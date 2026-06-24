@@ -12,6 +12,8 @@ PAIR_DIM = 7      # белый     — обычный текст
 PAIR_BORDER = 8   # жёлтый    — рамки/заголовки
 PAIR_CYAN = 6     # циан      — консоль
 PAIR_MAGENTA = 5  # пурпурный — акцент
+PAIR_BAR = 9      # синий фон  — полоска меню (фон)
+PAIR_BAR_SEL = 10 # циан фон   — слот под курсором в полоске меню
 
 # Алиасы на одну пару (8 = жёлтый) — для читаемости в вызывающем коде.
 PAIR_TITLE = PAIR_BORDER
@@ -27,6 +29,9 @@ def init_colors() -> None:
     curses.init_pair(PAIR_BORDER, curses.COLOR_YELLOW, -1)
     curses.init_pair(PAIR_CYAN, curses.COLOR_CYAN, -1)
     curses.init_pair(PAIR_MAGENTA, curses.COLOR_MAGENTA, -1)
+    # Полоска меню: чёрное по голубому, слот под курсором — инверсия (голубое по чёрному).
+    curses.init_pair(PAIR_BAR, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(PAIR_BAR_SEL, curses.COLOR_CYAN, curses.COLOR_BLACK)
 
 
 def A(pair: int = 0, bold: bool = False) -> int:

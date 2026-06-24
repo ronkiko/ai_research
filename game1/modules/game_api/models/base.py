@@ -18,7 +18,7 @@ import random
 from abc import ABC, abstractmethod
 
 from modules.base import Observation, Outcome, ModelInfo, ModelStats
-from ..modes import SUPERVISED, RL
+from ..modes import SUPERVISED, RL, PLAY
 
 _E = 2.718281828459045  # e
 
@@ -89,11 +89,22 @@ class Model(ABC):
         """Действие: argmax в supervised, сэмплирование Бернулли в rl."""
         p = self.prob(obs)
         if self.train_mode == RL:
-            return 1 if self._rng.random() < p else 0  # пробует (exploration)
+            # С небольшой вероятностью подмешиваем случайное действие —
+            # иначе при p≈1 разведка умирает и модель застревает
+            # в локальном минимуме (как на контригре с дилером).
+            eps = 0.05
+            p_mix = (1 - eps) * p + eps * 0.5
+            return 1 if self._rng.random() < p_mix else 0
         return 1 if p >= 0.5 else 0                      # выбирает лучшее
 
     def train(self, obs: Observation, outcome: Outcome) -> None:
-        """Один шаг обучения по текущему режиму; реально меняет веса."""
+        """Один шаг обучения по текущему режиму; реально меняет веса.
+
+        В режиме Play (без обучения) веса не трогаем — модель просто играет
+        выученным, чтобы её можно было протестировать как есть.
+        """
+        if self.train_mode == PLAY:
+            return
         feats = self.features(obs)
         p = self.prob(obs)
         if self.train_mode == RL:

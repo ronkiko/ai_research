@@ -17,16 +17,22 @@ from modules.base import (
     MechanicsHost,
     MechanicsInfo,
     SelectResult,
+    Observation,
+    Outcome,
 )
 from .adapter import MechanicsAdapter
 from .mechanics.ball import BallMechanics
 from .mechanics.kormushka import KormushkaMechanics
+from .mechanics.dealer import DealerMechanics
+from .mechanics.drift import DriftBallMechanics
 
 # Реестр столов казино: ключ -> класс мини-механики.
 # Порядок = порядок листания в будущем окне выбора.
 _TABLES: dict[str, type] = {
     BallMechanics.KEY: BallMechanics,
     KormushkaMechanics.KEY: KormushkaMechanics,
+    DealerMechanics.KEY: DealerMechanics,
+    DriftBallMechanics.KEY: DriftBallMechanics,
 }
 
 
@@ -56,3 +62,17 @@ class CoreModule(Module, MechanicsHost):
 
     def active_mechanics(self) -> MechanicsInfo | None:
         return self._adapter.active()
+
+    # --- драйв активного стола для игрового цикла ---
+
+    def active_observe(self) -> Observation | None:
+        return self._adapter.active_observe()
+
+    def active_step(self, action: int) -> Outcome | None:
+        return self._adapter.active_step(action)
+
+    def active_world_lore(self) -> list[str]:
+        return self._adapter.active_world_lore()
+
+    def active_world_bias(self) -> str | None:
+        return self._adapter.active_world_bias()

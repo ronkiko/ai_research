@@ -19,6 +19,9 @@ class ListItem:
     key: str
     title: str
     active: bool = False  # выбран ли этот пункт прямо сейчас (помечаем •)
+    # Опорный английский термин (техническое имя) — показывается в заголовке
+    # детали рядом с бытовым русским названием, чтобы оператор видел оба имени.
+    english: str = ""
 
 
 class ListPane(PseudoWindow):
@@ -129,7 +132,10 @@ class ListPane(PseudoWindow):
             it = self.items[idx]
             mark = "•" if it.active else " "
             cur = "▶" if idx == self.cursor else " "
-            line = f"{cur}{mark} {it.title}"
+            # В списке — только опорный английский термин; бытовое русское
+            # название живёт в справке (правая колонка), тут не дублируем.
+            label = it.english if it.english else it.title
+            line = f"{cur}{mark} {label}"
             line = line[:left_w]
             if idx == self.cursor:
                 attr = curses.A_REVERSE

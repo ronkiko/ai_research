@@ -25,6 +25,8 @@ class AiAdapter:
         # Живые экземпляры — создаются один раз, сохраняются между переключениями.
         self._instances: dict[str, Model] = {k: cls() for k, cls in models.items()}
         self._active_key: str | None = None
+        # Режим обучения — глобальный для адаптера, не привязан к модели.
+        self._train_mode: str = "supervised"
 
     # --- перечисление/описание ---
 
@@ -42,7 +44,10 @@ class AiAdapter:
             return SelectResult(Status.FAIL, f"модель '{key}' не найдена")
         self._active_key = key
         m = self._instances[key]
-        return SelectResult(Status.OK, f"активна модель '{m.TITLE}'", m.info())
+        # При переключении на модель применяем глобальный режим обучения.
+        m.train_mode = self._train_mode
+        msg = f"активна модель {m.KEY.capitalize()} ({m.TITLE})"
+        return SelectResult(Status.OK, msg, m.info())
 
     def active_info(self) -> ModelInfo | None:
         if self._active_key is None:
@@ -74,18 +79,21 @@ class AiAdapter:
         return list(TRAIN_MODES)
 
     def set_mode(self, mode: str) -> SelectResult:
-        from .modes import is_valid
+        from .modes import is_valid, mode_info
         m = self.active_model()
         if m is None:
             return SelectResult(Status.FAIL, "нет активной модели — некому ставить режим")
         if not is_valid(mode):
             return SelectResult(Status.FAIL, f"неизвестный режим '{mode}'")
+        self._train_mode = mode
         m.train_mode = mode
-        return SelectResult(Status.OK, f"режим '{mode}' для модели '{m.TITLE}'")
+        mi = mode_info(mode)
+        eng = mi.title.split(" — ")[0] if mi is not None else mode
+        msg = f"режим {eng} для модели {m.KEY.capitalize()}"
+        return SelectResult(Status.OK, msg)
 
     def active_mode(self) -> str | None:
-        m = self.active_model()
-        return m.train_mode if m is not None else None
+        return self._train_mode if self._active_key is not None else None
 
     # --- агент (для игрового цикла) ---
 

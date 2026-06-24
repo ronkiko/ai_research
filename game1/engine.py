@@ -2,9 +2,15 @@
 """game1 engine — загрузчик + TUI-рендер с псевдоокнами и нижним навбаром.
 
 Движок не содержит игровой логики. Он поднимает curses-интерфейс, рисует
-нижний навбар (F1 Help / F2 Models / F3 Games / F4 Modes), загружает автономные
+нижний навбар (F1 Старт / F2 Models / F3 Games / F4 Modes), загружает автономные
 модули и после загрузки даёт оператору интерактивно выбрать стол, модель и
-режим обучения — через псевдоокна со списком и справкой по курсору.
+режим обучения — через псевдоокна со списком и справкой по курсору. F1 открывает
+единое окно игры (установки + статистика + «Мир» + полоска меню с курсором):
+←/→ двигают курсор по меню (Пауза / Скорость / Старт / Закрыть), Enter активирует
+подсвеченный пункт. «Старт» пускает живой прогон активного стола с активной
+моделью прямо в этом окне (цикл observe → act → step → train по тикам),
+статистика обновляется на месте; «Скорость» переключает темп вплоть до режима
+без ограничений тиков.
 
 Запуск из каталога game1/:  python3 engine.py
 """
@@ -24,7 +30,7 @@ from ui.theme import init_colors, A, PAIR_OK, PAIR_FAIL, PAIR_WARN, PAIR_DIM, PA
 from ui.console import ConsoleWindow
 from ui.navbar import NavBar
 from ui.listpane import ListPane, ListItem
-from ui.help_pane import HelpPane
+from ui.title_pane import TitlePane
 from modules.base import (
     Module,
     LoadResult,
@@ -36,9 +42,11 @@ from modules.base import (
     ModelStats,
     TrainModeInfo,
     SelectResult,
+    ChangeLog,
 )
 from modules.core import CoreModule
 from modules.game_api import GameApiModule
+from config import load_config, save_config, default_settings, Settings
 
 locale.setlocale(locale.LC_ALL, "")
 
@@ -50,7 +58,7 @@ MODULES: list[type[Module]] = [CoreModule, GameApiModule]
 
 # Пункты навбара: (клавиша, подпись, pane_id). pane_id=None — не панель (Q — выход).
 NAVBAR_ITEMS = [
-    ("F1", "Help", "help"),
+    ("F1", "Старт", "title"),
     ("F2", "Models", "models"),
     ("F3", "Games", "games"),
     ("F4", "Modes", "modes"),
@@ -101,20 +109,52 @@ def load_modules(console: ConsoleWindow, stdscr) -> list[Module]:
         instances.append(module)
 
     console.append("", 0)
-    console.append("движок готов. Выбери игру/модель/режим в навбаре (F1–F4).",
-                   A(PAIR_OK, bold=True))
     return instances
+
+
+# ---------------------------------------------------------------------------
+# Журнал изменений настроек: единый путь вывода в Консоль
+# ---------------------------------------------------------------------------
+
+class ConsoleChangeLog(ChangeLog):
+    """ChangeLog поверх ConsoleWindow: каждое изменение настройки — строка статуса."""
+
+    def __init__(self, console: ConsoleWindow):
+        self._console = console
+
+    def log_change(self, scope: str, key: str, status: Status, message: str) -> None:
+        # scope/key — метаданные изменения (что и по какому ключу); в Консоль
+        # выводим самопонятное сообщение хоста со статусом, без префикса scope,
+        # чтобы не было «модель: активна модель …» / «режим: режим …».
+        line = f"{_status_tag(status)} {message}"
+        self._console.append(line, _status_attr(status))
+
+
+def _apply_change(sink: ChangeLog, scope: str, key: str, fn) -> SelectResult:
+    """Выполнить настройку fn(key) и залогировать результат через sink.
+
+    fn — канонический метод хоста (select_mechanics / select_model /
+    set_train_mode), возвращающий SelectResult. Все изменения настроек идут
+    через эту функцию, поэтому ни одно не проходит мимо Консоли.
+    """
+    try:
+        res = fn(key)
+    except Exception as exc:  # движок не падает на сломанной настройке
+        res = SelectResult(Status.FAIL, f"исключение: {exc}")
+    sink.log_change(scope, key, res.status, res.message)
+    return res
 
 
 # ---------------------------------------------------------------------------
 # Построение панелей выбора (список + справка по курсору)
 # ---------------------------------------------------------------------------
 
-def _build_games_pane(host: MechanicsHost, y, x, h, w) -> ListPane:
+def _build_games_pane(host: MechanicsHost, sink: ChangeLog, y, x, h, w) -> ListPane:
     infos = host.list_mechanics()
     active = host.active_mechanics()
     active_key = active.key if active is not None else None
-    items = [ListItem(it.key, it.title, active=(it.key == active_key)) for it in infos]
+    items = [ListItem(it.key, it.title, active=(it.key == active_key),
+                      english=it.key.capitalize()) for it in infos]
 
     def detail_for(item: ListItem) -> tuple[str, str]:
         info = host.mechanics_info(item.key)
@@ -123,14 +163,10 @@ def _build_games_pane(host: MechanicsHost, y, x, h, w) -> ListPane:
         body = f"Правила:\n{info.rules}\n\nЧему тут учится модель:\n{info.learns}"
         if item.active:
             body = "(активная игра)\n\n" + body
-        return f"Игра «{info.title}»", body
+        return f"Игра {item.english} «{info.title}»", body
 
     def on_select(item: ListItem) -> str:
-        try:
-            res = host.select_mechanics(item.key)
-        except Exception as exc:
-            return f"ошибка: {exc}"
-        # Пересчитать пометки активного пункта.
+        res = _apply_change(sink, "игра", item.key, host.select_mechanics)
         for it in items:
             it.active = (it.key == item.key)
         return f"{_status_tag(res.status)} {res.message}"
@@ -139,11 +175,12 @@ def _build_games_pane(host: MechanicsHost, y, x, h, w) -> ListPane:
                     items, detail_for, on_select)
 
 
-def _build_models_pane(ai: AiHost, y, x, h, w) -> ListPane:
+def _build_models_pane(ai: AiHost, sink: ChangeLog, y, x, h, w) -> ListPane:
     infos = ai.list_models()
     active = ai.active_model_info()
     active_key = active.key if active is not None else None
-    items = [ListItem(it.key, it.title, active=(it.key == active_key)) for it in infos]
+    items = [ListItem(it.key, it.title, active=(it.key == active_key),
+                      english=it.key.capitalize()) for it in infos]
 
     def detail_for(item: ListItem) -> tuple[str, str]:
         info = ai.model_info(item.key)
@@ -159,13 +196,10 @@ def _build_models_pane(ai: AiHost, y, x, h, w) -> ListPane:
         mode = ai.active_train_mode()
         if item.active and mode is not None:
             lines.append(f"активный режим обучения: {mode}")
-        return f"Модель «{info.title}»", "\n".join(lines)
+        return f"Модель {item.english} «{info.title}»", "\n".join(lines)
 
     def on_select(item: ListItem) -> str:
-        try:
-            res = ai.select_model(item.key)
-        except Exception as exc:
-            return f"ошибка: {exc}"
+        res = _apply_change(sink, "модель", item.key, ai.select_model)
         for it in items:
             it.active = (it.key == item.key)
         return f"{_status_tag(res.status)} {res.message}"
@@ -174,10 +208,13 @@ def _build_models_pane(ai: AiHost, y, x, h, w) -> ListPane:
                     items, detail_for, on_select)
 
 
-def _build_modes_pane(ai: AiHost, y, x, h, w) -> ListPane:
+def _build_modes_pane(ai: AiHost, sink: ChangeLog, y, x, h, w) -> ListPane:
     modes = ai.list_train_modes()
     active = ai.active_train_mode()
-    items = [ListItem(m.key, m.title, active=(m.key == active)) for m in modes]
+    # Опорный английский термин = часть заголовка до « — » (Supervised / RL);
+    # в списке показываем только его, бытовая расшифровка — в справке.
+    items = [ListItem(m.key, m.title, active=(m.key == active),
+                      english=m.title.split(" — ")[0]) for m in modes]
 
     def detail_for(item: ListItem) -> tuple[str, str]:
         info = next((m for m in modes if m.key == item.key), None)
@@ -186,10 +223,7 @@ def _build_modes_pane(ai: AiHost, y, x, h, w) -> ListPane:
         return f"Справка по режиму «{info.title}»", info.help
 
     def on_select(item: ListItem) -> str:
-        try:
-            res = ai.set_train_mode(item.key)
-        except Exception as exc:
-            return f"ошибка: {exc}"
+        res = _apply_change(sink, "режим", item.key, ai.set_train_mode)
         for it in items:
             it.active = (it.key == item.key)
         return f"{_status_tag(res.status)} {res.message}"
@@ -212,28 +246,52 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
     host = next((m for m in modules if isinstance(m, MechanicsHost)), None)
     ai = next((m for m in modules if isinstance(m, AiHost)), None)
 
-    # Тихо выставить умолчания, чтобы состояние было валидным; панели сами
-    # покажут активный пункт и позволят его сменить.
-    if host is not None:
-        opts = host.list_mechanics()
-        if opts:
-            host.select_mechanics(opts[0].key)
-    if ai is not None:
-        opts = ai.list_models()
-        if opts:
-            ai.select_model(opts[0].key)
-        modes = ai.list_train_modes()
-        if modes:
-            ai.set_train_mode(modes[0].key)
+    # Журнал изменений настроек — единый путь в Консоль. Через него идут и
+    # применение конфига/пресета на старте, и выборы оператора из панелей: ни
+    # одно изменение не проходит мимо Консоли.
+    sink = ConsoleChangeLog(console)
 
-    help_pane = HelpPane(y=pane_y, x=pane_x, h=pane_h, w=pane_w)
-    games_pane = _build_games_pane(host, pane_y, pane_x, pane_h, pane_w) if host else None
-    models_pane = _build_models_pane(ai, pane_y, pane_x, pane_h, pane_w) if ai else None
-    modes_pane = _build_modes_pane(ai, pane_y, pane_x, pane_h, pane_w) if ai else None
+    # Конфиг настроек: ищем файл при старте. Есть и валиден — грузим; нет или
+    # сломан — генерируем пресет по умолчанию (один раз). Всё это логируется.
+    settings, cfg_status, cfg_msg = load_config(host, ai)
+    sink.log_change("конфиг", "", cfg_status, cfg_msg)
+    if settings is None:
+        settings = default_settings(host, ai)
+        sink.log_change("конфиг", "", Status.OK, "сгенерирован пресет по умолчанию")
+
+    # Применить настройки (из конфига или пресета) — каждое через _apply_change,
+    # чтобы попасть в Консоль единым путём.
+    if host is not None and settings.game:
+        _apply_change(sink, "игра", settings.game, host.select_mechanics)
+    if ai is not None:
+        if settings.model:
+            _apply_change(sink, "модель", settings.model, ai.select_model)
+        if settings.train_mode:
+            _apply_change(sink, "режим", settings.train_mode, ai.set_train_mode)
+
+    console.append("", 0)
+    console.append("движок готов. F1 — старт игры, F2–F4 — выбор модели/игры/режима.",
+                   A(PAIR_OK, bold=True))
+
+    # TitlePane — единственная поверхность игры: статистика + «Мир» + кнопка
+    # «Старт/Стоп», прогон гоняется прямо в ней. Фиксированного размера 76×21
+    # (точная usable-область при минимальном терминале 80×24), по центру области
+    # панелей; пол 80×24 гарантирует, что помещается, поэтому внутри раскладка
+    # идёт по фиксированным координатам-константам. Отдельной панели прогона нет.
+    title_pane = None
+    if host and ai:
+        tpx = pane_x + max(0, (pane_w - TitlePane.CANVAS_W) // 2)
+        tpy = pane_y + max(0, (pane_h - TitlePane.CANVAS_H) // 2)
+        title_pane = TitlePane(host, ai, tpy, tpx,
+                               TitlePane.CANVAS_H, TitlePane.CANVAS_W,
+                               sink=sink)
+    games_pane = _build_games_pane(host, sink, pane_y, pane_x, pane_h, pane_w) if host else None
+    models_pane = _build_models_pane(ai, sink, pane_y, pane_x, pane_h, pane_w) if ai else None
+    modes_pane = _build_modes_pane(ai, sink, pane_y, pane_x, pane_h, pane_w) if ai else None
 
     panes = {
         "console": console,
-        "help": help_pane,
+        "title": title_pane,
         "games": games_pane,
         "models": models_pane,
         "modes": modes_pane,
@@ -250,11 +308,98 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
 
     render()
     while True:
+        # Таймаут getch синхронизируем ДО вызова, чтобы при смене
+        # running/темпа он вступал в силу немедленно, а не через итерацию.
+        if active == "title" and title_pane is not None:
+            running = title_pane.is_running()
+            stdscr.timeout(title_pane.tick_delay() if running else -1)
+
         key = stdscr.getch()
+
+        # --- стартовая панель (F1): меню с курсором + прогон в одном окне ---
+        # Меню (Модель / Режим / Старт / Скорость / Закрыть) работает и в покое, и
+        # во время прогона: ←/→ двигают курсор, Enter активирует подсвеченный
+        # пункт. Пока прогон идёт, getch неблокирующий — каждое срабатывание
+        # таймера (возврат -1) это один тик цикла observe → act → step → train.
+        if active == "title" and title_pane is not None:
+            # Тик таймера — один ход цикла (только когда прогон идёт).
+            if key == -1:
+                if running:
+                    title_pane.tick()
+                render()
+                continue
+
+            # Q — выход (с логом итога, если прогон шёл).
+            if key in (ord("q"), ord("Q")):
+                if running:
+                    sink.log_change("игра", "", Status.OK,
+                                    f"прогон остановлен: {title_pane.summary()}")
+                    title_pane.stop_run()
+                stdscr.timeout(-1)
+                break
+
+            # F1–F4: навигация. Во время прогона F2–F4 игнорируются (фокус на
+            # прогоне); F1 (в Консоль) и Esc/Закрыть всегда доступны.
+            fmap = {curses.KEY_F1: "title", curses.KEY_F2: "models",
+                    curses.KEY_F3: "games", curses.KEY_F4: "modes"}
+            if key in fmap:
+                target = fmap[key]
+                if running and target in ("models", "games", "modes"):
+                    continue
+                if target != "title" and panes.get(target) is None:
+                    continue
+                if running:
+                    sink.log_change("игра", "", Status.OK,
+                                    f"прогон остановлен: {title_pane.summary()}")
+                    title_pane.stop_run()
+                stdscr.timeout(-1)
+                active = "console" if active == target else target
+                render()
+                continue
+
+            # Клавиши меню делегируются в TitlePane.handle.
+            action = title_pane.handle(key)
+            if action == "start":
+                gi = host.active_mechanics() if host is not None else None
+                mi = ai.active_model_info() if ai is not None else None
+                gname = gi.title if gi is not None else "?"
+                mname = mi.key.capitalize() if mi is not None else "?"
+                sink.log_change("игра", "", Status.OK,
+                                f"запущен прогон: {gname} × {mname}")
+            elif action == "stop":
+                sink.log_change("игра", "", Status.OK,
+                                f"прогон остановлен: {title_pane.summary()}")
+            elif action == "speed":
+                sink.log_change("игра", "", Status.OK,
+                                f"темп: {title_pane.speed_label()}")
+            elif action == "model":
+                if ai is not None:
+                    mi = ai.active_model_info()
+                    if mi is not None:
+                        sink.log_change("игра", "", Status.OK,
+                                        f"активна модель {mi.key.capitalize()} ({mi.title})")
+            elif action == "mode":
+                if ai is not None:
+                    mode = ai.active_train_mode()
+                    if mode is not None:
+                        sink.log_change("игра", "", Status.OK,
+                                        f"режим {mode}")
+            elif action == "close":
+                if title_pane.is_running():
+                    sink.log_change("игра", "", Status.OK,
+                                    f"прогон остановлен: {title_pane.summary()}")
+                title_pane.stop_run()
+                stdscr.timeout(-1)
+                active = "console"
+            # move / noop / None — просто перерисовать.
+            render()
+            continue
+
+        # --- обычная навигация по панелям ---
         if key in (ord("q"), ord("Q")):
             break
         # F1–F4: открыть панель или вернуться в Консоль, если уже открыта.
-        fmap = {curses.KEY_F1: "help", curses.KEY_F2: "models",
+        fmap = {curses.KEY_F1: "title", curses.KEY_F2: "models",
                 curses.KEY_F3: "games", curses.KEY_F4: "modes"}
         if key in fmap:
             target = fmap[key]
@@ -276,6 +421,24 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
                 render()
                 continue
         # Прочие клавиши игнорируем.
+
+    # Выход: вернуть getch в блокирующий режим и сохранить изменённые в
+    # интерфейсе настройки в конфиг. Текущее состояние берём из хостов (что
+    # реально активно), логируем через sink.
+    stdscr.timeout(-1)
+    active_game = host.active_mechanics() if host is not None else None
+    active_model = ai.active_model_info() if ai is not None else None
+    active_mode = ai.active_train_mode() if ai is not None else None
+    cur = Settings(
+        game=active_game.key if active_game is not None else "",
+        model=active_model.key if active_model is not None else "",
+        train_mode=active_mode or "",
+    )
+    save_status, save_msg = save_config(cur)
+    sink.log_change("конфиг", "", save_status, save_msg)
+    active = "console"
+    render()
+    stdscr.refresh()
 
 
 def main(stdscr) -> None:

@@ -26,6 +26,9 @@ checkpoints/
 logs/
 data/raw/
 
+# game1: runtime-конфиг настроек (генерируется движком, не пушим)
+game1/game1.conf.json
+
 # OS / editors
 .DS_Store
 .idea/

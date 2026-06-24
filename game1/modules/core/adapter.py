@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from modules.base import MechanicsInfo, SelectResult, Status
+from modules.base import MechanicsInfo, SelectResult, Status, Observation, Outcome
 from .mechanics.base import Mechanics
 
 
@@ -33,7 +33,23 @@ class MechanicsAdapter:
         if result.status is not Status.OK:
             return result
         self._active = table
-        return SelectResult(Status.OK, f"сел за стол '{table.TITLE}'", table.info())
+        # Вести с опорного английского термина (ключ), русский алиас — справочно.
+        msg = f"сел за стол {table.KEY.capitalize()} ({table.TITLE})"
+        return SelectResult(Status.OK, msg, table.info())
 
     def active(self) -> MechanicsInfo | None:
         return self._active.info() if self._active is not None else None
+
+    # --- драйв активного стола для игрового цикла ---
+
+    def active_observe(self) -> Observation | None:
+        return self._active.observe() if self._active is not None else None
+
+    def active_step(self, action: int) -> Outcome | None:
+        return self._active.step(action) if self._active is not None else None
+
+    def active_world_lore(self) -> list[str]:
+        return self._active.world_lore() if self._active is not None else []
+
+    def active_world_bias(self) -> str | None:
+        return self._active.world_bias() if self._active is not None else None
