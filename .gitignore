@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Project: logs and model artifacts (research data, не пушим)
+*.log
+*.pt
+*.pth
+*.ckpt
+*.onnx
+runs/
+checkpoints/
+logs/
+data/raw/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
