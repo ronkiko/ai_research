@@ -284,7 +284,8 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
         tpy = pane_y + max(0, (pane_h - TitlePane.CANVAS_H) // 2)
         title_pane = TitlePane(host, ai, tpy, tpx,
                                TitlePane.CANVAS_H, TitlePane.CANVAS_W,
-                               sink=sink)
+                               sink=sink,
+                               speed_idx=settings.speed)
     games_pane = _build_games_pane(host, sink, pane_y, pane_x, pane_h, pane_w) if host else None
     models_pane = _build_models_pane(ai, sink, pane_y, pane_x, pane_h, pane_w) if ai else None
     modes_pane = _build_modes_pane(ai, sink, pane_y, pane_x, pane_h, pane_w) if ai else None
@@ -433,6 +434,7 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
         game=active_game.key if active_game is not None else "",
         model=active_model.key if active_model is not None else "",
         train_mode=active_mode or "",
+        speed=title_pane.speed_index if title_pane is not None else 0,
     )
     save_status, save_msg = save_config(cur)
     sink.log_change("конфиг", "", save_status, save_msg)

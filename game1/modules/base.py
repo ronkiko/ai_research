@@ -188,6 +188,8 @@ class ModelStats:
     n_neurons: int
     params: dict  # name -> value
     steps: int    # сколько раз звали train()
+    logit: float = 0.0
+    prob: float = 0.5
 
 
 @dataclass

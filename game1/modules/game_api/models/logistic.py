@@ -12,7 +12,7 @@ from .base import Model
 class LogisticModel(Model):
     KEY = "logistic"
     TITLE = "Один нейрон с входом"
-    SUMMARY = "2 параметра (вес + смещение), один вход — для игр с состоянием"
+    SUMMARY = "2 параметра (w + b), один вход: logit = w·x + b — для игр с состоянием"
     N_PARAMS = 2
     LR = 0.2
 

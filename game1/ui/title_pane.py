@@ -64,13 +64,14 @@ class TitlePane(PseudoWindow):
     _MENU_START_IDX = 2      # курсор по умолчанию — на «Старт»
 
     # Темп прогона: задержка getch в мс.
-    _SPEEDS = ((300, "1×"), (30, "10×"), (0, "∞"))
+    _SPEEDS = ((3000, "0.1×"), (300, "1×"), (30, "10×"), (0, "∞"))
 
     LABEL_W = 9  # ширина поля подписи «фишки»/«точность» для выравнивания значений
 
     def __init__(self, host: MechanicsHost | None, ai: AiHost | None,
                  y: int, x: int, h: int, w: int,
-                 sink: ChangeLog | None = None):
+                 sink: ChangeLog | None = None,
+                 speed_idx: int = 0):
         super().__init__("Старт", y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self._host = host
@@ -81,7 +82,7 @@ class TitlePane(PseudoWindow):
         self._steps = 0
         self._running = False
         self._cursor = self._MENU_START_IDX  # курсор меню (на «Старт»)
-        self._speed_idx = 0    # индекс в _SPEEDS (темп прогона)
+        self._speed_idx = max(0, min(speed_idx, len(self._SPEEDS) - 1))
         self._submenu_open = False
         self._submenu_cursor = 0
         self._submenu_items: list[tuple[str, str, bool]] = []  # (key, label, active)
@@ -114,6 +115,10 @@ class TitlePane(PseudoWindow):
     def speed_label(self) -> str:
         return self._SPEEDS[self._speed_idx][1]
 
+    @property
+    def speed_index(self) -> int:
+        return self._speed_idx
+
     _SUBMENU_SLOTS = frozenset({"start", "model", "mode", "speed"})
 
     def _slot_to_submenu(self, slot_key: str) -> str:
@@ -123,19 +128,15 @@ class TitlePane(PseudoWindow):
         """Обработать клавишу меню. Возвращает действие для контроллера:
         ``move``/``start``/``stop``/``close``/None.
         """
-        # субменю: единая навигация для всех типов
+        # субменю: ↑/↓ — навигация (на границе упираемся), Enter — выбор, Esc — закрыть
         if self._submenu_open:
             if key in (curses.KEY_UP, ord("k")):
                 if self._submenu_cursor > 0:
                     self._submenu_cursor -= 1
-                else:
-                    self._close_submenu()
                 return "move"
             if key in (curses.KEY_DOWN, ord("j")):
                 if self._submenu_cursor < len(self._submenu_items) - 1:
                     self._submenu_cursor += 1
-                else:
-                    self._close_submenu()
                 return "move"
             if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
                 return self._select_submenu()
@@ -476,12 +477,14 @@ class TitlePane(PseudoWindow):
             self._kv("фишки", f"{self._reward:+d}"),
             self._kv("точность", f"{self.accuracy()}%"),
             self._kv("шаги", f"{self._steps}"),
-            "веса",
         ]
         mi = self._ai.active_model_info() if self._ai is not None else None
         if mi is not None:
             st = self._ai.model_stats(mi.key)
             if st is not None:
+                lines.append(f"logit = {st.logit:+.3f}")
+                lines.append(f"p     = {st.prob:.4f}")
+                lines.append("веса:")
                 for k, v in st.params.items():
                     lines.append(f"  {k} = {v:+.3f}")
         return lines

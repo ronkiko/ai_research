@@ -13,7 +13,7 @@ from .base import Model
 class BiasModel(Model):
     KEY = "bias"
     TITLE = "Одно число-привычка"
-    SUMMARY = "1 параметр (смещение), без входа — для игр без состояния"
+    SUMMARY = "1 параметр (b), без входа: logit = b — для игр без состояния"
     N_PARAMS = 1
     LR = 0.1
 

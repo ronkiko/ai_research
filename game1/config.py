@@ -27,10 +27,11 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game1.co
 
 @dataclass
 class Settings:
-    """Выбранные настройки: игра, модель, режим обучения."""
+    """Выбранные настройки: игра, модель, режим обучения, темп."""
     game: str
     model: str
     train_mode: str
+    speed: int = 0  # индекс в _SPEEDS
 
 
 def default_settings(host: MechanicsHost | None, ai: AiHost | None) -> Settings:
@@ -77,7 +78,8 @@ def load_config(host: MechanicsHost | None,
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         s = Settings(game=str(data["game"]), model=str(data["model"]),
-                     train_mode=str(data["train_mode"]))
+                     train_mode=str(data["train_mode"]),
+                     speed=int(data.get("speed", 0)))
     except (OSError, ValueError, KeyError) as exc:
         return None, Status.FAIL, f"конфиг сломан и отклонён: {exc}"
     if not _is_valid(s, host, ai):
