@@ -1,23 +1,23 @@
-"""ReportPopup — лабораторный разбор весов в отдельном модальном окне.
+"""ReportPopup — полноэкранный лабораторный разбор весов.
 
 Открывается поверх PreviewPopup. Поддерживает три движка отчёта:
   - 1 — default (классический);
   - 2 — forensic (сигмоид + роли);
   - 3 — prune (отсечение).
 
-Esc/Enter/q закрывают только это окно и возвращают управление предыдущему.
+Esc/Enter/q закрывают это окно и возвращают управление предыдущему.
 """
 from __future__ import annotations
 
 import curses
 
-from .modal_window import ModalWindow
+from .modal_window import ModalContent
 from . import labpane
 from .lab_report import default_report, forensic_report, prune_report
 
 
-class ReportPopup(ModalWindow):
-    """Попап с лабораторным разбором весов."""
+class ReportPopup(ModalContent):
+    """Полноэкранный попап с лабораторным разбором весов."""
 
     ID = "report"
 

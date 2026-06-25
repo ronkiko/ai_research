@@ -278,7 +278,7 @@ def _build_games_pane(host: MechanicsHost, sink: ChangeLog, y, x, h, w) -> TreeP
                 if child.active:
                     cursor = idx + cidx + 1
                     break
-    pane = TreePane("F3 Games — выбор мини-игры", y, x, h, w,
+    pane = TreePane("games", "F3 Games — выбор мини-игры", y, x, h, w,
                     root, detail_for, on_select, group_help=group_help,
                     cursor=cursor)
     return pane

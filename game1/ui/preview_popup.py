@@ -1,28 +1,33 @@
-"""PreviewPopup — временное модальное окно поверх F1 для просмотра весов.
+"""PreviewPopup — временный попап поверх F1 для просмотра весов.
 
 Клавиши:
   - s — сохранить снапшот в файл и переключиться в Лабораторию;
-  - Enter — открыть следовательский (forensic) разбор весов в новом окне
-            без сохранения;
-  - Esc, q — закрыть окно и вернуться в F1.
+  - Enter — открыть следовательский (forensic) разбор в новом полноэкранном
+            модальном окне без сохранения;
+  - Esc, q — закрыть попап и вернуться в F1.
 """
 from __future__ import annotations
 
 import curses
 
-from .modal_window import ModalWindow
+from .modal_window import PopupContent
 
 
-class PreviewPopup(ModalWindow):
-    """Попап предпросмотра весов без сохранения."""
+class PreviewPopup(PopupContent):
+    """Попап предпросмотра весов без сохранения (80×24, центрирован)."""
 
     ID = "preview"
 
-    def __init__(self, y: int, x: int, h: int, w: int,
+    def __init__(self,
+                 container_y: int, container_x: int,
+                 container_h: int, container_w: int,
                  body: str, model_key: str, game_key: str, mode: str,
                  save_callback, open_report_callback,
                  sink=None):
-        super().__init__(self.ID, "Предпросмотр весов", y, x, h, w)
+        PopupContent.__init__(
+            self, self.ID, "Предпросмотр весов",
+            container_y, container_x, container_h, container_w,
+        )
         self._body = body
         self._model_key = model_key
         self._game_key = game_key

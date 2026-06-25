@@ -12,7 +12,7 @@ import textwrap
 from dataclasses import dataclass, field
 
 from .listpane import ListItem, SegLine
-from .window import PseudoWindow
+from .window import Modal
 from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER
 
 
@@ -40,7 +40,7 @@ class TreeItem:
     index: int = 0
 
 
-class TreePane(PseudoWindow):
+class TreePane(Modal):
     """Древовидное окно выбора: слева дерево, справа справка по выбранному.
 
     detail_for(item) -> (heading, body): бытовой текст справки по пункту.
@@ -48,11 +48,11 @@ class TreePane(PseudoWindow):
     group_help(level_key) -> str | None: справка по группе уровня.
     """
 
-    def __init__(self, title: str, y: int, x: int, h: int, w: int,
+    def __init__(self, window_id: str, title: str, y: int, x: int, h: int, w: int,
                  root: TreeNode,
                  detail_for, on_select, group_help=None,
                  cursor: int = 0):
-        super().__init__(title, y, x, h, w,
+        super().__init__(window_id, title, y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self.root = root
         self.detail_for = detail_for

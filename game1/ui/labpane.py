@@ -13,7 +13,7 @@ import os
 import time
 import textwrap
 
-from .window import PseudoWindow
+from .window import Modal
 from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER, PAIR_WARN,
     PAIR_FAIL, PAIR_CYAN, PAIR_MAGENTA,
@@ -107,7 +107,7 @@ def _scan_snapshots() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-class LabPane(PseudoWindow):
+class LabPane(Modal):
     """Лаборатория: список снапшотов слева + содержимое файла справа.
 
     Enter на снапшоте открывает полноэкранный детальный разбор. В нём:
@@ -119,7 +119,7 @@ class LabPane(PseudoWindow):
     """
 
     def __init__(self, y: int, x: int, h: int, w: int):
-        super().__init__("F2 Лаборатория — исследование весов", y, x, h, w,
+        super().__init__("lab", "F2 Лаборатория — исследование весов", y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self._snapshots: list[dict] = []
         self._cursor = 0

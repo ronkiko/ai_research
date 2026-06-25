@@ -1,10 +1,10 @@
-"""ModalWindow — базовое модальное псевдоокно с рамкой, скроллом и подсказкой.
+"""ModalContent / PopupContent — окна со скроллящимся контентом и подсказкой.
 
-Содержимое формируется методом `_content_rows()`, который возвращает список
-элементов: либо `(str, attr)`, либо `SegLine` из labpane.
+ModalContent   — полноэкранное модальное окно (наследует Modal).
+PopupContent   — центрированный попап 80×24 (наследует Popup).
 
-Наследники реализуют `_handle_extra(key)` для специальных клавиш и
-`_hint_text()` для строки подсказки.
+Контент формируется методом `_content_rows()`, подсказка — `_hint_text()`,
+специальные клавиши — `_handle_extra()`.
 """
 from __future__ import annotations
 
@@ -12,21 +12,15 @@ import curses
 import textwrap
 from typing import Any
 
-from .window import PseudoWindow
-from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER, PAIR_BAR
+from .window import Modal, Popup
+from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BAR
 
 
-class ModalWindow(PseudoWindow):
-    """Базовое модальное окно: рамка + скроллящийся контент + подсказка внизу."""
+class ContentMixin:
+    """Общая логика скролла, рендера контента и подсказки."""
 
-    def __init__(self, window_id: str, title: str, y: int, x: int, h: int, w: int,
-                 border_pair: int = PAIR_BORDER, title_pair: int = PAIR_TITLE):
-        super().__init__(title, y, x, h, w,
-                         border_pair=border_pair, title_pair=title_pair)
-        self.id = window_id
+    def __init__(self):
         self._scroll = 0
-
-    # --- подклассы переопределяют ---
 
     def _content_rows(self, width: int) -> list[Any]:
         """Вернуть строки контента для отрисовки."""
@@ -43,13 +37,10 @@ class ModalWindow(PseudoWindow):
         """Строка подсказки внизу окна."""
         return " Esc — закрыть "
 
-    # --- общая логика ---
-
     def handle(self, key: int) -> str | None:
         if key in (27, ord("q"), ord("Q")):
             return "close"
 
-        # Стрелки и скролл — общие для всех модальных окон.
         if key in (curses.KEY_UP, ord("k")):
             self._scroll = max(0, self._scroll - 1)
             return "move"
@@ -71,34 +62,15 @@ class ModalWindow(PseudoWindow):
 
         return "move"
 
-    def render(self, stdscr) -> None:
+    def render_content(self, stdscr) -> None:
+        """Отрисовать скроллящийся контент и подсказку.
+
+        Предполагается, что рамка и очистка уже выполнены базовым окном.
+        """
         if self.h < 5 or self.w < 10:
             return
 
-        # Рамка
-        border = curses.color_pair(self.border_pair)
-        try:
-            stdscr.addstr(self.y, self.x, "┌" + "─" * (self.w - 2) + "┐", border)
-            stdscr.addstr(self.y + self.h - 1, self.x,
-                          "└" + "─" * (self.w - 2) + "┘", border)
-            for r in range(1, self.h - 1):
-                stdscr.addstr(self.y + r, self.x, "│", border)
-                stdscr.addstr(self.y + r, self.x + self.w - 1, "│", border)
-            stdscr.addstr(self.y, self.x + 2, f" {self.title} ",
-                          curses.color_pair(self.title_pair) | curses.A_BOLD)
-        except curses.error:
-            return
-
-        # Очистить внутреннюю область
-        blank = " " * self.inner_w
-        for i in range(self.inner_h):
-            try:
-                stdscr.addstr(self.y + 1 + i, self.x + 1, blank,
-                              curses.color_pair(PAIR_DIM))
-            except curses.error:
-                break
-
-        content_h = max(1, self.inner_h - 2)  # последние 2 строки: подсказка + запас
+        content_h = max(1, self.inner_h - 2)
         rows = self._content_rows(self.inner_w - 2)
         max_scroll = max(0, len(rows) - content_h)
         self._scroll = min(self._scroll, max_scroll)
@@ -116,7 +88,6 @@ class ModalWindow(PseudoWindow):
                 except curses.error:
                     pass
             else:
-                # SegLine или совместимый объект с .segs
                 ox = 0
                 for text, attr in item.segs:
                     if ox >= self.inner_w - 2:
@@ -128,7 +99,6 @@ class ModalWindow(PseudoWindow):
                         pass
                     ox += len(text)
 
-        # Подсказка
         hint = self._hint_text()
         hint_y = self.y + self.h - 2
         hint_x = self.x + max(0, (self.w - len(hint)) // 2)
@@ -139,7 +109,7 @@ class ModalWindow(PseudoWindow):
 
     @staticmethod
     def _markdown_rows(body: str, width: int) -> list[Any]:
-        """Простой рендер markdown в строки (совместимый с форматом PreviewPopup)."""
+        """Простой рендер markdown в строки."""
         rows: list = []
         for line in body.split("\n"):
             if line.startswith("##"):
@@ -161,3 +131,36 @@ class ModalWindow(PseudoWindow):
                 for ln in textwrap.wrap(line, width=max(4, width)):
                     rows.append((ln, A(PAIR_DIM)))
         return rows
+
+
+class ModalContent(Modal, ContentMixin):
+    """Полноэкранное модальное окно со скроллящимся контентом."""
+
+    def __init__(self, window_id: str, title: str, y: int, x: int, h: int, w: int):
+        Modal.__init__(self, window_id, title, y, x, h, w)
+        ContentMixin.__init__(self)
+
+    def handle(self, key: int) -> str | None:
+        return ContentMixin.handle(self, key)
+
+    def render(self, stdscr) -> None:
+        Modal.render(self, stdscr)
+        self.render_content(stdscr)
+
+
+class PopupContent(Popup, ContentMixin):
+    """Центрированный попап 80×24 со скроллящимся контентом."""
+
+    def __init__(self, window_id: str, title: str,
+                 container_y: int, container_x: int,
+                 container_h: int, container_w: int):
+        Popup.__init__(self, window_id, title,
+                       container_y, container_x, container_h, container_w)
+        ContentMixin.__init__(self)
+
+    def handle(self, key: int) -> str | None:
+        return ContentMixin.handle(self, key)
+
+    def render(self, stdscr) -> None:
+        Popup.render(self, stdscr)
+        self.render_content(stdscr)

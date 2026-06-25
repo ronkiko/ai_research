@@ -10,7 +10,7 @@ import curses
 import textwrap
 from dataclasses import dataclass, field
 
-from .window import PseudoWindow
+from .window import Modal
 from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER
 
 
@@ -34,18 +34,18 @@ class SegLine:
     segs: list[tuple[int, str, int]] = field(default_factory=list)
 
 
-class ListPane(PseudoWindow):
+class ListPane(Modal):
     """Окно выбора: левая колонка-список + правая колонка-деталь.
 
     detail_for(item) -> (heading, body): бытовой текст справки по пункту.
     on_select(item) -> str: сообщение-подтверждение выбора (в строку статуса).
     """
 
-    def __init__(self, title: str, y: int, x: int, h: int, w: int,
+    def __init__(self, window_id: str, title: str, y: int, x: int, h: int, w: int,
                  items: list[ListItem],
                  detail_for, on_select,
                  cursor: int = 0):
-        super().__init__(title, y, x, h, w,
+        super().__init__(window_id, title, y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self.items = items
         self.detail_for = detail_for

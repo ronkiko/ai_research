@@ -23,7 +23,7 @@ from collections.abc import Callable
 import os
 import time
 
-from .window import PseudoWindow
+from .window import Modal
 from .modal_stack import ModalStack
 from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER,
@@ -35,17 +35,14 @@ from modules.base import MechanicsHost, AiHost, Status, ChangeLog
 from modules.game_api.modes import mode_info, PLAY
 
 
-class TitlePane(PseudoWindow):
-    # --- фиксированный размер и раскладка (без динамических расчётов) ---
-    # Окно 76×21 — точная usable-область над навбаром и под заголовком при
-    # минимальном терминале 80×24 (пол движка в engine.py). Контроллер строит
-    # панель этого размера по центру области панелей; внутри всё рисуется по
-    # фиксированным координатам-константам.
+class TitlePane(Modal):
+    # TitlePane — каноничный Modal (полноэкранное окно F1). Внутри него
+    # игровая карточка фиксированного размера 76×21 рисуется по центру pane.
     CANVAS_W = 76
     CANVAS_H = 21
 
     # Внутренние координаты — относительно левого-верхнего угла внутренней
-    # области (отступ +1 от рамки). inner = 74×19 (строки 0..18).
+    # области карточки (отступ +1 от рамки). inner = 74×19 (строки 0..18).
     _HEADER_ROW = 0          # «Ball • Bias (Supervised)»
     _COL_TOP = 2             # строка заголовков столбцов (на 1 строку выше)
     _COL_CONTENT_TOP = 4     # первая строка контента (после подчёркивания)
@@ -75,12 +72,10 @@ class TitlePane(PseudoWindow):
     LABEL_W = 9  # ширина поля подписи «фишки»/«точность» для выравнивания значений
 
     def __init__(self, host: MechanicsHost | None, ai: AiHost | None,
-                 y: int, x: int, h: int, w: int,
+                 pane_y: int, pane_x: int, pane_h: int, pane_w: int,
                  sink: ChangeLog | None = None,
-                 speed_idx: int = 0,
-                 full_y: int | None = None, full_x: int | None = None,
-                 full_h: int | None = None, full_w: int | None = None):
-        super().__init__("Старт", y, x, h, w,
+                 speed_idx: int = 0):
+        super().__init__("title", "Старт", pane_y, pane_x, pane_h, pane_w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self._host = host
         self._ai = ai
@@ -97,11 +92,11 @@ class TitlePane(PseudoWindow):
         self._submenu_callback: Callable[[str], str] = lambda k: "move"
         self._submenu_kind: str = ""  # game/model/mode/speed — для позиционирования
         self._modal_stack = ModalStack()  # каноничный стек модальных окон
-        # Полноэкранная область панели — для разборов весов (ReportPopup).
-        self._full_y = full_y if full_y is not None else y
-        self._full_x = full_x if full_x is not None else x
-        self._full_h = full_h if full_h is not None else h
-        self._full_w = full_w if full_w is not None else w
+        # Координаты игровой карточки 76×21 по центру полноэкранного F1.
+        self._card_y = pane_y + max(0, (pane_h - self.CANVAS_H) // 2)
+        self._card_x = pane_x + max(0, (pane_w - self.CANVAS_W) // 2)
+        self._pane_y, self._pane_x = pane_y, pane_x
+        self._pane_h, self._pane_w = pane_h, pane_w
 
     # --- состояние прогона ---
 
@@ -262,7 +257,7 @@ class TitlePane(PseudoWindow):
             return
         body, model_key, game_key, mode = data
         popup = PreviewPopup(
-            self.y + 1, self.x + 1, self.h - 2, self.w - 2,
+            self._pane_y, self._pane_x, self._pane_h, self._pane_w,
             body, model_key, game_key, mode,
             save_callback=self._do_save_and_lab,
             open_report_callback=self._open_report_popup,
@@ -277,7 +272,7 @@ class TitlePane(PseudoWindow):
             return
         body, model_key, _, _ = data
         popup = ReportPopup(
-            self._full_y, self._full_x, self._full_h, self._full_w,
+            self._pane_y, self._pane_x, self._pane_h, self._pane_w,
             model_key, body, engine=engine,
         )
         self._modal_stack.put(ReportPopup.ID, popup)
@@ -468,37 +463,25 @@ class TitlePane(PseudoWindow):
     def render(self, stdscr) -> None:
         if self.h < 3 or self.w < 8:
             return
-        # Очистить всю полную область панели перед рисованием F1, чтобы после
-        # закрытия полноэкранных модальных окон не оставалось артефактов по
-        # краям маленького игрового окна.
-        full_blank = " " * self._full_w
-        for i in range(self._full_h):
-            try:
-                stdscr.addstr(self._full_y + i, self._full_x, full_blank, 0)
-            except curses.error:
-                break
+        # Modal.render рисует рамку и очищает всю полноэкранную область F1.
+        Modal.render(self, stdscr)
+
+        # Игровая карточка 76×21 по центру панели.
         border = curses.color_pair(self.border_pair)
         try:
-            stdscr.addstr(self.y, self.x, "┌" + "─" * (self.w - 2) + "┐", border)
-            stdscr.addstr(self.y + self.h - 1, self.x,
-                          "└" + "─" * (self.w - 2) + "┘", border)
-            for r in range(1, self.h - 1):
-                stdscr.addstr(self.y + r, self.x, "│", border)
-                stdscr.addstr(self.y + r, self.x + self.w - 1, "│", border)
-            stdscr.addstr(self.y, self.x + 2, f" {self.title} ",
-                          curses.color_pair(self.title_pair) | curses.A_BOLD)
+            stdscr.addstr(self._card_y, self._card_x,
+                          "┌" + "─" * (self.CANVAS_W - 2) + "┐", border)
+            stdscr.addstr(self._card_y + self.CANVAS_H - 1, self._card_x,
+                          "└" + "─" * (self.CANVAS_W - 2) + "┘", border)
+            for r in range(1, self.CANVAS_H - 1):
+                stdscr.addstr(self._card_y + r, self._card_x, "│", border)
+                stdscr.addstr(self._card_y + r,
+                              self._card_x + self.CANVAS_W - 1, "│", border)
         except curses.error:
             return
-        blank = " " * self.inner_w
-        for i in range(self.inner_h):
-            try:
-                stdscr.addstr(self.y + 1 + i, self.x + 1, blank,
-                              curses.color_pair(PAIR_DIM))
-            except curses.error:
-                break
 
-        top, left = self.y + 1, self.x + 1
-        IW = self.inner_w
+        top, left = self._card_y + 1, self._card_x + 1
+        IW = self.CANVAS_W - 2
 
         # --- шапка установок (фиксированная строка 0) ---
         header = self._header_line()
