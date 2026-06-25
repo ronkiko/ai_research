@@ -1,0 +1,149 @@
+{
+  "total": 13,
+  "items": [
+    {
+      "path": "research/weights/mlp/20260625_071049_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/mlp/20260625_081604_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "72",
+      "target_role": "XNOR",
+      "network_role": "AND",
+      "match": false,
+      "cmos_transistors": 6
+    },
+    {
+      "path": "research/weights/mlp/20260625_082036_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/mlp/20260625_082931_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/mlp/20260625_135242_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "0",
+      "target_role": "XNOR",
+      "network_role": "ZERO",
+      "match": false,
+      "cmos_transistors": 0
+    },
+    {
+      "path": "research/weights/mlp/20260625_140734_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "0",
+      "target_role": "XNOR",
+      "network_role": "ONE",
+      "match": false,
+      "cmos_transistors": 0
+    },
+    {
+      "path": "research/weights/mlp/20260625_194435_lie_detector_play.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "play",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/mlp/20260625_201711_lie_detector_supervised.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/mlp/snapshot_5000_100pct.md",
+      "model": "mlp",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/torch/20260625_050537_lie_detector_supervised.md",
+      "model": "torch",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/torch/20260625_081649_lie_detector_supervised.md",
+      "model": "torch",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/torch/20260625_193537_lie_detector_supervised.md",
+      "model": "torch",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    },
+    {
+      "path": "research/weights/torch/20260625_193749_lie_detector_supervised.md",
+      "model": "torch",
+      "game": "lie_detector",
+      "mode": "supervised",
+      "accuracy": "100",
+      "target_role": "XNOR",
+      "network_role": "XNOR",
+      "match": true,
+      "cmos_transistors": 16
+    }
+  ],
+  "errors": []
+}

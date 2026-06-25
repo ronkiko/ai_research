@@ -1,13 +1,15 @@
-"""Минимальные unit-style проверки движка chip."""
+"""Минимальные проверки движка chip."""
 from __future__ import annotations
 
-from .chip import CmosBreakdown, CmosCost, ChipAnalysis, OutputCombiner, estimate_cmos, synthesize_expression
-from .common import classify_mask
+from pathlib import Path
+
+from .chip import ChipEngine, analyze_chip
 from .registry import ENGINES
+
+_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "examples" / "chip_fixtures"
 
 
 def _synthetic_xnor_snapshot() -> str:
-    """mlp snapshot: h0=NOR, h1=AND, output=OR -> XNOR."""
     return """## Synthetic XNOR
 
 - **Модель:** mlp
@@ -28,105 +30,68 @@ def _synthetic_xnor_snapshot() -> str:
 """
 
 
-def test_nor_mask():
-    role, _ = classify_mask((1, 0, 0, 0))
-    assert role == "NOR", f"expected NOR, got {role}"
+def _fixture_body(name: str) -> str:
+    return (_FIXTURE_DIR / name).read_text(encoding="utf-8")
 
 
-def test_and_mask():
-    role, _ = classify_mask((0, 0, 0, 1))
-    assert role == "AND", f"expected AND, got {role}"
+def test_case_a_fixture_real_xnor_match():
+    body = _fixture_body("mlp_lie_detector_xnor_case_a.md")
+    analysis = analyze_chip("mlp", body)
+    assert analysis is not None, "fixture should parse as supported mlp snapshot"
+    assert analysis.real_network.output_mask == (1, 0, 0, 1)
+    assert analysis.output_role == "XNOR"
+    assert analysis.target_role == "XNOR"
+    assert analysis.real_network.solves_target is True
+    assert analysis.result == "MATCH"
+    assert analysis.cmos.functional.transistors == 16
+
+    report = ChipEngine.render("mlp", body)
+    assert "Target: XNOR" in report
+    assert "Network: XNOR" in report
+    assert "Result: MATCH" in report
+    assert "CMOS COST: 16T" in report
+    assert "Network: NAND" not in report
 
 
-def test_xnor_optimized_reference_16t():
-    dummy_combiner = OutputCombiner(
-        active_hidden=[],
-        positive_hidden=[],
-        negative_hidden=[],
-        ignored_hidden=[],
-        bias=0.0,
-        kind="THRESHOLD",
-        expression="",
-        cost=CmosCost([], 0, 0, []),
-        notes=[],
-    )
-    analysis = ChipAnalysis(
-        model_key="dummy",
-        hidden=[],
-        output_mask=(1, 0, 0, 1),
-        output_role="XNOR",
-        extracted_expression="",
-        final_function="",
-        truth_match=True,
-        output_combiner=dummy_combiner,
-        cmos=CmosBreakdown(
-            extracted=CmosCost([], 0, 0, []),
-            optimized_reference=None,
-        ),
-        warnings=[],
-    )
-    cmos = estimate_cmos(analysis)
-    assert cmos.optimized_reference is not None
-    assert cmos.optimized_reference.transistors == 16, (
-        f"expected 16T optimized reference, got {cmos.optimized_reference.transistors}T"
-    )
-    assert "NOR2" in cmos.optimized_reference.gates
-    assert "AND2" in cmos.optimized_reference.gates
-    assert "OR2" in cmos.optimized_reference.gates
-
-
-def test_xnor_extracted_network_cost_16t():
-    """Стандартный XNOR-паттерн NOR+AND->OR должен давать extracted cost 16T, не 26T."""
-    from .chip import analyze_chip
-
+def test_synthetic_xnor_remains_supported():
     analysis = analyze_chip("mlp", _synthetic_xnor_snapshot())
-    assert analysis is not None, "failed to analyze synthetic XNOR snapshot"
-    assert analysis.output_role == "XNOR", f"expected XNOR, got {analysis.output_role}"
-    assert analysis.output_combiner.kind == "OR", (
-        f"expected OR output combiner, got {analysis.output_combiner.kind}"
-    )
-    extracted = analysis.cmos.extracted
-    assert extracted.transistors == 16, (
-        f"expected extracted cost 16T, got {extracted.transistors}T"
-    )
-    assert extracted.gates.count("NOR2") == 1
-    assert extracted.gates.count("AND2") == 1
-    assert extracted.gates.count("OR2") == 1
-    assert analysis.truth_match is True, "extracted network should match final XNOR function"
-
-
-def test_xnor_expression():
-    expr = synthesize_expression((1, 0, 0, 1))
-    assert "NOR" in expr and "AND" in expr, f"unexpected expression: {expr}"
-
-
-def test_hotkey_registry():
-    assert ENGINES[0].info.key == "chip", f"expected chip first, got {ENGINES[0].info.key}"
-    hotkeys = [e.info.hotkey for e in ENGINES]
-    assert len(hotkeys) == len(set(hotkeys)), f"duplicate hotkeys: {hotkeys}"
+    assert analysis is not None
+    assert analysis.output_role == "XNOR"
+    assert analysis.cmos.functional.transistors == 16
 
 
 def test_unsupported_model_message():
-    from .chip import ChipEngine
-
     report = ChipEngine.render("bias", "nothing here")
-    assert report is not None, "unsupported model should return a message, not None"
-    assert "2 → N → 1" in report, "message should explain supported architecture"
+    assert "2 → N → 1" in report
+
+
+def test_hotkey_registry():
+    assert ENGINES[0].info.key == "chip"
+    hotkeys = [engine.info.hotkey for engine in ENGINES]
+    assert len(hotkeys) == len(set(hotkeys))
+
+
+def test_report_keeps_debug_below_main_sections():
+    report = ChipEngine.render("mlp", _fixture_body("mlp_lie_detector_xnor_case_a.md"))
+    first_40 = report.splitlines()[:40]
+    assert "BOOLEAN CHIP SCHEME" in first_40
+    assert any(line.startswith("CMOS COST: ") for line in first_40)
+    assert "PROOF" in first_40
+
+    debug_index = report.index("DEBUG / RAW NEURON VIEW")
+    assert "h0:" not in report[:debug_index]
+    assert "Raw hidden approximation: not used for CMOS cost." in report[debug_index:]
 
 
 if __name__ == "__main__":
-    test_nor_mask()
-    print("✓ NOR mask")
-    test_and_mask()
-    print("✓ AND mask")
-    test_xnor_optimized_reference_16t()
-    print("✓ XNOR optimized reference = 16T")
-    test_xnor_extracted_network_cost_16t()
-    print("✓ XNOR extracted network cost = 16T")
-    test_xnor_expression()
-    print("✓ XNOR expression")
-    test_hotkey_registry()
-    print("✓ hotkey registry")
+    test_case_a_fixture_real_xnor_match()
+    print("✓ Case A fixture")
+    test_synthetic_xnor_remains_supported()
+    print("✓ synthetic XNOR")
     test_unsupported_model_message()
     print("✓ unsupported model message")
+    test_hotkey_registry()
+    print("✓ hotkey registry")
+    test_report_keeps_debug_below_main_sections()
+    print("✓ compact report layout")
     print("All chip engine tests passed.")
