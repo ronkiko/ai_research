@@ -393,10 +393,14 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
     if host and ai:
         tpx = pane_x + max(0, (pane_w - TitlePane.CANVAS_W) // 2)
         tpy = pane_y + max(0, (pane_h - TitlePane.CANVAS_H) // 2)
-        title_pane = TitlePane(host, ai, tpy, tpx,
-                               TitlePane.CANVAS_H, TitlePane.CANVAS_W,
-                               sink=sink,
-                               speed_idx=settings.speed)
+        title_pane = TitlePane(
+            host, ai, tpy, tpx,
+            TitlePane.CANVAS_H, TitlePane.CANVAS_W,
+            sink=sink,
+            speed_idx=settings.speed,
+            full_y=pane_y, full_x=pane_x,
+            full_h=pane_h, full_w=pane_w,
+        )
     lab_pane = LabPane(pane_y, pane_x, pane_h, pane_w)
     games_pane = _build_games_pane(host, sink, pane_y, pane_x, pane_h, pane_w) if host else None
     models_pane = _build_models_pane(ai, sink, pane_y, pane_x, pane_h, pane_w) if ai else None

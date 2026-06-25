@@ -76,7 +76,9 @@ class TitlePane(PseudoWindow):
     def __init__(self, host: MechanicsHost | None, ai: AiHost | None,
                  y: int, x: int, h: int, w: int,
                  sink: ChangeLog | None = None,
-                 speed_idx: int = 0):
+                 speed_idx: int = 0,
+                 full_y: int | None = None, full_x: int | None = None,
+                 full_h: int | None = None, full_w: int | None = None):
         super().__init__("Старт", y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self._host = host
@@ -94,6 +96,11 @@ class TitlePane(PseudoWindow):
         self._submenu_callback: Callable[[str], str] = lambda k: "move"
         self._submenu_kind: str = ""  # game/model/mode/speed — для позиционирования
         self._modals: list[PseudoWindow] = []  # стек оверлеев: preview → report
+        # Полноэкранная область панели — для разборов весов (ReportPopup).
+        self._full_y = full_y if full_y is not None else y
+        self._full_x = full_x if full_x is not None else x
+        self._full_h = full_h if full_h is not None else h
+        self._full_w = full_w if full_w is not None else w
 
     # --- состояние прогона ---
 
@@ -273,13 +280,13 @@ class TitlePane(PseudoWindow):
         self._push_modal(popup)
 
     def _open_report_popup(self, engine: str = "forensic") -> None:
-        """Открыть лабораторный разбор поверх PreviewPopup."""
+        """Открыть лабораторный разбор на полный экран поверх PreviewPopup."""
         data = self._build_snapshot_body()
         if data is None:
             return
         body, model_key, _, _ = data
         popup = ReportPopup(
-            self.y + 1, self.x + 1, self.h - 2, self.w - 2,
+            self._full_y, self._full_x, self._full_h, self._full_w,
             model_key, body, engine=engine,
         )
         self._push_modal(popup)
