@@ -25,11 +25,19 @@ from modules.base import (
 from .adapter import AiAdapter
 from .models.bias import BiasModel
 from .models.logistic import LogisticModel
+from .models.context import ContextModel
+from .models.duplet import DupletModel
+from .models.mlp import MlpModel
+from .models.torch import TorchModel
 
 # Реестр моделей адаптера: ключ -> класс. Порядок = порядок листания.
 _MODELS: dict[str, type] = {
     BiasModel.KEY: BiasModel,
     LogisticModel.KEY: LogisticModel,
+    DupletModel.KEY: DupletModel,
+    ContextModel.KEY: ContextModel,
+    MlpModel.KEY: MlpModel,
+    TorchModel.KEY: TorchModel,
 }
 
 

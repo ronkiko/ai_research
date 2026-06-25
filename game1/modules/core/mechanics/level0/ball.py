@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 
 from modules.base import SelectResult, Status
-from .base import Mechanics, Observation, Outcome
+from ..base import Mechanics, Observation, Outcome
 
 
 class BallMechanics(Mechanics):
@@ -23,7 +23,10 @@ class BallMechanics(Mechanics):
         "фишку. Мяч нечестный: он чаще катится в правую лунку, но ты не знаешь "
         "насколько. Ты ничего не видишь заранее — просто ставишь вслепую, "
         "опираясь только на свою привычку. Со временем можно приноровиться "
-        "к перекосу и угадывать чаще."
+        "к перекосу и угадывать чаще.\n\n"
+        "Альтернативная постановка:\n"
+        "  Вопрос: в какую лунку упадёт мяч?\n"
+        "  Правда: ставка совпала с лункой."
     )
     LEARNS = (
         "У модели всего одно число — привычка ставить направо. Нет ни глаз, "

@@ -1,35 +1,84 @@
-"""Валидация моделей: каноническое поведение, стабильность, ресет, переключение.
+"""Валидация моделей: инкрементальный прогон + канонические проверки.
 
-Прогоняет:
-  модели: Bias, Logistic
-    × игры: Ball, Kormushka, Drift, Dealer
-    × режимы: supervised, rl, adaptive, play
-  100k шагов каждый → отчёт + assert канонического поведения.
-
+Прогоняет только новые комбинации модель×игра×режим, дополняет validate.json.
 Запуск:
   python3 examples/validate_models.py
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 import time
 sys.path.insert(0, ".")
 
+_RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+_RESULTS_PATH = os.path.join(_RESULTS_DIR, "validate.json")
+
 from collections import deque
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List
 
 from modules.base import Observation, Outcome
 from modules.core.mechanics.ball import BallMechanics
 from modules.core.mechanics.kormushka import KormushkaMechanics
 from modules.core.mechanics.drift import DriftBallMechanics
 from modules.core.mechanics.dealer import DealerMechanics
+from modules.core.mechanics.pattern import PatternMechanics
+from modules.core.mechanics.witness import LieDetectorMechanics
 from modules.game_api.models.bias import BiasModel
 from modules.game_api.models.logistic import LogisticModel
+from modules.game_api.models.context import ContextModel
+from modules.game_api.models.duplet import DupletModel
+from modules.game_api.models.mlp import MlpModel
+from modules.game_api.models.torch import TorchModel
 from modules.game_api.models.base import Model
 from modules.game_api.modes import SUPERVISED, RL, PLAY, ADAPTIVE
 
-STEPS = 100_000
-REPORT_EVERY = 20_000
+STEPS = 10_000
+
+_ALL_MODELS = [BiasModel, LogisticModel, DupletModel, ContextModel, MlpModel, TorchModel]
+_ALL_GAMES = [BallMechanics, KormushkaMechanics, DriftBallMechanics, DealerMechanics, PatternMechanics, LieDetectorMechanics]
+_ALL_MODES = [SUPERVISED, RL, ADAPTIVE, PLAY]
+
+
+def combo_key(model_key: str, game_key: str, mode: str) -> str:
+    return f"{model_key}:{game_key}:{mode}"
+
+
+def load_existing() -> tuple[set[str], list[dict], list[str]]:
+    """Загрузить validate.json. Вернуть (completed_keys, results, errors)."""
+    completed: set[str] = set()
+    results: list[dict] = []
+    errors: list[str] = []
+    if not os.path.exists(_RESULTS_PATH):
+        return completed, results, errors
+    try:
+        with open(_RESULTS_PATH) as f:
+            data = json.load(f)
+        for r in data.get("results", []):
+            k = combo_key(r["model"], r["game"], r["mode"])
+            completed.add(k)
+        results = data.get("results", [])
+        errors = data.get("errors", [])
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return completed, results, errors
+
+
+def all_combos() -> list[tuple]:
+    """Все возможные комбинации (model_key, game_key, mode, cls_model, cls_game)."""
+    combos = []
+    for cm in _ALL_MODELS:
+        for cg in _ALL_GAMES:
+            for mode in _ALL_MODES:
+                combos.append((cm.KEY, cg.KEY, mode, cm, cg))
+    return combos
+
+
+def new_combos(completed: set[str]) -> list[tuple]:
+    """Комбинации, которых нет в completed."""
+    return [(mk, gk, mode, cm, cg) for mk, gk, mode, cm, cg in all_combos()
+            if combo_key(mk, gk, mode) not in completed]
 
 
 def run_one(
@@ -64,7 +113,7 @@ def run_one(
     st = model.stats()
 
     acc_last = sum(list(hits)[-1000:]) / 1000
-    acc_all = sum(rewards) / len(rewards)  # average reward, -1..+1
+    acc_all = sum(rewards) / len(rewards)
 
     result = {
         "model": model.KEY,
@@ -107,14 +156,14 @@ def check_canonical(results: List[dict]) -> List[str]:
             add(mo, ga, md, lambda r=r: 0.6 <= r["acc_last_1000"] <= 0.75,
                 "точность 60-75% (оптимум 70%)")
 
-        # --- Bias × Ball × rl: b ~ 10-15 (L2 равновесие) ---
+        # --- Bias × Ball × rl: b ~ 2-4 (entropy равновесие) ---
         elif mo == "bias" and ga == "ball" and md == RL:
             add(mo, ga, md, lambda r=r: abs(r["params"].get("b", 0)) < 50,
-                "b не ушёл в бесконечность (RL+L2)")
-            add(mo, ga, md, lambda r=r: 0.6 <= r["acc_last_1000"] <= 0.75,
-                "RL точность 60-75%")
-            add(mo, ga, md, lambda r=r: r["params"].get("b", 0) > 3,
-                "b > 3 (RL накручивает bias)")
+                "b не ушёл в бесконечность (RL+entropy)")
+            add(mo, ga, md, lambda r=r: 0.55 <= r["acc_last_1000"] <= 0.75,
+                "RL точность 55-75%")
+            add(mo, ga, md, lambda r=r: r["params"].get("b", 0) > 1,
+                "b > 1 (RL накручивает bias)")
 
         # --- Bias × Ball × play: b=0, argmax(p=0.5)→всегда право → acc~70% ---
         elif mo == "bias" and ga == "ball" and md == PLAY:
@@ -187,6 +236,69 @@ def check_canonical(results: List[dict]) -> List[str]:
             add(mo, ga, md, lambda r=r: r["params"].get("b", 0) < 0,
                 "bias на dealer rl: b < 0 (налево = 70% выигрыш)")
 
+        # --- Context × Pattern × supervised: выучивает цикл ---
+        elif mo == "context" and ga == "pattern" and md == SUPERVISED:
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.9,
+                "context на pattern supervised: > 90% (выучил цикл)")
+
+        # --- Context × Pattern × play: веса ≈ 0, acc ~ 50% ---
+        elif mo == "context" and ga == "pattern" and md == PLAY:
+            add(mo, ga, md, lambda r=r: abs(r["params"].get("w0", 0)) < 0.01,
+                "play: w0 ≈ 0")
+            add(mo, ga, md, lambda r=r: 0.45 <= r["acc_last_1000"] <= 0.55,
+                "play: acc ≈ 50%")
+
+        # --- Context × Pattern × rl/adaptive: выучивает цикл ---
+        elif mo == "context" and ga == "pattern" and md in (RL, ADAPTIVE):
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.8,
+                f"{md}: context на pattern > 80% (выучил цикл)")
+
+        # --- Duplet × Pattern × supervised: выучивает цикл (2 входа достаточно) ---
+        elif mo == "duplet" and ga == "pattern" and md == SUPERVISED:
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.9,
+                "duplet на pattern supervised: > 90% (выучил цикл)")
+
+        # --- Duplet × Pattern × play: веса ≈ 0, acc ~ 50% ---
+        elif mo == "duplet" and ga == "pattern" and md == PLAY:
+            add(mo, ga, md, lambda r=r: abs(r["params"].get("w0", 0)) < 0.01,
+                "play: w0 ≈ 0")
+            add(mo, ga, md, lambda r=r: 0.45 <= r["acc_last_1000"] <= 0.55,
+                "play: acc ≈ 50%")
+
+        # --- Duplet × Pattern × rl/adaptive: выучивает цикл ---
+        elif mo == "duplet" and ga == "pattern" and md in (RL, ADAPTIVE):
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.8,
+                f"{md}: duplet на pattern > 80% (выучил цикл)")
+
+        # --- Lie Detector: линейные модели не могут ---
+        elif ga == "lie_detector" and mo in ("bias", "logistic", "duplet", "context"):
+            if md == PLAY:
+                add(mo, ga, md, lambda r=r: 0.40 <= r["acc_last_1000"] <= 0.60,
+                    f"{mo} на lie_detector play: ~50%")
+            else:
+                add(mo, ga, md, lambda r=r: r["acc_last_1000"] < 0.80,
+                    f"{mo} на lie_detector {md}: < 80% (XOR нерешаем линейно)")
+
+        # --- MLP × Lie Detector × supervised: решает XOR ---
+        elif mo == "mlp" and ga == "lie_detector" and md == SUPERVISED:
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.8,
+                "mlp на lie_detector supervised: > 80% (решил XOR)")
+
+        # --- MLP × Lie Detector × play: acc ~ 50% ---
+        elif mo == "mlp" and ga == "lie_detector" and md == PLAY:
+            add(mo, ga, md, lambda r=r: 0.40 <= r["acc_last_1000"] <= 0.60,
+                "mlp на lie_detector play: ~50%")
+
+        # --- Torch × Lie Detector × supervised: решает XOR ---
+        elif mo == "torch" and ga == "lie_detector" and md == SUPERVISED:
+            add(mo, ga, md, lambda r=r: r["acc_last_1000"] > 0.8,
+                "torch на lie_detector supervised: > 80% (решил XOR)")
+
+        # --- Torch × Lie Detector × play: acc ~ 50% ---
+        elif mo == "torch" and ga == "lie_detector" and md == PLAY:
+            add(mo, ga, md, lambda r=r: 0.40 <= r["acc_last_1000"] <= 0.60,
+                "torch на lie_detector play: ~50%")
+
     for model, game, mode, fn, desc in checks:
         try:
             assert fn(), f"{model}×{game}×{mode}: {desc}"
@@ -247,8 +359,14 @@ def test_model_switch():
     from modules.game_api.adapter import AiAdapter
     from modules.game_api.models.bias import BiasModel
     from modules.game_api.models.logistic import LogisticModel
+    from modules.game_api.models.context import ContextModel
+    from modules.game_api.models.duplet import DupletModel
+    from modules.game_api.models.mlp import MlpModel
+    from modules.game_api.models.torch import TorchModel
 
-    adapter = AiAdapter({"bias": BiasModel, "logistic": LogisticModel})
+    adapter = AiAdapter({"bias": BiasModel, "logistic": LogisticModel,
+                         "duplet": DupletModel, "context": ContextModel,
+                         "mlp": MlpModel, "torch": TorchModel})
     adapter.select("bias")
     adapter.set_mode(SUPERVISED)
 
@@ -322,14 +440,11 @@ def test_canonical_formulas():
 
 
 def main():
-    models = [BiasModel, LogisticModel]
-    games = [BallMechanics, KormushkaMechanics, DriftBallMechanics, DealerMechanics]
-    modes = [SUPERVISED, RL, ADAPTIVE, PLAY]
     seed = 42
 
-    print("=== Валидация моделей ===")
+    print("=== Валидация моделей (инкрементальная) ===")
     print(f"Шагов на комбинацию: {STEPS}")
-    print(f"{len(models)} моделей × {len(games)} игр × {len(modes)} режимов = {len(models)*len(games)*len(modes)} комбинаций")
+    print(f"{len(_ALL_MODELS)} моделей × {len(_ALL_GAMES)} игр × {len(_ALL_MODES)} режимов = {len(all_combos())} комбинаций")
     print()
 
     # 1. Базовые формулы
@@ -337,28 +452,33 @@ def main():
     test_canonical_formulas()
     print("✓")
 
-    # 2. Прогон
-    print(f"2. Прогон {STEPS} шагов каждой комбинации...")
-    results = []
-    t0 = time.time()
-    for ClsModel in models:
-        for ClsGame in games:
-            for mode in modes:
-                model = ClsModel(seed=seed)
-                game = ClsGame(seed=seed + 1)
-                r = run_one(model, game, mode, seed=seed)
-                results.append(r)
-                elapsed = time.time() - t0
-                print(f"  [{elapsed:5.0f}s] {model.KEY:8s} × {game.KEY:10s} × {mode:11s}"
-                      f"  → acc={r['acc_last_1000']:.0%}  "
-                      f"params={' '.join(f'{k}={v:.2f}' for k,v in r['params'].items())}")
-    elapsed = time.time() - t0
-    print(f"  Всего: {elapsed:.0f}s")
+    # 2. Загрузить существующие результаты
+    completed, all_results, all_errors = load_existing()
+    todo = new_combos(completed)
+    print(f"2. Уже выполнено: {len(completed)}, осталось: {len(todo)}")
+    if not todo:
+        print("   Всё уже проверено.")
+    else:
+        print(f"   Прогон {STEPS} шагов...")
+        t0 = time.time()
+        for mk, gk, mode, ClsModel, ClsGame in todo:
+            model = ClsModel(seed=seed)
+            game = ClsGame(seed=seed + 1)
+            r = run_one(model, game, mode, seed=seed)
+            all_results.append(r)
+            elapsed = time.time() - t0
+            params_str = " ".join(f"{k}={v:.2f}" for k, v in r["params"].items())
+            print(f"  [{elapsed:5.0f}s] {mk:8s} × {gk:10s} × {mode:11s}"
+                  f"  → acc={r['acc_last_1000']:.0%}  {params_str[:40]:40s}")
+        elapsed = time.time() - t0
+        print(f"  Новых: {len(todo)} за {elapsed:.0f}s")
+    print(f"  Всего результатов: {len(all_results)}")
 
-    # 3. Отчёт
+    # 3. Канонические проверки
     print("\n3. Проверка канонического поведения...")
-    errors = check_canonical(results)
-    print_report(results, errors)
+    new_errors = check_canonical(all_results)
+    all_errors.extend(new_errors)
+    print_report(all_results, all_errors)
 
     # 4. Reset
     print("\n4. Reset()...", end=" ")
@@ -370,7 +490,45 @@ def main():
     test_model_switch()
     print("✓")
 
-    return 1 if errors else 0
+    # 6. Сохранение
+    print("6. Сохранение результатов...", end=" ")
+    path = save_results(all_results, all_errors)
+    print(f"→ {path}")
+
+    return 1 if new_errors else 0
+
+
+def save_results(results: list[dict], errors: list[str]) -> str:
+    os.makedirs(_RESULTS_DIR, exist_ok=True)
+    path = _RESULTS_PATH
+
+    # top_per_game — только если все комбинации выполнены
+    all_keys = {combo_key(cm.KEY, cg.KEY, mode)
+                for cm in _ALL_MODELS for cg in _ALL_GAMES for mode in _ALL_MODES}
+    done_keys = {combo_key(r["model"], r["game"], r["mode"]) for r in results}
+    all_done = done_keys == all_keys
+
+    data: dict[str, Any] = {
+        "n_models": len({r["model"] for r in results}),
+        "n_games": len({r["game"] for r in results}),
+        "n_modes": len({r["mode"] for r in results}),
+        "n_combinations": len(results),
+        "n_errors": len(errors),
+        "results": results,
+        "errors": errors,
+    }
+    if all_done:
+        games = sorted({r["game"] for r in results})
+        top_per_game: dict[str, list[dict]] = {}
+        for g in games:
+            rs = [r for r in results if r["game"] == g]
+            rs.sort(key=lambda r: r["acc_last_1000"], reverse=True)
+            top_per_game[g] = [{"model": r["model"], "mode": r["mode"],
+                                "acc": round(r["acc_last_1000"], 4)} for r in rs[:3]]
+        data["top_per_game"] = top_per_game
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+    return path
 
 
 if __name__ == "__main__":

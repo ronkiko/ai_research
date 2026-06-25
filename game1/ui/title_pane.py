@@ -20,12 +20,15 @@ import curses
 from collections import deque
 from collections.abc import Callable
 
+import os
+import time
+
 from .window import PseudoWindow
 from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER,
     PAIR_BAR, PAIR_BAR_SEL,
 )
-from modules.base import MechanicsHost, AiHost, Status, ChangeLog
+from modules.base import MechanicsHost, AiHost, Status, ChangeLog, ModelStats
 from modules.game_api.modes import mode_info, PLAY
 
 
@@ -43,23 +46,23 @@ class TitlePane(PseudoWindow):
     _HEADER_ROW = 0          # «Ball • Bias (Supervised)»
     _COL_TOP = 2             # строка заголовков столбцов (на 1 строку выше)
     _COL_CONTENT_TOP = 4     # первая строка контента (после подчёркивания)
-    _COL_CONTENT_ROWS = 8    # строки 4..11 — контент столбцов
+    _COL_CONTENT_ROWS = 12   # строки 4..15 — контент столбцов
     _STAT_X = 4              # столбец «Статистика» (с отступом от рамки)
-    _STAT_W = 16
-    _WORLD_X = 23            # = _STAT_X + _STAT_W + 3 (просвет)
-    _WORLD_W = 51            # до правого края (74 - 23 = 51)
+    _STAT_W = 26
+    _WORLD_X = 31            # = _STAT_X + _STAT_W + 1
+    _WORLD_W = 43            # до правого края (74 - 31 = 43)
     _MENU_ROW = 16           # полоска меню с курсором (вместо кнопки + подсказки)
 
     # Слоты меню на одной строке: (ключ, x, ширина). Старт — по центру (курсор на
-    # нём по умолчанию), слева Модель/Режим, справа Скорость/Закрыть. Подписи
+    # нём по умолчанию), слева Модель/Режим, справа Save/Скорость. Подписи
     # короткие, чтобы 5 кнопок влезли в 74 колонки. Остальное на строке — фон
     # полоски (PAIR_BAR); слот под курсором перекрашивается (PAIR_BAR_SEL).
     _MENU_ITEMS = (
-        ("model", 0, 12),    #  0..11
-        ("mode", 19, 8),     # 19..26
-        ("start", 34, 10),   # 34..43  Старт (центр 38.5)
-        ("speed", 51, 9),    # 51..59
-        ("close", 67, 7),    # 67..73
+        ("model", 11, 10),    # 11..20
+        ("mode", 23, 8),      # 23..30
+        ("start", 33, 10),    # 33..42  Старт
+        ("speed", 45, 8),     # 45..52
+        ("save",  55, 8),     # 55..62
     )
     _MENU_START_IDX = 2      # курсор по умолчанию — на «Старт»
 
@@ -91,7 +94,7 @@ class TitlePane(PseudoWindow):
 
     # --- состояние прогона ---
 
-    WINDOW = 200  # окно подсчёта точности (последние N ходов)
+    WINDOW = 1000  # окно подсчёта точности (последние N ходов)
 
     def is_running(self) -> bool:
         return self._running
@@ -175,9 +178,66 @@ class TitlePane(PseudoWindow):
                 return "stop"
             self.start_run()
             return "start"
-        if key == "close":
-            return "close"
+        if key == "save":
+            self._save_snapshot()
+            return "lab"
         return None
+
+    # --- сохранение снапшота весов ---
+
+    def _save_snapshot(self) -> None:
+        if self._ai is None or self._host is None:
+            return
+        mi = self._ai.active_model_info()
+        gi = self._host.active_mechanics()
+        mode = self._ai.active_train_mode()
+        if mi is None or gi is None or mode is None:
+            return
+        st = self._ai.model_stats(mi.key)
+        if st is None:
+            return
+
+        model_key = mi.key
+        game_key = gi.key
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{ts}_{game_key}_{mode}.md"
+
+        save_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "research", "weights", model_key,
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
+
+        acc = self.accuracy()
+        lines = [
+            f"## Snapshot — {mi.title} на {gi.title}",
+            "",
+            f"- **Модель:** {mi.key} ({mi.title})",
+            f"- **Игра:** {gi.key} ({gi.title})",
+            f"- **Режим:** {mode}",
+            f"- **Шаги:** {st.steps}",
+            f"- **Точность:** {acc}%",
+            f"- **logit:** {st.logit:+.4f}",
+            f"- **prob:** {st.prob:.4f}",
+            f"- **параметров:** {st.info.n_params}",
+            f"- **нейронов:** {st.n_neurons}",
+            "",
+            "### Веса",
+            "",
+        ]
+        for k, v in st.params.items():
+            lines.append(f"  `{k}` = {v}")
+        lines.append("")
+
+        with open(filepath, "w") as f:
+            f.write("\n".join(lines))
+
+        if self._sink is not None:
+            self._sink.log_change(
+                "сохранение", model_key, Status.OK,
+                f"снапшот → {filepath}",
+            )
 
     # --- субменю (игры, модель, режим, скорость) ---
 
@@ -283,6 +343,8 @@ class TitlePane(PseudoWindow):
             return "■  Stop" if self._running else "▶  Start"
         if key == "speed":
             return "Speed"
+        if key == "save":
+            return "Save"
         if key == "model":
             return "Model"
         if key == "mode":
@@ -428,6 +490,8 @@ class TitlePane(PseudoWindow):
             return self._mode_tag(m) if m is not None else None
         if mkey == "speed":
             return self._SPEEDS[self._speed_idx][1]
+        if mkey == "save":
+            return None
         return None
 
     # --- столбцы ---
@@ -537,9 +601,9 @@ class TitlePane(PseudoWindow):
     # x-координаты субменю под соответствующим слотом
     _SUBMENU_X = {
         "game": 33,      # под Старт
-        "model": 0,      # под М:...
-        "mode": 19,      # под Р:...
-        "speed": 51,     # под Скор:...
+        "model": 11,     # под Model
+        "mode": 23,      # под Mode
+        "speed": 45,     # под Speed
     }
     _SUBMENU_W = 18       # ширина подложки
 

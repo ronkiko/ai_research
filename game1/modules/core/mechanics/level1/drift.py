@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 
 from modules.base import SelectResult, Status
-from .base import Mechanics, Observation, Outcome
+from ..base import Mechanics, Observation, Outcome
 
 
 class DriftBallMechanics(Mechanics):
@@ -25,7 +25,11 @@ class DriftBallMechanics(Mechanics):
         "50 на 50. Но дует ветер: он сбивает мяч в одну из лунок чаще. Ветер "
         "меняется каждые 300 ходов: то дует вправо (сносит мяч в правую лунку), "
         "то влево. Ты не знаешь, когда он сменится, — нужно подстраиваться под "
-        "направление ветра."
+        "направление ветра.\n\n"
+        "Альтернативная постановка:\n"
+        "  Вопрос: в какую лунку упадёт мяч сейчас?\n"
+        "  Правда: ставка совпала с лункой.\n"
+        "  Сложность: направление ветра меняется каждые 300 ходов."
     )
     LEARNS = (
         "У модели одно число — привычка ставить направо, как и в обычном мяче. "

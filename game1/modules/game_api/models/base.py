@@ -14,21 +14,21 @@
 """
 from __future__ import annotations
 
+import math
 import random
 from abc import ABC, abstractmethod
+from collections import deque
 
 from modules.base import Observation, Outcome, ModelInfo, ModelStats
 from ..modes import SUPERVISED, RL, PLAY, ADAPTIVE
-
-from collections import deque
 
 _E = 2.718281828459045  # e
 
 _RL_EPS = 0.05
 _ADAPTIVE_MIN_STEPS = 1000  # не детектить смену пока модель не выучилась
-_ADAPTIVE_BUFFER = 50
-_ADAPTIVE_THRESHOLD = 0.6
-_ADAPTIVE_WINDOW = 50
+_ADAPTIVE_BUFFER = 100
+_ADAPTIVE_THRESHOLD = 0.52
+_ADAPTIVE_WINDOW = 100
 _ADAPTIVE_LR_BOOST = 3.0
 _ADAPTIVE_EPS_BOOST = 0.3
 
@@ -59,7 +59,7 @@ class Model(ABC):
     SUMMARY: str = ""
     N_PARAMS: int = 0
     LR: float = 0.1
-    L2: float = 5e-4      # weight decay (L2-регуляризация)
+    ENTROPY_BETA: float = 0.5    # entropy bonus (relative to LR: effective β = LR * ENTROPY_BETA)
 
     def __init__(self, seed: int | None = None) -> None:
         self._steps: int = 0
@@ -131,17 +131,24 @@ class Model(ABC):
                     self._adaptive_cooloff = _ADAPTIVE_WINDOW
 
             lr = self.LR * (_ADAPTIVE_LR_BOOST if self._adaptive_cooloff > 0 else 1.0)
-            # policy gradient (REINFORCE)
+            # policy gradient (REINFORCE) + entropy bonus
             score = outcome.action - p
-            delta = {n: lr * outcome.reward * score * f for n, f in feats.items()}
+            p_clamped = max(min(p, 1 - 1e-7), 1e-7)
+            ent_grad = p_clamped * (1 - p_clamped) * math.log((1 - p_clamped) / p_clamped)
+            delta = {n: lr * (outcome.reward * score + self.ENTROPY_BETA * ent_grad) * f
+                     for n, f in feats.items()}
 
             if self._adaptive_cooloff > 0:
                 self._adaptive_cooloff -= 1
 
         elif self.train_mode == RL:
             # policy gradient (REINFORCE): ∝ reward·∇log P(action)
+            # + entropy bonus чтобы не застревать в policy saturation
             score = outcome.action - p
-            delta = {n: self.LR * outcome.reward * score * f for n, f in feats.items()}
+            p_clamped = max(min(p, 1 - 1e-7), 1e-7)
+            ent_grad = p_clamped * (1 - p_clamped) * math.log((1 - p_clamped) / p_clamped)
+            delta = {n: self.LR * (outcome.reward * score + self.ENTROPY_BETA * ent_grad) * f
+                     for n, f in feats.items()}
 
         else:
             # supervised (кросс-энтропия): ∝ (σ − target)·input
@@ -149,10 +156,6 @@ class Model(ABC):
             delta = {n: -self.LR * err * f for n, f in feats.items()}
 
         self._apply(delta)
-        # weight decay (L2): тянет веса к нулю, чтобы RL не уводил b в бесконечность
-        if self.L2 > 0:
-            decay = {k: -self.L2 * v for k, v in self._params().items()}
-            self._apply(decay)
         self._steps += 1
 
     # --- управление/инспекция ---

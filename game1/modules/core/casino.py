@@ -21,10 +21,12 @@ from modules.base import (
     Outcome,
 )
 from .adapter import MechanicsAdapter
-from .mechanics.ball import BallMechanics
-from .mechanics.kormushka import KormushkaMechanics
-from .mechanics.dealer import DealerMechanics
-from .mechanics.drift import DriftBallMechanics
+from .mechanics.level0.ball import BallMechanics
+from .mechanics.level1.kormushka import KormushkaMechanics
+from .mechanics.level0.dealer import DealerMechanics
+from .mechanics.level1.drift import DriftBallMechanics
+from .mechanics.level2.pattern import PatternMechanics
+from .mechanics.level1.witness import LieDetectorMechanics
 
 # Реестр столов казино: ключ -> класс мини-механики.
 # Порядок = порядок листания в будущем окне выбора.
@@ -33,6 +35,8 @@ _TABLES: dict[str, type] = {
     KormushkaMechanics.KEY: KormushkaMechanics,
     DealerMechanics.KEY: DealerMechanics,
     DriftBallMechanics.KEY: DriftBallMechanics,
+    PatternMechanics.KEY: PatternMechanics,
+    LieDetectorMechanics.KEY: LieDetectorMechanics,
 }
 
 

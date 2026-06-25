@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import curses
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .window import PseudoWindow
 from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER
@@ -24,6 +24,16 @@ class ListItem:
     english: str = ""
 
 
+@dataclass
+class SegLine:
+    """Строка детали с сегментами разного цвета.
+
+    Каждый сегмент = (x_offset_от_левого_края_детали, текст, номер_цветовой_пары).
+    Сегменты рендерятся на одной строке через несколько addstr.
+    """
+    segs: list[tuple[int, str, int]] = field(default_factory=list)
+
+
 class ListPane(PseudoWindow):
     """Окно выбора: левая колонка-список + правая колонка-деталь.
 
@@ -33,14 +43,16 @@ class ListPane(PseudoWindow):
 
     def __init__(self, title: str, y: int, x: int, h: int, w: int,
                  items: list[ListItem],
-                 detail_for, on_select):
+                 detail_for, on_select,
+                 cursor: int = 0):
         super().__init__(title, y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
         self.items = items
         self.detail_for = detail_for
         self.on_select = on_select
-        self.cursor = 0
-        self._top = 0  # верхний видимый индекс (прокрутка списка)
+        self.cursor = max(0, min(cursor, len(items) - 1)) if items else 0
+        visible = max(1, self.inner_h - 1)
+        self._top = max(0, min(self.cursor, max(0, len(items) - visible)))
         self.status = ""
         self.status_pair = PAIR_OK
 
@@ -170,23 +182,75 @@ class ListPane(PseudoWindow):
                         pass
                     row += 1
                 row += 1  # пустая строка между заголовком и телом
-            # Тело может состоять из абзацев, разделённых \n\n: оборачиваем
-            # каждый абзац по ширине, пустая строка = пауза между абзацами.
-            for para in body.split("\n"):
-                if para == "":
-                    row += 1
-                    continue
-                for ln in textwrap.wrap(para, width=max(4, right_w)):
+            # Тело: str (текст с оборачиванием) или list[tuple[str, int]]
+            # (строки с цветом, без оборачивания).
+            if isinstance(body, str):
+                for para in body.split("\n"):
+                    if para == "":
+                        row += 1
+                        continue
+                    for ln in textwrap.wrap(para, width=max(4, right_w)):
+                        if row >= list_h:
+                            break
+                        try:
+                            stdscr.addstr(self.y + 1 + row, dx, ln[:right_w],
+                                          A(PAIR_DIM))
+                        except curses.error:
+                            pass
+                        row += 1
                     if row >= list_h:
                         break
-                    try:
-                        stdscr.addstr(self.y + 1 + row, dx, ln[:right_w],
-                                      A(PAIR_DIM))
-                    except curses.error:
-                        pass
-                    row += 1
-                if row >= list_h:
-                    break
+            elif isinstance(body, list):
+                for item in body:
+                    if row >= list_h:
+                        break
+                    if isinstance(item, str):
+                        for para in item.split("\n"):
+                            if para == "":
+                                row += 1
+                                continue
+                            for ln in textwrap.wrap(para,
+                                                    width=max(4, right_w)):
+                                if row >= list_h:
+                                    break
+                                try:
+                                    stdscr.addstr(self.y + 1 + row, dx,
+                                                  ln[:right_w], A(PAIR_DIM))
+                                except curses.error:
+                                    pass
+                                row += 1
+                            if row >= list_h:
+                                break
+                    elif isinstance(item, SegLine):
+                        for x_off, text, color in item.segs:
+                            try:
+                                stdscr.addstr(self.y + 1 + row,
+                                              dx + x_off,
+                                              text[:max(0, right_w - x_off)],
+                                              A(color))
+                            except curses.error:
+                                pass
+                        row += 1
+                    elif isinstance(item, tuple) and len(item) == 2:
+                        text, color = item
+                        if color == PAIR_DIM and text:
+                            for ln in textwrap.wrap(text,
+                                                    width=max(4, right_w)):
+                                if row >= list_h:
+                                    break
+                                try:
+                                    stdscr.addstr(self.y + 1 + row, dx,
+                                                  ln[:right_w], A(PAIR_DIM))
+                                except curses.error:
+                                    pass
+                                row += 1
+                        else:
+                            try:
+                                stdscr.addstr(self.y + 1 + row, dx,
+                                              text[:right_w], A(color))
+                            except curses.error:
+                                pass
+                            row += 1
 
         # Строка статуса внизу панели.
         if self.status:
