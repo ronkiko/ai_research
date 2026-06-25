@@ -29,6 +29,9 @@ data/raw/
 # game1: runtime-конфиг настроек (генерируется движком, не пушим)
 game1/game1.conf.json
 
+# game1: runtime research snapshots (generated locally, не пушим)
+game1/research/weights/**/*.md
+
 # OS / editors
 .DS_Store
 .idea/

@@ -3,7 +3,7 @@
   "n_games": 6,
   "n_modes": 4,
   "n_combinations": 144,
-  "n_errors": 0,
+  "n_errors": 1,
   "results": [
     {
       "model": "bias",
@@ -2790,7 +2790,9 @@
       "n_neurons": 3
     }
   ],
-  "errors": [],
+  "errors": [
+    "torch×lie_detector×supervised: torch на lie_detector supervised: > 80% (решил XOR)"
+  ],
   "top_per_game": {
     "ball": [
       {

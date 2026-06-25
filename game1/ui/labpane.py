@@ -142,9 +142,9 @@ class LabPane(Modal):
                 self._scroll = 0
                 return True
 
-            # Переключение движка отчёта по hotkey (1/2/3...).
-            for idx, engine in enumerate(self._engines, start=1):
-                if key == ord(str(idx)):
+            # Переключение движка отчёта по engine.info.hotkey.
+            for engine in self._engines:
+                if key == ord(engine.info.hotkey):
                     self._engine = engine.info.key
                     self._update_report()
                     self._scroll = 0
@@ -264,11 +264,11 @@ class LabPane(Modal):
                 except curses.error:
                     pass
 
-        # Статусная строка — строится по реестру движков.
+        # Статусная строка — строится по hotkey движков.
         parts = []
-        for idx, engine in enumerate(self._engines, start=1):
+        for engine in self._engines:
             cur = "•" if self._engine == engine.info.key else " "
-            parts.append(f"{cur}{idx} {engine.info.title}")
+            parts.append(f"{cur}{engine.info.hotkey} {engine.info.title}")
         status = "   ".join(parts) + "   ↑↓ scroll   Esc"
         try:
             stdscr.addstr(self.y + self.h - 2, self.x + 1,

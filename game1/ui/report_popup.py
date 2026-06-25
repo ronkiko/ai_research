@@ -44,8 +44,8 @@ class ReportPopup(ModalContent):
     def _handle_extra(self, key: int) -> str | None:
         if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
             return "close"
-        for idx, engine in enumerate(self._engines, start=1):
-            if key == ord(str(idx)):
+        for engine in self._engines:
+            if key == ord(engine.info.hotkey):
                 self._engine = engine.info.key
                 self._update_report()
                 self._scroll = 0
@@ -54,7 +54,7 @@ class ReportPopup(ModalContent):
 
     def _hint_text(self) -> str:
         parts = []
-        for idx, engine in enumerate(self._engines, start=1):
+        for engine in self._engines:
             cur = "•" if self._engine == engine.info.key else " "
-            parts.append(f"{cur}{idx} {engine.info.title}")
+            parts.append(f"{cur}{engine.info.hotkey} {engine.info.title}")
         return " " + "   ".join(parts) + "   ↑↓ scroll   Esc — назад "

@@ -123,7 +123,9 @@ def parse_weights(body: str) -> dict[str, float]:
 
         token = parts[0]
         values = parts[1:]
-        if len(values) < len(table_neurons):
+        # Веса второго слоя: bias выхода — одно число, хотя заголовок имеет N колонок.
+        is_output_bias = stage == 1 and token.startswith("bias")
+        if len(values) < len(table_neurons) and not is_output_bias:
             continue
 
         if token.startswith("weight"):
