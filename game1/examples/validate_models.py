@@ -18,13 +18,13 @@ _RESULTS_PATH = os.path.join(_RESULTS_DIR, "validate.json")
 from collections import deque
 from typing import Any, Dict, List
 
-from modules.base import Observation, Outcome
-from modules.core.mechanics.ball import BallMechanics
-from modules.core.mechanics.kormushka import KormushkaMechanics
-from modules.core.mechanics.drift import DriftBallMechanics
-from modules.core.mechanics.dealer import DealerMechanics
-from modules.core.mechanics.pattern import PatternMechanics
-from modules.core.mechanics.witness import LieDetectorMechanics
+from modules.base import Observation
+from modules.core.mechanics.level0.ball import BallMechanics
+from modules.core.mechanics.level0.dealer import DealerMechanics
+from modules.core.mechanics.level1.drift import DriftBallMechanics
+from modules.core.mechanics.level1.kormushka import KormushkaMechanics
+from modules.core.mechanics.level1.witness import LieDetectorMechanics
+from modules.core.mechanics.level2.pattern import PatternMechanics
 from modules.game_api.models.bias import BiasModel
 from modules.game_api.models.logistic import LogisticModel
 from modules.game_api.models.context import ContextModel

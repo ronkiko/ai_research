@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import curses
 import os
-import re
 import time
 import textwrap
 

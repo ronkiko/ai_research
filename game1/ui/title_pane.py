@@ -28,7 +28,7 @@ from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER,
     PAIR_BAR, PAIR_BAR_SEL,
 )
-from modules.base import MechanicsHost, AiHost, Status, ChangeLog, ModelStats
+from modules.base import MechanicsHost, AiHost, Status, ChangeLog
 from modules.game_api.modes import mode_info, PLAY
 
 
@@ -349,8 +349,6 @@ class TitlePane(PseudoWindow):
             return "Model"
         if key == "mode":
             return "Mode"
-        if key == "close":
-            return "Close"
         return ""
 
     @staticmethod
