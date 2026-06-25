@@ -20,14 +20,9 @@ from .common import (
     hidden_truth_table,
     mask_to_formula,
 )
+from .targets import target_for_game
 
 _INPUT_CASES: tuple[tuple[int, int], ...] = ((0, 0), (0, 1), (1, 0), (1, 1))
-
-# TODO: брать canonical target напрямую из механики, когда у игр появится
-# стабильный экспорт truth table. Пока держим минимальный словарь локально.
-_TARGET_MASK_BY_GAME: dict[str, tuple[int, int, int, int]] = {
-    "lie_detector": (1, 0, 0, 1),
-}
 
 
 @dataclass(frozen=True)
@@ -94,14 +89,6 @@ class OutputCombiner:
 class CmosBreakdown:
     functional: CmosCost
     raw_hidden: CmosCost | None
-
-    @property
-    def extracted(self) -> CmosCost:
-        return self.functional
-
-    @property
-    def optimized_reference(self) -> CmosCost:
-        return self.functional
 
 
 @dataclass(frozen=True)
@@ -210,7 +197,8 @@ def _build_hidden_diagnostics(model_key: str, parsed: Parsed2Layer) -> list[Hidd
 
 
 def _target_mask_for_game(game_key: str) -> tuple[int, int, int, int] | None:
-    return _TARGET_MASK_BY_GAME.get(game_key)
+    target = target_for_game(game_key)
+    return target.mask if target is not None else None
 
 
 def _hidden_value(model_key: str, z: float) -> float:
@@ -357,17 +345,13 @@ def _scheme_for_mask(mask: tuple[int, int, int, int]) -> str:
             "x₁ ─┘"
         ),
         "XOR": (
-            "x₀ ─────┬───────────────┐\n"
-            "        ▼               │\n"
-            "      [NOT] ──┐         │\n"
-            "              ├─► [AND] ┐\n"
-            "x₁ ───────────┘         │\n"
-            "                        ├─► [OR] ──► OUT\n"
-            "x₁ ─────┬───────────────│\n"
-            "        ▼               │\n"
-            "      [NOT] ──┐         │\n"
-            "              ├─► [AND] ┘\n"
-            "x₀ ───────────┘"
+            "x₀ ─┬──► [NOT] ──┐\n"
+            "    │            ├──► [AND] ──┐\n"
+            "x₁ ─┴────────────┘             │\n"
+            "                               ├──► [OR] ──► OUT\n"
+            "x₀ ─┴────────────┐             │\n"
+            "    │            ├──► [AND] ──┘\n"
+            "x₁ ─┬──► [NOT] ──┘"
         ),
         "NAND": "x₀ ─┐\n    ├──► [NAND] ──► OUT\nx₁ ─┘",
         "NOR": "x₀ ─┐\n    ├──► [NOR] ──► OUT\nx₁ ─┘",
@@ -380,7 +364,7 @@ def _scheme_for_mask(mask: tuple[int, int, int, int]) -> str:
         "ZERO": "0 ───────────────► OUT",
         "ONE": "1 ───────────────► OUT",
     }
-    return schemes.get(role, "CUSTOM DNF")
+    return schemes.get(role, "CUSTOM DNF\nsee proof table")
 
 
 def _raw_neuron_lines(hidden: list[HiddenGate], limit: int = 8) -> list[str]:
@@ -399,9 +383,8 @@ def _raw_neuron_lines(hidden: list[HiddenGate], limit: int = 8) -> list[str]:
         )
     if len(hidden) > limit:
         lines.append(f"... {len(hidden) - limit} more hidden neurons")
-    lines.append("Note:")
-    lines.append("Real network output is computed from activation values, not hidden bits.")
-    lines.append("Raw hidden approximation: not used for CMOS cost.")
+    lines.append("Real network output uses activation values, not hidden bits.")
+    lines.append("Raw hidden approximation is not used for CMOS cost.")
     return lines
 
 
@@ -491,9 +474,19 @@ def analyze_chip(model_key: str, body: str) -> ChipAnalysis | None:
     )
 
 
+_FIRST_SCREEN_LINES = 35
+"""Сколько строк занимает чистый первый экран: заголовок, статус, схема,
+CMOS, proof. Сырой raw neuron diagnostic должен начинаться ниже этого порога."""
+
+
 def render_chip_report(analysis: ChipAnalysis) -> str:
-    """Короткий отчёт для первого экрана chip."""
-    lines = [
+    """Короткий отчёт для первого экрана chip.
+
+    Первый экран = короткая булева схема: Game/Target/Network/Result, ASCII,
+    CMOS COST, proof table. Raw neuron diagnostic уходит ниже разделителя,
+    чтобы не превращать первый экран в лабораторный дамп.
+    """
+    main: list[str] = [
         "# CHIP",
         "",
         f"Game: {analysis.snapshot.game or 'unknown'}",
@@ -503,16 +496,24 @@ def render_chip_report(analysis: ChipAnalysis) -> str:
         "",
         "BOOLEAN CHIP SCHEME",
         "",
-        analysis.scheme,
-        "",
-        f"CMOS COST: {analysis.cmos.functional.transistors}T",
-        "",
-        "PROOF",
-        "",
     ]
-    lines.extend(_proof_lines(analysis.real_network))
-    lines.append("")
-    lines.append("DEBUG / RAW NEURON VIEW")
+    main.extend(analysis.scheme.splitlines())
+    main.append("")
+    main.append(f"CMOS COST: {analysis.cmos.functional.transistors}T")
+    main.append("")
+    main.append("PROOF")
+    main.append("")
+    main.extend(_proof_lines(analysis.real_network))
+    main.append("")
+    main.append("DEBUG: press 1/2/3 to switch engines; raw neuron diagnostic below")
+
+    # Дополняем чистый блок до высоты первого экрана, чтобы разделитель raw
+    # diagnostic гарантированно ушёл ниже fold.
+    if len(main) < _FIRST_SCREEN_LINES:
+        main.extend([""] * (_FIRST_SCREEN_LINES - len(main)))
+
+    lines: list[str] = list(main)
+    lines.append("--- RAW NEURON DIAGNOSTIC ---")
     lines.append("")
     lines.extend(_raw_neuron_lines(analysis.hidden))
     if analysis.warnings:

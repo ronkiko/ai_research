@@ -2,107 +2,109 @@
 
 > **Важное уточнение.** Этот движок **не** утверждает, что обученная нейросеть
 > физически является CMOS-чипом. Поведение сети дискретизируется на булевых
-> входах `0/1`, после чего из него извлекается логическая схема и оценивается её
+> входах `0/1`, после чего из него строится логическая схема и оценивается её
 > **эквивалентная CMOS-стоимость** в стандартной вентильной библиотеке.
 
 ## 1. Назначение
 
 - Это **первый движок лаборатории** (`engine #1`).
 - Заменяет устаревший `default_report`.
-- Строит полный «чиповый» разбор снапшота весов:
+- Строит «чиповый» разбор снапшота весов:
 
 ```text
 weights snapshot
 → parse weights
-→ hidden neurons as threshold gates
-→ output combiner по hidden outputs
-→ extracted Boolean circuit
-→ extracted network CMOS cost
-→ optimized final-function CMOS reference
+→ real network forward pass на 00/01/10/11
+→ real network behavior (truth table)
+→ functional boolean chip
+→ functional CMOS cost
 → human-readable chip report
+→ raw neuron diagnostic (ниже первого экрана)
 ```
 
-Главное правило: **не смешивать** стоимость фактически извлечённой сети
-и стоимость оптимизированной итоговой функции.
+Главное правило: итоговая булева функция и её CMOS-стоимость строятся по
+**real network behavior** — честному forward pass сети, а не по hidden-bit
+approximation.
 
-## 2. Вход
+## 2. Терминология
+
+- **real network behavior** — truth table, полученная реальным forward passом
+  сети `2 → N → 1` на входах `00, 01, 10, 11` с настоящими активациями
+  скрытого слоя.
+- **functional boolean chip** — булева схема, эквивалентная `real network
+  behavior`. Это то, что рисуется в ASCII и чему считается CMOS-стоимость.
+- **functional CMOS cost** — стоимость `functional boolean chip` в стандартной
+  вентильной библиотеке. Единственная CMOS-цена в отчёте.
+- **raw neuron diagnostic** — компактная диагностика скрытых нейронов как
+  threshold-gate (роль, статус, margin). Расположена ниже первого экрана и
+  **не влияет** на `Network`, `Result`, `CMOS COST`.
+
+> Старые термины `extracted network CMOS cost` и `optimized final-function
+> reference` больше не используются. Единственная стоимость —
+> `functional CMOS cost`.
+
+## 3. Вход
 
 - Markdown-снапшот из `game1/research/weights/**/*.md`.
 - `model_key` — ключ модели, сохранённый в мета-поле `Модель:`.
 - Распарсенные веса: `W1`, `b1`, `W2`, `b2`.
-- В текущей версии поддерживаются архитектуры `2 → N → 1`, где скрытый слой
-  может использовать одно из трёх семейств активаций:
+- Поддерживаются архитектуры `2 → N → 1`, где скрытый слой использует одно из
+  семейств активаций:
   - `ReLU` — модель `mlp`;
   - `Tanh` — модель `torch`;
   - sigmoid-like threshold — любая модель, бинаризуемая через `z >= 0`.
 
-## 3. Ограничения
+## 4. Ограничения
 
 - Это **не физический синтез нейросети в кремний**.
 - Это **дискретизация поведения** сети на булевых входах.
-- Малый `margin` (`min |z|` на четырёх входах) помечается как нестабильный
-  вентиль.
-- `ReLU`, `Tanh` и sigmoid бинаризуются через **pre-activation / logit threshold**,
-  а не через произвольное правило `activation(z) > 0.5`.
+- Малый `margin` (`min |z|` на четырёх входах скрытого нейрона) помечается как
+  `unstable` в raw neuron diagnostic.
+- `ReLU`, `Tanh` и sigmoid бинаризуются через **pre-activation / logit
+  threshold**, а не через произвольное правило `activation(z) > 0.5`.
 - Модели без скрытого слоя (`bias`, `logistic`, `duplet`, `context`) в этой
   версии не разбираются как схемы; вместо `None` выдаётся понятное сообщение.
+- **Hidden-bit approximation не влияет** на `Network`, `Result`, `CMOS COST`:
+  эти поля строятся только по `real network behavior`. Approximation остаётся
+  лишь справочной диагностикой.
 
-## 4. Алгоритм
+## 5. Алгоритм
 
 1. Распарсить веса из Markdown inline-формата (`0.weight[0] = 1.23`) или
    табличного формата.
 2. Восстановить `W1`, `b1`, `W2`, `b2` для сети `2 → N → 1`.
-3. Для каждого скрытого нейрона `k` посчитать `z` на четырёх входах
-   `00, 01, 10, 11`:
+3. Для каждого из четырёх входов `00, 01, 10, 11` выполнить **реальный forward
+   pass**:
    ```text
-   z(x₀, x₁) = W1[0][k] * x₀ + W1[1][k] * x₁ + b1[k]
+   z_k    = W1[0][k] * x₀ + W1[1][k] * x₁ + b1[k]
+   h_k    = activation(z_k)        # ReLU/Tanh по model_key
+   logit  = Σ W2[k] * h_k + b2
+   output = 1 if logit >= 0 else 0
    ```
-4. Получить маску из 4 бит по policy бинаризации (см. раздел 5).
-5. Сопоставить маску с ролью:
+4. Собрать `output_mask` из четырёх `output`-битов → `real network behavior`.
+5. Сопоставить `output_mask` с ролью:
    `ZERO`, `ONE`, `AND`, `OR`, `NOR`, `NAND`, `XOR`, `XNOR`, `PASS`, `NOT`,
-   implication, `custom/DNF`.
-6. Посчитать `margin = min |z|`. Если `margin` меньше порога — статус
-   `unstable`.
-7. Определить статус каждого скрытого нейрона:
-   - `active` — используется в схеме;
-   - `ignored_by_output` — вес на выходе близок к нулю;
-   - `constant` — маска `0000` или `1111`;
-   - `duplicate` — такая же маска уже встречалась раньше;
-   - `unstable` — малый margin.
-8. Посчитать выходную truth table по **бинаризованным** скрытым битам:
-   ```text
-   net(x₀, x₁)  = Σ W2[k] * hidden_bit[k] + b2
-   output_bit   = 1 if net >= 0 else 0
-   ```
-   Маска строится для тех же четырёх входов `00, 01, 10, 11`.
-9. Проанализировать **output combiner**: по active hidden gates, их маскам и
-   весам на выход определить, какая двухвходовая операция (OR/AND/NAND/NOR)
-   или threshold-функция реализована над hidden outputs.
-10. Построить `extracted network expression`:
-    - для стандартного XNOR-паттерна `NOR + AND → OR` —
-      `OR(NOR(x₀,x₁), AND(x₀,x₁))`;
-    - для известных ролей — каноническая формула;
-    - иначе — threshold/DNF по hidden bits.
-11. Построить `final Boolean function` напрямую от `x₀, x₁`.
-12. Проверить совпадение truth table извлечённой сети с итоговой функцией.
-13. Построить текстовую схему (active / ignored / constant / duplicate / unstable
-    gates + output combiner).
-14. Посчитать **extracted network CMOS cost** (hidden gates + output combiner).
-15. Показать **optimized final-function CMOS reference** отдельно, не прибавляя
-    его к extracted cost.
-16. Сформировать отчёт и вердикт.
+   implication, `CUSTOM DNF`.
+6. Сравнить `output_mask` с canonical target игры → `Result` (`MATCH` / `FAIL`
+   / `NETWORK ONLY`).
+7. Построить `functional boolean chip` (ASCII-схема) по роли `output_mask`.
+8. Посчитать **functional CMOS cost** по роли; для `CUSTOM` — DNF-оценка.
+9. Сформировать proof table: `x₀ x₁ | target | network | ok`.
+10. Дополнительно собрать **raw neuron diagnostic** по hidden-нейронам как
+    threshold-gate (роль, статус, margin). Эта секция расположена ниже первого
+    экрана и не участвует в стоимости.
 
-## 5. Бинаризация
+## 6. Бинаризация
 
 | Семейство активации | Policy |
 |---|---|
 | sigmoid-like, tanh | `bit = 1 if z >= 0 else 0` |
 | ReLU | `bit = 1 if z > EPS else 0` (`EPS = 1e-6`) |
 
-`EPS` — константа, не параметр. В отчёте явно пишутся `activation family` и
-`threshold policy`.
+`EPS` — константа, не параметр. В raw neuron diagnostic явно пишутся `role` и
+`margin`.
 
-## 6. CMOS-библиотека
+## 7. CMOS-библиотека
 
 | Вентиль | Стоимость |
 |---|---|
@@ -112,71 +114,49 @@ weights snapshot
 | `AND2` | NAND2 + INV = 6T |
 | `OR2` | NOR2 + INV = 6T |
 
-### 6.1 Extracted network CMOS cost
+### 7.1 Functional CMOS cost
 
-Стоимость фактически извлечённой сети:
+Единственная стоимость в отчёте — стоимость `functional boolean chip`:
 
 ```text
-extracted cost = Σ active hidden gates + output combiner
+functional cost = cost(role(output_mask))
 ```
 
-Пример стандартного XNOR-паттерна:
+Для известной роли берётся каноническая реализация. Пример XNOR:
 
 ```text
 h0 = NOR(x₀, x₁)
 h1 = AND(x₀, x₁)
 output = OR(h0, h1)
 
-cost = NOR2 + AND2 + OR2 = 4 + 6 + 6 = 16T
-depth = 2
+functional cost = NOR2 + AND2 + OR2 = 4 + 6 + 6 = 16T
 ```
 
-Выходной комбайнер анализируется по hidden outputs и весам выхода. Это **не**
-всегда OR; для mixed-sign весов или более чем двух active hidden gates
-используется threshold/DNF fallback с честным note об ограничении.
+Для `CUSTOM` — DNF-оценка по реальной truth table (`AND2` на терм, `INV` на
+отрицательные литералы, `OR2` на сборку). Точная стоимость смешанных
+комбинаторов не вычисляется — тогда схема показывает `CUSTOM DNF` и отсылает к
+proof table.
 
-### 6.2 Optimized final-function reference
+## 8. Target truth tables
 
-Справочная оценка итоговой булевой функции, реализованной напрямую по `x₀,x₁`.
-**Не прибавляется** к extracted cost.
+Canonical target пока берётся из `game1/ui/lab_engines/targets.py` —
+минимального локального словаря (`target_for_game`). Позже источник target
+должен переехать к mechanics metadata игр, а `targets.py` станет тонким
+читателем.
 
-Для XNOR:
+Текущая запись:
 
 ```text
-Classic XNOR reference:
-NOR2 + AND2 + OR2 = 16T
-
-Alternative NAND-only:
-4 × NAND2 = 16T
-
-Optimized macro / pass-transistor:
-may be cheaper, not counted as extracted network
+lie_detector → XNOR, mask (1, 0, 0, 1) — two witnesses agree
 ```
 
-## 7. Output combiner
-
-Output combiner — функция выходного нейрона над hidden outputs.
-
-- `active_hidden` — hidden gates со статусом `active`, `unstable` или `duplicate`,
-  с ненулевым весом на выход и не являющиеся constant.
-- `positive_hidden` / `negative_hidden` — по знаку веса.
-- `ignored_hidden` — не влияют на выход.
-
-Логика:
-
-- 1 active hidden → `WIRE`, `INV` или threshold-обёртка.
-- 2 active hidden, оба positive → семантический поиск `OR/AND/NAND/NOR`;
-  `XOR/XNOR` показываются как DNF fallback.
-- mixed-sign веса или более 2 active hidden → threshold / multi-input
-  combiner с честным note, что точная CMOS-стоимость не вычислена.
-
-## 8. Неподдерживаемые и direct-модели
+## 9. Неподдерживаемые и direct-модели
 
 Если `model_key` не `mlp` / `torch`, или в снапшоте нет весов скрытого слоя,
 `chip` возвращает понятный markdown-отчёт вместо `None`:
 
 ```text
-# CHIP ANALYSIS
+# CHIP
 
 chip engine supports 2 → N → 1 snapshots in this version.
 
@@ -186,24 +166,40 @@ Reason: no hidden layer weights were found.
 Use forensic / prune, or train/save an mlp / torch snapshot.
 ```
 
-## 9. Формат отчёта
+## 10. Формат отчёта
 
-Отчёт состоит из пяти шагов:
+Первый экран — короткая булева схема, а не лабораторный дамп:
 
-1. **Hidden gates** — таблица нейронов, их роли, z-значения, margin, статус.
-2. **Output combiner truth table** — таблица для `00,01,10,11`: hidden bits,
-   `net`, `output_bit`, итоговая роль.
-3. **Full chip scheme** — текстовая схема: входы → hidden gates → output,
-   плюс секции ignored / constant / duplicate / unstable gates.
-4. **CMOS estimate** — отдельно:
-   - extracted network expression;
-   - final Boolean function;
-   - verification note;
-   - extracted network CMOS cost;
-   - optimized final-function reference.
-5. **Verdict** — краткий вывод: схема совпала с target или нет, предупреждения.
+```text
+# CHIP
 
-## 10. Критерии готовности
+Game: lie_detector
+Target: XNOR
+Network: XNOR
+Result: MATCH
+
+BOOLEAN CHIP SCHEME
+
+<ASCII-схема>
+
+CMOS COST: 16T
+
+PROOF
+
+x₀ x₁ | target | network | ok
+0  0  |   1    |    1    | ✓
+0  1  |   0    |    0    | ✓
+1  0  |   0    |    0    | ✓
+1  1  |   1    |    1    | ✓
+
+DEBUG: press 1/2/3 to switch engines; raw neuron diagnostic below
+```
+
+Ниже разделителя `--- RAW NEURON DIAGNOSTIC ---` идёт компактная диагностика
+скрытых нейронов (`h0: role, status, margin`). Эта секция не влияет на
+основной результат.
+
+## 11. Критерии готовности
 
 - Старый `default_report` больше не является движком №1.
 - Новый движок №1 называется `chip`.
@@ -211,5 +207,6 @@ Use forensic / prune, or train/save an mlp / torch snapshot.
 - `forensic` и `prune` остаются доступными как отдельные подключаемые движки.
 - `py_compile` проходит без ошибок.
 - Добавлены unit-style проверки нового движка.
-- CMOS-оценка разделена на `extracted network cost` и `optimized reference`.
-- Output combiner анализируется по hidden outputs, а не только по `output_mask`.
+- Итоговая функция и CMOS-стоимость строятся по `real network behavior`.
+- Hidden-bit approximation не влияет на `Network`, `Result`, `CMOS COST`.
+- Canonical target берётся из `ui/lab_engines/targets.py`.

@@ -1,5 +1,26 @@
 {
   "total": 13,
+  "known_target_total": 13,
+  "matched": 10,
+  "failed": 3,
+  "unknown_target": 0,
+  "by_accuracy": {
+    "100": {
+      "total": 10,
+      "matched": 10,
+      "failed": 0
+    },
+    "72": {
+      "total": 1,
+      "matched": 0,
+      "failed": 1
+    },
+    "0": {
+      "total": 2,
+      "matched": 0,
+      "failed": 2
+    }
+  },
   "items": [
     {
       "path": "research/weights/mlp/20260625_071049_lie_detector_supervised.md",
