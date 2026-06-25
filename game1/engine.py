@@ -202,13 +202,22 @@ def _build_games_pane(host: MechanicsHost, sink: ChangeLog, y, x, h, w) -> TreeP
     active_key = active.key if active is not None else None
 
     # Собрать дерево: группы по уровням, внутри — столы из механик.
+    # Раскрыта только группа, в которой находится активная игра; остальные
+    # свёрнуты, чтобы сразу было видно, где сейчас оператор.
+    active_group: str | None = None
+    if active_key in ("ball", "dealer"):
+        active_group = "level0"
+    elif active_key in ("kormushka", "lie_detector", "drift"):
+        active_group = "level1"
+    elif active_key == "pattern":
+        active_group = "level2"
+
     groups: dict[str, TreeNode] = {
-        key: TreeNode(key, title, children=[], expanded=True, info_key=key)
+        key: TreeNode(key, title, children=[],
+                      expanded=(key == active_group), info_key=key)
         for key, title in LEVEL_FOLDERS
     }
     for it in infos:
-        # Назначить стол в группу по префиксу пути (key) либо по умолчанию
-        # в первую подходящую. Пока все известные столы явно привязаны.
         if it.key in ("ball", "dealer"):
             target = "level0"
         elif it.key in ("kormushka", "lie_detector", "drift"):
