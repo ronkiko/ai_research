@@ -129,7 +129,7 @@ class ReportPopup(PseudoWindow):
         cur1 = "•" if self._engine == "default" else " "
         cur2 = "•" if self._engine == "forensic" else " "
         cur3 = "•" if self._engine == "prune" else " "
-        hint = f" {cur1}1 default   {cur2}2 forensic   {cur3}3 prune   ↑↓ scroll   Esc — назад "
+        hint = f" {cur1}1 default   {cur2}2 forensic   {cur3}3 prune   ↑↓ scroll   Esc — закрыть "
         hint_y = self.y + self.h - 2
         hint_x = self.x + max(0, (self.w - len(hint)) // 2)
         try:

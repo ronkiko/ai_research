@@ -156,7 +156,13 @@ class TitlePane(PseudoWindow):
             if hasattr(top, "handle"):
                 action = top.handle(key)
                 if action == "close":
-                    self._modals.pop()
+                    # Если закрывается полноэкранный ReportPopup, убираем весь
+                    # стек и возвращаемся сразу в F1; иначе закрываем только
+                    # верхнее окно (маленький Preview → F1).
+                    if len(self._modals) > 1:
+                        self._modals.clear()
+                    else:
+                        self._modals.pop()
                     return "move"
                 if action == "lab":
                     self._modals.clear()
