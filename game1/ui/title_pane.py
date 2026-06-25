@@ -483,6 +483,15 @@ class TitlePane(PseudoWindow):
     def render(self, stdscr) -> None:
         if self.h < 3 or self.w < 8:
             return
+        # Очистить всю полную область панели перед рисованием F1, чтобы после
+        # закрытия полноэкранных модальных окон не оставалось артефактов по
+        # краям маленького игрового окна.
+        full_blank = " " * self._full_w
+        for i in range(self._full_h):
+            try:
+                stdscr.addstr(self._full_y + i, self._full_x, full_blank, 0)
+            except curses.error:
+                break
         border = curses.color_pair(self.border_pair)
         try:
             stdscr.addstr(self.y, self.x, "┌" + "─" * (self.w - 2) + "┐", border)
