@@ -29,6 +29,7 @@ class Window:
         self.y, self.x, self.h, self.w = y, x, h, w
         self.border_pair = border_pair
         self.title_pair = title_pair
+        self.lines: list[tuple[str, int]] = []
 
     @property
     def inner_h(self) -> int:
@@ -62,6 +63,25 @@ class Window:
                               curses.color_pair(PAIR_DIM))
             except curses.error:
                 break
+
+        # Окна-логи (Console) хранят строки; показываем последние inner_h строк.
+        for i, (text, attr) in enumerate(self.lines[-self.inner_h:]):
+            try:
+                stdscr.addstr(self.y + 1 + i, self.x + 1, text[:self.inner_w], attr)
+            except curses.error:
+                pass
+
+    def append(self, text: str, attr: int = 0) -> None:
+        self.lines.append((text, attr or curses.color_pair(PAIR_DIM)))
+
+    def update_last(self, text: str, attr: int = 0) -> None:
+        if self.lines:
+            self.lines[-1] = (text, attr or curses.color_pair(PAIR_DIM))
+        else:
+            self.append(text, attr)
+
+    def clear(self) -> None:
+        self.lines.clear()
 
     def handle(self, key: int) -> str | None:
         """Обработать клавишу. Вернуть действие или None."""

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import curses
 import os
+import re
 import time
 import textwrap
 
@@ -19,29 +20,7 @@ from .theme import (
     PAIR_FAIL, PAIR_CYAN, PAIR_MAGENTA,
 )
 from .lab_report import default_report, forensic_report, prune_report
-
-
-# Цветовые inline-теги, которые понимает LabPane.
-_COLOR_TAGS: dict[str, int] = {
-    "[green]": PAIR_OK,
-    "[red]": PAIR_FAIL,
-    "[yellow]": PAIR_TITLE,
-    "[cyan]": PAIR_CYAN,
-    "[magenta]": PAIR_MAGENTA,
-    "[dim]": PAIR_DIM,
-}
-
-
-class SegLine:
-    """Строка из цветовых сегментов.
-
-    Каждый сегмент = (текст, атрибут curses). Используется для таблиц и
-    других строк, где одна логическая строка содержит фрагменты разного цвета.
-    """
-
-    def __init__(self, segs: list[tuple[str, int]]):
-        self.segs = segs
-
+from .markdown import parse_markdown, SegLine
 
 _WEIGHTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -224,90 +203,9 @@ class LabPane(Modal):
     # --- рендер ---
 
     @staticmethod
-    def _parse_color_segments(line: str, base_attr: int) -> SegLine:
-        """Разобрать inline-теги [green]...[green] внутри строки."""
-        segs: list[tuple[str, int]] = []
-        buf = ""
-        cur_attr = base_attr
-        i = 0
-        while i < len(line):
-            matched = False
-            for tag, pair in _COLOR_TAGS.items():
-                close_tag = tag.replace("[", "[/")
-                if line.startswith(tag, i):
-                    if buf:
-                        segs.append((buf, cur_attr))
-                        buf = ""
-                    cur_attr = A(pair, bold=(pair in (PAIR_OK, PAIR_FAIL, PAIR_TITLE)))
-                    i += len(tag)
-                    matched = True
-                    break
-                elif line.startswith(close_tag, i):
-                    if buf:
-                        segs.append((buf, cur_attr))
-                        buf = ""
-                    cur_attr = base_attr
-                    i += len(close_tag)
-                    matched = True
-                    break
-            if not matched:
-                buf += line[i]
-                i += 1
-        if buf:
-            segs.append((buf, cur_attr))
-        return SegLine(segs)
-
-    @staticmethod
     def _markdown_rows(body: str, width: int) -> list:
-        """Превратить markdown-тело в список строк/SegLine с цветами.
-
-        Результат: список, каждый элемент — либо (str, attr), либо SegLine.
-        """
-        rows: list = []
-        for line in body.split("\n"):
-            base_attr = A(PAIR_DIM)
-            stripped = line
-
-            if line.startswith("###"):
-                base_attr = A(PAIR_TITLE, bold=True)
-                stripped = line[3:].strip()
-            elif line.startswith("##"):
-                base_attr = A(PAIR_OK, bold=True)
-                stripped = line[2:].strip()
-            elif line.startswith("++ "):
-                base_attr = A(PAIR_OK, bold=True)
-                stripped = line[3:]
-            elif line.startswith("!! "):
-                base_attr = A(PAIR_FAIL, bold=True)
-                stripped = line[3:]
-            elif line.startswith(">>"):
-                base_attr = A(PAIR_CYAN)
-                stripped = line[3:]
-            elif line.startswith("<< "):
-                base_attr = A(PAIR_MAGENTA)
-                stripped = line[3:]
-            elif line.startswith("  `"):
-                base_attr = A(PAIR_DIM)
-                stripped = line
-            elif line.startswith("- **") and ":**" in line:
-                label, val = line[2:].split(":**", 1)
-                stripped = f"{label}:{val.strip()}"
-                base_attr = A(PAIR_WARN, bold=True)
-
-            if stripped == "":
-                rows.append(("", A(PAIR_DIM)))
-                continue
-
-            # Строки таблицы и строки с inline-цветами не переносим.
-            has_color = any(tag in stripped for tag in _COLOR_TAGS)
-            if has_color or "│" in stripped:
-                rows.append(LabPane._parse_color_segments(stripped, base_attr))
-                continue
-
-            # Обычный текст — переносим по ширине.
-            for ln in textwrap.wrap(stripped, width=width):
-                rows.append((ln, base_attr))
-        return rows
+        """Прокси на общий парсер Markdown."""
+        return parse_markdown(body, width)
 
     def render(self, stdscr) -> None:
         if self.h < 3 or self.w < 8:

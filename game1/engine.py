@@ -316,7 +316,7 @@ def _build_models_pane(ai: AiHost, sink: ChangeLog, y, x, h, w) -> ListPane:
         return f"{_status_tag(res.status)} {res.message}"
 
     cursor = next((i for i, it in enumerate(items) if it.active), 0)
-    return ListPane("F2 Models \u2014 выбор модели", y, x, h, w,
+    return ListPane("models", "F4 Models \u2014 выбор модели", y, x, h, w,
                     items, detail_for, on_select, cursor=cursor)
 
 
@@ -339,7 +339,7 @@ def _build_modes_pane(ai: AiHost, sink: ChangeLog, y, x, h, w) -> ListPane:
         return f"{_status_tag(res.status)} {res.message}"
 
     cursor = next((i for i, it in enumerate(items) if it.active), 0)
-    return ListPane("F4 Modes \u2014 режим обучения", y, x, h, w,
+    return ListPane("modes", "F5 Modes \u2014 режим обучения", y, x, h, w,
                     items, detail_for, on_select, cursor=cursor)
 
 
@@ -394,12 +394,9 @@ def run_ui(stdscr, modules: list[Module], console: ConsoleWindow) -> None:
         tpx = pane_x + max(0, (pane_w - TitlePane.CANVAS_W) // 2)
         tpy = pane_y + max(0, (pane_h - TitlePane.CANVAS_H) // 2)
         title_pane = TitlePane(
-            host, ai, tpy, tpx,
-            TitlePane.CANVAS_H, TitlePane.CANVAS_W,
+            host, ai, pane_y, pane_x, pane_h, pane_w,
             sink=sink,
             speed_idx=settings.speed,
-            full_y=pane_y, full_x=pane_x,
-            full_h=pane_h, full_w=pane_w,
         )
     lab_pane = LabPane(pane_y, pane_x, pane_h, pane_w)
     games_pane = _build_games_pane(host, sink, pane_y, pane_x, pane_h, pane_w) if host else None

@@ -9,7 +9,6 @@ import math
 import re
 from collections.abc import Callable
 
-
 def _sigmoid(x: float) -> float:
     """Защищённый от переполнения сигмоид."""
     if x < -50:
@@ -198,89 +197,67 @@ def _hidden_activation(model_key: str) -> tuple[Callable[[float], float], str]:
 # ---------------------------------------------------------------------------
 
 
-def _infer_strategy(
+def _compute_roles(
     hidden_n: int,
     w0: list[list[float]],
     b0: list[float],
-    w1: list[float],
-    b1: float,
-    act,
-    act_name: str,
-) -> list[str]:
-    """Понять, как сеть решает XOR, и описать словами."""
-    lines: list[str] = []
-    inputs = [(0, 0), (0, 1), (1, 0), (1, 1)]
-
-    neuron_on: list[list[tuple[int, int]]] = []
+    model_key: str,
+) -> tuple[dict[int, tuple[str, str]], dict[int, tuple[int, ...]]]:
+    """Определить логические роли скрытых нейронов как цифровые вентили."""
+    act, _ = _hidden_activation(model_key)
+    cases = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    roles: dict[int, tuple[str, str]] = {}
+    masks: dict[int, tuple[int, ...]] = {}
     for k in range(hidden_n):
-        on = []
-        for xi, xj in inputs:
-            hv = act(w0[0][k] * xi + w0[1][k] * xj + b0[k])
-            if abs(hv) > 0.5:
-                on.append((xi, xj))
-        neuron_on.append(on)
+        outs = []
+        for xi, xj in cases:
+            z = xi * w0[0][k] + xj * w0[1][k] + b0[k]
+            outs.append(1 if act(z) > 0.5 else 0)
+        mask = tuple(outs)
+        masks[k] = mask
+        roles[k] = _ROLE_NAMES.get(mask, ("CUSTOM", f"Кастомный триггер {list(mask)}"))
+    return roles, masks
 
-    for k in range(hidden_n):
-        on = neuron_on[k]
-        on_pos = [(xi, xj) for xi, xj in on if act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) > 0.5]
-        on_neg = [(xi, xj) for xi, xj in on if act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) < -0.5]
 
-        if not on_pos and not on_neg:
-            lines.append(f"[red]h{k} — мёртв (всегда = {act(b0[k]):+.3f})[/red]")
-            continue
+def _chip_diagram(
+    pos_roles: list[str],
+    neg_roles: list[str],
+    target_name: str,
+    bias: float,
+) -> str:
+    """ASCII-схема сборки логических вентилей в чип."""
+    lines: list[str] = ["СХЕМА СБОРКИ ВЕНТИЛЕЙ:", ""]
 
-        parts = []
-        if len(on_pos) == 1:
-            xi, xj = on_pos[0]
-            parts.append(f"зажигается на ({xi},{xj})")
-        elif len(on_pos) > 1:
-            parts.append(f"горит на {', '.join(f'({xi},{xj})' for xi, xj in on_pos)}")
+    gates: list[str] = []
+    for r in pos_roles:
+        gates.append(f"[{r}]")
+    for r in neg_roles:
+        gates.append(f"[{r}]→[NOT]")
 
-        if len(on_neg) == 1:
-            xi, xj = on_neg[0]
-            parts.append(f"гаснет на ({xi},{xj})")
-        elif len(on_neg) > 1:
-            parts.append(f"отрицателен на {', '.join(f'({xi},{xj})' for xi, xj in on_neg)}")
+    if not gates:
+        lines.append("    (нет активных вентилей)")
+        if abs(bias) > 0.5:
+            lines.append(f"    bias {bias:+.3f} держит базовый уровень")
+        return "\n".join(lines)
 
-        lines.append(f"h{k}: {', '.join(parts)}")
+    lines.append("        x₀        x₁")
+    lines.append("         │         │")
+    lines.append("    ┌────┴─────────┴────┐")
+    lines.append("    │                   │")
+    lines.append("    │  " + "    ".join(gates) + "  │")
+    lines.append("    │                   │")
+    lines.append("    └────────┬────────┘")
+    lines.append("             │")
+    lines.append(f"          [ OR ]───► {target_name}")
+    if abs(bias) > 0.5:
+        lines.append("             ▲")
+        lines.append(f"        (bias {bias:+.3f})")
 
-    lines.append("")
-
-    dead_neurons = [k for k in range(hidden_n) if abs(w1[k]) < 0.01]
-    pos_neurons = [k for k in range(hidden_n) if w1[k] > 0 and k not in dead_neurons]
-    neg_neurons = [k for k in range(hidden_n) if w1[k] < 0 and k not in dead_neurons]
-
-    parts = []
-    if pos_neurons:
-        parts.append(f"[green]СКЛАДЫВАЕТ {', '.join(f'h{k}' for k in pos_neurons)}[/green]")
-    if neg_neurons:
-        parts.append(f"[yellow]ВЫЧИТАЕТ {', '.join(f'h{k}' for k in neg_neurons)}[/yellow]")
-    if dead_neurons:
-        parts.append(f"[red]игнорирует h{', h'.join(str(k) for k in dead_neurons)}[/red]")
-
-    lines.append("Стратегия выхода: " + ", ".join(parts) + ".")
-    lines.append(f"Bias выхода {b1:+.4f} — порог sigmoid.")
-    lines.append("")
-
-    # Проверка
-    all_ok = True
-    for xi, xj in inputs:
-        h_vals = [act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) for k in range(hidden_n)]
-        out_z = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b1
-        target = 1 if xi == xj else 0
-        if (out_z > 0) != (target == 1):
-            all_ok = False
-
-    if all_ok:
-        lines.append("[green]Сеть решает XOR правильно на всех четырёх входах. ✓[/green]")
-    else:
-        lines.append("[red]Сеть ошибается на некоторых входах. ✗[/red]")
-
-    return lines
+    return "\n".join(lines)
 
 
 def default_report(model_key: str, body: str) -> str | None:
-    """Классический детальный разбор для torch/mlp."""
+    """Схемотехнический разбор для torch/mlp: нейроны как логические вентили."""
     if model_key not in ("torch", "mlp"):
         return None
 
@@ -289,54 +266,116 @@ def default_report(model_key: str, body: str) -> str | None:
         return None
     hidden_n, w0, b0, w1, b1 = parsed
 
-    def act(v: float) -> float:
-        if model_key == "torch":
-            return math.tanh(v)
-        return max(0.0, v)
+    act, act_name = _hidden_activation(model_key)
+    cases = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    roles, masks = _compute_roles(hidden_n, w0, b0, model_key)
+
+    active_pos = [
+        k for k in range(hidden_n)
+        if w1[k] > 0 and abs(w1[k]) >= 0.01 and masks[k] not in ((0, 0, 0, 0), (1, 1, 1, 1))
+    ]
+    active_neg = [
+        k for k in range(hidden_n)
+        if w1[k] < 0 and abs(w1[k]) >= 0.01 and masks[k] not in ((0, 0, 0, 0), (1, 1, 1, 1))
+    ]
+    ignored = [k for k in range(hidden_n) if k not in active_pos and k not in active_neg]
+
+    pos_roles = [roles[k][0] for k in active_pos]
+    neg_roles = [roles[k][0] for k in active_neg]
+
+    target_table = {c: (1 if c[0] == c[1] else 0) for c in cases}
+    target_name = "XNOR"
+
+    pos_part = _join_formula_terms([_mask_to_formula(masks[k]) for k in active_pos], "∨")
+    neg_part = _join_formula_terms([_mask_to_formula(masks[k]) for k in active_neg], "∨")
+    if pos_part and neg_part:
+        equation = f"({pos_part}) ∧ ¬({neg_part}) = {target_name}"
+    elif pos_part:
+        equation = f"{pos_part} = {target_name}"
+    elif neg_part:
+        equation = f"¬({neg_part}) = {target_name}"
+    else:
+        equation = f"? = {target_name}"
 
     def sigmoid(x: float) -> float:
         return 1.0 / (1.0 + math.exp(-x))
 
-    inputs = [(0, 0), (0, 1), (1, 0), (1, 1)]
-    act_name = "Tanh" if model_key == "torch" else "ReLU"
-
     lines: list[str] = []
-    lines.append("### Разбор нейронов")
+    lines.append("### ШАГ 1. Вентили скрытого слоя")
     lines.append("")
-    lines.append(f"Архитектура: 2 входа → {hidden_n} скрытых ({act_name}) → 1 выход")
+    lines.append(f"Архитектура: 2 входа → {hidden_n} скрытых ({act_name}) → 1 выход (sigmoid)")
     lines.append("")
 
+    gate_table = [
+        "| Нейрон | Вентиль | Статус |",
+        "| :---: | :---: | :---: |",
+    ]
     for k in range(hidden_n):
-        w0k = w0[0][k]
-        w1k = w0[1][k]
-        bk = b0[k]
-        lines.append(f"**Нейрон h{k}:** {act_name}({w0k:+.4f}·x₀ {w1k:+.4f}·x₁ {bk:+.4f})")
-        desc = []
-        for xi, xj in inputs:
-            hv = act(w0k * xi + w1k * xj + bk)
-            desc.append(f"({xi},{xj})→{hv:+.3f}")
-        lines.append("  " + "  ".join(desc))
-        lines.append("")
-
-    lines.append("### Когда что горит")
-    lines.append("")
-    lines.extend(_infer_strategy(hidden_n, w0, b0, w1, b1, act, act_name))
+        role_name, _ = roles[k]
+        weight = w1[k]
+        mask = masks[k]
+        if abs(weight) < 0.01 or mask in ((0, 0, 0, 0), (1, 1, 1, 1)):
+            status = "[red]Игнор[/red]"
+        elif weight > 0:
+            status = "[green]**АКТИВЕН (+)**[/green]"
+        else:
+            status = "[yellow]**АКТИВЕН (−)**[/yellow]"
+        gate_table.append(f"| **h{k}** | **{role_name}** | {status} |")
+    lines.extend(gate_table)
     lines.append("")
 
-    lines.append("### Выход (net → sigmoid → p)")
+    lines.append("### ШАГ 2. Логическая схема и верификация")
     lines.append("")
-    out_parts = " ".join(f"{w1[k]:+.4f}·h{k}" for k in range(hidden_n))
-    lines.append(f"net = {out_parts} {b1:+.4f}  → sigmoid → p")
+    lines.append(f"**Уравнение:** {equation}")
     lines.append("")
-    for xi, xj in inputs:
+    lines.append(_chip_diagram(pos_roles, neg_roles, target_name, b1))
+    lines.append("")
+
+    verify_header = (
+        "| x₀ | x₁ | " + " | ".join(f"h{k}" for k in range(hidden_n)) + " | net | p | target | OK |"
+    )
+    verify_sep = "| " + " | ".join([":---:"] * (4 + hidden_n + 3)) + " |"
+    verify_table = [verify_header, verify_sep]
+
+    all_ok = True
+    for xi, xj in cases:
         h_vals = [act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) for k in range(hidden_n)]
-        out_z = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b1
-        out_p = sigmoid(out_z)
-        target = 1 if xi == xj else 0
-        h_str = ", ".join(f"h{k}={v:+.3f}" for k, v in enumerate(h_vals))
-        arrow = "[green]✓[/green]" if round(out_p) == target else "[red]✗[/red]"
+        net = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b1
+        p = sigmoid(net)
+        target = target_table[(xi, xj)]
+        ok = round(p) == target
+        all_ok = all_ok and ok
+        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+        h_str = " | ".join(f"{v:+.3f}" for v in h_vals)
+        verify_table.append(
+            f"| {xi} | {xj} | {h_str} | {net:+.3f} | {p:.1%} | {target} | {mark} |"
+        )
+    lines.extend(verify_table)
+    lines.append("")
+
+    lines.append("### ШАГ 3. Вердикт")
+    lines.append("")
+    if all_ok:
+        lines.append("⚖️ [green]**Сеть собрала верный чип XNOR.**[/green]")
+        parts: list[str] = []
+        for r in pos_roles:
+            parts.append(f"**{r}**")
+        for r in neg_roles:
+            parts.append(f"**NOT {r}**")
+        if parts:
+            lines.append(
+                f"Вентили {', '.join(parts)} объединяются через [ OR ] в выход {target_name}."
+            )
+        else:
+            lines.append("Сеть решает задачу через выходной bias.")
+    else:
+        lines.append("⚖️ [red]**Схема неверна — сеть не собрала XNOR.**[/red]")
+
+    if ignored:
+        lines.append("")
         lines.append(
-            f"  ({xi},{xj}): {h_str} → net={out_z:+.3f} → p={out_p:.1%} (target={target}) {arrow}"
+            f"[yellow]Примечание:[/yellow] нейроны h{', h'.join(str(k) for k in ignored)} "
+            "не участвуют в схеме."
         )
 
     lines.append("")
@@ -421,6 +460,35 @@ def _join_formula_terms(terms: list[str], op: str) -> str:
         else:
             wrapped.append(t)
     return f" {op} ".join(wrapped)
+
+
+def _to_code_formula(formula: str) -> str:
+    """Перевести научную булеву формулу в синтаксис C++/JavaScript."""
+    code = formula
+
+    def _impl(m: re.Match) -> str:
+        return f"(!{m.group(1).strip()} || {m.group(2).strip()})"
+
+    def _equiv(m: re.Match) -> str:
+        return f"({m.group(1).strip()} == {m.group(2).strip()})"
+
+    # Разворачиваем импликацию и эквивалентность, возможно в скобках.
+    code = re.sub(r"\(([^()]+)\)\s*→\s*\(([^()]+)\)", _impl, code)
+    code = re.sub(r"\(([^()]+)\)\s*→\s*([^()]+)", _impl, code)
+    code = re.sub(r"([^()]+)\s*→\s*\(([^()]+)\)", _impl, code)
+    code = re.sub(r"([^()]+)\s*→\s*([^()]+)", _impl, code)
+
+    code = re.sub(r"\(([^()]+)\)\s*↔\s*\(([^()]+)\)", _equiv, code)
+    code = re.sub(r"\(([^()]+)\)\s*↔\s*([^()]+)", _equiv, code)
+    code = re.sub(r"([^()]+)\s*↔\s*\(([^()]+)\)", _equiv, code)
+    code = re.sub(r"([^()]+)\s*↔\s*([^()]+)", _equiv, code)
+
+    code = code.replace("x₀", "x0")
+    code = code.replace("x₁", "x1")
+    code = code.replace("¬", "!")
+    code = code.replace("∧", "&&")
+    code = code.replace("∨", "||")
+    return code
 
 
 def _mask_to_truth(mask: tuple[int, ...]) -> dict[tuple[int, int], int]:
@@ -518,7 +586,7 @@ def _build_logic_equation(
 
 
 def forensic_report(model_key: str, body: str) -> str | None:
-    """Следовательский разбор: роли, дубли, вердикт с учётом реальной активации."""
+    """Следовательский разбор в формате Markdown-отчёта."""
     parsed = _extract_2layer_weights(model_key, body)
     if parsed is None:
         return None
@@ -527,14 +595,8 @@ def forensic_report(model_key: str, body: str) -> str | None:
     cases = [(0, 0), (0, 1), (1, 0), (1, 1)]
     act, act_name = _hidden_activation(model_key)
 
-    lines: list[str] = []
-    lines.append("### Следовательский разбор")
-    lines.append("")
-    lines.append(f"Архитектура: 2 входа → {hidden_n} скрытых ({act_name}) → 1 выход (sigmoid)")
-    lines.append("")
-
     # --- Роли скрытых нейронов ---
-    roles: dict[int, str] = {}
+    roles: dict[int, tuple[str, str]] = {}
     masks: dict[int, tuple[int, ...]] = {}
     for k in range(hidden_n):
         outs = []
@@ -543,68 +605,9 @@ def forensic_report(model_key: str, body: str) -> str | None:
             outs.append(1 if act(z) > 0.5 else 0)
         mask = tuple(outs)
         masks[k] = mask
-        role_pair = _ROLE_NAMES.get(mask, ("CUSTOM", f"Кастомный триггер {list(mask)}"))
-        roles[k] = role_pair
+        roles[k] = _ROLE_NAMES.get(mask, ("CUSTOM", f"Кастомный триггер {list(mask)}"))
 
-    # --- Таблица ролей ---
-    lines.append("### Таблица ролей нейронов")
-    lines.append("")
-
-    col1 = 6   # нейрон
-    col2 = 14  # англ. термин
-    col3 = 38  # русское описание
-    col4 = 7   # вес
-    col5 = 9   # вклад
-
-    top = (
-        f"┌{'─' * col1}┬{'─' * col2}┬{'─' * col3}┬{'─' * col4}┬{'─' * col5}┐"
-    )
-    hdr = (
-        f"│{'нейр':^{col1}}│{'роль (англ.)':^{col2}}│"
-        f"{'смысл':^{col3}}│{'вес':^{col4}}│{'участие':^{col5}}│"
-    )
-    sep = (
-        f"├{'─' * col1}┼{'─' * col2}┼{'─' * col3}┼{'─' * col4}┼{'─' * col5}┤"
-    )
-    bot = (
-        f"└{'─' * col1}┴{'─' * col2}┴{'─' * col3}┴{'─' * col4}┴{'─' * col5}┘"
-    )
-
-    lines.append(top)
-    lines.append(hdr)
-    lines.append(sep)
-
-    for k in range(hidden_n):
-        weight = w1[k]
-        mask = masks[k]
-        term, meaning = roles[k]
-
-        if abs(weight) < 0.01 or mask == (0, 0, 0, 0) or mask == (1, 1, 1, 1):
-            color = "red"
-            w_text = f"{weight:+.2f}"[:col4]
-            part_text = "[red]игнор[/red]"
-        elif weight > 0:
-            color = "green"
-            w_text = f"{weight:+.2f}"[:col4]
-            part_text = "[green]+[/green]"
-        else:
-            color = "yellow"
-            w_text = f"{weight:+.2f}"[:col4]
-            part_text = "[yellow]-[/yellow]"
-
-        term_text = f"[{color}]{term}[/{color}]"
-        meaning_text = f"[{color}]{meaning}[/{color}]"
-
-        row = (
-            f"│{_center(f'h{k}', col1)}│{_center(term_text, col2)}│{_center(meaning_text, col3)}│"
-            f"{_center(w_text, col4)}│{_center(part_text, col5)}│"
-        )
-        lines.append(row)
-
-    lines.append(bot)
-    lines.append("")
-
-    # --- Логическая схема ---
+    # --- Логическая формула ---
     effective_pos = [
         k for k in range(hidden_n)
         if abs(w1[k]) >= 0.01 and masks[k] not in ((0, 0, 0, 0), (1, 1, 1, 1)) and w1[k] > 0
@@ -614,205 +617,197 @@ def forensic_report(model_key: str, body: str) -> str | None:
         if abs(w1[k]) >= 0.01 and masks[k] not in ((0, 0, 0, 0), (1, 1, 1, 1)) and w1[k] < 0
     ]
 
-    if effective_pos or effective_neg:
-        lines.append("### Логическое уравнение")
-        lines.append("")
+    target_table = {c: (1 if c[0] == c[1] else 0) for c in cases}
+    target_name = "XNOR"
+    pos_masks, neg_masks, exact, bias_note = _build_logic_equation(
+        effective_pos, effective_neg, masks, target_table, b2
+    )
 
-        target_table = {c: (1 if c[0] == c[1] else 0) for c in cases}
-        target_name = "XNOR"  # в игре lie_detector правда = показания совпали
-        pos_masks, neg_masks, exact, bias_note = _build_logic_equation(
-            effective_pos, effective_neg, masks, target_table, b2
-        )
+    real_pos = [m for m in pos_masks if m != _BIAS_MASK]
+    bias_pos = [m for m in pos_masks if m == _BIAS_MASK]
+    real_neg = [m for m in neg_masks if m != _BIAS_MASK]
+    bias_neg = [m for m in neg_masks if m == _BIAS_MASK]
 
-        # Разделяем виртуальную роль bias от реальных нейронов.
-        real_pos = [m for m in pos_masks if m != _BIAS_MASK]
-        bias_pos = [m for m in pos_masks if m == _BIAS_MASK]
-        real_neg = [m for m in neg_masks if m != _BIAS_MASK]
-        bias_neg = [m for m in neg_masks if m == _BIAS_MASK]
+    pos_formulas = [_mask_to_formula(m) for m in real_pos]
+    neg_formulas = [_mask_to_formula(m) for m in real_neg]
+    pos_names = [_ROLE_NAMES.get(m, ("?", "?"))[0] for m in real_pos]
+    neg_names = [_ROLE_NAMES.get(m, ("?", "?"))[0] for m in real_neg]
 
-        pos_formulas = [_mask_to_formula(m) for m in real_pos]
-        neg_formulas = [_mask_to_formula(m) for m in real_neg]
-        pos_names = [_ROLE_NAMES.get(m, ("?", "?"))[0] for m in real_pos]
-        neg_names = [_ROLE_NAMES.get(m, ("?", "?"))[0] for m in real_neg]
+    pos_part = _join_formula_terms(pos_formulas, "∨")
+    neg_part = _join_formula_terms(neg_formulas, "∨")
 
-        pos_part = _join_formula_terms(pos_formulas, "∨")
-        neg_part = _join_formula_terms(neg_formulas, "∨")
+    if pos_part and neg_part:
+        equation_scientific = f"({pos_part}) ∧ ¬({neg_part}) = {target_name}"
+        equation_code = _to_code_formula(f"({pos_part}) && !({neg_part}) == true")
+    elif pos_part:
+        equation_scientific = f"{pos_part} = {target_name}"
+        equation_code = _to_code_formula(f"{pos_part} == true")
+    elif neg_part:
+        equation_scientific = f"¬({neg_part}) = {target_name}"
+        equation_code = _to_code_formula(f"!({neg_part}) == true")
+    else:
+        equation_scientific = f"? = {target_name}"
+        equation_code = "? == true"
 
-        if pos_part and neg_part:
-            equation_short = f"({pos_part}) + NOT ({neg_part})"
-            equation_full = f"({pos_part}) ∧ ¬({neg_part})"
-        elif pos_part:
-            equation_short = pos_part
-            equation_full = pos_part
-        elif neg_part:
-            equation_short = f"NOT ({neg_part})"
-            equation_full = f"¬({neg_part})"
-        else:
-            equation_short = "?"
-            equation_full = "?"
+    # --- Проверка уравнения ---
+    answer_table, equation_ok = _evaluate_formula(pos_masks, neg_masks, target_table)
+    all_ok = equation_ok
+    verification_rows = []
+    for xi, xj in cases:
+        case = (xi, xj)
+        pos_vals = [_mask_to_truth(m)[case] for m in pos_masks]
+        neg_vals = [_mask_to_truth(m)[case] for m in neg_masks]
+        eq_val = answer_table[case]
 
-        lines.append(f"**Уравнение: {equation_short} = {target_name}**")
-        lines.append(f"  → {equation_full}")
-        lines.append("")
+        h_vals = [act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) for k in range(hidden_n)]
+        net = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b2
+        net_val = 1 if _sigmoid(net) > 0.5 else 0
+        target = target_table[case]
 
-        notes: list[str] = []
-        if pos_names:
-            joined = ", ".join(f"[green]{n}[/green]" for n in pos_names)
-            notes.append(f"позитивные роли: {joined}")
-        if neg_names:
-            joined = ", ".join(f"[yellow]{n}[/yellow]" for n in neg_names)
-            notes.append(f"негативные роли: {joined}")
-        if bias_pos or bias_neg:
-            notes.append(f"[cyan]bias[/cyan] как постоянная {1 if bias_pos else 0}")
-        if bias_note:
-            notes.append(f"[cyan]{bias_note}[/cyan]")
-        if notes:
-            lines.append("Детектор выделил: " + "; ".join(notes) + ".")
-        else:
-            lines.append("[red]Детектор не выделил ни одной рабочей роли.[/red]")
-        lines.append("")
+        ok = eq_val == target == net_val
+        all_ok = all_ok and ok
+        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
 
-        # --- Проверка уравнения ---
-        answer_table, equation_ok = _evaluate_formula(pos_masks, neg_masks, target_table)
+        # Слагаемые в школьной записи: список "1" / "0" по позитивным ролям.
+        terms = [str(int(v)) for v in pos_vals]
+        if bias_pos:
+            terms.append("1")
+        terms_str = " + ".join(terms) if terms else "0"
 
-        headers = ["x₀", "x₁"]
-        if pos_masks:
-            headers.append(" ∨ ".join(f"p{i+1}" for i in range(len(pos_masks))))
-        if neg_masks:
-            headers.append(" ∧ ".join(f"n{i+1}" for i in range(len(neg_masks))))
-        headers.extend(["уравнение", "сеть", "target", "ok"])
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("|" + "|".join("---" for _ in headers) + "|")
+        verification_rows.append((xi, xj, terms_str, eq_val, net_val, target, mark))
 
-        all_ok = equation_ok
-        for xi, xj in cases:
-            case = (xi, xj)
-            pos_vals = [_mask_to_truth(m)[case] for m in pos_masks]
-            neg_vals = [_mask_to_truth(m)[case] for m in neg_masks]
-            eq_val = answer_table[case]
-
-            h_vals = [act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) for k in range(hidden_n)]
-            net = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b2
-            net_val = 1 if _sigmoid(net) > 0.5 else 0
-            target = target_table[case]
-
-            ok = eq_val == target == net_val
-            all_ok = all_ok and ok
-            mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
-
-            cells = [f"{xi}", f"{xj}"]
-            if pos_masks:
-                cells.append(" ∨ ".join(str(v) for v in pos_vals))
-            if neg_masks:
-                cells.append(" ∧ ".join(str(v) for v in neg_vals))
-            cells.extend([f"{eq_val}", f"{net_val}", f"{target}", mark])
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
-
-        if all_ok:
-            lines.append(
-                f"[green]Уравнение детектора верно: роли действительно складываются в {target_name}. ✓[/green]"
-            )
-        else:
-            lines.append(
-                "[red]Уравнение детектора неверно — либо детектор сглючил, либо сеть не решила задачу. ✗[/red]"
-            )
-        lines.append("")
-
-        # Бытовое объяснение для распространённых уравнений.
-        explanations: dict[str, str] = {
-            "(¬x₀ ∧ ¬x₁) ∨ (x₀ ∧ x₁)":
-                "«оба сказали нет» ИЛИ «оба сказали да» → показания совпали.",
-            "(x₀ ∨ x₁) ∧ ¬(x₀ ∧ x₁)":
-                "«хоть один сказал да» И НЕ «оба сказали да» → показания разошлись.",
-            "(x₁ → x₀) ∧ ¬(x₀ ∧ ¬x₁)":
-                "«второй ведёт к первому» И НЕ «только первый прав» → показания совпали.",
-            "x₀ ↔ x₁":
-                "первый и второй совпадают → показания совпали.",
-            "¬((x₁ ∧ ¬x₀) ∨ (x₀ ∧ ¬x₁))":
-                "НЕ «только один сказал да» → показания совпали.",
-        }
-        if equation_full in explanations:
-            lines.append(f"**Смысл:** {explanations[equation_full]}")
-            lines.append("")
-
-        lines.append(
-            "Классическое XOR (различие) строится как «OR + NOT AND»: "
-            "`(x₀ ∨ x₁) ∧ ¬(x₀ ∧ x₁)`. "
-            f"Текущая задача — {target_name}, это инверсия XOR."
-        )
-        lines.append("")
-
-        if not exact:
-            lines.append(
-                "[yellow]Примечание:[/yellow] подобрано ближайшее приближение; возможно, "
-                "детектору не хватило чистых OR/XOR-ролей."
-            )
-            lines.append("")
-
-    # --- Вердикт: дубли и общая картина ---
-    lines.append("### Вердикт следователя")
-    lines.append("")
-    lines.append("Сеть решает XOR как комбинация логических ролей нейронов.")
-    lines.append("")
-
-    seen_masks: dict[tuple[int, ...], int] = {}
-    duplicates: list[tuple[int, int]] = []  # (current, previous)
-    effective_pos: list[int] = []
-    effective_neg: list[int] = []
-    useless: list[int] = []
+    # --- Вердикт: рабочие/бесполезные нейроны ---
+    active_pos: list[int] = []
+    active_neg: list[int] = []
+    ignored: list[int] = []
+    seen: dict[tuple[int, ...], int] = {}
+    duplicates: list[tuple[int, int]] = []
 
     for k in range(hidden_n):
         weight = w1[k]
         mask = masks[k]
-        if abs(weight) < 0.01 or mask == (0, 0, 0, 0) or mask == (1, 1, 1, 1):
-            useless.append(k)
-        elif mask in seen_masks:
-            duplicates.append((k, seen_masks[mask]))
+        if abs(weight) < 0.01 or mask in ((0, 0, 0, 0), (1, 1, 1, 1)):
+            ignored.append(k)
+        elif mask in seen:
+            duplicates.append((k, seen[mask]))
         else:
-            seen_masks[mask] = k
+            seen[mask] = k
             if weight > 0:
-                effective_pos.append(k)
+                active_pos.append(k)
             else:
-                effective_neg.append(k)
+                active_neg.append(k)
 
-    if effective_pos:
-        lines.append(f"[green]Складывает паттерны: h{', h'.join(str(k) for k in effective_pos)}[/green]")
-    if effective_neg:
-        lines.append(f"[yellow]Вычитает паттерны: h{', h'.join(str(k) for k in effective_neg)}[/yellow]")
-    if useless:
-        lines.append(f"[red]Игнорирует бесполезных: h{', h'.join(str(k) for k in useless)}[/red]")
+    # --- Формирование отчёта ---
+    lines: list[str] = []
+    lines.append("# ОТЧЁТ: АНАЛИЗ ВЕСОВ МОДЕЛИ (XNOR)")
+    lines.append("")
+    lines.append(f"**Цель:** Проверка логики сети 2 → {hidden_n} → 1 (задача «Два свидетеля»).")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## ШАГ 1. Фильтрация и роли нейронов")
+    lines.append("")
+
+    role_table = [
+        "| Нейрон | Роль | Поведение | Вес | Статус |",
+        "| :---: | :---: | :--- | :---: | :---: |",
+    ]
+    for k in range(hidden_n):
+        weight = w1[k]
+        mask = masks[k]
+        term, meaning = roles[k]
+
+        if abs(weight) < 0.01 or mask in ((0, 0, 0, 0), (1, 1, 1, 1)):
+            status = "[red]Игнор[/red]"
+            role_cell = term
+        elif weight > 0:
+            status = "[green]**АКТИВЕН (+)**[/green]"
+            role_cell = f"**{term}**"
+        else:
+            status = "[yellow]**АКТИВЕН (-)**[/yellow]"
+            role_cell = f"**{term}**"
+
+        neuron_cell = f"**h{k}**"
+        role_table.append(
+            f"| {neuron_cell} | {role_cell} | {meaning} | {weight:+.2f} | {status} |"
+        )
+    lines.extend(role_table)
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## ШАГ 2. Логическая формула и верификация")
+    lines.append("")
+    lines.append(f"**Уравнение:** {equation_scientific}")
+    lines.append("")
+    if bias_note:
+        lines.append(f"*{bias_note}.*")
+        lines.append("")
+
+    verify_table = [
+        "| x₀ | x₁ | Слагаемые | Уравнение | Сеть | Target | OK |",
+        "| :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+    ]
+    for xi, xj, terms_str, eq_val, net_val, target, mark in verification_rows:
+        eq_bold = f"**{eq_val}**"
+        verify_table.append(
+            f"| {xi} | {xj} | {terms_str} | {eq_bold} | {net_val} | {target} | {mark} |"
+        )
+    lines.extend(verify_table)
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## ШАГ 3. Вердикт")
+    lines.append("")
+
+    # Бытовое описание ролей для вердикта.
+    role_descriptions = []
+    for k in active_pos:
+        term = roles[k][0]
+        role_descriptions.append(f"**{term}**")
+    for k in active_neg:
+        term = roles[k][0]
+        role_descriptions.append(f"**{term}** (вычитание)")
+
+    if all_ok:
+        lines.append("⚖️ [green]**Уравнение детектора верно.**[/green]")
+        lines.append("")
+        if role_descriptions:
+            lines.append(
+                f"Сеть разложила {target_name} на подзадачи: {', '.join(role_descriptions)}. "
+                "Выходной нейрон объединяет их через логическое сложение (+). "
+                "Результаты уравнения, сети и target полностью совпадают."
+            )
+        else:
+            lines.append("Сеть корректно решает задачу через выходной bias.")
+    else:
+        lines.append("⚖️ [red]**Уравнение детектора неверно.**[/red]")
+        lines.append("")
+        lines.append(
+            "[red]Роли не складываются в целевую функцию — либо детектор сглючил, "
+            "либо сеть не решила задачу.[/red]"
+        )
+
+    if ignored:
+        lines.append("")
+        lines.append(
+            f"[yellow]Примечание:[/yellow] нейроны h{', h'.join(str(k) for k in ignored)} "
+            "не участвуют в решении (игнорируются)."
+        )
     if duplicates:
+        lines.append("")
         for k, prev in duplicates:
             same_sign = (w1[k] > 0 and w1[prev] > 0) or (w1[k] < 0 and w1[prev] < 0)
-            note = "работают заодно" if same_sign else "[red]гасят друг друга (противоположные веса)[/red]"
-            lines.append(f"[yellow]Дубликат: h{k} делает то же, что h{prev} — {note}[/yellow]")
-    lines.append("")
+            note = "работают заодно" if same_sign else "[red]гасят друг друга[/red]"
+            lines.append(f"[yellow]Дубликат:[/yellow] h{k} повторяет h{prev} — {note}.")
 
-    # --- Таблица выхода ---
-    lines.append("### Расчёт выхода")
-    lines.append("")
-    out_formula = " ".join(f"{w1[k]:+.4f}·h{k}" for k in range(hidden_n))
-    lines.append(f"net = {out_formula} {b2:+.4f}")
-    lines.append("sigmoid(net) → p, порог 0.5")
-    lines.append("")
-    all_ok = True
-    for xi, xj in cases:
-        h_vals = [act(w0[0][k] * xi + w0[1][k] * xj + b0[k]) for k in range(hidden_n)]
-        net = sum(w1[k] * h_vals[k] for k in range(hidden_n)) + b2
-        p = _sigmoid(net)
-        target = 1 if xi == xj else 0
-        ok = (p > 0.5) == (target == 1)
-        all_ok = all_ok and ok
-        h_str = ", ".join(f"h{k}={v:.3f}" for k, v in enumerate(h_vals))
-        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
-        lines.append(f"  ({xi},{xj}): {h_str} → net={net:+.3f} → p={p:.1%} (target={target}) {mark}")
-
-    lines.append("")
-    if all_ok:
-        lines.append("[green]Сеть корректно решает XOR на всех четырёх входах. ✓[/green]")
-    else:
-        lines.append("[red]Сеть ошибается — следователь вынесет неверный вердикт. ✗[/red]")
+    if not exact:
+        lines.append("")
+        lines.append(
+            "[yellow]Примечание:[/yellow] подобрано ближайшее приближение; возможно, "
+            "детектору не хватило чистых OR/XOR-ролей."
+        )
 
     lines.append("")
     lines.append("(Esc — назад, 1 — default, 2 — forensic, 3 — prune)")
@@ -835,22 +830,21 @@ def prune_report(model_key: str, body: str) -> str | None:
     cases = [(0, 0), (0, 1), (1, 0), (1, 1)]
     act, act_name = _hidden_activation(model_key)
 
+    keep_count = 0
+    prune_count = 0
+
     lines: list[str] = []
     lines.append("### Таблица prune-анализа")
     lines.append("")
     lines.append(f"Архитектура: 2 входа → {hidden_n} скрытых ({act_name}) → 1 выход (sigmoid)")
     lines.append("")
-    lines.append("Критерий PRUNE: нейрон мёртв (max|activation| < 0.1) ИЛИ вес на выходе ≈ 0.")
+    lines.append("Критерий PRUNE: нейрон мёртв (`max·activation < 0.1`) ИЛИ вес на выходе ≈ 0.")
     lines.append("")
 
-    # Заголовок таблицы (поуже, чтобы влезать на 80×24)
-    header = f"{'нейр':>4} │ {'w_x0':>7} │ {'w_x1':>7} │ {'bias':>7} │ {'w_out':>7} │ {'max|act|':>7} │ вердикт"
-    lines.append(header)
-    lines.append("─" * len(header))
-
-    keep_count = 0
-    prune_count = 0
-
+    table_lines = [
+        "| нейр | w_x0 | w_x1 | bias | w_out | max\\|act\\| | вердикт |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
     for k in range(hidden_n):
         wx0 = w0[0][k]
         wx1 = w0[1][k]
@@ -868,14 +862,16 @@ def prune_report(model_key: str, body: str) -> str | None:
             keep_count += 1
             verdict = "[green]KEEP[/green]"
 
-        row = (
-            f"{f'h{k}':>4} │ {wx0:7.3f} │ {wx1:7.3f} │ {bk:7.3f} │ {wout:7.3f} │ {max_act:7.3f} │ {verdict}"
+        table_lines.append(
+            f"| h{k} | {wx0:+.3f} | {wx1:+.3f} | {bk:+.3f} | {wout:+.3f} | {max_act:.3f} | {verdict} |"
         )
-        lines.append(row)
 
     # Строка выходного нейрона
-    lines.append("─" * len(header))
-    lines.append(f"{'out':>4} │ {'—':>7} │ {'—':>7} │ {b2:7.3f} │ {'—':>7} │ {'—':>7} │ [yellow]bias[/yellow]")
+    table_lines.append(
+        "| out | — | — | {b2:+.3f} | — | — | [yellow]bias[/yellow] |".format(b2=b2)
+    )
+
+    lines.extend(table_lines)
     lines.append("")
 
     # Итог
