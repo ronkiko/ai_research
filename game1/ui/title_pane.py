@@ -28,6 +28,7 @@ from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER,
     PAIR_BAR, PAIR_BAR_SEL,
 )
+from .preview_popup import PreviewPopup
 from modules.base import MechanicsHost, AiHost, Status, ChangeLog
 from modules.game_api.modes import mode_info, PLAY
 
@@ -54,7 +55,7 @@ class TitlePane(PseudoWindow):
     _MENU_ROW = 16           # полоска меню с курсором (вместо кнопки + подсказки)
 
     # Слоты меню на одной строке: (ключ, x, ширина). Старт — по центру (курсор на
-    # нём по умолчанию), слева Модель/Режим, справа Save/Скорость. Подписи
+    # нём по умолчанию), слева Модель/Режим, справа Preview/Скорость. Подписи
     # короткие, чтобы 5 кнопок влезли в 74 колонки. Остальное на строке — фон
     # полоски (PAIR_BAR); слот под курсором перекрашивается (PAIR_BAR_SEL).
     _MENU_ITEMS = (
@@ -62,7 +63,7 @@ class TitlePane(PseudoWindow):
         ("mode", 23, 8),      # 23..30
         ("start", 33, 10),    # 33..42  Старт
         ("speed", 45, 8),     # 45..52
-        ("save",  55, 8),     # 55..62
+        ("preview", 55, 10),  # 55..64  Preview
     )
     _MENU_START_IDX = 2      # курсор по умолчанию — на «Старт»
 
@@ -91,6 +92,8 @@ class TitlePane(PseudoWindow):
         self._submenu_items: list[tuple[str, str, bool]] = []  # (key, label, active)
         self._submenu_callback: Callable[[str], str] = lambda k: "move"
         self._submenu_kind: str = ""  # game/model/mode/speed — для позиционирования
+        self._preview_open = False
+        self._preview_popup: PreviewPopup | None = None
 
     # --- состояние прогона ---
 
@@ -138,8 +141,12 @@ class TitlePane(PseudoWindow):
 
     def handle(self, key: int) -> str | None:
         """Обработать клавишу меню. Возвращает действие для контроллера:
-        ``move``/``start``/``stop``/``close``/None.
+        ``move``/``start``/``stop``/``close``/``lab``/None.
         """
+        # попап Preview поверх F1: свои клавиши, Esc/Enter/S — закрыть/сохранить
+        if self._preview_open and self._preview_popup is not None:
+            return self._preview_popup.handle(key)
+
         # субменю: ↑/↓ — навигация (на границе упираемся), Enter — выбор, Esc — закрыть
         if self._submenu_open:
             if key in (curses.KEY_UP, ord("k")):
@@ -187,36 +194,26 @@ class TitlePane(PseudoWindow):
                 return "stop"
             self.start_run()
             return "start"
-        if key == "save":
-            self._save_snapshot()
-            return "lab"
+        if key == "preview":
+            self._open_preview()
+            return "move"
         return None
 
     # --- сохранение снапшота весов ---
 
-    def _save_snapshot(self) -> None:
+    def _build_snapshot_body(self) -> tuple[str, str, str, str] | None:
+        """Собрать тело снапшота в памяти. Вернуть (body, model_key, game_key, mode)
+        или None, если данные не готовы."""
         if self._ai is None or self._host is None:
-            return
+            return None
         mi = self._ai.active_model_info()
         gi = self._host.active_mechanics()
         mode = self._ai.active_train_mode()
         if mi is None or gi is None or mode is None:
-            return
+            return None
         st = self._ai.model_stats(mi.key)
         if st is None:
-            return
-
-        model_key = mi.key
-        game_key = gi.key
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"{ts}_{game_key}_{mode}.md"
-
-        save_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "research", "weights", model_key,
-        )
-        os.makedirs(save_dir, exist_ok=True)
-        filepath = os.path.join(save_dir, filename)
+            return None
 
         acc = self.accuracy()
         lines = [
@@ -238,11 +235,61 @@ class TitlePane(PseudoWindow):
         for k, v in st.params.items():
             lines.append(f"  `{k}` = {v}")
         lines.append("")
+        return "\n".join(lines), mi.key, gi.key, mode
 
+    def _open_preview(self) -> None:
+        data = self._build_snapshot_body()
+        if data is None:
+            return
+        body, model_key, game_key, mode = data
+        popup = PreviewPopup(
+            self.y + 1, self.x + 1, self.h - 2, self.w - 2,
+            body, model_key, game_key, mode,
+            save_callback=self._do_save_and_lab,
+            close_callback=self._close_preview,
+            sink=self._sink,
+        )
+        self._preview_popup = popup
+        self._preview_open = True
+
+    def _close_preview(self) -> None:
+        self._preview_open = False
+        self._preview_popup = None
+
+    def _do_save_and_lab(self, body: str, model_key: str, game_key: str,
+                         mode: str) -> None:
+        filepath = self._save_snapshot_body_to_file(body, model_key, game_key, mode)
+        if filepath and self._sink is not None:
+            self._sink.log_change(
+                "сохранение", model_key, Status.OK,
+                f"снапшот → {filepath}",
+            )
+        self._close_preview()
+
+    def _save_snapshot_body_to_file(self, body: str, model_key: str,
+                                    game_key: str, mode: str) -> str | None:
+        if self._ai is None:
+            return None
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{ts}_{game_key}_{mode}.md"
+        save_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "research", "weights", model_key,
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
         with open(filepath, "w") as f:
-            f.write("\n".join(lines))
+            f.write(body)
+        return filepath
 
-        if self._sink is not None:
+    def _save_snapshot(self) -> None:
+        """Устаревший прямой сохранятор; оставлен для совместимости."""
+        data = self._build_snapshot_body()
+        if data is None:
+            return
+        body, model_key, game_key, mode = data
+        filepath = self._save_snapshot_body_to_file(body, model_key, game_key, mode)
+        if filepath and self._sink is not None:
             self._sink.log_change(
                 "сохранение", model_key, Status.OK,
                 f"снапшот → {filepath}",
@@ -352,8 +399,8 @@ class TitlePane(PseudoWindow):
             return "■  Stop" if self._running else "▶  Start"
         if key == "speed":
             return "Speed"
-        if key == "save":
-            return "Save"
+        if key == "preview":
+            return "Preview"
         if key == "model":
             return "Model"
         if key == "mode":
@@ -442,6 +489,10 @@ class TitlePane(PseudoWindow):
         # --- полоска меню + статусы + субменю (логическая единица) ---
         self._render_menu_bar(stdscr, top, left, IW)
 
+        # --- попап Preview поверх всего ---
+        if self._preview_open and self._preview_popup is not None:
+            self._preview_popup.render(stdscr)
+
     # --- полоска меню: имена слотов, статусы, субменю ---
 
     _ACTIVE_LABEL_Y = 17  # на 1 строку ниже MENU_ROW=16
@@ -497,7 +548,7 @@ class TitlePane(PseudoWindow):
             return self._mode_tag(m) if m is not None else None
         if mkey == "speed":
             return self._SPEEDS[self._speed_idx][1]
-        if mkey == "save":
+        if mkey == "preview":
             return None
         return None
 
