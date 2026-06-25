@@ -1,8 +1,10 @@
 """PreviewPopup — временное псевдоокно поверх F1 для просмотра весов.
 
-Показывает markdown-тело снапшота без сохранения. Клавиши:
-  - Esc, q, Enter — закрыть попап и вернуться в F1;
-  - s — сохранить снапшот в файл и переключиться в Лабораторию.
+Клавиши:
+  - s — сохранить снапшот в файл и переключиться в Лабораторию;
+  - Enter — запустить следовательский (forensic) разбор весов без сохранения
+            и показать результат в том же попапе;
+  - Esc, q — закрыть попап и вернуться в F1.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import textwrap
 
 from .window import PseudoWindow
 from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER, PAIR_BAR
+from .lab_report import forensic_report
 
 
 class PreviewPopup(PseudoWindow):
@@ -30,11 +33,15 @@ class PreviewPopup(PseudoWindow):
         self._close_callback = close_callback
         self._sink = sink
         self._scroll = 0
+        self._forensic_mode = False
+        self._forensic_report: str | None = None
 
     def handle(self, key: int) -> str | None:
-        if key in (27, ord("q"), ord("Q"), ord("\n"), ord("\r"),
-                   curses.KEY_ENTER):
+        if key in (27, ord("q"), ord("Q")):
             self._close_callback()
+            return "move"
+        if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
+            self._run_forensic()
             return "move"
         if key in (ord("s"), ord("S")):
             self._save_callback(self._body, self._model_key,
@@ -54,7 +61,19 @@ class PreviewPopup(PseudoWindow):
             page = max(1, self.inner_h - 3)
             self._scroll += page
             return "move"
+        if key in (ord("1"),):
+            self._forensic_mode = False
+            self._scroll = 0
+            return "move"
+        if key in (ord("2"),):
+            self._run_forensic()
+            return "move"
         return "move"
+
+    def _run_forensic(self) -> None:
+        self._forensic_report = forensic_report(self._model_key, self._body)
+        self._forensic_mode = True
+        self._scroll = 0
 
     def render(self, stdscr) -> None:
         if self.h < 5 or self.w < 10:
@@ -82,7 +101,10 @@ class PreviewPopup(PseudoWindow):
                 break
 
         content_h = self.inner_h - 2  # последние 2 строки — подсказка
-        rows = self._body_rows(self.inner_w - 2)
+        if self._forensic_mode and self._forensic_report:
+            rows = self._report_rows(self._forensic_report, self.inner_w - 2)
+        else:
+            rows = self._body_rows(self._body, self.inner_w - 2)
         max_scroll = max(0, len(rows) - content_h)
         self._scroll = min(self._scroll, max_scroll)
 
@@ -91,14 +113,30 @@ class PreviewPopup(PseudoWindow):
             idx = self._scroll + i
             if idx >= len(rows):
                 break
-            text, attr = rows[idx]
-            try:
-                stdscr.addstr(self.y + 1 + i, x, text[:self.inner_w - 2], attr)
-            except curses.error:
-                pass
+            item = rows[idx]
+            if isinstance(item, tuple):
+                text, attr = item
+                try:
+                    stdscr.addstr(self.y + 1 + i, x, text[:self.inner_w - 2], attr)
+                except curses.error:
+                    pass
+            else:
+                ox = 0
+                for text, attr in item.segs:
+                    if ox >= self.inner_w - 2:
+                        break
+                    try:
+                        stdscr.addstr(self.y + 1 + i, x + ox,
+                                      text[:self.inner_w - 2 - ox], attr)
+                    except curses.error:
+                        pass
+                    ox += len(text)
 
         # подсказка внизу
-        hint = " s — сохранить │ Enter/Esc/q — закрыть "
+        if self._forensic_mode:
+            hint = " 1 — веса │ s — save │ Esc — close "
+        else:
+            hint = " s — save │ Enter — forensic │ Esc — close "
         hint_y = self.y + self.h - 2
         hint_x = self.x + max(0, (self.w - len(hint)) // 2)
         try:
@@ -106,9 +144,9 @@ class PreviewPopup(PseudoWindow):
         except curses.error:
             pass
 
-    def _body_rows(self, width: int) -> list[tuple[str, int]]:
-        rows: list[tuple[str, int]] = []
-        for line in self._body.split("\n"):
+    def _body_rows(self, body: str, width: int) -> list:
+        rows: list = []
+        for line in body.split("\n"):
             if line.startswith("##"):
                 rows.append((line[2:].strip(), A(PAIR_OK, bold=True)))
             elif line.startswith("###"):
@@ -118,9 +156,17 @@ class PreviewPopup(PseudoWindow):
                 rows.append((f"{label.strip()}: {val.strip()}", A(PAIR_DIM)))
             elif line.startswith("  `"):
                 rows.append((line, A(PAIR_DIM)))
+            elif line.startswith("++ "):
+                rows.append((line[3:], A(PAIR_OK, bold=True)))
+            elif line.startswith("!! "):
+                rows.append((line[3:], A(PAIR_TITLE, bold=True)))
             elif line.strip() == "":
                 rows.append(("", A(PAIR_DIM)))
             else:
                 for ln in textwrap.wrap(line, width=max(4, width)):
                     rows.append((ln, A(PAIR_DIM)))
         return rows
+
+    def _report_rows(self, report: str, width: int) -> list:
+        """Те же правила рендера, что и для markdown-тела снапшота."""
+        return self._body_rows(report, width)
