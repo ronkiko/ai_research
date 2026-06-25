@@ -48,6 +48,8 @@ class ApiRouter:
             ("GET", "/api/snapshots"): self._snapshots,
             ("POST", "/api/snapshots/save"): self._snapshots_save,
             ("GET", "/api/snapshots/read"): self._snapshots_read,
+            ("GET", "/api/graph"): self._graph,
+            ("POST", "/api/graph-current"): self._graph_current,
             ("GET", "/api/lab/engines"): self._lab_engines,
             ("GET", "/api/lab/report"): self._lab_report,
             ("POST", "/api/lab/report-current"): self._lab_report_current,
@@ -151,6 +153,19 @@ class ApiRouter:
             raise ApiError(404, "not_found", f"Snapshot not found: {snapshot_id}")
         return {"snapshot": snapshot}, ""
 
+    def _graph(self, query: dict[str, list[str]], _body: dict[str, Any]):
+        snapshot_id = self._require_query_value(query, "snapshot")
+        graph = self._app.graph_snapshot(snapshot_id)
+        if graph is None:
+            raise ApiError(404, "not_found", f"Snapshot not found: {snapshot_id}")
+        return graph, ""
+
+    def _graph_current(self, _query: dict[str, list[str]], _body: dict[str, Any]):
+        graph = self._app.graph_current()
+        if graph is None:
+            raise ApiError(409, "snapshot_unavailable", "Could not build snapshot from the current state.")
+        return graph, ""
+
     def _lab_engines(self, _query: dict[str, list[str]], _body: dict[str, Any]):
         return {"engines": self._app.list_lab_engines()}, ""
 
@@ -221,4 +236,3 @@ class ApiRouter:
             "error": error,
             "message": message,
         }
-

@@ -15,6 +15,7 @@ from .dto import (
     SnapshotDto,
     SnapshotSummaryDto,
 )
+from .graph import build_graph_payload
 from .lab import LabService
 from .module_loader import LoadedModules, load_application_modules
 from .run_session import RunSession
@@ -174,6 +175,18 @@ class GameApplication:
 
     def render_report_from_body(self, model_key: str, body: str, engine_key: str) -> ReportDto:
         return self._lab.render_report_from_body(model_key, body, engine_key)
+
+    def graph_snapshot(self, snapshot_id: str) -> dict[str, object] | None:
+        snapshot = self.read_snapshot(snapshot_id)
+        if snapshot is None:
+            return None
+        return build_graph_payload(snapshot)
+
+    def graph_current(self) -> dict[str, object] | None:
+        snapshot = self.build_snapshot()
+        if snapshot is None:
+            return None
+        return build_graph_payload(snapshot)
 
     def save_config(self) -> ActionResultDto:
         active_game = self._host.active_mechanics() if self._host is not None else None

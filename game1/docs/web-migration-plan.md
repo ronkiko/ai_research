@@ -4,16 +4,16 @@
 
 - Patch 1: done. Backend application layer lives in `game1/app/` for module loading, config, runtime session, snapshots, and lab reports without `curses`.
 - Patch 2: done. Minimal web server MVP now wraps that backend facade and exposes operator actions through HTTP plus a plain HTML/CSS/JS UI.
-- Patch 3: move remaining lab/report imports out of `ui/`, switch web to primary operator interface, then remove TUI.
+- Patch 3: done. Remaining lab/report code moved out of `ui/`, old TUI removed, `engine.py` is web-only, and graph placeholder seam added.
 
 ## Rules
 
-- Backend code must not import `curses` or other TUI rendering modules.
-- Temporary exception until Patch 3: `app/lab.py` may import `ui.lab_engines` as a report-engine bridge.
+- Backend and web code must not import `curses` or legacy `ui` modules.
+- `lab/engines/` is the canonical home for report engines.
 
-## Patch 2 result
+## Final state
 
-- Default launch path is now web-first:
+- Default launch path is web-only:
 
 ```bash
 python3 engine.py
@@ -32,9 +32,17 @@ python3 engine.py --port 0
   - start/stop/tick/step run controls;
   - snapshot save/list/read;
   - lab engine list;
-  - current snapshot report rendering and saved snapshot report rendering.
+  - current snapshot report rendering and saved snapshot report rendering;
+  - graph placeholder panel with `Open current graph` / `Open snapshot graph`.
 
-## Temporary legacy path
+## Patch 3 result
 
-- `python3 engine.py --tui` still launches the old curses interface during the transition.
-- TUI removal, report-engine import cleanup, and final dead-code cleanup stay in Patch 3.
+- `engine.py` launches only `web.server.main`.
+- Legacy terminal flag is removed.
+- Old terminal launcher and the entire legacy UI tree are removed.
+- Report engines moved into `lab/engines/`.
+- `app/lab.py` now imports `from lab.engines.registry import ENGINES`.
+- Added API placeholder seam:
+  - `GET /api/graph?snapshot=<id>`;
+  - `POST /api/graph-current`.
+- Web is the only operator interface for `game1`.

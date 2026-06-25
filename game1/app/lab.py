@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ui.lab_engines.registry import ENGINES
+from lab.engines.registry import ENGINES
 
 from .dto import LabEngineDto, ReportDto, SnapshotDto
 

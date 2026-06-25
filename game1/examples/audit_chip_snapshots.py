@@ -11,7 +11,7 @@ RESULT_PATH = ROOT / "examples" / "results" / "chip_audit.json"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui.lab_engines.chip import analyze_chip, parse_snapshot_meta
+from lab.engines.chip import analyze_chip, parse_snapshot_meta
 
 
 def build_summary(items: list[dict[str, object]]) -> dict[str, object]:

@@ -4,6 +4,7 @@ const appState = {
   engines: [],
   selectedSnapshotId: "",
   selectedEngine: "chip",
+  graph: null,
   tickerId: null,
   tickInFlight: false,
   logs: [],
@@ -57,6 +58,7 @@ async function apiRequest(path, options = {}, { quiet = false } = {}) {
 function setButtonState() {
   const hasSnapshot = Boolean(appState.selectedSnapshotId);
   document.getElementById("report-snapshot-button").disabled = !hasSnapshot;
+  document.getElementById("graph-snapshot-button").disabled = !hasSnapshot;
 
   const runState = appState.state ? appState.state.run : null;
   const running = Boolean(runState && runState.running);
@@ -181,6 +183,62 @@ function renderReport(report) {
   document.getElementById("report-output").textContent = report.body || "Empty report.";
 }
 
+function appendGraphField(root, label, value) {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "graph-row";
+
+  const term = document.createElement("span");
+  term.className = "graph-label";
+  term.textContent = label;
+
+  const detail = document.createElement("strong");
+  detail.textContent = String(value);
+
+  row.append(term, detail);
+  root.appendChild(row);
+}
+
+function renderGraph(payload) {
+  const root = document.getElementById("graph-output");
+  root.innerHTML = "";
+
+  if (!payload || !payload.graph) {
+    root.textContent = "Graph inspector coming next.";
+    return;
+  }
+
+  appState.graph = payload;
+  const placeholder = document.createElement("p");
+  placeholder.className = "graph-placeholder";
+  placeholder.textContent = payload.graph.message || "Graph inspector coming next.";
+  root.appendChild(placeholder);
+
+  const meta = document.createElement("div");
+  meta.className = "graph-meta";
+  appendGraphField(meta, "Snapshot", payload.snapshot && payload.snapshot.id);
+  appendGraphField(meta, "Network", payload.graph.network_role);
+  appendGraphField(meta, "Target", payload.graph.target_role);
+  appendGraphField(
+    meta,
+    "Match",
+    typeof payload.graph.match === "boolean" ? (payload.graph.match ? "yes" : "no") : "",
+  );
+  appendGraphField(
+    meta,
+    "CMOS",
+    typeof payload.graph.cmos_transistors === "number"
+      ? `${payload.graph.cmos_transistors}T`
+      : "",
+  );
+
+  if (meta.children.length) {
+    root.appendChild(meta);
+  }
+}
+
 function applyState(state) {
   appState.state = state;
   renderHeader(state.run);
@@ -296,6 +354,34 @@ async function openSnapshotReport() {
   }
 }
 
+async function openCurrentGraph() {
+  try {
+    const data = await apiRequest("/api/graph-current", {
+      method: "POST",
+    });
+    renderGraph(data);
+    logLine("Loaded graph placeholder for current snapshot.", "ok");
+  } catch (error) {
+    logLine(error.message, "error");
+  }
+}
+
+async function openSnapshotGraph() {
+  if (!appState.selectedSnapshotId) {
+    logLine("Select a snapshot first.", "warn");
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({ snapshot: appState.selectedSnapshotId });
+    const data = await apiRequest(`/api/graph?${params.toString()}`, {}, { quiet: true });
+    renderGraph(data);
+    logLine(`Loaded graph placeholder for snapshot ${appState.selectedSnapshotId}.`, "ok");
+  } catch (error) {
+    logLine(error.message, "error");
+  }
+}
+
 function bindUi() {
   document.getElementById("run-start-button").addEventListener("click", async () => {
     await performAction(() => apiRequest("/api/run/start", { method: "POST" }));
@@ -344,10 +430,19 @@ function bindUi() {
   document.getElementById("report-snapshot-button").addEventListener("click", async () => {
     await openSnapshotReport();
   });
+
+  document.getElementById("graph-current-button").addEventListener("click", async () => {
+    await openCurrentGraph();
+  });
+
+  document.getElementById("graph-snapshot-button").addEventListener("click", async () => {
+    await openSnapshotGraph();
+  });
 }
 
 async function init() {
   bindUi();
+  renderGraph(null);
   try {
     await refreshAll();
     logLine("Web UI ready.", "ok");

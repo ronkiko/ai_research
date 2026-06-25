@@ -139,7 +139,7 @@ proof table.
 
 ## 8. Target truth tables
 
-Canonical target пока берётся из `game1/ui/lab_engines/targets.py` —
+Canonical target пока берётся из `game1/lab/engines/targets.py` —
 минимального локального словаря (`target_for_game`). Позже источник target
 должен переехать к mechanics metadata игр, а `targets.py` станет тонким
 читателем.
@@ -209,4 +209,4 @@ DEBUG: press 1/2/3 to switch engines; raw neuron diagnostic below
 - Добавлены unit-style проверки нового движка.
 - Итоговая функция и CMOS-стоимость строятся по `real network behavior`.
 - Hidden-bit approximation не влияет на `Network`, `Result`, `CMOS COST`.
-- Canonical target берётся из `ui/lab_engines/targets.py`.
+- Canonical target берётся из `lab/engines/targets.py`.
