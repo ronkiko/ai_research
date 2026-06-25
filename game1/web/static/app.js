@@ -5,10 +5,15 @@ const appState = {
   selectedSnapshotId: "",
   selectedEngine: "chip",
   graph: null,
+  graphSelectedCaseId: "all",
+  graphSelectedNodeId: "",
+  graphSelectedEdgeId: "",
   tickerId: null,
   tickInFlight: false,
   logs: [],
 };
+
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function logLine(message, level = "info") {
   const ts = new Date().toLocaleTimeString();
@@ -201,42 +206,558 @@ function appendGraphField(root, label, value) {
   root.appendChild(row);
 }
 
-function renderGraph(payload) {
+function formatGraphNumber(value, digits = 4) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  return value.toFixed(digits);
+}
+
+function graphEdgeId(edge) {
+  return `${edge.from}->${edge.to}`;
+}
+
+function findGraphCase(graph, caseId) {
+  if (!graph || !Array.isArray(graph.cases)) {
+    return null;
+  }
+  return graph.cases.find((item) => item.id === caseId) || null;
+}
+
+function selectedGraphCase(graph, caseId) {
+  if (!graph || caseId === "all") {
+    return null;
+  }
+  return findGraphCase(graph, caseId);
+}
+
+function graphNodeById(graph, nodeId) {
+  if (!graph || !nodeId) {
+    return null;
+  }
+
+  const inputNode = (graph.inputs || []).find((item) => item.id === nodeId);
+  if (inputNode) {
+    return { ...inputNode, kind: "input" };
+  }
+
+  const hiddenNode = (graph.hidden || []).find((item) => item.id === nodeId);
+  if (hiddenNode) {
+    return { ...hiddenNode, kind: "hidden" };
+  }
+
+  if (graph.output && graph.output.id === nodeId) {
+    return { ...graph.output, kind: "output" };
+  }
+
+  return null;
+}
+
+function findGraphEdge(graph, edgeId) {
+  if (!graph || !edgeId || !Array.isArray(graph.edges)) {
+    return null;
+  }
+  return graph.edges.find((edge) => graphEdgeId(edge) === edgeId) || null;
+}
+
+function setGraphSelection({ caseId, nodeId, edgeId }) {
+  if (caseId !== undefined) {
+    appState.graphSelectedCaseId = caseId;
+  }
+  if (nodeId !== undefined) {
+    appState.graphSelectedNodeId = nodeId;
+  }
+  if (edgeId !== undefined) {
+    appState.graphSelectedEdgeId = edgeId;
+  }
+  rerenderGraphPanel();
+}
+
+function buildGraphChip(label, value) {
+  const chip = document.createElement("div");
+  chip.className = "graph-chip";
+
+  const term = document.createElement("span");
+  term.className = "graph-label";
+  term.textContent = label;
+
+  const detail = document.createElement("strong");
+  detail.textContent = String(value);
+
+  chip.append(term, detail);
+  return chip;
+}
+
+function buildGraphSummary(graph) {
+  const summary = document.createElement("div");
+  summary.className = "graph-summary";
+  summary.appendChild(buildGraphChip("Target", graph.target_role || "unknown"));
+  summary.appendChild(buildGraphChip("Network", graph.network_role || "unknown"));
+  summary.appendChild(buildGraphChip(
+    "Match",
+    typeof graph.match === "boolean" ? (graph.match ? "yes" : "no") : "n/a",
+  ));
+  summary.appendChild(buildGraphChip(
+    "CMOS",
+    typeof graph.cmos_transistors === "number" ? `${graph.cmos_transistors}T` : "n/a",
+  ));
+  return summary;
+}
+
+function renderGraphControls(graph) {
+  const toolbar = document.createElement("div");
+  toolbar.id = "graph-toolbar";
+  toolbar.className = "graph-toolbar";
+
+  const caseIds = ["all", ...(graph.cases || []).map((item) => item.id)];
+  for (const caseId of caseIds) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = caseId;
+    if (caseId === appState.graphSelectedCaseId) {
+      button.classList.add("active");
+    }
+    button.addEventListener("click", () => {
+      setGraphSelection({
+        caseId,
+        edgeId: "",
+      });
+    });
+    toolbar.appendChild(button);
+  }
+
+  return toolbar;
+}
+
+function createSvgElement(name, attrs = {}) {
+  const element = document.createElementNS(SVG_NS, name);
+  for (const [key, value] of Object.entries(attrs)) {
+    element.setAttribute(key, String(value));
+  }
+  return element;
+}
+
+function drawNetworkSvg(graph, selectedCaseId) {
+  const container = document.createElement("div");
+  container.id = "graph-svg";
+  container.className = "graph-svg";
+
+  if (graph.status !== "ok") {
+    const copy = document.createElement("p");
+    copy.className = "graph-message";
+    copy.textContent = graph.message || "Graph unsupported for this snapshot.";
+    container.appendChild(copy);
+    return container;
+  }
+
+  const currentCase = selectedGraphCase(graph, selectedCaseId);
+  const hiddenCount = Math.max(graph.hidden.length, 1);
+  const width = 720;
+  const height = Math.max(320, 150 + hiddenCount * 74);
+  const top = 70;
+  const bottom = 70;
+  const hiddenStep = hiddenCount === 1 ? 0 : (height - top - bottom) / (hiddenCount - 1);
+  const centerY = height / 2;
+  const positions = {
+    x0: { x: 110, y: centerY - 56 },
+    x1: { x: 110, y: centerY + 56 },
+    out: { x: 610, y: centerY },
+  };
+
+  graph.hidden.forEach((node, index) => {
+    positions[node.id] = {
+      x: 360,
+      y: hiddenCount === 1 ? centerY : top + hiddenStep * index,
+    };
+  });
+
+  const svg = createSvgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": "MLP graph inspector",
+  });
+
+  svg.appendChild(createSvgElement("rect", {
+    x: 0,
+    y: 0,
+    width,
+    height,
+    rx: 18,
+    ry: 18,
+    fill: "#f8fbfe",
+  }));
+
+  const title = createSvgElement("text", {
+    x: 28,
+    y: 34,
+    class: "graph-layer-label",
+  });
+  title.textContent = currentCase
+    ? `Case ${currentCase.id}: x0=${currentCase.x0}, x1=${currentCase.x1}, logit=${formatGraphNumber(currentCase.logit)}`
+    : "All cases: topology and weights";
+  svg.appendChild(title);
+
+  const layerTitles = [
+    { label: "inputs", x: positions.x0.x - 24 },
+    { label: "hidden", x: positions.h0 ? positions.h0.x - 28 : 332 },
+    { label: "output", x: positions.out.x - 28 },
+  ];
+  for (const item of layerTitles) {
+    const text = createSvgElement("text", {
+      x: item.x,
+      y: 56,
+      class: "graph-layer-label",
+    });
+    text.textContent = item.label;
+    svg.appendChild(text);
+  }
+
+  for (const edge of graph.edges) {
+    const from = positions[edge.from];
+    const to = positions[edge.to];
+    const edgeId = graphEdgeId(edge);
+    const edgeGroup = createSvgElement("g", {});
+    const isSelected = appState.graphSelectedEdgeId === edgeId;
+    let edgeActive = false;
+    if (currentCase) {
+      if (edge.from === "x0" || edge.from === "x1") {
+        const sourceValue = currentCase[edge.from];
+        const targetState = currentCase.hidden ? currentCase.hidden[edge.to] : null;
+        edgeActive = sourceValue === 1 && Boolean(targetState && targetState.active);
+      } else {
+        const sourceState = currentCase.hidden ? currentCase.hidden[edge.from] : null;
+        edgeActive = Boolean(sourceState && sourceState.active);
+      }
+    }
+
+    const line = createSvgElement("line", {
+      x1: from.x,
+      y1: from.y,
+      x2: to.x,
+      y2: to.y,
+      class: [
+        "graph-edge",
+        edge.weight >= 0 ? "positive" : "negative",
+        edgeActive ? "active" : "",
+        isSelected ? "selected" : "",
+      ].filter(Boolean).join(" "),
+      "stroke-width": 1.5 + Math.min(5.5, Math.abs(edge.weight)),
+    });
+    line.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setGraphSelection({
+        nodeId: "",
+        edgeId,
+      });
+    });
+
+    const midX = (from.x + to.x) / 2;
+    const midY = (from.y + to.y) / 2;
+    const weightLabel = createSvgElement("text", {
+      x: midX + (edge.from === "x1" ? 10 : -6),
+      y: midY + (edge.to === "out" ? -10 : edge.from === "x1" ? 14 : -10),
+      class: `graph-weight ${edge.weight >= 0 ? "positive" : "negative"} ${isSelected ? "selected" : ""}`,
+    });
+    weightLabel.textContent = formatGraphNumber(edge.weight);
+    weightLabel.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setGraphSelection({
+        nodeId: "",
+        edgeId,
+      });
+    });
+
+    edgeGroup.append(line, weightLabel);
+    svg.appendChild(edgeGroup);
+  }
+
+  const allNodes = [
+    ...(graph.inputs || []).map((node) => ({ ...node, kind: "input" })),
+    ...(graph.hidden || []).map((node) => ({ ...node, kind: "hidden" })),
+    { ...graph.output, kind: "output" },
+  ];
+
+  for (const node of allNodes) {
+    const position = positions[node.id];
+    const group = createSvgElement("g", {
+      class: [
+        "graph-node",
+        node.id === appState.graphSelectedNodeId ? "selected" : "",
+        node.dead ? "dead" : "",
+      ].filter(Boolean).join(" "),
+    });
+
+    let isActive = false;
+    if (currentCase) {
+      if (node.id === "x0" || node.id === "x1") {
+        isActive = currentCase[node.id] === 1;
+      } else if (node.kind === "hidden") {
+        const state = currentCase.hidden ? currentCase.hidden[node.id] : null;
+        isActive = Boolean(state && state.active);
+      } else if (node.id === "out") {
+        isActive = currentCase.network === 1;
+      }
+    }
+    if (isActive) {
+      group.classList.add("active");
+    }
+
+    const shapeAttrs = {
+      cx: position.x,
+      cy: position.y,
+      r: node.kind === "hidden" ? 24 : 22,
+    };
+    group.appendChild(createSvgElement("circle", shapeAttrs));
+
+    const label = createSvgElement("text", {
+      x: position.x,
+      y: position.y + 5,
+      "text-anchor": "middle",
+      class: "graph-node-label",
+    });
+    label.textContent = node.label;
+    group.appendChild(label);
+
+    const sideText = createSvgElement("text", {
+      x: position.x + (node.kind === "output" ? 34 : 36),
+      y: position.y - 8,
+      class: "graph-node-copy",
+    });
+    if (node.kind === "hidden") {
+      const hiddenState = currentCase && currentCase.hidden ? currentCase.hidden[node.id] : null;
+      sideText.textContent = hiddenState
+        ? `${node.role || "unknown"} · a=${formatGraphNumber(hiddenState.activation)}`
+        : (node.role || "unknown");
+    } else if (node.kind === "output") {
+      sideText.textContent = currentCase
+        ? `y=${currentCase.network} · logit=${formatGraphNumber(currentCase.logit)}`
+        : `bias=${formatGraphNumber(node.bias)}`;
+    } else {
+      sideText.textContent = currentCase ? `value=${currentCase[node.id]}` : node.label;
+    }
+    group.appendChild(sideText);
+
+    if (node.kind === "hidden" && currentCase && currentCase.hidden) {
+      const hiddenState = currentCase.hidden[node.id];
+      if (hiddenState) {
+        const detail = createSvgElement("text", {
+          x: position.x + 36,
+          y: position.y + 14,
+          class: "graph-node-copy subtle",
+        });
+        detail.textContent = `z=${formatGraphNumber(hiddenState.z)}`;
+        group.appendChild(detail);
+      }
+    }
+
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setGraphSelection({
+        nodeId: node.id,
+        edgeId: "",
+      });
+    });
+    svg.appendChild(group);
+  }
+
+  svg.addEventListener("click", () => {
+    setGraphSelection({
+      edgeId: "",
+    });
+  });
+
+  container.appendChild(svg);
+  return container;
+}
+
+function renderGraphDetails(graph, selectedNodeId, selectedCaseId) {
+  const details = document.createElement("div");
+  details.id = "graph-details";
+  details.className = "graph-details";
+  details.appendChild(buildGraphSummary(graph));
+
+  const caseCopy = document.createElement("p");
+  caseCopy.className = "graph-copy";
+  if (graph.status !== "ok") {
+    caseCopy.textContent = "Inspector is unavailable for this snapshot.";
+    details.appendChild(caseCopy);
+    const message = document.createElement("p");
+    message.className = "graph-message";
+    message.textContent = graph.message || "Graph unsupported for this snapshot.";
+    details.appendChild(message);
+    return details;
+  }
+
+  const currentCase = selectedGraphCase(graph, selectedCaseId);
+  caseCopy.textContent = currentCase
+    ? `Selected case ${currentCase.id}: target ${currentCase.target ?? "?"}, network ${currentCase.network}, logit ${formatGraphNumber(currentCase.logit)}.`
+    : "Selected case: all. Click 00/01/10/11 to inspect hidden activations.";
+  details.appendChild(caseCopy);
+
+  const info = document.createElement("div");
+  info.className = "graph-inspector";
+
+  const selectedEdge = findGraphEdge(graph, appState.graphSelectedEdgeId);
+  if (selectedEdge) {
+    appendGraphField(info, "Edge", `${selectedEdge.from} → ${selectedEdge.to}`);
+    appendGraphField(info, "Weight", formatGraphNumber(selectedEdge.weight));
+    appendGraphField(info, "Sign", selectedEdge.weight >= 0 ? "positive" : "negative");
+    details.appendChild(info);
+    return details;
+  }
+
+  const node = graphNodeById(graph, selectedNodeId);
+  if (!node) {
+    const hint = document.createElement("p");
+    hint.className = "graph-copy";
+    hint.textContent = "Click a node or edge to inspect it.";
+    details.appendChild(hint);
+    return details;
+  }
+
+  appendGraphField(info, "Node", node.label || node.id);
+  appendGraphField(info, "Type", node.kind);
+
+  if (node.kind === "input") {
+    appendGraphField(info, "Value", currentCase ? currentCase[node.id] : "all cases");
+  }
+
+  if (node.kind === "hidden") {
+    appendGraphField(info, "Role", node.role || "unknown");
+    appendGraphField(info, "Bias", formatGraphNumber(node.bias));
+    appendGraphField(info, "Output weight", formatGraphNumber(node.output_weight));
+    appendGraphField(info, "Dead", node.dead ? "yes" : "no");
+
+    const incoming = (graph.edges || []).filter((edge) => edge.to === node.id);
+    for (const edge of incoming) {
+      appendGraphField(info, `${edge.from} → ${node.id}`, formatGraphNumber(edge.weight));
+    }
+
+    const hiddenState = currentCase && currentCase.hidden ? currentCase.hidden[node.id] : null;
+    if (hiddenState) {
+      appendGraphField(info, "z", formatGraphNumber(hiddenState.z));
+      appendGraphField(info, "activation", formatGraphNumber(hiddenState.activation));
+      appendGraphField(info, "Active", hiddenState.active ? "yes" : "no");
+    }
+  }
+
+  if (node.kind === "output") {
+    appendGraphField(info, "Bias", formatGraphNumber(node.bias));
+    const incoming = (graph.edges || []).filter((edge) => edge.to === node.id);
+    for (const edge of incoming) {
+      appendGraphField(info, `${edge.from} → out`, formatGraphNumber(edge.weight));
+    }
+    if (currentCase) {
+      appendGraphField(info, "Logit", formatGraphNumber(currentCase.logit));
+      appendGraphField(info, "Network", currentCase.network);
+      appendGraphField(info, "Target", currentCase.target ?? "?");
+    }
+  }
+
+  details.appendChild(info);
+  return details;
+}
+
+function renderTruthTable(graph, selectedCaseId) {
+  const wrap = document.createElement("div");
+  wrap.id = "graph-truth-table";
+  wrap.className = "graph-table";
+
+  if (graph.status !== "ok") {
+    return wrap;
+  }
+
+  const title = document.createElement("h3");
+  title.textContent = "Truth table";
+  wrap.appendChild(title);
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  for (const label of ["case", "x0", "x1", "target", "network", "logit", "ok"]) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of graph.cases || []) {
+    const tr = document.createElement("tr");
+    if (row.id === selectedCaseId) {
+      tr.classList.add("selected");
+    }
+    tr.addEventListener("click", () => {
+      setGraphSelection({ caseId: row.id, edgeId: "" });
+    });
+
+    const ok = row.target === null || row.target === undefined ? "-" : (row.target === row.network ? "yes" : "no");
+    const values = [
+      row.id,
+      row.x0,
+      row.x1,
+      row.target ?? "?",
+      row.network,
+      formatGraphNumber(row.logit),
+      ok,
+    ];
+    for (const value of values) {
+      const td = document.createElement("td");
+      td.textContent = String(value);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function rerenderGraphPanel() {
   const root = document.getElementById("graph-output");
   root.innerHTML = "";
 
-  if (!payload || !payload.graph) {
-    root.textContent = "Graph inspector coming next.";
+  if (!appState.graph || !appState.graph.graph) {
+    root.textContent = "Load current or snapshot graph.";
     return;
   }
 
-  appState.graph = payload;
-  const placeholder = document.createElement("p");
-  placeholder.className = "graph-placeholder";
-  placeholder.textContent = payload.graph.message || "Graph inspector coming next.";
-  root.appendChild(placeholder);
+  const { graph } = appState.graph;
+  root.appendChild(renderGraphDetails(
+    graph,
+    appState.graphSelectedNodeId,
+    appState.graphSelectedCaseId,
+  ));
 
-  const meta = document.createElement("div");
-  meta.className = "graph-meta";
-  appendGraphField(meta, "Snapshot", payload.snapshot && payload.snapshot.id);
-  appendGraphField(meta, "Network", payload.graph.network_role);
-  appendGraphField(meta, "Target", payload.graph.target_role);
-  appendGraphField(
-    meta,
-    "Match",
-    typeof payload.graph.match === "boolean" ? (payload.graph.match ? "yes" : "no") : "",
-  );
-  appendGraphField(
-    meta,
-    "CMOS",
-    typeof payload.graph.cmos_transistors === "number"
-      ? `${payload.graph.cmos_transistors}T`
-      : "",
-  );
-
-  if (meta.children.length) {
-    root.appendChild(meta);
+  if (graph.status === "ok") {
+    root.appendChild(renderGraphControls(graph));
   }
+
+  root.appendChild(drawNetworkSvg(graph, appState.graphSelectedCaseId));
+
+  if (graph.status === "ok") {
+    root.appendChild(renderTruthTable(graph, appState.graphSelectedCaseId));
+  }
+}
+
+function renderGraph(payload) {
+  appState.graph = payload;
+  if (!payload || !payload.graph) {
+    appState.graphSelectedCaseId = "all";
+    appState.graphSelectedNodeId = "";
+    appState.graphSelectedEdgeId = "";
+    rerenderGraphPanel();
+    return;
+  }
+
+  appState.graphSelectedCaseId = "all";
+  appState.graphSelectedEdgeId = "";
+  appState.graphSelectedNodeId = payload.graph.output && payload.graph.output.id
+    ? payload.graph.output.id
+    : "";
+  rerenderGraphPanel();
 }
 
 function applyState(state) {
@@ -360,7 +881,7 @@ async function openCurrentGraph() {
       method: "POST",
     });
     renderGraph(data);
-    logLine("Loaded graph placeholder for current snapshot.", "ok");
+    logLine("Loaded graph inspector for current snapshot.", "ok");
   } catch (error) {
     logLine(error.message, "error");
   }
@@ -376,7 +897,7 @@ async function openSnapshotGraph() {
     const params = new URLSearchParams({ snapshot: appState.selectedSnapshotId });
     const data = await apiRequest(`/api/graph?${params.toString()}`, {}, { quiet: true });
     renderGraph(data);
-    logLine(`Loaded graph placeholder for snapshot ${appState.selectedSnapshotId}.`, "ok");
+    logLine(`Loaded graph inspector for snapshot ${appState.selectedSnapshotId}.`, "ok");
   } catch (error) {
     logLine(error.message, "error");
   }

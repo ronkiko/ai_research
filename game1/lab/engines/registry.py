@@ -1,6 +1,6 @@
 """Реестр подключаемых движков отчётов лаборатории.
 
-Порядок в `ENGINES` = порядок в UI и hotkeys 1/2/3.
+Порядок в `ENGINES` = порядок отображения в web UI.
 """
 from __future__ import annotations
 

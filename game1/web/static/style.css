@@ -203,18 +203,85 @@ button {
   border-radius: 8px;
   background: linear-gradient(180deg, #f9fbfd 0%, #eef4f9 100%);
   border: 1px solid #d7e1ea;
+  display: grid;
+  gap: 0.9rem;
 }
 
-.graph-placeholder {
+.graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.graph-toolbar button {
+  padding: 0.45rem 0.8rem;
+  border: 1px solid #c3d1dd;
+  border-radius: 999px;
+  background: #f3f8fc;
+  color: #1b2b39;
+  cursor: pointer;
+}
+
+.graph-toolbar button.active {
+  background: #1c5d87;
+  border-color: #1c5d87;
+  color: #ffffff;
+}
+
+.graph-svg {
+  border: 1px solid #d7e1ea;
+  border-radius: 12px;
+  background: #fcfeff;
+  overflow: hidden;
+}
+
+.graph-svg svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.graph-details {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.graph-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.graph-chip {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: #f7fbff;
+  border: 1px solid #d9e5ef;
+}
+
+.graph-inspector .graph-row {
   margin: 0;
-  color: #30485f;
+}
+
+.graph-copy,
+.graph-message {
+  margin: 0;
+  color: #334a5f;
+}
+
+.graph-message {
   font-weight: 600;
 }
 
-.graph-meta {
+.graph-inspector {
   display: grid;
-  gap: 0.7rem;
-  margin-top: 1rem;
+  gap: 0.55rem;
+  padding: 0.8rem;
+  border-radius: 10px;
+  background: #f7fbff;
+  border: 1px solid #d9e5ef;
 }
 
 .graph-row {
@@ -230,6 +297,143 @@ button {
   text-transform: uppercase;
   font-size: 0.78rem;
   letter-spacing: 0.04em;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node circle {
+  fill: #ffffff;
+  stroke: #4c6f88;
+  stroke-width: 2;
+  transition: fill 120ms ease, stroke 120ms ease, stroke-width 120ms ease;
+}
+
+.graph-node.active circle {
+  fill: #dbf3e6;
+  stroke: #227447;
+}
+
+.graph-node.dead circle {
+  fill: #edf2f7;
+  stroke: #8d9baa;
+  stroke-dasharray: 4 4;
+}
+
+.graph-node.selected circle {
+  stroke: #c24c1a;
+  stroke-width: 3;
+}
+
+.graph-node-label {
+  font-size: 14px;
+  font-weight: 700;
+  fill: #1c2e3f;
+}
+
+.graph-node-copy {
+  font-size: 11px;
+  fill: #446178;
+}
+
+.graph-node-copy.subtle {
+  fill: #6e8498;
+}
+
+.graph-layer-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #6a8195;
+  text-transform: uppercase;
+}
+
+.graph-edge {
+  stroke-linecap: round;
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.graph-edge.positive {
+  stroke: #1c7c54;
+}
+
+.graph-edge.negative {
+  stroke: #b54545;
+}
+
+.graph-edge.active {
+  opacity: 1;
+}
+
+.graph-edge.selected {
+  opacity: 1;
+  filter: drop-shadow(0 0 1px rgba(24, 34, 45, 0.4));
+}
+
+.graph-weight {
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.graph-weight.positive {
+  fill: #1c7c54;
+}
+
+.graph-weight.negative {
+  fill: #b54545;
+}
+
+.graph-weight.selected {
+  fill: #c24c1a;
+}
+
+.graph-table {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.graph-table h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.graph-table table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  border: 1px solid #d7e1ea;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.graph-table th,
+.graph-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #e3ebf2;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.graph-table th {
+  background: #eef5fb;
+  color: #456177;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+
+.graph-table tbody tr {
+  cursor: pointer;
+}
+
+.graph-table tbody tr.selected {
+  background: #e5f1fb;
+}
+
+.graph-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .log-entry + .log-entry {
