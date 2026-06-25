@@ -33,17 +33,15 @@ from ui.listpane import ListPane, ListItem
 from ui.treepane import TreePane, TreeNode
 from ui.labpane import LabPane
 from ui.title_pane import TitlePane
+from app.module_loader import load_application_modules
 from modules.base import (
     Module,
-    LoadResult,
     Status,
     MechanicsHost,
     AiHost,
     SelectResult,
     ChangeLog,
 )
-from modules.core import CoreModule
-from modules.game_api import GameApiModule
 from config import load_config, save_config, default_settings, Settings
 
 import json
@@ -90,10 +88,6 @@ locale.setlocale(locale.LC_ALL, "")
 
 MIN_H, MIN_W = 24, 80
 
-# Манифест модулей: что загружает движок и в каком порядке. Движок — загрузчик,
-# поэтому манифест — единственное, что он знает о составе игры.
-MODULES: list[type[Module]] = [CoreModule, GameApiModule]
-
 # Пункты навбара: (клавиша, подпись, pane_id). pane_id=None — не панель (Q — выход).
 NAVBAR_ITEMS = [
     ("F1", "Старт", "title"),
@@ -135,28 +129,21 @@ def load_modules(console: ConsoleWindow, stdscr) -> list[Module]:
     console.render(stdscr)
     stdscr.refresh()
 
-    instances: list[Module] = []
-    for cls in MODULES:
-        module = cls()
+    loaded = load_application_modules()
+    for module, result in zip(loaded.modules, loaded.results):
         info = module.info()
         console.append(f"[ ... ] {info.name} v{info.version} — {info.summary}", A(PAIR_DIM))
         console.render(stdscr)
         stdscr.refresh()
-
-        try:
-            result = module.load()
-        except Exception as exc:  # движок должен пережить сломавшийся модуль
-            result = LoadResult(Status.FAIL, f"исключение при загрузке: {exc}", info.version)
 
         ver = result.version or info.version
         line = f"{_status_tag(result.status)} {info.name} v{ver}: {result.message}"
         console.update_last(line, _status_attr(result.status))
         console.render(stdscr)
         stdscr.refresh()
-        instances.append(module)
 
     console.append("", 0)
-    return instances
+    return loaded.modules
 
 
 # ---------------------------------------------------------------------------
