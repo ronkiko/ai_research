@@ -24,6 +24,7 @@ import os
 import time
 
 from .window import PseudoWindow
+from .modal_stack import ModalStack
 from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER,
     PAIR_BAR, PAIR_BAR_SEL,
@@ -95,7 +96,7 @@ class TitlePane(PseudoWindow):
         self._submenu_items: list[tuple[str, str, bool]] = []  # (key, label, active)
         self._submenu_callback: Callable[[str], str] = lambda k: "move"
         self._submenu_kind: str = ""  # game/model/mode/speed — для позиционирования
-        self._modals: list[PseudoWindow] = []  # стек оверлеев: preview → report
+        self._modal_stack = ModalStack()  # каноничный стек модальных окон
         # Полноэкранная область панели — для разборов весов (ReportPopup).
         self._full_y = full_y if full_y is not None else y
         self._full_x = full_x if full_x is not None else x
@@ -151,23 +152,19 @@ class TitlePane(PseudoWindow):
         ``move``/``start``/``stop``/``close``/``lab``/None.
         """
         # Стек модальных окон поверх F1: preview → report. Клавиши идут в верхнее.
-        if self._modals:
-            top = self._modals[-1]
-            if hasattr(top, "handle"):
-                action = top.handle(key)
-                if action == "close":
-                    # Если закрывается полноэкранный ReportPopup, убираем весь
-                    # стек и возвращаемся сразу в F1; иначе закрываем только
-                    # верхнее окно (маленький Preview → F1).
-                    if len(self._modals) > 1:
-                        self._modals.clear()
-                    else:
-                        self._modals.pop()
-                    return "move"
-                if action == "lab":
-                    self._modals.clear()
-                    return "lab"
+        if not self._modal_stack.is_empty():
+            top = self._modal_stack.top()
+            # Полноэкранный ReportPopup: Esc/Enter/q закрывает весь стек сразу,
+            # чтобы не возвращаться к маленькому Preview посреди экрана.
+            if (
+                top is not None
+                and top.id == ReportPopup.ID
+                and key in (27, ord("q"), ord("Q"), ord("\n"), ord("\r"),
+                            curses.KEY_ENTER)
+            ):
+                self._modal_stack.clear()
                 return "move"
+            return self._modal_stack.handle(key)
 
         # субменю: ↑/↓ — навигация (на границе упираемся), Enter — выбор, Esc — закрыть
         if self._submenu_open:
@@ -259,18 +256,6 @@ class TitlePane(PseudoWindow):
         lines.append("")
         return "\n".join(lines), mi.key, gi.key, mode
 
-    def _push_modal(self, modal: PseudoWindow) -> None:
-        """Добавить модальное окно поверх текущего контента."""
-        self._modals.append(modal)
-
-    def _pop_modal(self) -> PseudoWindow | None:
-        """Закрыть верхнее модальное окно."""
-        return self._modals.pop() if self._modals else None
-
-    def _clear_modals(self) -> None:
-        """Закрыть все модальные окна."""
-        self._modals.clear()
-
     def _open_preview(self) -> None:
         data = self._build_snapshot_body()
         if data is None:
@@ -283,7 +268,7 @@ class TitlePane(PseudoWindow):
             open_report_callback=self._open_report_popup,
             sink=self._sink,
         )
-        self._push_modal(popup)
+        self._modal_stack.put(PreviewPopup.ID, popup)
 
     def _open_report_popup(self, engine: str = "forensic") -> None:
         """Открыть лабораторный разбор на полный экран поверх PreviewPopup."""
@@ -295,7 +280,7 @@ class TitlePane(PseudoWindow):
             self._full_y, self._full_x, self._full_h, self._full_w,
             model_key, body, engine=engine,
         )
-        self._push_modal(popup)
+        self._modal_stack.put(ReportPopup.ID, popup)
 
     def _do_save_and_lab(self, body: str, model_key: str, game_key: str,
                          mode: str) -> None:
@@ -539,8 +524,7 @@ class TitlePane(PseudoWindow):
         self._render_menu_bar(stdscr, top, left, IW)
 
         # --- стек модальных окон поверх всего ---
-        for modal in self._modals:
-            modal.render(stdscr)
+        self._modal_stack.render(stdscr)
 
     # --- полоска меню: имена слотов, статусы, субменю ---
 
