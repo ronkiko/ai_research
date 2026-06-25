@@ -3,122 +3,69 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>game1 web engine</title>
+    <title>game1 operator dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <header class="page-header">
-      <div>
-        <h1>game1 web engine</h1>
-        <p class="subtitle">Operator MVP for games, models, modes, runs, snapshots, and lab reports.</p>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand">game1</div>
+          <p class="brand-copy">Operator dashboard for local runs, snapshots, lab reports, and graph inspection.</p>
+        </div>
+
+        <nav class="nav" aria-label="Primary">
+          <button type="button" class="nav-button active" data-view="dashboard">Dashboard</button>
+          <button type="button" class="nav-button" data-view="run">Run</button>
+          <button type="button" class="nav-button" data-view="lab">Lab</button>
+          <button type="button" class="nav-button" data-view="graph">Graph</button>
+          <button type="button" class="nav-button" data-view="snapshots">Snapshots</button>
+          <button type="button" class="nav-button" data-view="info">Info</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="sidebar-pill" id="server-status">local</span>
+          <span class="sidebar-pill" id="server-run-status">stopped</span>
+        </div>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="topbar-eyebrow">Operator panel</p>
+            <h1 id="topbar-title">Dashboard</h1>
+            <p class="topbar-subtitle" id="topbar-subtitle">Fast controls, current metrics, and immediate analysis.</p>
+          </div>
+          <div class="topbar-meta" id="topbar-meta"></div>
+        </header>
+
+        <main class="workspace">
+          <section id="view-dashboard" class="view active">
+            <div id="dashboard-content"></div>
+          </section>
+
+          <section id="view-run" class="view">
+            <div id="run-content"></div>
+          </section>
+
+          <section id="view-lab" class="view">
+            <div id="lab-content"></div>
+          </section>
+
+          <section id="view-graph" class="view">
+            <div id="graph-content"></div>
+          </section>
+
+          <section id="view-snapshots" class="view">
+            <div id="snapshots-content"></div>
+          </section>
+
+          <section id="view-info" class="view">
+            <div id="info-content"></div>
+          </section>
+        </main>
       </div>
-      <div class="header-status">
-        <div><span class="label">Game</span><strong id="header-game">-</strong></div>
-        <div><span class="label">Model</span><strong id="header-model">-</strong></div>
-        <div><span class="label">Mode</span><strong id="header-mode">-</strong></div>
-        <div><span class="label">Run</span><strong id="header-run">stopped</strong></div>
-      </div>
-    </header>
-
-    <main class="layout">
-      <section class="column">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Games</h2>
-          </div>
-          <div id="games-list" class="stack"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Models</h2>
-            <button id="reset-model-button" type="button">Reset active</button>
-          </div>
-          <div id="models-list" class="stack"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Modes</h2>
-          </div>
-          <div id="modes-list" class="stack"></div>
-        </div>
-      </section>
-
-      <section class="column">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Run</h2>
-          </div>
-          <div class="button-row">
-            <button id="run-start-button" type="button">Start</button>
-            <button id="run-stop-button" type="button">Stop</button>
-          </div>
-          <div class="button-row">
-            <button class="step-button" data-steps="1" type="button">Step 1</button>
-            <button class="step-button" data-steps="10" type="button">Step 10</button>
-            <button class="step-button" data-steps="100" type="button">Step 100</button>
-            <button class="step-button" data-steps="1000" type="button">Step 1000</button>
-          </div>
-          <dl class="metrics" id="run-metrics">
-            <div><dt>Status</dt><dd id="metric-status">stopped</dd></div>
-            <div><dt>Accuracy</dt><dd id="metric-accuracy">0%</dd></div>
-            <div><dt>Reward</dt><dd id="metric-reward">0</dd></div>
-            <div><dt>Steps</dt><dd id="metric-steps">0</dd></div>
-            <div><dt>Logit</dt><dd id="metric-logit">0.0000</dd></div>
-            <div><dt>Prob</dt><dd id="metric-prob">0.5000</dd></div>
-          </dl>
-        </div>
-      </section>
-
-      <section class="column">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Snapshots</h2>
-            <button id="save-snapshot-button" type="button">Save snapshot</button>
-          </div>
-          <div id="snapshots-list" class="stack compact"></div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Lab engines</h2>
-          </div>
-          <div id="engines-list" class="stack"></div>
-          <div class="button-row">
-            <button id="report-current-button" type="button">Open current report</button>
-            <button id="report-snapshot-button" type="button">Open snapshot report</button>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <section class="bottom-grid">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Report</h2>
-        </div>
-        <pre id="report-output" class="report-output">No report loaded.</pre>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Graph</h2>
-        </div>
-        <div class="button-row">
-          <button id="graph-current-button" type="button">Open current graph</button>
-          <button id="graph-snapshot-button" type="button">Open snapshot graph</button>
-        </div>
-        <div id="graph-output" class="graph-output">Graph inspector coming next.</div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Console</h2>
-        </div>
-        <div id="console-log" class="console-log"></div>
-      </div>
-    </section>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>

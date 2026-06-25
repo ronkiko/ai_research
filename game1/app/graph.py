@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from lab.engines.chip import ChipAnalysis, analyze_chip
-from lab.engines.common import EPS, extract_2layer_weights, parse_weights
+from lab.engines.common import EPS, extract_2layer_weights
 
 from .dto import SnapshotDto
 
@@ -49,9 +49,8 @@ def build_graph_payload(snapshot: SnapshotDto) -> dict[str, object]:
 
 
 def _build_mlp_graph(snapshot: SnapshotDto, analysis: ChipAnalysis) -> dict[str, object]:
-    raw_weights = parse_weights(snapshot.body)
     parsed = extract_2layer_weights(snapshot.model, snapshot.body)
-    if not raw_weights or parsed is None:
+    if parsed is None:
         return _unsupported(snapshot, _UNSUPPORTED_REASON)
 
     hidden_by_index = {gate.index: gate for gate in analysis.hidden}
