@@ -99,8 +99,8 @@ NAVBAR_ITEMS = [
     ("F1", "Старт", "title"),
     ("F2", "Лаба", "lab"),
     ("F3", "Games", "games"),
-    ("F4", "Modes", "models"),
-    ("F5", "—", None),
+    ("F4", "Models", "models"),
+    ("F5", "Modes", "modes"),
     ("Q", "Выход", None),
 ]
 

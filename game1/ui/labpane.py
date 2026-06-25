@@ -3,8 +3,8 @@
 Левая колонка: таблица снапшотов весов (время, модель, игра, режим, точность),
 отсортированных от новых к старым. Правая колонка: содержимое .md файла по
 курсору. Enter — детальный разбор нейронов на полный экран, Esc — назад.
-В окне разбора 1/2/3 переключают движок отчёта (default / forensic / prune).
-Снапшоты сканируются из research/weights/**/*.md.
+В окне разбора 1/2/3 переключают подключаемые движки отчёта
+(chip / forensic / prune). Снапшоты сканируются из research/weights/**/*.md.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .theme import (
     A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER, PAIR_WARN,
     PAIR_FAIL, PAIR_CYAN, PAIR_MAGENTA,
 )
-from .lab_report import default_report, forensic_report, prune_report
+from .lab_engines.registry import ENGINES
 from .markdown import parse_markdown, SegLine
 
 _WEIGHTS_DIR = os.path.join(
@@ -90,8 +90,9 @@ class LabPane(Modal):
     """Лаборатория: список снапшотов слева + содержимое файла справа.
 
     Enter на снапшоте открывает полноэкранный детальный разбор. В нём:
-      - 1 — движок default (классический);
+      - 1 — движок chip (CMOS / булева схема);
       - 2 — движок forensic (sigmoid + роли);
+      - 3 — движок prune (KEEP/PRUNE);
       - ↑/↓ или k/j — скролл;
       - PgUp/PgDn — страницей;
       - Esc/q — назад к списку.
@@ -104,7 +105,8 @@ class LabPane(Modal):
         self._cursor = 0
         self._top = 0
         self._detail_mode = False
-        self._engine = "default"
+        self._engines = ENGINES
+        self._engine = self._engines[0].info.key
         self._report: str | None = None
         self._scroll = 0
         self._refresh()
@@ -123,12 +125,11 @@ class LabPane(Modal):
         if s is None:
             self._report = None
             return
-        if self._engine == "forensic":
-            self._report = forensic_report(s["model"], s["body"])
-        elif self._engine == "prune":
-            self._report = prune_report(s["model"], s["body"])
-        else:
-            self._report = default_report(s["model"], s["body"])
+        engine = next(
+            (e for e in self._engines if e.info.key == self._engine),
+            self._engines[0],
+        )
+        self._report = engine.render(s["model"], s["body"])
 
     # --- навигация ---
 
@@ -141,22 +142,13 @@ class LabPane(Modal):
                 self._scroll = 0
                 return True
 
-            # Переключение движка отчёта
-            if key == ord("1"):
-                self._engine = "default"
-                self._update_report()
-                self._scroll = 0
-                return True
-            if key == ord("2"):
-                self._engine = "forensic"
-                self._update_report()
-                self._scroll = 0
-                return True
-            if key == ord("3"):
-                self._engine = "prune"
-                self._update_report()
-                self._scroll = 0
-                return True
+            # Переключение движка отчёта по hotkey (1/2/3...).
+            for idx, engine in enumerate(self._engines, start=1):
+                if key == ord(str(idx)):
+                    self._engine = engine.info.key
+                    self._update_report()
+                    self._scroll = 0
+                    return True
 
             # Скролл (верхняя граница отсекает здесь; нижняя — в render())
             page = max(1, self.inner_h - 1)
@@ -272,11 +264,12 @@ class LabPane(Modal):
                 except curses.error:
                     pass
 
-        # Статусная строка
-        cur1 = "•" if self._engine == "default" else " "
-        cur2 = "•" if self._engine == "forensic" else " "
-        cur3 = "•" if self._engine == "prune" else " "
-        status = f"{cur1}1 default   {cur2}2 forensic   {cur3}3 prune   ↑↓ scroll   Esc"
+        # Статусная строка — строится по реестру движков.
+        parts = []
+        for idx, engine in enumerate(self._engines, start=1):
+            cur = "•" if self._engine == engine.info.key else " "
+            parts.append(f"{cur}{idx} {engine.info.title}")
+        status = "   ".join(parts) + "   ↑↓ scroll   Esc"
         try:
             stdscr.addstr(self.y + self.h - 2, self.x + 1,
                           status[:self.inner_w], A(PAIR_DIM))

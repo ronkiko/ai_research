@@ -2,7 +2,7 @@
 
 Клавиши:
   - s — сохранить снапшот в файл и переключиться в Лабораторию;
-  - Enter — открыть следовательский (forensic) разбор в новом полноэкранном
+  - Enter — открыть первый движок из реестра (chip) в новом полноэкранном
             модальном окне без сохранения;
   - Esc, q — закрыть попап и вернуться в F1.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 import curses
 
 from .modal_window import PopupContent
+from .lab_engines.registry import ENGINES
 
 
 class PreviewPopup(PopupContent):
@@ -35,13 +36,14 @@ class PreviewPopup(PopupContent):
         self._save_callback = save_callback
         self._open_report_callback = open_report_callback
         self._sink = sink
+        self._default_engine = ENGINES[0].info.key
 
     def _content_rows(self, width: int):
         return self._markdown_rows(self._body, width)
 
     def _handle_extra(self, key: int) -> str | None:
         if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
-            self._open_report_callback("forensic")
+            self._open_report_callback(self._default_engine)
             return "move"
         if key in (ord("s"), ord("S")):
             self._save_callback(self._body, self._model_key,
@@ -50,4 +52,4 @@ class PreviewPopup(PopupContent):
         return None
 
     def _hint_text(self) -> str:
-        return " s — save │ Enter — forensic │ Esc — закрыть "
+        return f" s — save │ Enter — {self._default_engine} │ Esc — закрыть "

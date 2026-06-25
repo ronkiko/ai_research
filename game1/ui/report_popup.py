@@ -1,9 +1,7 @@
 """ReportPopup — полноэкранный лабораторный разбор весов.
 
-Открывается поверх PreviewPopup. Поддерживает три движка отчёта:
-  - 1 — default (классический);
-  - 2 — forensic (сигмоид + роли);
-  - 3 — prune (отсечение).
+Открывается поверх PreviewPopup. Движки отчёта берутся из реестра
+`lab_engines.registry.ENGINES` и переключаются клавишами 1/2/3.
 
 Esc/Enter/q закрывают это окно и возвращают управление предыдущему.
 """
@@ -13,7 +11,7 @@ import curses
 
 from .modal_window import ModalContent
 from . import labpane
-from .lab_report import default_report, forensic_report, prune_report
+from .lab_engines.registry import ENGINES
 
 
 class ReportPopup(ModalContent):
@@ -22,21 +20,21 @@ class ReportPopup(ModalContent):
     ID = "report"
 
     def __init__(self, y: int, x: int, h: int, w: int,
-                 model_key: str, body: str, engine: str = "forensic"):
+                 model_key: str, body: str, engine: str | None = None):
         super().__init__(self.ID, "Разбор весов", y, x, h, w)
         self._model_key = model_key
         self._body = body
-        self._engine = engine
+        self._engines = ENGINES
+        self._engine = engine if engine is not None else self._engines[0].info.key
         self._report: str | None = None
         self._update_report()
 
     def _update_report(self) -> None:
-        if self._engine == "forensic":
-            self._report = forensic_report(self._model_key, self._body)
-        elif self._engine == "prune":
-            self._report = prune_report(self._model_key, self._body)
-        else:
-            self._report = default_report(self._model_key, self._body)
+        engine = next(
+            (e for e in self._engines if e.info.key == self._engine),
+            self._engines[0],
+        )
+        self._report = engine.render(self._model_key, self._body)
         if self._report is None:
             self._report = self._body
 
@@ -46,28 +44,17 @@ class ReportPopup(ModalContent):
     def _handle_extra(self, key: int) -> str | None:
         if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
             return "close"
-        if key == ord("1"):
-            self._engine = "default"
-            self._update_report()
-            self._scroll = 0
-            return "move"
-        if key == ord("2"):
-            self._engine = "forensic"
-            self._update_report()
-            self._scroll = 0
-            return "move"
-        if key == ord("3"):
-            self._engine = "prune"
-            self._update_report()
-            self._scroll = 0
-            return "move"
+        for idx, engine in enumerate(self._engines, start=1):
+            if key == ord(str(idx)):
+                self._engine = engine.info.key
+                self._update_report()
+                self._scroll = 0
+                return "move"
         return None
 
     def _hint_text(self) -> str:
-        cur1 = "•" if self._engine == "default" else " "
-        cur2 = "•" if self._engine == "forensic" else " "
-        cur3 = "•" if self._engine == "prune" else " "
-        return (
-            f" {cur1}1 default   {cur2}2 forensic   {cur3}3 prune   "
-            "↑↓ scroll   Esc — назад "
-        )
+        parts = []
+        for idx, engine in enumerate(self._engines, start=1):
+            cur = "•" if self._engine == engine.info.key else " "
+            parts.append(f"{cur}{idx} {engine.info.title}")
+        return " " + "   ".join(parts) + "   ↑↓ scroll   Esc — назад "
