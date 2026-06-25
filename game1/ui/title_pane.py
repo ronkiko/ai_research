@@ -29,6 +29,7 @@ from .theme import (
     PAIR_BAR, PAIR_BAR_SEL,
 )
 from .preview_popup import PreviewPopup
+from .report_popup import ReportPopup
 from modules.base import MechanicsHost, AiHost, Status, ChangeLog
 from modules.game_api.modes import mode_info, PLAY
 
@@ -92,8 +93,7 @@ class TitlePane(PseudoWindow):
         self._submenu_items: list[tuple[str, str, bool]] = []  # (key, label, active)
         self._submenu_callback: Callable[[str], str] = lambda k: "move"
         self._submenu_kind: str = ""  # game/model/mode/speed — для позиционирования
-        self._preview_open = False
-        self._preview_popup: PreviewPopup | None = None
+        self._modals: list[PseudoWindow] = []  # стек оверлеев: preview → report
 
     # --- состояние прогона ---
 
@@ -143,9 +143,18 @@ class TitlePane(PseudoWindow):
         """Обработать клавишу меню. Возвращает действие для контроллера:
         ``move``/``start``/``stop``/``close``/``lab``/None.
         """
-        # попап Preview поверх F1: свои клавиши, Esc/Enter/S — закрыть/сохранить
-        if self._preview_open and self._preview_popup is not None:
-            return self._preview_popup.handle(key)
+        # Стек модальных окон поверх F1: preview → report. Клавиши идут в верхнее.
+        if self._modals:
+            top = self._modals[-1]
+            if hasattr(top, "handle"):
+                action = top.handle(key)
+                if action == "close":
+                    self._modals.pop()
+                    return "move"
+                if action == "lab":
+                    self._modals.clear()
+                    return "lab"
+                return "move"
 
         # субменю: ↑/↓ — навигация (на границе упираемся), Enter — выбор, Esc — закрыть
         if self._submenu_open:
@@ -237,6 +246,18 @@ class TitlePane(PseudoWindow):
         lines.append("")
         return "\n".join(lines), mi.key, gi.key, mode
 
+    def _push_modal(self, modal: PseudoWindow) -> None:
+        """Добавить модальное окно поверх текущего контента."""
+        self._modals.append(modal)
+
+    def _pop_modal(self) -> PseudoWindow | None:
+        """Закрыть верхнее модальное окно."""
+        return self._modals.pop() if self._modals else None
+
+    def _clear_modals(self) -> None:
+        """Закрыть все модальные окна."""
+        self._modals.clear()
+
     def _open_preview(self) -> None:
         data = self._build_snapshot_body()
         if data is None:
@@ -246,15 +267,22 @@ class TitlePane(PseudoWindow):
             self.y + 1, self.x + 1, self.h - 2, self.w - 2,
             body, model_key, game_key, mode,
             save_callback=self._do_save_and_lab,
-            close_callback=self._close_preview,
+            open_report_callback=self._open_report_popup,
             sink=self._sink,
         )
-        self._preview_popup = popup
-        self._preview_open = True
+        self._push_modal(popup)
 
-    def _close_preview(self) -> None:
-        self._preview_open = False
-        self._preview_popup = None
+    def _open_report_popup(self, engine: str = "forensic") -> None:
+        """Открыть лабораторный разбор поверх PreviewPopup."""
+        data = self._build_snapshot_body()
+        if data is None:
+            return
+        body, model_key, _, _ = data
+        popup = ReportPopup(
+            self.y + 1, self.x + 1, self.h - 2, self.w - 2,
+            model_key, body, engine=engine,
+        )
+        self._push_modal(popup)
 
     def _do_save_and_lab(self, body: str, model_key: str, game_key: str,
                          mode: str) -> None:
@@ -264,7 +292,6 @@ class TitlePane(PseudoWindow):
                 "сохранение", model_key, Status.OK,
                 f"снапшот → {filepath}",
             )
-        self._close_preview()
 
     def _save_snapshot_body_to_file(self, body: str, model_key: str,
                                     game_key: str, mode: str) -> str | None:
@@ -489,9 +516,9 @@ class TitlePane(PseudoWindow):
         # --- полоска меню + статусы + субменю (логическая единица) ---
         self._render_menu_bar(stdscr, top, left, IW)
 
-        # --- попап Preview поверх всего ---
-        if self._preview_open and self._preview_popup is not None:
-            self._preview_popup.render(stdscr)
+        # --- стек модальных окон поверх всего ---
+        for modal in self._modals:
+            modal.render(stdscr)
 
     # --- полоска меню: имена слотов, статусы, субменю ---
 

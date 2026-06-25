@@ -1,48 +1,62 @@
-"""PreviewPopup — временное псевдоокно поверх F1 для просмотра весов.
+"""ReportPopup — лабораторный разбор весов в отдельном псевдоокне.
 
-Клавиши:
-  - s — сохранить снапшот в файл и переключиться в Лабораторию;
-  - Enter — запустить следовательский (forensic) разбор весов без сохранения
-            и показать результат в том же попапе;
-  - Esc, q — закрыть попап и вернуться в F1.
+Открывается поверх PreviewPopup (или любого другого окна). Поддерживает три
+движка отчёта: default (1), forensic (2), prune (3). Esc/Enter/q закрывают
+только это окно, возвращая управление предыдущему.
 """
 from __future__ import annotations
 
 import curses
-import textwrap
 
 from .window import PseudoWindow
 from .theme import A, PAIR_DIM, PAIR_OK, PAIR_TITLE, PAIR_BORDER, PAIR_BAR
+from . import labpane
+from .lab_report import default_report, forensic_report, prune_report
 
 
-class PreviewPopup(PseudoWindow):
-    """Попап предпросмотра весов без сохранения."""
+class ReportPopup(PseudoWindow):
+    """Попап с лабораторным разбором весов."""
 
     def __init__(self, y: int, x: int, h: int, w: int,
-                 body: str, model_key: str, game_key: str, mode: str,
-                 save_callback, open_report_callback,
-                 sink=None):
-        super().__init__("Предпросмотр весов", y, x, h, w,
+                 model_key: str, body: str, engine: str = "forensic"):
+        super().__init__("Разбор весов", y, x, h, w,
                          border_pair=PAIR_BORDER, title_pair=PAIR_TITLE)
-        self._body = body
         self._model_key = model_key
-        self._game_key = game_key
-        self._mode = mode
-        self._save_callback = save_callback
-        self._open_report_callback = open_report_callback
-        self._sink = sink
+        self._body = body
+        self._engine = engine
         self._scroll = 0
+        self._report: str | None = None
+        self._update_report()
+
+    def _update_report(self) -> None:
+        if self._engine == "forensic":
+            self._report = forensic_report(self._model_key, self._body)
+        elif self._engine == "prune":
+            self._report = prune_report(self._model_key, self._body)
+        else:
+            self._report = default_report(self._model_key, self._body)
+        if self._report is None:
+            self._report = self._body
 
     def handle(self, key: int) -> str | None:
-        if key in (27, ord("q"), ord("Q")):
+        if key in (27, ord("q"), ord("Q"), ord("\n"), ord("\r"),
+                   curses.KEY_ENTER):
             return "close"
-        if key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
-            self._open_report_callback("forensic")
+        if key == ord("1"):
+            self._engine = "default"
+            self._update_report()
+            self._scroll = 0
             return "move"
-        if key in (ord("s"), ord("S")):
-            self._save_callback(self._body, self._model_key,
-                               self._game_key, self._mode)
-            return "lab"
+        if key == ord("2"):
+            self._engine = "forensic"
+            self._update_report()
+            self._scroll = 0
+            return "move"
+        if key == ord("3"):
+            self._engine = "prune"
+            self._update_report()
+            self._scroll = 0
+            return "move"
         if key in (curses.KEY_UP, ord("k")):
             self._scroll = max(0, self._scroll - 1)
             return "move"
@@ -75,7 +89,6 @@ class PreviewPopup(PseudoWindow):
         except curses.error:
             return
 
-        # затемнить/очистить внутреннюю область
         blank = " " * self.inner_w
         for i in range(self.inner_h):
             try:
@@ -84,8 +97,8 @@ class PreviewPopup(PseudoWindow):
             except curses.error:
                 break
 
-        content_h = self.inner_h - 2  # последние 2 строки — подсказка
-        rows = self._body_rows(self._body, self.inner_w - 2)
+        content_h = self.inner_h - 2
+        rows = labpane.LabPane._markdown_rows(self._report, self.inner_w - 2)
         max_scroll = max(0, len(rows) - content_h)
         self._scroll = min(self._scroll, max_scroll)
 
@@ -113,34 +126,13 @@ class PreviewPopup(PseudoWindow):
                         pass
                     ox += len(text)
 
-        # подсказка внизу
-        hint = " s — save │ Enter — forensic │ Esc — close "
+        cur1 = "•" if self._engine == "default" else " "
+        cur2 = "•" if self._engine == "forensic" else " "
+        cur3 = "•" if self._engine == "prune" else " "
+        hint = f" {cur1}1 default   {cur2}2 forensic   {cur3}3 prune   ↑↓ scroll   Esc — назад "
         hint_y = self.y + self.h - 2
         hint_x = self.x + max(0, (self.w - len(hint)) // 2)
         try:
             stdscr.addstr(hint_y, hint_x, hint, A(PAIR_BAR))
         except curses.error:
             pass
-
-    def _body_rows(self, body: str, width: int) -> list:
-        rows: list = []
-        for line in body.split("\n"):
-            if line.startswith("##"):
-                rows.append((line[2:].strip(), A(PAIR_OK, bold=True)))
-            elif line.startswith("###"):
-                rows.append((line[3:].strip(), A(PAIR_TITLE, bold=True)))
-            elif line.startswith("- **") and ":**" in line:
-                label, val = line[2:].split(":**", 1)
-                rows.append((f"{label.strip()}: {val.strip()}", A(PAIR_DIM)))
-            elif line.startswith("  `"):
-                rows.append((line, A(PAIR_DIM)))
-            elif line.startswith("++ "):
-                rows.append((line[3:], A(PAIR_OK, bold=True)))
-            elif line.startswith("!! "):
-                rows.append((line[3:], A(PAIR_TITLE, bold=True)))
-            elif line.strip() == "":
-                rows.append(("", A(PAIR_DIM)))
-            else:
-                for ln in textwrap.wrap(line, width=max(4, width)):
-                    rows.append((ln, A(PAIR_DIM)))
-        return rows
