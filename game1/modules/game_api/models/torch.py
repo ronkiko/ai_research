@@ -135,6 +135,8 @@ class TorchModel(Model):
         self._steps = 0
         self._adaptive_cooloff = 0
         self._adaptive_buffer.clear()
+        # Очистить состояние Adam, иначе старые моменты перетягивают новые веса.
+        self._optimizer.state.clear()
         for pg in self._optimizer.param_groups:
             pg["lr"] = self.LR
 

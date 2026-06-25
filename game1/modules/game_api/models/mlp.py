@@ -134,6 +134,9 @@ class MlpModel(Model):
         self._steps = 0
         self._adaptive_cooloff = 0
         self._adaptive_buffer.clear()
+        # Очистить состояние Adam (моменты), иначе старые накопленные градиенты
+        # губят свежие веса после сброса.
+        self._optimizer.state.clear()
         for pg in self._optimizer.param_groups:
             pg["lr"] = self._lr_base
 

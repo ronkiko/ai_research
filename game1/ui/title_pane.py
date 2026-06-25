@@ -100,7 +100,16 @@ class TitlePane(PseudoWindow):
         return self._running
 
     def start_run(self) -> None:
-        """Новый прогон: обнулить статистику и пустить тики."""
+        """Новый прогон: сбросить активную модель, обнулить статистику и пустить тики."""
+        if self._ai is not None:
+            mi = self._ai.active_model_info()
+            if mi is not None:
+                self._ai.reset_model(mi.key)
+                if self._sink is not None:
+                    self._sink.log_change(
+                        "сброс", mi.key, Status.OK,
+                        f"модель {mi.key.capitalize()} сброшена к начальным весам",
+                    )
         self._reward = 0
         self._hits.clear()
         self._steps = 0
