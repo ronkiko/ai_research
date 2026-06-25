@@ -21,11 +21,11 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const VIEW_META = {
   dashboard: {
     title: "Dashboard",
-    subtitle: "Fast controls, current metrics, and immediate analysis.",
+    subtitle: "Runs, metrics, and immediate analysis.",
   },
   run: {
     title: "Run",
-    subtitle: "Select the game, model, and mode, then control the active run.",
+    subtitle: "Pick the game, model, and mode, then control the active run.",
   },
   lab: {
     title: "Lab",
@@ -33,15 +33,15 @@ const VIEW_META = {
   },
   graph: {
     title: "Graph",
-    subtitle: "Inspect the current or saved MLP graph with case-by-case activation details.",
+    subtitle: "Inspect the current or saved MLP graph case by case.",
   },
   snapshots: {
     title: "Snapshots",
-    subtitle: "Save, select, and reopen recent run states without leaving the operator panel.",
+    subtitle: "Save, select, and reopen recent run states.",
   },
   info: {
     title: "Info",
-    subtitle: "Compact architecture notes, operator flow hints, and graph support scope.",
+    subtitle: "Architecture notes, flow hints, and graph support scope.",
   },
 };
 
