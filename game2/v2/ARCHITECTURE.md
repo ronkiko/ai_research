@@ -1,93 +1,75 @@
 # Game2 V2 Architecture
 
-V2 is a headless-first process topology. `router.py` is the sole composition and
-lifecycle entrypoint; it is not a game object and contains no physics, map rules,
-controller decisions, rendering, or training.
+Game2 V2 is a virtual game console played by an external Player. `console.py`
+is the composition and lifecycle supervisor, not a gameplay proxy.
 
-## Ownership
+## Planes
+
+The gameplay data plane is:
+
+```text
+Player <-> Joystick <-> Controller <-> Engine -> Display -> Screen
+```
+
+The management plane is separate:
+
+```text
+UI <-> Console management
+UI <-> Player/Trainer management
+```
+
+UI is optional and is not required for gameplay. Removing UI must not change the
+gameplay topology. UI never transports actions, world frames, observations, or
+physics state between the Player and Engine.
+
+## Console subsystems
 
 | Component | Owns |
 |---|---|
-| Engine | world, map instance, physics, ticks, episode lifecycle, avatar body |
-| Controller | decision and action policy |
-| Sensor adapter | observation transformation |
-| Trainer | learning, reward and parameter updates |
-| UI | rendering and operator controls |
-| Router | process composition, endpoints and lifecycle |
+| Console | configuration, manifests, process lifecycle and readiness |
+| Engine | authoritative map, world, physics, ticks, episodes and Avatar |
+| Controller | Joystick ingress and private Joystick-to-Engine translation |
+| Joystick | Player-facing two-button digital contract |
+| Display | independent video consumer of Engine STATE |
+| Player | external decisions through peripheral contracts |
+| Trainer | external learning process, not a console subsystem |
+| UI | future operator management interface |
 
-The physical `AvatarBody` is mutable Engine state. Published `WorldState` and
-`AvatarState` are frozen snapshots, so no module receives a mutable physics object.
-The Controller is an external process and can only send framed commands over TCP.
+Engine has no Controller, Display, UI, model, training, pygame, or torch import.
+Controller has no Display/UI/Player/model import. Display has no
+Controller/Player/model import. The only mutable world owner is Engine.
 
-## Clock and actions
+## Manifests
 
-Engine runs fixed physics ticks at `dt = 1 / physics_hz`. `unpaced` executes the
-same ticks without wall-clock sleep; `realtime` paces them against a monotonic
-wall clock. Controller timing never advances the clock or delays a tick. If no
-action is scheduled for a tick, Engine applies neutral input (`right = false`,
-`jump = false`). A hold exists only because a Controller explicitly scheduled it
-for a finite number of ticks.
+`InternalManifest` is private console wiring and contains only
+`engine_control`, `engine_state`, `engine_telemetry`, and `engine_events`.
+Console gives it to Engine, Controller, and Display as needed.
 
-## Controller latency
+`PeripheralManifest` is the only manifest given to a Player. It contains the
+session id, the Joystick endpoint, and an optional Display output endpoint. It
+cannot contain Engine endpoint names or fields.
 
-Controller timing never controls world timing. A slow Controller may produce a
-late command. Late commands are rejected; the world is never rewound and Engine
-is never paused to wait for inference. Realtime and unpaced differ only in
-wall-clock pacing. There is no control horizon barrier, lockstep model/world
-step, or implicit previous-input hold.
+## Hot paths
 
-Actions contain episode, sequence, target tick, and hold ticks. The Engine
-accepts them into a bounded command queue and applies them only at their
-scheduled tick. Every processed action receives an authoritative versioned
-`action_ack` on the same CONTROL connection, including its sequence, status,
-episode tick, and session tick. Reset receives a `reset_ack`; session tick stays
-monotonic while episode tick returns to zero.
+After startup, Player input goes directly over TCP to Controller, and Controller
+sends private framed commands directly to Engine. Console does not proxy input.
+Engine publishes STATE directly to Display. Display does not receive Joystick.
 
-`episode_tick` resets on Engine reset. `session_tick` is monotonic for the whole
-process. A reset is executed by Engine after a Controller request; the requester
-does not receive direct world access.
+Engine always advances its fixed ticks independently. A missing Player decision
+does not create input; after a finite Controller hold, input is neutral. A slow
+Controller cannot pause or rewind Engine.
 
-## Channels
+## Lifecycle
 
-| Channel | Direction | Payload | Backpressure |
-|---|---|---|---|
-| CONTROL | Controller -> Engine | Action, reset, quit; Engine returns versioned ACKs | bounded command and outbound ACK queues; reject or disconnect on full |
-| STATE | Engine -> observers | physical immutable snapshot | latest value; old snapshot discarded |
-| TELEMETRY | Engine -> observers | numeric/scalar snapshot | latest value; old snapshot discarded |
-| EVENTS | Engine -> observers | discrete world events | bounded FIFO per subscriber; oldest discarded |
+Console allocates endpoints, starts Engine, waits for Engine READY, starts
+Controller, waits for Controller READY, and starts optional Display independently.
+Console is READY only after every required subsystem is READY. It then publishes
+the PeripheralManifest. Engine starts its world immediately after its own READY;
+there is no hidden wait for Player or Display.
 
-STATE never contains pixels, TELEMETRY does not require STATE parsing, and EVENTS
-is a separate discrete modality. `VisionAdapter`, `ProprioceptionAdapter`, and
-`EventAdapter` are intentionally only boundaries in this patch:
+## Future replacement invariant
 
-```text
-ENGINE --STATE------> VisionAdapter -----------\
-ENGINE --TELEMETRY--> ProprioceptionAdapter ----> future model
-ENGINE --EVENTS-----> EventAdapter ------------/
-                                      CONTROL -> ENGINE
-```
-
-If a channel has no subscribers, the Engine does not serialize its payload. A
-publisher's socket sender can block on a slow observer, but that sender is not the
-Engine tick thread. STATE and TELEMETRY retain only the latest value; EVENTS
-retain a bounded FIFO. CONTROL ACKs likewise use a bounded per-client writer
-queue, so a slow Controller reader cannot stop physics. Thus an observer or
-Controller can never stop physics. UI is currently absent
-and the Engine does not import or require pygame, torch, or a renderer.
-
-## Lifecycle and determinism
-
-The Router validates config and map, allocates loopback endpoints, writes an
-immutable `RuntimeManifest`, starts Engine, waits for its `READY` line (all enabled
-CONTROL, STATE, TELEMETRY, and EVENTS listeners are already listening), then
-starts the critical Controller. Engine starts world ticks immediately after READY
-regardless of Controller startup. The Router supervises both processes, treats Engine and Controller
-as critical, reaps every child, and stops Engine last. Optional observer modules can
-be added without becoming Engine dependencies; an observer failure is not a world
-failure.
-
-The only authoritative state transition is `Engine.tick -> PhysicsWorld.step`.
-With equal map/config/seed and equal ordered tick-indexed action tape, attached
-observers and realtime pacing cannot change the result. Future human, MLP, and PPO
-controllers are replacements in the registry/configuration, not changes to Engine,
-physics, or map loading.
+Human, scripted, MLP, PPO, and LLM implementations are replaceable external
+Players. Replacing a Player does not change Engine, Controller, Display, or the
+Joystick contract. Model adapters translate model outputs into two boolean
+Joystick decisions; Joystick never imports a model or physics.

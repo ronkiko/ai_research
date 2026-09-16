@@ -20,13 +20,15 @@ class _ControlClient:
     def __init__(self, client_id: int, sock: socket.socket, max_responses: int,
                  on_command: Callable[[ControlEnvelope], None],
                  on_closed: Callable[[int], None],
-                 on_rejected: Callable[[str], None] | None):
+                 on_rejected: Callable[[str], None] | None,
+                 decoder: Callable[[dict], object]):
         self.client_id = client_id
         self.sock = sock
         self.responses: queue.Queue[dict | None] = queue.Queue(maxsize=max_responses)
         self.on_command = on_command
         self.on_closed = on_closed
         self.on_rejected = on_rejected
+        self.decoder = decoder
         self.closed = threading.Event()
         self.reader = threading.Thread(target=self._read_loop, name="v2-control-reader")
         self.writer = threading.Thread(target=self._write_loop, name="v2-control-writer")
@@ -42,7 +44,7 @@ class _ControlClient:
                     message = recv_frame(self.sock)
                 except socket.timeout:
                     continue
-                self.on_command(ControlEnvelope(self.client_id, decode_control_message(message)))
+                self.on_command(ControlEnvelope(self.client_id, self.decoder(message)))
         except ProtocolError:
             if self.on_rejected:
                 self.on_rejected("malformed control stream")
@@ -99,11 +101,12 @@ class _ControlClient:
 class ControlServer:
     def __init__(self, host: str, port: int, max_commands: int = 512,
                  on_rejected: Callable[[str], None] | None = None,
-                 max_responses: int = 256):
+                 max_responses: int = 256, decoder: Callable[[dict], object] = decode_control_message):
         self.host, self.port = host, port
         self.commands: queue.Queue[ControlEnvelope] = queue.Queue(maxsize=max_commands)
         self.max_responses = max_responses
         self.on_rejected = on_rejected
+        self.decoder = decoder
         self.server: socket.socket | None = None
         self.stop_event = threading.Event()
         self.connected_event = threading.Event()
@@ -138,7 +141,7 @@ class ControlServer:
                 self._next_client_id += 1
                 client = _ControlClient(client_id, sock, self.max_responses,
                                          self._enqueue_command, self._client_closed,
-                                         self.on_rejected)
+                                          self.on_rejected, self.decoder)
                 self.clients[client_id] = client
             self.connected_event.set()
             client.start()
