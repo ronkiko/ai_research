@@ -1,5 +1,6 @@
 """CLI entry point. Component construction and lifecycle belong to GameContainer."""
 import argparse
+import signal
 
 from game import GameContainer
 from level import DEFAULT_MAP
@@ -21,9 +22,22 @@ def main():
         parser.error('--auto cannot be combined with --window')
     if args.speed <= 0:
         parser.error('--speed must be positive')
+    stop_requested = False
+    game = None
+
+    def request_stop(_signum, _frame):
+        nonlocal stop_requested
+        stop_requested = True
+        if game is not None:
+            game.quit_requested = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
     try:
         with GameContainer(args.map, args.mode, port=args.port, window=args.window,
                            auto=args.auto) as game:
+            if stop_requested:
+                game.quit_requested = True
             if args.auto:
                 game.run_auto(args.speed)
             else:

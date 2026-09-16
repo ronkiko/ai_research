@@ -6,7 +6,9 @@ from diagnostics import console_message
 import argparse
 from collections import deque
 import json
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -216,6 +218,13 @@ def main(argv=None):
         raise SystemExit('Invalid max-ticks or wait')
     # A 50-parameter network gains nothing from a large CPU thread pool.
     torch.set_num_threads(1)
+    stop_event = threading.Event()
+
+    def request_stop(_signum, _frame):
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
     policy = MLP382Policy(seed=args.seed)
     if args.mode == 'play' or (args.mode == 'train' and not args.fresh
                                and args.checkpoint.exists()):
@@ -224,11 +233,16 @@ def main(argv=None):
         policy.load(args.checkpoint)
     try:
         with connect(args.host, args.port, timeout=2, wait=args.wait) as client:
-            MlpRunner(client, policy, training=args.mode == 'train',
-                      episodes=args.episodes, checkpoint=args.checkpoint,
-                      max_ticks=args.max_ticks, target_delay=args.target_delay,
-                       hold_ticks=args.hold_ticks,
-                      save_every=args.save_every).run()
+            runner = MlpRunner(client, policy, training=args.mode == 'train',
+                               episodes=args.episodes, checkpoint=args.checkpoint,
+                               max_ticks=args.max_ticks, target_delay=args.target_delay,
+                               hold_ticks=args.hold_ticks,
+                               save_every=args.save_every, stop_event=stop_event)
+            try:
+                runner.run()
+            finally:
+                if runner.training:
+                    runner.save_checkpoint()
     except (ConnectionError, OSError, TimeoutError, ValueError) as error:
         print(f'game2 MLP: {error}', file=sys.stderr)
         return 1

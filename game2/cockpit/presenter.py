@@ -192,6 +192,14 @@ class LabPresenter:
                 self.statistics.update(event)
                 if kind == "episode_finished":
                     self.history.append(dict(event))
+            elif kind == "auto_summary":
+                self.statistics.update(event)
+                self.message(
+                    "Auto summary: "
+                    + " ".join(
+                        f"{key}={value}" for key, value in event.items() if key != "type"
+                    )
+                )
             elif (
                 kind == "game_event"
                 and self.active is not None

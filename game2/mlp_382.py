@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import os
 import tempfile
+import warnings
 
 import torch
 from torch import nn
@@ -131,7 +132,16 @@ class MLP382Policy:
                 os.unlink(temporary)
 
     def load(self, path: str | Path) -> None:
-        checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+        # PyTorch 2.1 emits this compatibility warning while its safe loader
+        # materializes old TypedStorage records; the checkpoint format is still
+        # loaded with weights_only=True.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                'ignore',
+                message=r'TypedStorage is deprecated.*',
+                category=UserWarning,
+            )
+            checkpoint = torch.load(path, map_location='cpu', weights_only=True)
         if checkpoint.get('version') not in (1, 2):
             raise ValueError('Unsupported checkpoint version')
         if checkpoint.get('architecture') != self.ARCHITECTURE:

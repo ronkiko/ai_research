@@ -419,7 +419,7 @@ class DemoRegressionTests(unittest.TestCase):
                 sys, "stderr", BrokenTerminal()
             ):
                 self.assertTrue(controller.apply(config))
-                controller._runner_thread.join(timeout=15)
+                controller._external_watch_thread.join(timeout=15)
                 events = controller.status_channel.drain()
                 status = controller.status
                 controller.stop()
@@ -468,6 +468,195 @@ class DemoRegressionTests(unittest.TestCase):
             self.assertTrue(
                 any(e["type"] == "error" for e in controller.status_channel.drain())
             )
+
+
+class FakeExternalProcess:
+    def __init__(self, returncode=None, polls=None):
+        self.returncode = returncode
+        self.polls = list(polls or [])
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        if self.polls:
+            value = self.polls.pop(0)
+            if value is not None:
+                self.returncode = value
+            return value
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
+class ExternalRuntimeTests(unittest.TestCase):
+    def config(self, directory, *, execution="Auto", checkpoint_mode="Resume", episodes=17):
+        return SessionConfig(
+            controller="Bot",
+            bot_mode="Training",
+            execution=execution,
+            episodes=episodes,
+            auto_speed=73.5,
+            checkpoint_mode=checkpoint_mode,
+            checkpoint_file=str(Path(directory) / "weights.pt"),
+            seed=123,
+        )
+
+    def test_auto_training_selects_external_without_game_or_runner_objects(self):
+        controller = SessionController()
+        thread = Mock()
+        with patch.object(controller, "_start_external"), patch(
+            "session.threading.Thread", return_value=thread
+        ), patch("session.GameContainer") as game:
+            self.assertTrue(controller.apply(SessionConfig(
+                controller="Bot", bot_mode="Training", execution="Auto"
+            )))
+        game.assert_not_called()
+        self.assertIsNone(controller.game)
+        self.assertIsNone(controller.runner)
+        self.assertIs(controller._external_watch_thread, thread)
+        controller._clear_external_runtime()
+
+    def test_realtime_training_and_human_use_integrated_game_path(self):
+        class NoopThread:
+            def start(self):
+                pass
+
+            def join(self, timeout=None):
+                pass
+
+            def is_alive(self):
+                return False
+
+        game = Mock()
+        game.transport = None
+        game.closed = False
+        game.close.side_effect = lambda: setattr(game, "closed", True)
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "weights.pt"
+            checkpoint.write_bytes(b"checkpoint")
+            configs = (
+                SessionConfig(controller="Bot", bot_mode="Training", execution="Realtime"),
+                SessionConfig(controller="Bot", bot_mode="Play", execution="Realtime",
+                              checkpoint_file=str(checkpoint)),
+                SessionConfig(controller="Human"),
+            )
+            with patch("session.GameContainer", return_value=game) as factory, patch(
+                "session.threading.Thread", return_value=NoopThread()
+            ):
+                for config in configs:
+                    controller = SessionController()
+                    self.assertTrue(controller.apply(config))
+                    self.assertIs(controller.game, game)
+                    self.assertIsNone(controller.external_game_process)
+                    controller.stop()
+        self.assertEqual(factory.call_count, 3)
+
+    def test_external_commands_share_port_and_forward_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.config(directory)
+            controller = SessionController()
+            processes = [FakeExternalProcess(), FakeExternalProcess()]
+            with patch.object(controller, "_free_local_port", return_value=19191), patch(
+                "session.subprocess.Popen", side_effect=processes
+            ) as popen:
+                controller._start_external(config)
+            engine, runner = [call.args[0] for call in popen.call_args_list]
+            self.assertEqual(engine[1:6], ["engine.py", "--mode", "mlp", "--auto", "--speed"])
+            self.assertIn("73.5", engine)
+            self.assertIn("--episodes", runner)
+            self.assertEqual(runner[runner.index("--episodes") + 1], "17")
+            self.assertEqual(engine[engine.index("--port") + 1], "19191")
+            self.assertEqual(runner[runner.index("--port") + 1], "19191")
+            self.assertEqual(runner[runner.index("--checkpoint") + 1], str(config.checkpoint_path()))
+            self.assertEqual(runner[runner.index("--seed") + 1], "123")
+            self.assertNotIn("--fresh", runner)
+            self.assertFalse(any(call.kwargs.get("shell", False) for call in popen.call_args_list))
+            controller._terminate_external_processes()
+            controller._clear_external_runtime()
+
+    def test_fresh_forwards_fresh_and_keeps_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.config(directory, checkpoint_mode="Fresh")
+            config.checkpoint_path().write_bytes(b"old")
+            controller = SessionController()
+            processes = [FakeExternalProcess(), FakeExternalProcess()]
+            with patch.object(controller, "_free_local_port", return_value=19192), patch(
+                "session.subprocess.Popen", side_effect=processes
+            ) as popen:
+                controller._start_external(config)
+            self.assertIn("--fresh", popen.call_args_list[1].args[0])
+            # The backup is created before the child processes and contains the old weights.
+            backups = list(config.checkpoint_path().parent.glob("weights.backup-*.pt"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), b"old")
+            self.assertTrue(controller.external_runner_process)
+            controller._terminate_external_processes()
+            controller._clear_external_runtime()
+
+    def test_invalid_config_does_not_start_external_processes(self):
+        controller = SessionController()
+        with patch("session.subprocess.Popen") as popen:
+            self.assertFalse(controller.apply(SessionConfig(
+                controller="Bot", bot_mode="Training", execution="Auto", episodes=0
+            )))
+        popen.assert_not_called()
+
+    def test_runner_completion_stops_engine_and_publishes_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = SessionController()
+            log = Path(directory) / "runtime.log"
+            log.write_text(
+                '{"episode": 1, "result": "success", "attempts": 1, "updated": true}\n'
+                "auto_summary simulated_seconds=5.000000 wall_seconds=0.400000 "
+                "effective_speed_x=12.50 physics_ticks=600 late=0 rejected=2\n",
+                encoding="utf-8",
+            )
+            controller.external_log_path = log
+            controller.external_port = 19193
+            controller.config = SessionConfig(
+                controller="Bot", bot_mode="Training", execution="Auto"
+            )
+            controller.external_game_process = FakeExternalProcess(polls=[None, None])
+            controller.external_runner_process = FakeExternalProcess(polls=[None, 0])
+            controller._watch_external()
+            self.assertEqual(controller.status, "Finished")
+            self.assertTrue(controller.external_game_process.terminated)
+            events = controller.status_channel.drain()
+            summary = next(event for event in events if event["type"] == "auto_summary")
+            self.assertEqual(summary["effective_speed_x"], 12.5)
+            self.assertEqual(summary["physics_ticks"], 600)
+            self.assertEqual(summary["late"], 0)
+            self.assertEqual(summary["rejected"], 2)
+
+    def test_engine_failure_stops_runner(self):
+        controller = SessionController()
+        controller.external_game_process = FakeExternalProcess(returncode=1)
+        controller.external_runner_process = FakeExternalProcess()
+        controller._watch_external()
+        self.assertEqual(controller.status, "Error")
+        self.assertTrue(controller.external_runner_process.terminated)
+
+    def test_stop_and_exit_terminate_both_children_and_release_port(self):
+        for operation in ("stop", "exit"):
+            controller = SessionController()
+            controller.status = "Running"
+            controller.external_port = 19194
+            controller.external_game_process = FakeExternalProcess()
+            controller.external_runner_process = FakeExternalProcess()
+            getattr(controller, operation)()
+            self.assertEqual(controller.status, "Stopped")
+            self.assertIsNone(controller.external_game_process)
+            self.assertIsNone(controller.external_runner_process)
+            self.assertIsNone(controller.external_port)
 
 
 class LauncherTests(unittest.TestCase):

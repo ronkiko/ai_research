@@ -176,12 +176,18 @@ class RegressionTests(unittest.TestCase):
                 sensors.read(frame(velocity_x=velocity_x))
 
     def test_checkpoint_restores_random_sampling(self):
+        import warnings
+
         policy = MLP382Policy(seed=15)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'policy.pt'
             policy.save(path)
             expected = [policy.sample((0.1, 1, 0)) for _ in range(10)]
-            policy.load(path)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                policy.load(path)
+            self.assertFalse(any('TypedStorage is deprecated' in str(w.message)
+                                 for w in caught))
             actual = [policy.sample((0.1, 1, 0)) for _ in range(10)]
             self.assertEqual([(d.right, d.jump) for d in expected],
                              [(d.right, d.jump) for d in actual])

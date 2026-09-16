@@ -40,6 +40,17 @@ class MonitorPanel:
             MUTED,
             width=rect.w - 36,
         )
+        if active and active.controller == "Bot" and active.bot_mode == "Training" and active.execution == "Auto":
+            c.text("Fast Auto Training", area.x, area.y + 42, 24, ACCENT, width=area.w)
+            c.text(
+                "External runtime\nWorld preview disabled for benchmark",
+                area.x,
+                area.y + 92,
+                15,
+                MUTED,
+                width=area.w,
+            )
+            return
         if path != self.path:
             self.level = load_level(path)
             self.renderer = TileRenderer(pg, self.level)

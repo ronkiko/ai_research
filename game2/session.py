@@ -6,6 +6,9 @@ from dataclasses import asdict, dataclass, field, replace
 import json
 import math
 import os
+import socket
+import subprocess
+import sys
 import tempfile
 import shutil
 import traceback
@@ -13,7 +16,7 @@ from pathlib import Path
 import threading
 import time
 from collections import deque
-from typing import Callable
+from typing import Callable, TextIO
 
 from game import GameContainer
 from level import DEFAULT_MAP, load_level
@@ -265,6 +268,9 @@ class Statistics:
     speed: float = 1.0
     updated_episodes: int = 0
     last_loss: float = 0.0
+    effective_speed_x: float = 0.0
+    physics_ticks: int = 0
+    wall_seconds: float = 0.0
 
     def update(self, event: dict) -> None:
         for key in (
@@ -279,6 +285,7 @@ class Statistics:
             "episode",
             "tick",
             "cumulative_sim_ticks",
+            "physics_ticks",
         ):
             if key in event:
                 setattr(self, key, int(event[key]))
@@ -287,9 +294,13 @@ class Statistics:
             "success_rate_100",
             "mean_terminal_tick_100",
             "speed",
+            "effective_speed_x",
+            "wall_seconds",
         ):
             if key in event:
                 setattr(self, key, float(event[key]))
+        if "effective_speed_x" in event:
+            self.speed = float(event["effective_speed_x"])
         if event.get("type") == "episode_finished":
             self.updated_episodes += int(bool(event.get("updated", False)))
             self.last_loss = float(event.get("loss", 0.0))
@@ -318,6 +329,13 @@ class SessionController:
         self._stop_event = threading.Event()
         self._game_thread = None
         self._runner_thread = None
+        self.external_game_process: subprocess.Popen | None = None
+        self.external_runner_process: subprocess.Popen | None = None
+        self.external_port = None
+        self.external_log_path = None
+        self._external_log: TextIO | None = None
+        self._external_watch_thread = None
+        self._external_stop_requested = False
         self._preview_at = 0.0
         self._auto_started = 0.0
         self._lifecycle_lock = threading.RLock()
@@ -356,6 +374,21 @@ class SessionController:
             and config.bot_mode == "Training"
             and config.execution == "Auto"
         )
+        if auto:
+            try:
+                self._start_external(config)
+            except (OSError, ValueError, RuntimeError) as error:
+                self.status = "Error"
+                self._publish("error", message=str(error), details=traceback.format_exc())
+                self._clear_external_runtime()
+                return False
+            self._publish("session_started", config=_config_dict(config), auto=True)
+            self.status = "Running"
+            self._external_watch_thread = threading.Thread(
+                target=self._watch_external, name="game2-external-watch", daemon=True
+            )
+            self._external_watch_thread.start()
+            return True
         try:
             self.game = GameContainer(
                 config.level,
@@ -382,6 +415,205 @@ class SessionController:
             )
             self._runner_thread.start()
         return True
+
+    @staticmethod
+    def _free_local_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            return int(listener.getsockname()[1])
+
+    def _start_external(self, config: SessionConfig) -> None:
+        """Start the unchanged CLI game and runner as separate processes."""
+        checkpoint = config.checkpoint_path()
+        if config.checkpoint_mode == "Fresh" and checkpoint.exists():
+            backup = checkpoint.with_name(
+                checkpoint.stem + f".backup-{time.time_ns()}.pt"
+            )
+            shutil.copy2(checkpoint, backup)
+            self._publish("notice", message=f"Previous weights saved: {backup.name}")
+
+        log_dir = ROOT / "runs" / "cockpit"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.external_log_path = log_dir / (
+            f"auto-runtime-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}.log"
+        )
+        self._external_log = self.external_log_path.open(
+            "w", encoding="utf-8", buffering=1
+        )
+        self.external_port = self._free_local_port()
+        port = str(self.external_port)
+        speed = f"{config.auto_speed:g}"
+        engine_args = [
+            sys.executable,
+            "engine.py",
+            "--mode",
+            "mlp",
+            "--auto",
+            "--speed",
+            speed,
+            "--port",
+            port,
+            "--map",
+            str(config.level),
+        ]
+        runner_args = [
+            sys.executable,
+            "mlp_runner.py",
+            "--mode",
+            "train",
+            "--episodes",
+            str(config.episodes),
+            "--port",
+            port,
+            "--checkpoint",
+            str(checkpoint),
+            "--seed",
+            str(config.seed),
+        ]
+        if config.checkpoint_mode == "Fresh":
+            runner_args.append("--fresh")
+        log = self._external_log
+        if log is None:
+            raise RuntimeError("External runtime log is not open")
+        try:
+            self.external_game_process = subprocess.Popen(
+                engine_args, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT
+            )
+            self.external_runner_process = subprocess.Popen(
+                runner_args, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT
+            )
+        except BaseException:
+            self._terminate_external_processes()
+            self._close_external_log()
+            raise
+
+    def _terminate_external_processes(self) -> None:
+        processes = (self.external_game_process, self.external_runner_process)
+        for process in processes:
+            if process is not None and process.poll() is None:
+                process.terminate()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(
+            process is not None and process.poll() is None for process in processes
+        ):
+            time.sleep(0.02)
+        for process in processes:
+            if process is not None and process.poll() is None:
+                process.kill()
+        for process in processes:
+            if process is not None:
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.wait()
+
+    def _close_external_log(self) -> None:
+        if self._external_log is not None:
+            self._external_log.close()
+            self._external_log = None
+
+    def _parse_external_log(self) -> tuple[list[dict], dict | None]:
+        self._close_external_log()
+        episodes = []
+        summary = None
+        if self.external_log_path is None:
+            return episodes, summary
+        try:
+            lines = self.external_log_path.read_text(encoding="utf-8").splitlines()
+        except OSError as error:
+            self._publish("notice", message=f"Runtime log unavailable: {error}")
+            return episodes, summary
+        for line in lines:
+            marker = "auto_summary "
+            if marker in line:
+                values = {}
+                for token in line.split(marker, 1)[1].split():
+                    if "=" not in token:
+                        continue
+                    key, value = token.split("=", 1)
+                    try:
+                        values[key] = float(value) if "." in value else int(value)
+                    except ValueError:
+                        values[key] = value
+                summary = values
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and "result" in event and "episode" in event:
+                episodes.append(event)
+        return episodes, summary
+
+    def _watch_external(self) -> None:
+        game = self.external_game_process
+        runner = self.external_runner_process
+        first = None
+        while not self._external_stop_requested:
+            game_code = game.poll() if game is not None else 1
+            runner_code = runner.poll() if runner is not None else 1
+            if game_code is not None:
+                first = "game"
+                break
+            if runner_code is not None:
+                first = "runner"
+                break
+            time.sleep(0.02)
+
+        stopped = self._external_stop_requested
+        if stopped:
+            self._terminate_external_processes()
+        elif first == "game":
+            # Closing the socket is the normal game's response to a runner
+            # that has just completed. Give the runner time to finish its
+            # final save before treating an exited engine as a failure.
+            if game is not None and game.poll() == 0:
+                deadline = time.monotonic() + 2
+                while runner is not None and runner.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            if runner is not None and runner.poll() is None:
+                self._terminate_external_processes()
+        else:
+            # A completed runner is the successful session boundary. The game
+            # has no reason to continue once all requested episodes are saved.
+            self._terminate_external_processes()
+        game_code = game.poll() if game is not None else 1
+        runner_code = runner.poll() if runner is not None else 1
+        episodes, summary = self._parse_external_log()
+        for event in episodes:
+            self._publish("episode_finished", **event)
+        if summary is not None:
+            self._publish("auto_summary", **summary)
+        self.external_port = None
+        if stopped:
+            self.status = "Stopped"
+            self._publish("session_stopped")
+        elif runner_code == 0 and (first == "runner" or game_code == 0):
+            self.status = "Finished"
+            config = self.config
+            if config is not None:
+                checkpoint = config.checkpoint_path()
+                if checkpoint.is_file():
+                    self._publish("checkpoint_saved", path=str(checkpoint))
+            self._publish("session_finished", status="Finished")
+        else:
+            self.status = "Error"
+            self._publish(
+                "error",
+                message=(
+                    f"External runtime failed (engine={game_code}, runner={runner_code}); "
+                    f"log: {self.external_log_path}"
+                ),
+            )
+
+    def _clear_external_runtime(self) -> None:
+        self._close_external_log()
+        self.external_game_process = None
+        self.external_runner_process = None
+        self.external_port = None
+        self._external_watch_thread = None
+        self._external_stop_requested = False
 
     def _game_snapshot(self, game, body, metadata):
         now = time.monotonic()
@@ -552,6 +784,24 @@ class SessionController:
 
     def _stop(self):
         if self.game is None and self.status == "Stopped":
+            if self.external_game_process is None and self.external_runner_process is None:
+                return
+        if self.external_game_process is not None or self.external_runner_process is not None:
+            self.status = "Stopping"
+            self._external_stop_requested = True
+            self._stop_event.set()
+            self._terminate_external_processes()
+            watcher = self._external_watch_thread
+            current = threading.current_thread()
+            if watcher is not None and watcher is not current:
+                watcher.join(timeout=6)
+            if watcher is not None and watcher.is_alive():
+                self._terminate_external_processes()
+                watcher.join(timeout=2)
+            self.game = self.runner = None
+            self._clear_external_runtime()
+            self.status = "Stopped"
+            self._publish("session_stopped")
             return
         self.status = "Stopping"
         self._stop_event.set()
@@ -578,9 +828,10 @@ class SessionController:
         try:
             if runner is not None and runner.training:
                 runner.save_checkpoint()
-                self._publish(
-                    "checkpoint_saved", path=str(self.config.checkpoint_path())
-                )
+                if self.config is not None:
+                    self._publish(
+                        "checkpoint_saved", path=str(self.config.checkpoint_path())
+                    )
         except Exception as error:
             save_error = error
         finally:
