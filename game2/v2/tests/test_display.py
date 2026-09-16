@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
@@ -15,6 +18,7 @@ from game2.v2.console.display.view_state import AvatarView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionFrame, VisionRenderer
 from game2.v2.console.main import run_session
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
+from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
 
 
@@ -155,6 +159,93 @@ class DisplayServiceTests(unittest.TestCase):
         }))
         self.assertEqual(calls[0].map_id, world.map_id)
         self.assertEqual(service.frames_received, 1)
+
+    def test_ingest_keeps_only_newest_monotonic_valid_state(self):
+        world = _tiny_world()
+        service = DisplayService(self._manifest(), world=world)
+        valid = {
+            "version": 1, "type": "state", "session_id": "session",
+            "session_tick": 10, "map": "tiny",
+            "avatar": {"x": 2, "y": 2, "alive": True},
+        }
+        self.assertTrue(service.ingest(valid))
+        self.assertFalse(service.ingest({**valid, "session_tick": 9}))
+        self.assertFalse(service.ingest({**valid, "session_tick": 11,
+                                         "avatar": {"x": "bad", "y": 2}}))
+        self.assertEqual(service.latest_state.session_tick, 10)
+        self.assertEqual(service.frames_received, 1)
+        self.assertEqual(service.rendered_frames, 0)
+        service.renderer.close()
+
+    def test_reader_continues_during_slow_screen_render_and_drops_backlog(self):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+
+        class SlowRenderer:
+            def __init__(self):
+                self.calls = []
+                self.first_render_started = threading.Event()
+                self.release = threading.Event()
+
+            def render(self, view):
+                self.calls.append(view.session_tick)
+                if len(self.calls) == 1:
+                    self.first_render_started.set()
+                self.release.wait(2)
+                return view
+
+            def poll_close(self):
+                return False
+
+            def pace(self):
+                return None
+
+            def close(self):
+                self.release.set()
+
+        renderer = SlowRenderer()
+        endpoint = Endpoint("127.0.0.1", listener.getsockname()[1])
+        service = DisplayService(DisplayManifest("session", endpoint, "unused-map", "screen"),
+                                 world=_tiny_world(), renderer=renderer)
+        runner = threading.Thread(target=service.run, daemon=True)
+        client = None
+        try:
+            runner.start()
+            client, _ = listener.accept()
+            client.sendall(encode_frame({
+                "version": 1, "type": "state", "session_id": "session",
+                "session_tick": 1, "map": "tiny", "avatar": {"x": 2, "y": 2},
+            }))
+            self.assertTrue(renderer.first_render_started.wait(1))
+            for tick in range(2, 6):
+                client.sendall(encode_frame({
+                    "version": 1, "type": "state", "session_id": "session",
+                    "session_tick": tick, "map": "tiny",
+                    "avatar": {"x": 2 + tick, "y": 2},
+                }))
+
+            deadline = time.monotonic() + 1
+            while service.frames_received < 5 and time.monotonic() < deadline:
+                time.sleep(0.001)
+            self.assertEqual(service.frames_received, 5)
+            self.assertTrue(runner.is_alive())
+            self.assertEqual(service.latest_state.session_tick, 5)
+            self.assertEqual(renderer.calls, [1])
+
+            renderer.release.set()
+            client.close()
+            client = None
+            runner.join(2)
+            self.assertFalse(runner.is_alive())
+            self.assertEqual(renderer.calls, [1, 5])
+            self.assertEqual(service.latest_frame.session_tick, 5)
+        finally:
+            renderer.release.set()
+            if client is not None:
+                client.close()
+            runner.join(2)
+            listener.close()
 
     def test_display_manifest_requires_mode_and_world_resource(self):
         manifest = self._manifest()

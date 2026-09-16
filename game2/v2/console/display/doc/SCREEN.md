@@ -8,4 +8,6 @@ gameplay input.
 Window events are limited to `QUIT` and `ESC`, which close this spectator process.
 They never reach Controller or Engine. The static background, autotiled terrain,
 decorations, and goal marker are built once; each frame redraws that cached scene
-and the current avatar.
+and the current avatar. The Screen presentation loop runs at the 60 FPS target,
+independently of Engine physics cadence, and renders only a newer latest STATE;
+it never replays a backlog.

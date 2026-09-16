@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import time
 
 from ..config import DisplayManifest
@@ -34,6 +35,12 @@ class DisplayService:
         self.rendered_frames = 0
         self.latest_frame = None
         self._latest_view = None
+        self._accepted_tick = -1
+        self._presented_tick = -1
+        self._state_condition = threading.Condition()
+        self._reader_stop = threading.Event()
+        self._reader_done = threading.Event()
+        self._reader_thread: threading.Thread | None = None
         self._state_socket: socket.socket | None = None
         self.renderer = renderer if renderer is not None else self._create_renderer()
 
@@ -44,58 +51,132 @@ class DisplayService:
         from .screen.renderer import ScreenRenderer
         return ScreenRenderer(self.world)
 
-    def consume(self, snapshot: dict) -> bool:
-        """Validate and render one STATE payload; invalid input is discarded."""
+    @property
+    def latest_state(self):
+        """Return the one latest accepted view held by the Display mailbox."""
+        with self._state_condition:
+            return self._latest_view
+
+    def _accept_view(self, view: DisplayState) -> bool:
+        with self._state_condition:
+            if view.session_tick <= self._accepted_tick:
+                return False
+            self._accepted_tick = view.session_tick
+            self._latest_view = view
+            self.frames_received += 1
+            self._state_condition.notify_all()
+            return True
+
+    def ingest(self, snapshot: dict) -> bool:
+        """Validate a STATE and replace the single latest-state slot."""
         try:
             view = DisplayState.from_payload(snapshot, self.manifest.session_id, self.world)
         except (TypeError, ValueError):
             return False
-        self._latest_view = view
-        self.frames_received += 1
-        self.latest_frame = self.renderer.render(view)
-        self.rendered_frames += 1
-        return True
+        return self._accept_view(view)
 
-    def consume_state(self, state) -> bool:
-        """Test/in-process helper for an immutable state-shaped value."""
+    def ingest_state(self, state) -> bool:
+        """Validate a state-shaped value and replace the latest-state slot."""
         try:
             view = DisplayState.from_state(state, self.manifest.session_id, self.world)
         except (TypeError, ValueError):
             return False
-        self._latest_view = view
-        self.frames_received += 1
+        return self._accept_view(view)
+
+    def _next_view(self):
+        with self._state_condition:
+            if (self._latest_view is None or
+                    self._latest_view.session_tick <= self._presented_tick):
+                return None
+            return self._latest_view
+
+    def _present_latest(self) -> bool:
+        view = self._next_view()
+        if view is None:
+            return False
         self.latest_frame = self.renderer.render(view)
+        with self._state_condition:
+            self._presented_tick = max(self._presented_tick, view.session_tick)
         self.rendered_frames += 1
+        return True
+
+    def consume(self, snapshot: dict) -> bool:
+        """Ingest and immediately present one in-process STATE payload."""
+        if not self.ingest(snapshot):
+            return False
+        self._present_latest()
+        return True
+
+    def consume_state(self, state) -> bool:
+        """In-process helper for an immutable state-shaped value."""
+        if not self.ingest_state(state):
+            return False
+        self._present_latest()
         return True
 
     def _poll_close(self) -> bool:
         poll_close = getattr(self.renderer, "poll_close", None)
         return bool(poll_close and poll_close())
 
+    def _read_states(self, state_socket: socket.socket) -> None:
+        try:
+            while not self._reader_stop.is_set():
+                try:
+                    snapshot = recv_frame(state_socket)
+                except socket.timeout:
+                    continue
+                self.ingest(snapshot)
+        except (EOFError, OSError, ValueError):
+            pass
+        finally:
+            self._reader_done.set()
+            with self._state_condition:
+                self._state_condition.notify_all()
+
+    def _wait_for_update(self, timeout: float = 0.25) -> None:
+        with self._state_condition:
+            if self._reader_done.is_set() or self._reader_stop.is_set():
+                return
+            if (self._latest_view is not None and
+                    self._latest_view.session_tick > self._presented_tick):
+                return
+            self._state_condition.wait(timeout)
+
     def run(self) -> int:
         self._state_socket = _connect(self.manifest.engine_state)
         state_socket = self._state_socket
+        self._reader_thread = threading.Thread(
+            target=self._read_states, args=(state_socket,),
+            name="v2-display-state-reader", daemon=True)
+        self._reader_thread.start()
         print("READY " + json.dumps({"session_id": self.manifest.session_id,
                                      "mode": self.manifest.mode}, sort_keys=True), flush=True)
         try:
             while True:
                 if self.manifest.mode == "screen" and self._poll_close():
                     return 0
-                try:
-                    snapshot = recv_frame(state_socket)
-                except socket.timeout:
-                    continue
-                if not self.consume(snapshot):
-                    continue
+                self._present_latest()
+                if self._reader_done.is_set() and self._next_view() is None:
+                    return 0
                 if self.manifest.mode == "screen":
                     pace = getattr(self.renderer, "pace", None)
                     if pace:
                         pace()
+                else:
+                    self._wait_for_update()
         except (EOFError, OSError, socket.timeout, ValueError):
             return 0
         finally:
+            self._reader_stop.set()
+            with self._state_condition:
+                self._state_condition.notify_all()
             if self._state_socket:
-                self._state_socket.close()
+                try:
+                    self._state_socket.close()
+                except OSError:
+                    pass
+            if self._reader_thread and self._reader_thread is not threading.current_thread():
+                self._reader_thread.join(timeout=1)
             close = getattr(self.renderer, "close", None)
             if close:
                 close()

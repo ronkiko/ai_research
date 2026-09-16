@@ -259,6 +259,13 @@ raw x/y/vx/vy telemetry. `VisionAdapter` remains a future separate sensory
 subsystem with its own Player-facing contract; it must not provide privileged
 Engine STATE through Display.
 
+Display STATE transport is latest-only. Display continuously ingests STATE in a
+separate reader path and atomically replaces one latest validated snapshot;
+presentation is not replay, so intermediate visual states may be dropped.
+Screen and Vision presentation cadence is independent of Engine physics cadence.
+An accepted STATE with `session_tick` less than or equal to the latest accepted
+tick is stale and cannot roll the Display view backward.
+
 ## External Model and Trainer
 
 Model runtime is not a Game Console subsystem. Trainer is not a Game Console
