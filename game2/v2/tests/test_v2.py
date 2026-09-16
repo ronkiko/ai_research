@@ -48,6 +48,7 @@ class StructureTests(unittest.TestCase):
     def test_required_subsystems_have_readmes_and_docs(self):
         for relative in (
             "console/engine", "console/controller", "console/display", "console/transport",
+            "console/display/screen", "console/display/vision",
             "player/scripted", "tests",
         ):
             directory = V2 / relative
@@ -149,11 +150,12 @@ class ManifestAndWorldTests(unittest.TestCase):
         state = Endpoint("127.0.0.1", 12347)
         joystick = Endpoint("127.0.0.1", 12348)
         controller = ControllerManifest("s", control, telemetry, joystick)
-        display = DisplayManifest("s", state)
+        display = DisplayManifest("s", state, str(PIT), "vision")
         engine = EngineManifest("s", control, state, telemetry, None, "/tmp/run")
         self.assertEqual(set(controller.to_dict()),
                          {"session_id", "engine_control", "engine_telemetry", "joystick"})
-        self.assertEqual(set(display.to_dict()), {"session_id", "engine_state"})
+        self.assertEqual(set(display.to_dict()),
+                         {"session_id", "engine_state", "world_file", "mode"})
         self.assertEqual(set(engine.to_dict()),
                          {"session_id", "control", "state", "telemetry", "events", "run_dir"})
         self.assertNotIn("engine_state", controller.to_dict())
@@ -166,6 +168,11 @@ class ManifestAndWorldTests(unittest.TestCase):
         self.assertEqual(unpaced.clock_mode, "unpaced")
         self.assertEqual(realtime.controller, "default")
         self.assertEqual(unpaced.controller, "default")
+        self.assertEqual(realtime.display_mode, "vision")
+        self.assertEqual(unpaced.display_mode, "vision")
+        self.assertEqual(SessionConfig.from_dict({"map": str(PIT)}).display_mode, "vision")
+        with self.assertRaises(ValueError):
+            SessionConfig.from_dict({"map": str(PIT), "display_mode": "debug"})
 
     def test_console_rejects_management_ui_configuration(self):
         with self.assertRaises(ValueError):
@@ -356,10 +363,11 @@ class BoundaryTests(unittest.TestCase):
     def test_controller_and_display_capabilities_are_narrow(self):
         controller = ControllerManifest("s", Endpoint("127.0.0.1", 1),
                                        Endpoint("127.0.0.1", 2), Endpoint("127.0.0.1", 3))
-        display = DisplayManifest("s", Endpoint("127.0.0.1", 4))
+        display = DisplayManifest("s", Endpoint("127.0.0.1", 4), str(PIT), "vision")
         self.assertEqual(set(controller.to_dict()),
                          {"session_id", "engine_control", "engine_telemetry", "joystick"})
-        self.assertEqual(set(display.to_dict()), {"session_id", "engine_state"})
+        self.assertEqual(set(display.to_dict()),
+                         {"session_id", "engine_state", "world_file", "mode"})
         self.assertNotIn("engine_state", controller.to_dict())
         self.assertNotIn("engine_control", display.to_dict())
         self.assertNotIn("engine_telemetry", display.to_dict())
@@ -396,9 +404,11 @@ class BoundaryTests(unittest.TestCase):
             base = {**json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text()),
                     "map": str(PIT)}
             paths = []
-            for enabled in (False, True):
-                config = {**base, "enable_display": enabled}
-                path = Path(directory) / ("display-on.json" if enabled else "display-off.json")
+            for mode in ("disabled", "vision"):
+                enabled = mode != "disabled"
+                config = {**base, "enable_display": enabled,
+                          "display_mode": "vision"}
+                path = Path(directory) / f"display-{mode}.json"
                 path.write_text(json.dumps(config), encoding="utf-8")
                 paths.append(path)
             off_status, off = run_session(paths[0])
@@ -407,9 +417,11 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(off["avatar"], on["avatar"])
 
     def test_display_has_no_public_video_payload(self):
-        service = DisplayService(DisplayManifest("s", Endpoint("127.0.0.1", 12345)))
+        service = DisplayService(DisplayManifest("s", Endpoint("127.0.0.1", 12345),
+                                                 str(PIT), "vision"))
         self.assertFalse(hasattr(service, "output"))
         self.assertFalse(hasattr(service, "publish"))
+        self.assertFalse(hasattr(service, "state"))
         source = (V2 / "console" / "display" / "display.py").read_text(encoding="utf-8")
         self.assertNotIn("video_frame", source)
         self.assertNotIn('"state": snapshot', source)

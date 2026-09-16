@@ -1,9 +1,21 @@
 # Display
 
-The independent Console presentation boundary. Display consumes Engine STATE and
-keeps internal frame diagnostics; it does not control Engine or receive Joystick
-input. The future read-only `screen` and `vision` presentations are not
-implemented by this patch.
+Display is the independent Console presentation domain. It loads the immutable
+`WorldDefinition`, consumes the Engine's latest STATE snapshots, and owns two
+read-only presentations of the same authoritative world:
 
-Process entrypoint: `main.py`; runtime: `display.py`. Local documentation:
-`doc/`.
+```text
+WorldDefinition + latest WorldState
+                 |
+              Display
+              /     \
+          screen    vision
+          human     semantic
+```
+
+`screen/` is the optional Pygame human view. `vision/` is a deterministic,
+headless semantic raster. Neither presentation controls Engine, receives
+Joystick input, reads TELEMETRY/EVENTS, or changes World/Physics.
+
+Process entrypoint: `main.py`; runtime: `display.py`. Local documentation is in
+`doc/`, `screen/`, and `vision/`.

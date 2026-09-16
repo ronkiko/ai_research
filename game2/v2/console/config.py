@@ -33,6 +33,7 @@ class SessionConfig:
     physics_hz: int = 120
     controller: str = "default"
     enable_display: bool = False
+    display_mode: str = "vision"
     enable_state: bool = True
     enable_telemetry: bool = True
     enable_events: bool = True
@@ -46,6 +47,7 @@ class SessionConfig:
             raise ValueError("Session config must be a JSON object")
         allowed = {
             "map", "clock_mode", "physics_hz", "controller", "enable_display",
+            "display_mode",
             "enable_state", "enable_telemetry", "enable_events", "seed",
             "episode_limit", "session_ticks",
         }
@@ -58,6 +60,9 @@ class SessionConfig:
             raise ValueError("map must be a non-empty string")
         if values.get("clock_mode", "unpaced") not in {"realtime", "unpaced"}:
             raise ValueError("clock_mode must be realtime or unpaced")
+        display_mode = values.get("display_mode", "vision")
+        if not isinstance(display_mode, str) or display_mode not in {"vision", "screen"}:
+            raise ValueError("display_mode must be vision or screen")
         if not isinstance(values.get("physics_hz", 120), int) or values.get("physics_hz", 120) <= 0:
             raise ValueError("physics_hz must be a positive integer")
         if not isinstance(values.get("controller", "default"), str) or not values.get("controller", "default"):
@@ -232,19 +237,30 @@ class ControllerManifest:
 
 @dataclass(frozen=True)
 class DisplayManifest:
-    """Display capability: the authoritative STATE input only."""
+    """Private Display capability: STATE, static World, and presentation mode."""
 
     session_id: str
     engine_state: Endpoint
+    world_file: str
+    mode: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.world_file, str) or not self.world_file:
+            raise ValueError("world_file must be a non-empty string")
+        if not isinstance(self.mode, str) or self.mode not in {"vision", "screen"}:
+            raise ValueError("mode must be vision or screen")
 
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id,
-                "engine_state": self.engine_state.as_dict()}
+                "engine_state": self.engine_state.as_dict(),
+                "world_file": self.world_file, "mode": self.mode}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DisplayManifest":
-        session_id = _manifest_session(data, {"session_id", "engine_state"})
-        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_state"])))
+        session_id = _manifest_session(data, {"session_id", "engine_state",
+                                               "world_file", "mode"})
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_state"])),
+                   data["world_file"], data["mode"])
 
     @classmethod
     def from_file(cls, path: str | Path) -> "DisplayManifest":

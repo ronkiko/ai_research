@@ -20,7 +20,7 @@ update to this specification in the same patch.
 | Controller | console input subsystem |
 | Joystick | Player-facing digital input device |
 | Display | console video subsystem |
-| Screen | consumer of Display output |
+| Screen | human-facing consumer of Display screen presentation |
 | Trainer | external learning process |
 | UI | operator management interface |
 
@@ -48,11 +48,11 @@ The gameplay data plane is:
 
 ```text
 Player <-> Joystick <-> Controller <-> Engine
-Engine -> Display -> Screen
+Engine -> Display -> screen (human) / vision (semantic)
 ```
 
-The future Display domain will expose two read-only presentations of the same
-authoritative `WorldState`:
+Display is the Console presentation domain. It owns two read-only rendering
+interfaces for the same authoritative world:
 
 ```text
 WorldDefinition + WorldState
@@ -63,11 +63,12 @@ WorldDefinition + WorldState
    human    model
 ```
 
-`screen` will be a human-facing visual renderer using assets. `vision` will be
-a model-facing semantic representation derived from stable tile IDs. Neither
-presentation changes World or affects Physics. Future vision is a representation
+`screen` is a human-facing visual renderer using V2-owned assets, decoration
+artwork, and presentation autotiling. `vision` is a deterministic model-oriented
+semantic raster derived from stable World tile IDs and dynamic entity positions.
+Neither presentation changes World or affects Physics. Vision is a representation
 of what exists in the game world, not raw Engine debug telemetry such as x/y or
-velocity.
+velocity metadata.
 
 Future sensory peripherals, such as VisionAdapter and event/audio-like
 adapters, will be separate Player-facing contracts. The management plane is:
@@ -102,13 +103,13 @@ messages. Trainer is external and has no direct reset, tick, physics, or world
 access. Reset/reward contracts, if needed for training, will be specified
 separately later.
 
-Display consumes authoritative Engine STATE and is independent of Controller,
-Player, model, and UI. The current Display process is only a video boundary with
-internal diagnostics. Future read-only `screen` and `vision` presentations may
-consume the same WorldDefinition and WorldState, but neither can affect World
-or Physics. A future VisionAdapter may expose the semantic `vision` presentation
-through a Player-facing contract; Display and VisionAdapter remain distinct
-consumers, and raw Engine STATE is never their public protocol.
+Display consumes authoritative Engine STATE plus its immutable `world_file` and
+selected `mode`; it is independent of Controller, Player, model, and UI. It
+never consumes TELEMETRY or EVENTS. `screen` initializes Pygame only in its own
+subsystem; `vision` is fully headless and emits an immutable `VisionFrame`.
+A future VisionAdapter may expose that semantic presentation through a
+Player-facing contract; Display and VisionAdapter remain distinct consumers, and
+raw Engine STATE is never their public protocol.
 
 ## Manifests
 
@@ -136,12 +137,18 @@ engine_telemetry
 joystick
 ```
 
-`DisplayManifest` contains only the STATE capability:
+`DisplayManifest` contains only the STATE capability, the immutable World
+resource, and the selected presentation mode:
 
 ```text
 session_id
 engine_state
+world_file
+mode
 ```
+
+`mode` is exactly `vision` or `screen`. Display manifests do not contain Engine
+CONTROL, TELEMETRY, EVENTS, Joystick, Player, or Trainer capabilities.
 
 `PeripheralManifest` is public to an external Player. Its fields are only:
 
@@ -153,10 +160,10 @@ joystick
 Engine endpoint fields are forbidden in the peripheral structure and its
 serialization. The internal manifest is issued only to Console composition.
 
-The public Display/video protocol is not implemented yet. Raw Engine STATE must
-never be used as a substitute for video. The current Display subsystem proves
-the process boundary, consumes Engine STATE, counts frames internally, and
-exposes no raw STATE externally. A later patch will implement actual rendering.
+There is no public Display/video socket in this patch. Raw Engine STATE must
+never be used as a substitute for presentation. Display consumes private STATE,
+validates it, and exposes no raw STATE externally; its internal output is either
+the human screen or `VisionFrame`.
 
 ## Joystick Specification v1
 
@@ -225,7 +232,8 @@ model output 1 -> JUMP
 
 Console creates its topology, starts Engine and waits for Engine READY, starts
 Controller and waits for Controller READY, then starts optional Display and
-waits for Display READY. Only then does it announce Console READY and publish
+waits for Display READY when it is available. A Display startup failure is
+reported locally and does not stop Engine or prevent the Console from publishing
 the `PeripheralManifest`.
 
 Controller READY requires a listening Joystick, connected Engine CONTROL, and a
@@ -238,21 +246,18 @@ is introduced here.
 
 ## Display and vision
 
-Display is the Console presentation subsystem. It consumes Engine STATE and
-currently only maintains internal frame diagnostics; it does not implement
-visual rendering and does not expose raw STATE externally. Future presentation
-interfaces will use:
+Display is the Console presentation subsystem. It consumes Engine STATE and the
+same immutable WorldDefinition used by Engine. Its interfaces are:
 
 ```text
-WorldDefinition + WorldState -> Display.screen -> rendered frame -> Screen
-WorldDefinition + WorldState -> Display.vision -> semantic presentation
+WorldDefinition + WorldState -> Display.screen -> Pygame human presentation
+WorldDefinition + WorldState -> Display.vision -> VisionFrame
 ```
 
-The current patch implements neither interface. `Display.vision` is a
-model-facing representation of what exists in the world, not raw x/y/vx/vy
-telemetry. `VisionAdapter` remains a future separate sensory subsystem with its
-own Player-facing contract; it must not provide privileged Engine STATE through
-Display.
+`Display.vision` is a semantic representation of what exists in the world, not
+raw x/y/vx/vy telemetry. `VisionAdapter` remains a future separate sensory
+subsystem with its own Player-facing contract; it must not provide privileged
+Engine STATE through Display.
 
 ## External Model and Trainer
 
@@ -286,15 +291,15 @@ UI -> gameplay hot path
 
 ## Deliberate non-goals
 
-This patch does not add MLP, REINFORCE, PPO, Torch, a reward system, a Pygame
-renderer, a cockpit UI, authentication, plugin infrastructure, shared memory,
+This patch does not add MLP, REINFORCE, PPO, Torch, a reward system, a cockpit
+UI, authentication, plugin infrastructure, shared memory,
 gRPC, ZeroMQ, a database, VisionAdapter implementation, audio, or a training
 API.
 
 ## Planned order
 
 1. Console, Controller, Joystick, and Display boundaries
-2. Real Display renderer
+2. Real Display screen and vision renderers
 3. Player MLP `3-8-2` through Joystick
 4. Sensory peripherals
 5. External Trainer REINFORCE

@@ -178,4 +178,7 @@ python -m unittest discover -s game2 -p 'test*.py' -v
 ```
 
 The current V2 foundation intentionally does not implement an MLP, Trainer,
-hierarchical AI, renderer, or management UI.
+hierarchical AI, Player VisionAdapter, or management UI. Console Display provides
+a headless semantic `vision` renderer by default and an explicit human-facing
+`screen` renderer. `enable_display: false` disables the Display process entirely;
+`display_mode` is `vision` or `screen`.

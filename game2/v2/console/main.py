@@ -103,7 +103,9 @@ def run_session(config_path: str | Path) -> tuple[int, dict]:
     ControllerManifest(session_id, internal.engine_control, internal.engine_telemetry,
                        peripheral.joystick).write(controller_manifest_path)
     if config.enable_display:
-        DisplayManifest(session_id, internal.engine_state).write(display_manifest_path)
+        world_file = str(config.map_path(config_path).resolve())
+        DisplayManifest(session_id, internal.engine_state, world_file,
+                        config.display_mode).write(display_manifest_path)
     peripheral.write(peripheral_path)
 
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
@@ -135,10 +137,16 @@ def run_session(config_path: str | Path) -> tuple[int, dict]:
              "--manifest", str(controller_manifest_path)],
             root, controller_log, "Controller")
         if config.enable_display:
-            display = _launch_ready(
-                [sys.executable, "-m", "game2.v2.console.display.main",
-                  "--manifest", str(display_manifest_path)],
-                root, display_log, "Display")
+            try:
+                display = _launch_ready(
+                    [sys.executable, "-m", "game2.v2.console.display.main",
+                      "--manifest", str(display_manifest_path)],
+                    root, display_log, "Display")
+            except (OSError, RuntimeError) as exc:
+                # Display is a spectator. Its startup failure must not stop Engine.
+                if display_log:
+                    display_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")
+                    display_log.flush()
 
         # An external Player may attach only after all Console-owned services are ready.
         ready = {"session_id": session_id, **peripheral.to_dict()}
@@ -162,6 +170,7 @@ def run_session(config_path: str | Path) -> tuple[int, dict]:
         if summary_path.exists():
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             summary["display"] = config.enable_display
+            summary["display_mode"] = config.display_mode
         console_log.write(json.dumps({"engine_returncode": engine.returncode if engine else None,
                                       "controller_returncode": controller.returncode if controller else None,
                                       "display_returncode": display.returncode if display else None,

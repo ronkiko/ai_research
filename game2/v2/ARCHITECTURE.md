@@ -33,6 +33,7 @@ The gameplay path is:
 ```text
 Player -> Joystick contract -> Console Controller -> Console Engine
 Console Engine -> Console Display
+WorldDefinition + WorldState -> Display.screen / Display.vision
 ```
 
 ## Console Internal Decomposition
@@ -55,8 +56,8 @@ does not import Engine, and Physics remains an Engine hot-path component rather
 than a separate process. Engine never waits for Player while advancing fixed
 ticks.
 
-The future Display domain will provide two read-only presentations of the same
-authoritative state:
+The Display domain provides two read-only presentations of the same authoritative
+world:
 
 ```text
                  WorldDefinition + WorldState
@@ -67,10 +68,11 @@ authoritative state:
                     for humans    for models
 ```
 
-`screen` may use beautiful assets, sprites, and backgrounds. `vision` will use
-stable semantic tile IDs to represent what exists in the world, not raw Engine
-debug telemetry. Neither presentation changes World or affects Physics. Neither
-interface is implemented in this migration.
+`screen` uses V2-owned assets, decorations, and deterministic autotiling for
+humans. `vision` uses stable semantic classes in a headless world-resolution
+raster for future machine-facing sensing. Neither presentation changes World or
+affects Physics. A future Player VisionAdapter remains a separate transport
+contract and is not Display.
 
 The Engine remains the sole mutable world owner. It advances fixed ticks without
 waiting for a Player. The Controller translates public Joystick decisions into

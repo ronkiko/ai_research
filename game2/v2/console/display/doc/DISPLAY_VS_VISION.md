@@ -1,10 +1,22 @@
 # Display Versus Vision
 
-Display is a Console presentation consumer. Future `Display.screen` and
-`Display.vision` interfaces will be two read-only presentations of
-`WorldDefinition` and `WorldState`: artwork for humans and semantic world
-representation for models. They are not implemented yet.
+Display owns two read-only rendering interfaces for one authoritative world:
 
-A future VisionAdapter will be a separate Player-facing sensory contract that
-may consume the semantic vision presentation. It must not turn Display into a
-privileged Engine-state API, and vision is not raw x/y/vx/vy telemetry.
+```text
+WorldDefinition + WorldState
+           |             |
+    Display.screen  Display.vision
+       artwork       semantic raster
+```
+
+`vision` is a representation of what exists in the world, not raw
+`x/y/vx/vy` telemetry. A future `VisionAdapter` remains a separate Player-facing
+sensory contract and transport layer:
+
+```text
+Engine STATE -> Display.vision -> VisionFrame -> future Vision peripheral -> Player
+```
+
+That future adapter must not expose raw Engine STATE. Management/God Mode may
+later display both implementations side by side, but Management is not changed
+by this patch.

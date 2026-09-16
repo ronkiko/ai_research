@@ -13,7 +13,7 @@ The tile ID describes what exists in the world, not how it should look. A
 renderer. A `HAZARD` tile can receive a different artwork without changing its
 collision or death semantics.
 
-The intended future presentation split is:
+The presentation split is:
 
 ```text
 same WorldDefinition and WorldState
@@ -25,8 +25,11 @@ same WorldDefinition and WorldState
       artwork        semantic representation
 ```
 
-`screen` may use tilesets, sprites, and backgrounds. `vision` may encode
-semantic tiles and dynamic world entities in a simple representation. The
-eventual palette or wire protocol is intentionally not fixed here. Vision is a
-representation of what exists in the game world, not privileged raw
-Engine telemetry such as x/y/vx/vy.
+`screen` uses tilesets, sprites, backgrounds, and presentation-owned autotiling.
+`vision` encodes semantic tiles and dynamic world entities in a deterministic
+world-resolution raster. The future Player transport/wire protocol is separate
+and intentionally not defined here. Vision is a representation of what exists in
+the game world, not privileged raw Engine telemetry such as x/y/vx/vy.
+
+World never stores visual atlas IDs such as `GRASS_TOP` or `TILESET_INDEX_41`.
+Changing screen artwork cannot change semantic terrain or collision geometry.

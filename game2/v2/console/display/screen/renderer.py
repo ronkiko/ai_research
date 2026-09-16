@@ -1,0 +1,219 @@
+"""Human-facing Pygame renderer for one immutable world definition."""
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+
+from ...world import TileID, WorldDefinition
+from ..view_state import DisplayState
+from .autotile import AutoTiler, NeighborMask
+
+
+ASSET_DIR = Path(__file__).with_name("assets")
+SOURCE_TILE_SIZE = 16
+DECORATION_ATLAS = {
+    "tree": (16, 0, 80, 112),
+    "bush": (112, 96, 48, 16),
+    "ruin": (176, 80, 32, 32),
+}
+
+
+class ScreenRenderer:
+    """A presentation-only viewport with a cached static scene."""
+
+    FPS = 60
+
+    def __init__(self, world: WorldDefinition, fps: int = FPS):
+        if type(fps) is not int or fps <= 0:
+            raise ValueError("screen fps must be a positive integer")
+        self.world = world
+        self.width, self.height = world.width, world.height
+        self.fps = fps
+        self.pygame = None
+        self.screen = None
+        self.static_scene = None
+        self.clock = None
+        self._closed = False
+        try:
+            import os
+            os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+            import pygame
+            self.pygame = pygame
+            pygame.display.init()
+            self.screen = pygame.display.set_mode((self.width, self.height))
+            pygame.display.set_caption("Game2 V2")
+            self.clock = pygame.time.Clock()
+            self.static_scene = self._build_static_scene()
+        except BaseException:
+            self.close()
+            raise
+
+    def _load(self, name: str):
+        path = ASSET_DIR / name
+        if not path.is_file():
+            raise FileNotFoundError(f"screen asset is missing: {path}")
+        pygame = self._pygame()
+        return pygame.image.load(str(path)).convert_alpha()
+
+    def _pygame(self):
+        if self.pygame is None:
+            raise RuntimeError("Pygame is not initialized")
+        return self.pygame
+
+    def _build_background(self):
+        pygame = self._pygame()
+        background = pygame.Surface((self.width, self.height)).convert()
+        background.fill((80, 130, 200))
+        scale = self.world.tile_size // SOURCE_TILE_SIZE
+        for name in ("BG1.png", "BG2.png", "BG3.png"):
+            source = self._load(name)
+            image = pygame.transform.scale(
+                source, (source.get_width() * scale, source.get_height() * scale))
+            for x in range(0, self.width, image.get_width()):
+                background.blit(image, (x, self.height - image.get_height()))
+        return background
+
+    def _build_terrain(self):
+        pygame = self._pygame()
+        layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        atlas = self._load("Tileset.png")
+        tiles = {}
+        for cell_y in (0, 1):
+            for cell_x in (0, 1, 2):
+                source = atlas.subsurface((cell_x * SOURCE_TILE_SIZE,
+                                           cell_y * SOURCE_TILE_SIZE,
+                                           SOURCE_TILE_SIZE, SOURCE_TILE_SIZE))
+                tiles[cell_x, cell_y] = pygame.transform.scale(
+                    source, (self.world.tile_size, self.world.tile_size))
+
+        autotiler = AutoTiler()
+        for row, cells in enumerate(self.world.tiles):
+            for column, tile in enumerate(cells):
+                if tile is TileID.EMPTY:
+                    continue
+                x, y = column * self.world.tile_size, row * self.world.tile_size
+                rect = pygame.Rect(x, y, self.world.tile_size, self.world.tile_size)
+                if tile is TileID.SOLID:
+                    variant = autotiler.variant_for(self.world.tiles, row, column)
+                    layer.fill((53, 29, 40), rect)
+                    layer.blit(tiles[variant.atlas_cell], rect)
+                else:
+                    layer.fill((69, 33, 47), rect)
+                    variant = autotiler.variant_for(self.world.tiles, row, column)
+                    if not variant.neighbor_mask & NeighborMask.NORTH:
+                        for offset in range(0, self.world.tile_size, SOURCE_TILE_SIZE):
+                            spike_x = x + offset
+                            pygame.draw.polygon(
+                                layer, (228, 221, 204),
+                                [(spike_x, y + 24), (spike_x + 8, y),
+                                 (spike_x + 16, y + 24)],
+                            )
+                            pygame.draw.line(
+                                layer, (185, 58, 52), (spike_x + 8, y),
+                                (spike_x + 12, y + 12), 3,
+                            )
+        return layer
+
+    def _build_decorations(self):
+        pygame = self._pygame()
+        layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        atlas = self._load("Decors.png")
+        scale = self.world.tile_size // SOURCE_TILE_SIZE
+        sprites = {}
+        for name, source_rect in DECORATION_ATLAS.items():
+            source = atlas.subsurface(source_rect)
+            sprites[name] = pygame.transform.scale(
+                source, (source_rect[2] * scale, source_rect[3] * scale))
+        for decoration in self.world.decorations:
+            sprite = sprites[decoration.sprite]
+            layer.blit(sprite, (decoration.column * self.world.tile_size,
+                                decoration.baseline * self.world.tile_size - sprite.get_height()))
+        return layer
+
+    def _build_goal(self):
+        pygame = self._pygame()
+        layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        goal = pygame.Rect(self.world.goal.x, self.world.goal.y,
+                           self.world.goal.width, self.world.goal.height)
+        inset = min(10, max(2, goal.width // 8))
+        portal = goal.inflate(-2 * inset, -2 * inset)
+        pygame.draw.rect(layer, (255, 218, 82, 220), portal, 4)
+        pygame.draw.rect(layer, (255, 247, 171, 150), portal.inflate(-10, -10), 2)
+        pole_x = goal.left + inset + 5
+        pygame.draw.line(layer, (255, 247, 171, 255),
+                         (pole_x, goal.top + inset),
+                         (pole_x, goal.bottom - inset), 3)
+        pygame.draw.polygon(layer, (255, 218, 82, 240), [
+            (pole_x, goal.top + inset),
+            (pole_x + max(12, goal.width // 5), goal.top + inset + 8),
+            (pole_x, goal.top + inset + 16),
+        ])
+        return layer
+
+    def _build_static_scene(self):
+        scene = self._build_background()
+        scene.blit(self._build_terrain(), (0, 0))
+        scene.blit(self._build_decorations(), (0, 0))
+        scene.blit(self._build_goal(), (0, 0))
+        return scene
+
+    def _view(self, world_or_state, state=None) -> DisplayState:
+        if state is None:
+            candidate = world_or_state
+        else:
+            if world_or_state is not self.world:
+                raise ValueError("ScreenRenderer is bound to a different world")
+            candidate = state
+        if isinstance(candidate, DisplayState):
+            return DisplayState.from_state(candidate, candidate.session_id, self.world)
+        if isinstance(candidate, Mapping):
+            session_id = candidate.get("session_id")
+            if not isinstance(session_id, str):
+                raise ValueError("STATE session_id is required")
+            return DisplayState.from_payload(candidate, session_id, self.world)
+        session_id = getattr(candidate, "session_id", None)
+        if not isinstance(session_id, str):
+            raise ValueError("state session_id is required")
+        return DisplayState.from_state(candidate, session_id, self.world)
+
+    def present(self, world_or_state, state=None):
+        if self._closed or self.screen is None:
+            raise RuntimeError("screen renderer is closed")
+        view = self._view(world_or_state, state)
+        pygame = self._pygame()
+        if self.static_scene is None:
+            raise RuntimeError("static scene is not initialized")
+        self.screen.blit(self.static_scene, (0, 0))
+        rect = pygame.Rect(round(view.avatar.x), round(view.avatar.y),
+                           self.world.spawn.width, self.world.spawn.height)
+        color = (34, 126, 232) if view.avatar.alive else (190, 54, 64)
+        pygame.draw.rect(self.screen, color, rect)
+        pygame.draw.rect(self.screen, (220, 248, 255), rect, 3)
+        pygame.display.flip()
+        return self.screen
+
+    render = present
+
+    def poll_close(self) -> bool:
+        if self._closed:
+            return True
+        pygame = self._pygame()
+        return any(event.type == pygame.QUIT or
+                   (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE)
+                   for event in pygame.event.get())
+
+    def pace(self) -> None:
+        if self.clock is not None and not self._closed:
+            self.clock.tick(self.fps)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.pygame is not None:
+            self.pygame.display.quit()
+        self.screen = None
+        self.static_scene = None
+
+
+__all__ = ["ASSET_DIR", "DECORATION_ATLAS", "ScreenRenderer"]
