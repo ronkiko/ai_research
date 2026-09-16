@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
+import tempfile
 
 import torch
 from torch import nn
@@ -104,18 +106,29 @@ class MLP242Policy:
     def save(self, path: str | Path) -> None:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            'version': 1,
+        checkpoint = {
+            'version': 2,
+            'rng_state': torch.get_rng_state(),
             'architecture': self.ARCHITECTURE,
             'network': self.network.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'steps': self.steps,
             'episodes': self.episodes,
             'baseline': self.baseline,
-        }, destination)
+        }
+        descriptor, temporary = tempfile.mkstemp(prefix=destination.name + '.', dir=destination.parent)
+        os.close(descriptor)
+        try:
+            torch.save(checkpoint, temporary)
+            os.replace(temporary, destination)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def load(self, path: str | Path) -> None:
-        checkpoint = torch.load(path, map_location='cpu')
+        checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+        if checkpoint.get('version') not in (1, 2):
+            raise ValueError('Unsupported checkpoint version')
         if checkpoint.get('architecture') != self.ARCHITECTURE:
             raise ValueError('Checkpoint architecture is not 2-4-2')
         self.network.load_state_dict(checkpoint['network'])
@@ -124,6 +137,8 @@ class MLP242Policy:
         self.steps = int(checkpoint.get('steps', 0))
         self.episodes = int(checkpoint.get('episodes', 0))
         self.baseline = float(checkpoint.get('baseline', 0.0))
+        if 'rng_state' in checkpoint:
+            torch.set_rng_state(checkpoint['rng_state'])
 
     def stats(self) -> dict:
         return {

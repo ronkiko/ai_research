@@ -57,5 +57,64 @@ class MlpTests(unittest.TestCase):
                              restored.probabilities((0.2, 1.0)))
 
 
+class RegressionTests(unittest.TestCase):
+    def test_gap_remains_visible_while_player_straddles_edge(self):
+        reading = PixelSensors().read(frame(player_x=468))
+        self.assertEqual(reading.gap_left, 500)
+        self.assertLess(reading.features[0], 0)
+        self.assertTrue(reading.grounded)
+        falling = PixelSensors().read(frame(player_x=510, player_y=370))
+        self.assertEqual(falling.gap_left, 500)
+        self.assertFalse(falling.grounded)
+
+    def test_checkpoint_restores_random_sampling(self):
+        policy = MLP242Policy(seed=15)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'policy.pt'
+            policy.save(path)
+            expected = [policy.sample((0.1, 1), jump_allowed=True) for _ in range(10)]
+            policy.load(path)
+            actual = [policy.sample((0.1, 1), jump_allowed=True) for _ in range(10)]
+            self.assertEqual([(d.right, d.jump) for d in expected],
+                             [(d.right, d.jump) for d in actual])
+
+    def test_runner_only_credits_executed_actions_and_skips_transport_errors(self):
+        import contextlib
+        import io
+        from mlp_runner import MlpRunner
+
+        class Client:
+            def __init__(self, rejected):
+                self.seq = 0
+                observation = frame()
+                def f(episode, tick, status, accepted, rejected=0):
+                    return dict(observation, episode=episode, tick=tick, status=status,
+                                accepted=accepted, late=0, rejected=rejected)
+                self.frames = iter([f(1, 100, 1, 0), f(2, 0, 0, 1),
+                                    f(2, 10, 0, 2), f(2, 40, 1, 3, rejected)])
+
+            def receive(self):
+                return next(self.frames)
+
+            def reset(self, episode):
+                self.seq += 1
+                return self.seq
+
+            def action(self, **kwargs):
+                self.seq += 1
+                return self.seq
+
+        for rejected, expected_steps in [(0, 1), (1, 0)]:
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as directory:
+                policy = MLP242Policy(seed=1)
+                runner = MlpRunner(Client(rejected), policy, training=True, episodes=1,
+                                   checkpoint=Path(directory)/'weights.pt', max_ticks=600,
+                                   target_delay=32, hold_ticks=48, jump_window=.08, save_every=1)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    runner.run()
+                self.assertEqual(policy.steps, expected_steps)
+                self.assertEqual(policy.episodes, int(expected_steps > 0))
+
+
 if __name__ == '__main__':
     unittest.main()

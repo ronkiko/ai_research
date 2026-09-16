@@ -7,6 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+import torch
+
+from protocol import MAX_FUTURE, MAX_HOLD
+
 from mlp_client import MLPClient
 from mlp_242 import MLP242Policy
 from sensors import PixelSensors
@@ -42,54 +46,78 @@ class MlpRunner:
         self.save_every = save_every
         self.sensors = PixelSensors()
 
+    def _reset(self, frame):
+        episode = frame['episode']
+        self.client.reset(episode)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            frame = self.client.receive()
+            if frame['episode'] != episode:
+                return frame
+        raise TimeoutError('Game did not acknowledge reset')
+
     def run(self) -> None:
-        frame = self.client.receive()
+        # Never credit a previous controller's terminal result or partial attempt.
+        frame = self._reset(self.client.receive())
         completed = 0
         while completed < self.episodes:
             episode = frame['episode']
             started_tick = frame['tick']
+            transport_start = (frame['late'], frame['rejected'])
             jumped = False
-            log_probabilities = []
-            entropies = []
+            pending = []
+            last_tick = -1
             while frame['episode'] == episode and frame['status'] == 0:
                 if frame['tick'] - started_tick >= self.max_ticks:
-                    reward = -1.0
                     break
+                if frame['tick'] == last_tick:
+                    frame = self.client.receive()
+                    continue
+                last_tick = frame['tick']
                 reading = self.sensors.read(frame)
                 jump_allowed = not jumped and reading.grounded and reading.features[0] <= self.jump_window
                 if self.training:
                     decision = self.policy.sample(reading.features, jump_allowed=jump_allowed)
-                    log_probabilities.append(decision.log_probability)
-                    entropies.append(decision.entropy)
                 else:
                     decision = self.policy.greedy(reading.features, jump_allowed=jump_allowed)
-                right, jump = decision.right, decision.jump
-                jumped = jumped or jump
-                self.client.action(episode=episode, target_tick=frame['tick'] + self.target_delay,
-                                   hold_ticks=self.hold_ticks, right=right, jump=jump)
+                target = frame['tick'] + self.target_delay
+                sequence = self.client.action(episode=episode, target_tick=target,
+                                              hold_ticks=self.hold_ticks,
+                                              right=decision.right, jump=decision.jump)
+                pending.append((sequence, target, decision))
+                jumped = jumped or decision.jump
                 frame = self.client.receive()
-            else:
-                reward = 1.0 if frame['status'] == 2 else -1.0
 
-            loss = self.policy.update(log_probabilities, entropies, reward) if self.training else 0.0
+            same_episode = frame['episode'] == episode
+            clean_transport = transport_start == (frame['late'], frame['rejected'])
+            # ACK is cumulative. With no rejection and unique target ticks it proves
+            # acceptance of earlier sequence numbers. Future commands did not act.
+            executed = [decision for seq, target, decision in pending
+                        if same_episode and seq <= frame['accepted'] and target <= frame['tick']]
+            reward = 1.0 if same_episode and frame['status'] == 2 else -1.0
+            trainable = same_episode and clean_transport and bool(executed)
+            loss = 0.0
+            if self.training and trainable:
+                loss = self.policy.update([d.log_probability for d in executed],
+                                          [d.entropy for d in executed], reward)
             completed += 1
             if self.training and (completed % self.save_every == 0 or completed == self.episodes):
                 self.policy.save(self.checkpoint)
+            result = ('success' if reward > 0 else
+                      'die' if same_episode and frame['status'] == 1 else 'timeout_or_reset')
             print(json.dumps({
-                'episode': episode,
-                'result': 'success' if reward > 0 else 'die_or_timeout',
-                'reward': reward,
-                'loss': round(loss, 6),
-                'tick': frame['tick'],
-                'jumped': jumped,
+                'episode': episode, 'result': result, 'reward': reward,
+                'loss': round(loss, 6), 'tick': frame['tick'],
+                'jumped': any(d.jump for d in executed),
+                'executed_actions': len(executed),
+                'updated': self.training and trainable,
+                'late': frame['late'] - transport_start[0],
+                'rejected': frame['rejected'] - transport_start[1],
                 **self.policy.stats(),
             }), flush=True)
             if completed == self.episodes:
                 return
-            self.client.reset(episode)
-            frame = self.client.receive()
-            while frame['episode'] == episode:
-                frame = self.client.receive()
+            frame = self._reset(frame)
 
 
 def parse_args(argv=None):
@@ -118,6 +146,12 @@ def main(argv=None):
     args = parse_args(argv)
     if args.episodes < 1 or args.save_every < 1:
         raise SystemExit('--episodes and --save-every must be positive')
+    if not 1 <= args.target_delay <= MAX_FUTURE or not 1 <= args.hold_ticks <= MAX_HOLD:
+        raise SystemExit('--target-delay and --hold-ticks must be in [1, 120]')
+    if args.max_ticks <= args.target_delay or not 0 <= args.jump_window <= 1 or args.wait < 0:
+        raise SystemExit('Invalid max-ticks, jump-window or wait')
+    # A 22-parameter network gains nothing from a large CPU thread pool.
+    torch.set_num_threads(1)
     policy = MLP242Policy(seed=args.seed)
     if args.mode == 'play' or (args.mode == 'train' and not args.fresh
                                and args.checkpoint.exists()):

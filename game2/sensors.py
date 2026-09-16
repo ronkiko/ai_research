@@ -1,5 +1,6 @@
 """Pixel-only sensors for the first game2 controller."""
 from dataclasses import dataclass
+import re
 
 
 PLAYER = 2
@@ -17,17 +18,7 @@ class SensorReading:
 
 
 def _runs(row: bytes, value: int) -> list[tuple[int, int]]:
-    result = []
-    start = None
-    for index, pixel in enumerate(row):
-        if pixel == value and start is None:
-            start = index
-        elif pixel != value and start is not None:
-            result.append((start, index))
-            start = None
-    if start is not None:
-        result.append((start, len(row)))
-    return result
+    return [match.span() for match in re.finditer(re.escape(bytes([value])) + b'+', row)]
 
 
 class PixelSensors:
@@ -40,24 +31,24 @@ class PixelSensors:
 
     def read(self, frame: dict) -> SensorReading:
         width, height, pixels = frame['width'], frame['height'], frame['pixels']
-        player_pixels = [(index % width, index // width)
-                         for index, pixel in enumerate(pixels) if pixel == PLAYER]
-        if not player_pixels:
+        if len(pixels) != width * height:
+            raise ValueError('Invalid observation size')
+        # The player is a solid, axis-aligned rectangle. bytes.find/rfind run in C.
+        first, last = pixels.find(bytes([PLAYER])), pixels.rfind(bytes([PLAYER]))
+        if first < 0:
             raise ValueError('Player is missing from observation')
-        left = min(point[0] for point in player_pixels)
-        right = max(point[0] for point in player_pixels) + 1
-        top = min(point[1] for point in player_pixels)
-        bottom = max(point[1] for point in player_pixels) + 1
+        left, top = first % width, first // width
+        right, bottom = last % width + 1, last // width + 1
 
-        gap_left = self._next_gap_left(width, height, pixels, right)
+        gap_left = self._next_gap_left(width, height, pixels, left)
         distance = (gap_left - right) / width
         distance = max(-1.0, min(1.0, distance))
-        grounded = bottom < height and pixels[bottom * width + (left + right - 1) // 2] == GROUND
+        grounded = bottom < height and GROUND in pixels[bottom * width + left:bottom * width + right]
         return SensorReading((distance, 1.0 if grounded else 0.0),
                              (left, top, right - left, bottom - top), gap_left, grounded)
 
     @staticmethod
-    def _next_gap_left(width: int, height: int, pixels: bytes, player_right: int) -> int:
+    def _next_gap_left(width: int, height: int, pixels: bytes, player_left: int) -> int:
         # The first row containing two substantial ground runs is the simplest
         # visible ground profile for the current maps.
         minimum_run = max(8, width // 16)
@@ -68,6 +59,6 @@ class PixelSensors:
             for index in range(len(runs) - 1):
                 start, end = runs[index]
                 next_start, _ = runs[index + 1]
-                if next_start - end >= minimum_run and player_right <= end:
+                if next_start - end >= minimum_run and player_left < next_start:
                     return end
         return width
