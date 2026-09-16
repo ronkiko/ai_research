@@ -1,7 +1,7 @@
 """Semantic MLP raster and asset-based window; no simulation or input logic."""
 from dataclasses import dataclass
 
-from protocol import encode_frame
+from protocol import encode_features, encode_frame
 
 PALETTE = ((255, 255, 255), (0, 0, 0), (0, 102, 255), (255, 0, 0))
 
@@ -52,6 +52,23 @@ class MlpMonitor:
 
     def present(self, frame, metadata):
         self.transport.publish(encode_frame(frame, **metadata))
+
+    def close(self):
+        pass
+
+
+class AutoMonitor:
+    """Compact MLP observation transport used only by the headless scheduler."""
+
+    def __init__(self, transport):
+        self.transport = transport
+
+    def present(self, reading, metadata):
+        metadata = {key: value for key, value in metadata.items()
+                    if key not in ('hz', 'monitor_hz')}
+        self.transport.publish_queued(encode_features(
+            distance_to_gap=reading.features[0], grounded=reading.grounded,
+            **metadata))
 
     def close(self):
         pass

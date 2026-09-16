@@ -1,9 +1,10 @@
 """Binary client adapter: continuously receive frames while the MLP computes."""
 import socket
 import threading
+from collections import deque
 
-from protocol import (ACTION, ACTION_PACKET, MAX_FRAME, PREFIX, RESET, RESET_PACKET,
-                      decode_command, decode_frame, packet)
+from protocol import (ACTION, ACTION_PACKET, FEATURES, MAX_FRAME, PREFIX, RESET,
+                      RESET_PACKET, decode_command, decode_features, decode_frame, packet)
 
 
 class MLPClient:
@@ -16,6 +17,7 @@ class MLPClient:
         self._condition = threading.Condition()
         self._send_lock = threading.Lock()
         self._latest = self._error = None
+        self._features = deque()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._read, name='game2-observations', daemon=True)
         self._thread.start()
@@ -37,10 +39,17 @@ class MLPClient:
                         raise ValueError('Invalid frame length')
                     if len(incoming) < PREFIX.size + size:
                         break
-                    frame = decode_frame(bytes(incoming[PREFIX.size:PREFIX.size + size]))
+                    payload = bytes(incoming[PREFIX.size:PREFIX.size + size])
+                    if payload[0] == FEATURES:
+                        frame = decode_features(payload)
+                    else:
+                        frame = decode_frame(payload)
                     del incoming[:PREFIX.size + size]
                     with self._condition:
-                        self._latest = frame  # Bounded: replace instead of enqueue.
+                        if payload[0] == FEATURES:
+                            self._features.append(frame)
+                        else:
+                            self._latest = frame  # Realtime remains bounded/latest.
                         self._condition.notify_all()
         except (OSError, ValueError) as error:
             with self._condition:
@@ -48,10 +57,11 @@ class MLPClient:
                 self._condition.notify_all()
 
     def receive(self) -> dict:
-        """Newest unread observation; background I/O discards superseded frames."""
+        """Receive the next compact observation or latest realtime frame."""
         with self._condition:
             ready = self._condition.wait_for(
-                lambda: self._latest is not None or self._error is not None or self._stop.is_set(),
+                lambda: self._features or self._latest is not None or
+                self._error is not None or self._stop.is_set(),
                 timeout=self.timeout)
             if self._error is not None:
                 raise self._error
@@ -59,7 +69,10 @@ class MLPClient:
                 raise ConnectionError('Client closed')
             if not ready:
                 raise TimeoutError('No observation received')
-            frame, self._latest = self._latest, None
+            if self._features:
+                frame = self._features.popleft()
+            else:
+                frame, self._latest = self._latest, None
             if frame is None:
                 raise ConnectionError('Observation stream ended')
             return frame

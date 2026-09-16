@@ -2,7 +2,8 @@ import math
 import unittest
 
 from monitors import Frame
-from protocol import FRAME_HEADER, VERSION, decode_frame, encode_frame
+from protocol import (FEATURES_PACKET, FRAME_HEADER, VERSION, decode_features,
+                      decode_frame, encode_features, encode_frame)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -25,6 +26,16 @@ class ProtocolTests(unittest.TestCase):
         for velocity_x in (math.nan, math.inf, -1.01, 1.01):
             with self.subTest(velocity_x=velocity_x), self.assertRaises(ValueError):
                 self.frame_payload(velocity_x)
+
+    def test_compact_features_round_trip_without_pixels(self):
+        payload = encode_features(
+            episode=3, tick=42, status=0, accepted=7, late=1, rejected=2,
+            overrun_ticks=0, jump_requested=4, jump_applied=2, event_sequence=5,
+            last_event=3, distance_to_gap=-0.25, grounded=True, velocity_x=0.375)
+        decoded = decode_features(payload)
+        self.assertEqual(len(payload), FEATURES_PACKET.size)
+        self.assertNotIn('pixels', decoded)
+        self.assertEqual(decoded['features'], (-0.25, 1.0, 0.375))
 
 
 if __name__ == '__main__':

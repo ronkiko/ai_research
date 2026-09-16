@@ -22,7 +22,8 @@ def main():
     if args.speed <= 0:
         parser.error('--speed must be positive')
     try:
-        with GameContainer(args.map, args.mode, port=args.port, window=args.window) as game:
+        with GameContainer(args.map, args.mode, port=args.port, window=args.window,
+                           auto=args.auto) as game:
             if args.auto:
                 game.run_auto(args.speed)
             else:

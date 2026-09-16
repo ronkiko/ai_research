@@ -14,7 +14,7 @@ from protocol import MAX_FUTURE, MAX_HOLD
 
 from mlp_client import MLPClient
 from mlp_382 import MLP382Policy
-from sensors import PixelSensors
+from sensors import ObservationSensors
 
 
 DEFAULT_CHECKPOINT = Path(__file__).with_name('models') / '3-8-2' / 'weights.pt'
@@ -72,7 +72,7 @@ class MlpRunner:
         self.target_delay = target_delay
         self.hold_ticks = hold_ticks
         self.save_every = save_every
-        self.sensors = PixelSensors()
+        self.sensors = ObservationSensors()
         self.episode_stats = RollingEpisodeStats()
 
     def _reset(self, frame):

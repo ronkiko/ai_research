@@ -1,13 +1,17 @@
 import contextlib
 from dataclasses import asdict
+from dataclasses import replace
 import io
 import unittest
 
 from game import GameContainer
 from mlp_joystick import MlpJoystick
-from monitors import MlpMonitor
-from physics import PhysicsConfig
-from protocol import ACTION, ACTION_PACKET, RESET, RESET_PACKET, decode_command, decode_frame
+from level import DEFAULT_MAP, load_level
+from monitors import AutoMonitor, ColorRenderer
+from physics import Body, PhysicsConfig, PhysicsWorld
+from protocol import (ACTION, ACTION_PACKET, RESET, RESET_PACKET, decode_command,
+                      decode_features)
+from sensors import AutoFeatureProvider, PixelSensors
 
 
 class AutoTransport:
@@ -33,8 +37,11 @@ class AutoTransport:
         packets, self.inbox = self.inbox, []
         return self.generation, self.connected, packets
 
+    def publish_queued(self, payload):
+        self.publish(payload)
+
     def publish(self, payload):
-        frame = decode_frame(payload)
+        frame = decode_features(payload)
         self.frames.append(frame)
         if frame['episode'] >= 3 and self.game is not None:
             self.game.quit_requested = True
@@ -69,12 +76,60 @@ class AutoTransport:
 
 
 class AutoTests(unittest.TestCase):
+    def test_auto_features_equal_pixel_sensors_for_both_maps(self):
+        for path in (DEFAULT_MAP, DEFAULT_MAP.with_name('short_pit.json')):
+            with self.subTest(map=path.name):
+                level = load_level(path)
+                renderer = ColorRenderer()
+                pixels = PixelSensors()
+                auto = AutoFeatureProvider(level)
+                world = PhysicsWorld(level.new_body(), level.surfaces)
+                states = [('start', replace(world.body))]
+                for _ in range(40):
+                    world.step(move=1)
+                states.append(('runup', replace(world.body)))
+                gap = pixels.read({'width': level.width, 'height': level.height,
+                                   'pixels': renderer.render(level.width, level.height,
+                                   level.surfaces, world.body).pixels,
+                                   'velocity_x': world.body.vx / world.config.max_speed}).gap_left
+                for name, x, y in (('before_gap', gap - 64, level.spawn.y),
+                                   ('edge', gap - 20, level.spawn.y),
+                                   ('over_gap', gap + 20, level.spawn.y - 100),
+                                   ('falling', gap + 20, level.spawn.y + 40),
+                                   ('after_gap', level.goal.x, level.spawn.y)):
+                    states.append((name, Body(x, y, vx=170, vy=-90 if name == 'over_gap' else 0)))
+                for name, body in states:
+                    frame = renderer.render(level.width, level.height, level.surfaces, body)
+                    observation = {'width': level.width, 'height': level.height,
+                                   'pixels': frame.pixels,
+                                   'velocity_x': body.vx / world.config.max_speed}
+                    expected = pixels.read(observation)
+                    actual = auto.read(body, observation['velocity_x'])
+                    with self.subTest(state=name):
+                        self.assertEqual(expected.features[:2], actual.features[:2])
+                        self.assertAlmostEqual(expected.features[2], actual.features[2], places=6)
+
+    def test_equal_features_produce_equal_policy_actions_with_same_rng(self):
+        import torch
+        from mlp_382 import MLP382Policy
+
+        features = [(-0.2, 1.0, 0.0), (0.1, 0.0, 0.8), (0.7, 1.0, -0.3)]
+        first, second = MLP382Policy(seed=17), MLP382Policy(seed=19)
+        second.network.load_state_dict(first.network.state_dict())
+        for value in features:
+            state = torch.get_rng_state()
+            decision_first = first.sample(value)
+            torch.set_rng_state(state)
+            decision_second = second.sample(value)
+            self.assertEqual((decision_first.right, decision_first.jump),
+                             (decision_second.right, decision_second.jump))
+
     def new_game(self, transport, *, config=None, monitor_hz=30):
-        game = GameContainer(mode='mlp', port=0, config=config, monitor_hz=monitor_hz)
+        game = GameContainer(mode='mlp', port=0, config=config, monitor_hz=monitor_hz, auto=True)
         game.transport.close()
         game.transport = transport
         game.joystick = MlpJoystick(transport)
-        game.monitor = MlpMonitor(transport)
+        game.monitor = AutoMonitor(transport)
         transport.game = game
         self.addCleanup(game.close)
         return game
@@ -83,11 +138,13 @@ class AutoTests(unittest.TestCase):
         transport = AutoTransport(stop_tick=12)
         game = self.new_game(transport)
 
-        with contextlib.redirect_stderr(io.StringIO()):
+        summary = io.StringIO()
+        with contextlib.redirect_stderr(summary):
             game.run_auto(speed=10**9)
 
         self.assertIsNone(game.window)
-        self.assertIsInstance(game.monitor, MlpMonitor)
+        self.assertIsNone(game.renderer)
+        self.assertIsInstance(game.monitor, AutoMonitor)
         self.assertFalse(hasattr(game.monitor, 'renderer'))
         self.assertEqual([frame['tick'] for frame in transport.frames], [0, 4, 8, 12])
         self.assertEqual([(command.target_tick, command.hold_ticks)
@@ -96,6 +153,7 @@ class AutoTests(unittest.TestCase):
         self.assertEqual(game.physics.tick, 12)
         self.assertEqual((game.joystick.late, game.joystick.rejected), (0, 0))
         self.assertEqual((game.config.hz, game.monitor_hz, game.config.dt), (120, 30, 1 / 120))
+        self.assertIn('observations=4 physics_ticks=12', summary.getvalue())
 
     def test_auto_uses_ratio_from_config(self):
         transport = AutoTransport(stop_tick=10)

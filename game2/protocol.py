@@ -5,7 +5,7 @@ import zlib
 from dataclasses import dataclass
 
 VERSION = 3
-ACTION, RESET, FRAME = 1, 2, 128
+ACTION, RESET, FRAME, FEATURES = 1, 2, 128, 129
 PREFIX = struct.Struct('!I')
 ACTION_PACKET = struct.Struct('!BIIQHBB')
 RESET_PACKET = struct.Struct('!BII')
@@ -14,6 +14,10 @@ RESET_PACKET = struct.Struct('!BII')
 # jump_requested, jump_applied, event_sequence, last_event
 # (0 none, 1 die, 2 success, 3 reset); normalized velocity_x follows.
 FRAME_HEADER = struct.Struct('!BBIQHHHHBIIIIIIIBf')
+# type, version, episode, tick, status, accepted, late, rejected,
+# overrun_ticks, jump_requested, jump_applied, event_sequence, last_event,
+# distance_to_gap, grounded, normalized velocity_x
+FEATURES_PACKET = struct.Struct('!BBIQBIIIIIIIBfBf')
 MAX_COMMAND = 64
 MAX_FRAME = 17 * 1024 * 1024
 MAX_HOLD = MAX_FUTURE = 120
@@ -85,4 +89,47 @@ def decode_frame(payload):
     if len(pixels) != width * height or not decoder.eof or decoder.unused_data:
         raise ValueError('Invalid pixel payload')
     result['pixels'] = pixels
+    return result
+
+
+def encode_features(*, episode, tick, status, accepted, late, rejected,
+                     overrun_ticks, jump_requested, jump_applied, event_sequence,
+                     last_event, distance_to_gap, grounded, velocity_x):
+    if (isinstance(distance_to_gap, bool) or not isinstance(distance_to_gap, (int, float))
+            or not math.isfinite(distance_to_gap) or not -1.0 <= distance_to_gap <= 1.0):
+        raise ValueError('distance_to_gap must be finite and in [-1, 1]')
+    if type(grounded) is not bool:
+        raise ValueError('grounded must be boolean')
+    if (isinstance(velocity_x, bool) or not isinstance(velocity_x, (int, float))
+            or not math.isfinite(velocity_x) or not -1.0 <= velocity_x <= 1.0):
+        raise ValueError('velocity_x must be finite and in [-1, 1]')
+    return FEATURES_PACKET.pack(FEATURES, VERSION, episode, tick, status, accepted,
+                                 late, rejected, overrun_ticks, jump_requested,
+                                 jump_applied, event_sequence, last_event,
+                                 distance_to_gap, grounded, velocity_x)
+
+
+def decode_features(payload):
+    if len(payload) != FEATURES_PACKET.size:
+        raise ValueError('Invalid compact observation length')
+    values = FEATURES_PACKET.unpack(payload)
+    if values[:2] != (FEATURES, VERSION):
+        raise ValueError('Unsupported compact observation protocol')
+    names = ('type', 'version', 'episode', 'tick', 'status', 'accepted', 'late',
+             'rejected', 'overrun_ticks', 'jump_requested', 'jump_applied',
+             'event_sequence', 'last_event', 'distance_to_gap', 'grounded',
+             'velocity_x')
+    result: dict = dict(zip(names, values))
+    if result['status'] not in (0, 1, 2) or result['last_event'] not in (0, 1, 2, 3):
+        raise ValueError('Invalid compact observation status')
+    if result['grounded'] not in (0, 1):
+        raise ValueError('Invalid compact observation grounded flag')
+    if not math.isfinite(result['distance_to_gap']) or not -1.0 <= result['distance_to_gap'] <= 1.0:
+        raise ValueError('Invalid compact observation distance')
+    if not math.isfinite(result['velocity_x']) or not -1.0 <= result['velocity_x'] <= 1.0:
+        raise ValueError('Invalid compact observation velocity')
+    result['grounded'] = bool(result['grounded'])
+    result['features'] = (result['distance_to_gap'],
+                          1.0 if result['grounded'] else 0.0,
+                          result['velocity_x'])
     return result

@@ -6,19 +6,26 @@ import time
 from controls import Action
 from joysticks import HumanJoystick
 from level import DEFAULT_MAP, load_level
-from monitors import ColorRenderer, MlpMonitor, WindowMonitor
+from monitors import AutoMonitor, ColorRenderer, MlpMonitor, WindowMonitor
 from physics import PhysicsConfig, PhysicsWorld
 from socket_io import SocketTransport
 from mlp_joystick import MlpJoystick
+from sensors import AutoFeatureProvider
 
 
 class GameContainer:
     AUTO_SPEED = 100
+    AUTO_TARGET_DELAY = 32
+    AUTO_MAX_TICKS = 600
 
     def __init__(self, map_path=DEFAULT_MAP, mode='human', *, port=8765, config=None,
-                 monitor_hz=30, window=False):
+                 monitor_hz=30, window=False, auto=False):
         if mode not in ('human', 'mlp'):
             raise ValueError('mode must be human or mlp')
+        if auto and mode != 'mlp':
+            raise ValueError('auto mode requires mlp mode')
+        if auto and window:
+            raise ValueError('auto mode cannot be combined with --window')
         if type(port) is not int or not 0 <= port <= 65535:
             raise ValueError('port must be an integer in [0, 65535]')
         self.config = config or PhysicsConfig()
@@ -28,10 +35,12 @@ class GameContainer:
             raise ValueError('monitor_hz must be a positive divisor of physics Hz')
         self.monitor_hz = monitor_hz
         self.mode = mode
+        self.auto = bool(auto)
         self.map_path = map_path
         self.level = load_level(map_path)
         self.physics = PhysicsWorld(self.level.new_body(), self.level.surfaces, self.config)
-        self.renderer = ColorRenderer()
+        self.renderer = None if self.auto else ColorRenderer()
+        self.feature_provider = AutoFeatureProvider(self.level) if self.auto else None
         self.transport = self.monitor = self.joystick = self.window = None
         self.episode = 1
         self.status = self.event_sequence = self.last_event = 0
@@ -46,7 +55,8 @@ class GameContainer:
             else:
                 self.transport = SocketTransport(port=port)
                 self.joystick = MlpJoystick(self.transport)
-                self.monitor = MlpMonitor(self.transport)
+                self.monitor = (AutoMonitor(self.transport) if self.auto
+                                else MlpMonitor(self.transport))
                 if window:
                     self.window = WindowMonitor(self.level, spectator=True)
         except BaseException:
@@ -132,6 +142,8 @@ class GameContainer:
 
     def frame(self):
         self._check_open()
+        if self.renderer is None:
+            raise RuntimeError('auto mode does not build semantic raster frames')
         key = (self.episode, self.physics.tick)
         if key != self._frame_key:
             self._frame = self.renderer.render(self.level.width, self.level.height,
@@ -190,6 +202,8 @@ class GameContainer:
         self._check_open()
         if self.mode != 'mlp':
             raise ValueError('auto mode requires mlp mode')
+        if not self.auto:
+            raise ValueError('auto scheduler requires auto mode')
         if self.window is not None:
             raise ValueError('auto mode cannot be combined with --window')
         if isinstance(speed, bool) or not isinstance(speed, (int, float)):
@@ -200,28 +214,29 @@ class GameContainer:
         interval = self.config.hz // self.monitor_hz
         started = time.perf_counter()
         simulated_ticks = 0
+        self._auto_metrics = dict(observations=0, feature_build_ms=0.0,
+                                  transport_wait_ms=0.0, physics_ms=0.0,
+                                  mlp_wait_ms=0.0)
         try:
             if self.transport is not None:
                 print(f'game2 socket listening on {self.transport.address[0]}:'
                       f'{self.transport.address[1]}', file=sys.stderr, flush=True)
-            self._auto_wait_for_connection()
+            if self._auto_wait_for_connection() == 'quit':
+                return
             while not self.quit_requested:
                 self._publish_observation()
                 if self.done:
+                    wait_started = time.perf_counter()
                     operation = self._auto_wait_for_reset()
+                    self._auto_metrics['mlp_wait_ms'] += (time.perf_counter() - wait_started) * 1000
                     if operation == 'quit':
                         break
                     self.reset()
                     continue
 
-                accepted_before = self.joystick.accepted
-                operation = self._auto_wait_for_acceptance(accepted_before)
-                if operation == 'quit':
-                    break
-                if operation == 'reset':
-                    self.reset()
-                    continue
-
+                next_sequence = self.joystick.accepted + 1
+                pending = [(next_sequence, self.physics.tick + self.AUTO_TARGET_DELAY)]
+                next_sequence += 1
                 reset_requested = False
                 while not self.done and not self.quit_requested:
                     for _ in range(interval):
@@ -235,8 +250,24 @@ class GameContainer:
                             self.reset()
                             reset_requested = True
                             break
+                        next_tick = self.physics.tick + 1
+                        while pending and pending[0][1] <= next_tick:
+                            wait_started = time.perf_counter()
+                            operation = self._auto_wait_for_acceptance(pending[0][0] - 1)
+                            self._auto_metrics['mlp_wait_ms'] += (time.perf_counter() - wait_started) * 1000
+                            if operation == 'quit':
+                                break
+                            if operation == 'reset':
+                                self.reset()
+                                reset_requested = True
+                                break
+                            pending.pop(0)
+                        if reset_requested or self.quit_requested or operation == 'quit':
+                            break
                         self._auto_pace(started, simulated_ticks + 1, speed)
+                        physics_started = time.perf_counter()
                         events = self.step(self.joystick.next_action(self.physics.tick + 1))
+                        self._auto_metrics['physics_ms'] += (time.perf_counter() - physics_started) * 1000
                         simulated_ticks += 1
                         for event in events:
                             print(event, file=sys.stderr, flush=True)
@@ -245,14 +276,18 @@ class GameContainer:
                     if reset_requested or self.quit_requested or self.done:
                         break
                     self._publish_observation()
-                    accepted_before = self.joystick.accepted
-                    operation = self._auto_wait_for_acceptance(accepted_before)
-                    if operation == 'quit':
-                        break
-                    if operation == 'reset':
+                    if self.physics.tick >= self.AUTO_MAX_TICKS:
+                        wait_started = time.perf_counter()
+                        operation = self._auto_wait_for_reset()
+                        self._auto_metrics['mlp_wait_ms'] += (time.perf_counter() - wait_started) * 1000
+                        if operation == 'quit':
+                            break
                         self.reset()
                         reset_requested = True
                         break
+                    pending.append((next_sequence,
+                                    self.physics.tick + self.AUTO_TARGET_DELAY))
+                    next_sequence += 1
                 # A terminal frame is published before waiting for the runner's
                 # reset. For a running game it was already published above.
         finally:
@@ -262,18 +297,29 @@ class GameContainer:
                                if wall_seconds > 0 else 0.0)
             print(f'auto_summary simulated_seconds={simulated_seconds:.6f} '
                   f'wall_seconds={wall_seconds:.6f} '
-                  f'effective_speed_x={effective_speed:.2f}',
+                  f'effective_speed_x={effective_speed:.2f} '
+                  f'observations={getattr(self, "_auto_metrics", {}).get("observations", 0)} '
+                  f'physics_ticks={simulated_ticks} late={getattr(self.joystick, "late", 0)} '
+                  f'rejected={getattr(self.joystick, "rejected", 0)} '
+                  f'feature_build_ms={getattr(self, "_auto_metrics", {}).get("feature_build_ms", 0):.3f} '
+                  f'transport_wait_ms={getattr(self, "_auto_metrics", {}).get("transport_wait_ms", 0):.3f} '
+                  f'physics_ms={getattr(self, "_auto_metrics", {}).get("physics_ms", 0):.3f} '
+                  f'mlp_wait_ms={getattr(self, "_auto_metrics", {}).get("mlp_wait_ms", 0):.3f}',
                   file=sys.stderr, flush=True)
 
     def _publish_observation(self):
-        self.monitor.present(self.frame(), self.metadata())
+        started = time.perf_counter()
+        reading = self.feature_provider.read(self.body, self.body.vx / self.config.max_speed)
+        self._auto_metrics['feature_build_ms'] += (time.perf_counter() - started) * 1000
+        self._auto_metrics['observations'] += 1
+        self.monitor.present(reading, self.metadata())
 
     def _auto_wait_for_connection(self):
         while not self.quit_requested:
             self.joystick.poll(self.episode, self.physics.tick)
             if self.joystick.connected:
                 return
-            time.sleep(0.001)
+            self._wait_for_transport_event(self.joystick.generation)
         return 'quit'
 
     def _auto_wait_for_acceptance(self, accepted_before):
@@ -283,12 +329,14 @@ class GameContainer:
             if operation == 'reset':
                 return 'reset'
             if not self.joystick.connected:
-                raise ConnectionError('MLP controller disconnected during auto run')
+                self.quit_requested = True
+                return 'quit'
             if self.joystick.generation != generation:
-                raise ConnectionError('MLP controller reconnected during auto run')
+                self.quit_requested = True
+                return 'quit'
             if self.joystick.accepted > accepted_before:
                 return None
-            time.sleep(0.001)
+            self._wait_for_transport_event(generation)
         return 'quit'
 
     def _auto_wait_for_reset(self):
@@ -298,10 +346,12 @@ class GameContainer:
             if operation == 'reset':
                 return 'reset'
             if not self.joystick.connected:
-                raise ConnectionError('MLP controller disconnected during auto run')
+                self.quit_requested = True
+                return 'quit'
             if self.joystick.generation != generation:
-                raise ConnectionError('MLP controller reconnected during auto run')
-            time.sleep(0.001)
+                self.quit_requested = True
+                return 'quit'
+            self._wait_for_transport_event(generation)
         return 'quit'
 
     def _auto_pace(self, started, simulated_tick, speed):
@@ -309,6 +359,16 @@ class GameContainer:
         delay = started + target - time.perf_counter()
         if delay > 0:
             time.sleep(delay)
+
+    def _wait_for_transport_event(self, generation):
+        started = time.perf_counter()
+        waiter = getattr(self.transport, 'wait_for_event', None)
+        if waiter is None:
+            time.sleep(0)
+        else:
+            waiter(generation)
+        if hasattr(self, '_auto_metrics'):
+            self._auto_metrics['transport_wait_ms'] += (time.perf_counter() - started) * 1000
 
     def _check_open(self):
         if self.closed:

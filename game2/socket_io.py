@@ -19,9 +19,11 @@ class SocketTransport:
             self.listener.close()
             raise
         self.address = self.listener.getsockname()
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
+        self._lock = self._condition
         self._inbox = deque()
         self._latest = None
+        self._queued_outgoing = deque()
         self._generation = 0
         self._connected = False
         self._stop = threading.Event()
@@ -29,23 +31,42 @@ class SocketTransport:
         self._thread.start()
 
     def drain(self):
-        with self._lock:
+        with self._condition:
             result = (self._generation, self._connected, list(self._inbox))
             self._inbox.clear()
             return result
 
+    def wait_for_event(self, generation):
+        """Wait for a connection change or an incoming command."""
+        with self._condition:
+            self._condition.wait_for(lambda: self._generation != generation or self._inbox)
+
     def publish(self, payload):
-        with self._lock:
+        return self._publish(payload, queued=False)
+
+    def publish_queued(self, payload):
+        """Queue an auto observation without changing realtime latest-frame behavior."""
+        return self._publish(payload, queued=True)
+
+    def _publish(self, payload, *, queued):
+        with self._condition:
             if self._connected:
-                # Only the newest unsent observation is retained.
-                self._latest = packet(payload)
+                if queued:
+                    if len(self._queued_outgoing) >= 256:
+                        raise ConnectionError('Observation queue overflow')
+                    self._queued_outgoing.append(packet(payload))
+                else:
+                    # Realtime keeps only the newest unsent observation.
+                    self._latest = packet(payload)
 
     def _connection(self, connected):
-        with self._lock:
+        with self._condition:
             self._generation += 1
             self._connected = connected
             self._inbox.clear()
             self._latest = None
+            self._queued_outgoing.clear()
+            self._condition.notify_all()
 
     def _run(self):
         peer = None
@@ -57,8 +78,11 @@ class SocketTransport:
         try:
             while not self._stop.is_set():
                 if peer is not None and not outgoing:
-                    with self._lock:
-                        outgoing, self._latest = self._latest or b'', None
+                    with self._condition:
+                        if self._queued_outgoing:
+                            outgoing = self._queued_outgoing.popleft()
+                        else:
+                            outgoing, self._latest = self._latest or b'', None
                     sent = 0
                     send_started = time.monotonic()
                 readers = [self.listener] + ([peer] if peer is not None else [])
@@ -91,10 +115,11 @@ class SocketTransport:
                                 break
                             payload = bytes(incoming[PREFIX.size:PREFIX.size + size])
                             del incoming[:PREFIX.size + size]
-                            with self._lock:
+                            with self._condition:
                                 if len(self._inbox) >= 256:
                                     raise ConnectionError('Command queue overflow')
                                 self._inbox.append(payload)
+                                self._condition.notify_all()
                     if peer in writable:
                         count = peer.send(memoryview(outgoing)[sent:])
                         if not count:
@@ -119,4 +144,6 @@ class SocketTransport:
 
     def close(self):
         self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
         self._thread.join(timeout=2)

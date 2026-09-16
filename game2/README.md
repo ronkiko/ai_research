@@ -23,10 +23,10 @@
 | Общие действия | `controls.py` | Неизменяемый `Action(right, jump)` |
 | Джойстик человека | `joysticks.py` | Клавиши → те же действия |
 | Джойстик MLP | `mlp_joystick.py` | Команды сокета → действия на заданных тактах |
-| Монитор датчиков | `monitors.py:ColorRenderer` | Четырёхцветный растр физической геометрии |
+| Монитор датчиков | `monitors.py:ColorRenderer`, `sensors.py:AutoFeatureProvider` | Realtime raster или эквивалентные compact features |
 | Графический рендер | `tile_renderer.py:TileRenderer` | Фон, тайлы земли, декорации из ассетов |
 | Монитор человека | `monitors.py:WindowMonitor` | Игровое окно и отдельный HUD |
-| Монитор MLP | `monitors.py:MlpMonitor` | Поток цветовых кадров с номерами тактов |
+| Монитор MLP | `monitors.py:MlpMonitor`, `AutoMonitor` | Realtime frames или compact canonical features |
 | Сетевой транспорт | `socket_io.py` | TCP в отдельном потоке, ограниченные буферы |
 | Протокол / клиент | `protocol.py`, `mlp_client.py` | Бинарный формат и адаптер для локального MLP |
 | Pixel-сенсоры | `sensors.py` | Distance/grounded из растра, velocity metadata |
@@ -121,8 +121,8 @@ Auto сохраняет физику 120 Hz, observations 30 Hz и tick-based sc
 команд. `AUTO_SPEED` задаёт только максимальный wall-clock pacing: если socket
 или MLP не успевают, симуляция замедляется вместо пропуска ticks или команд.
 
-`mlp_runner.py` подключается к TCP-сокету и получает изображения. Канонический
-порядок входов MLP:
+`mlp_runner.py` подключается к TCP-сокету. В realtime он получает изображения,
+а в auto — компактные canonical features. Канонический порядок входов MLP:
 
 ```text
 (distance_to_gap, grounded, velocity_x)
@@ -220,10 +220,12 @@ reward shaping.
 успеха проверяется отдельно сериями запусков `play`, а не по одному loss.
 
 
-**Игра не ждёт MLP.** Физика идёт с фиксированным шагом 1/120 s даже без
-подключения. Монитор MLP отправляет кадры с целевой частотой 30 Hz. Окно
-человека обновляется с целевой частотой 60 Hz. Это лабораторный real-time цикл,
-а не гарантия hard real-time от ОС/Python. MLP работает вне контейнера.
+**Игра не ждёт MLP в realtime.** Физика идёт с фиксированным шагом 1/120 s
+даже без подключения. Realtime monitor отправляет кадры с целевой частотой 30
+Hz, а auto monitor отправляет те же canonical features компактным FIFO-потоком.
+Окно человека обновляется с целевой частотой 60 Hz. Это лабораторный
+real-time цикл, а не гарантия hard real-time от ОС/Python. MLP работает вне
+контейнера.
 
 Каждая команда задаёт:
 

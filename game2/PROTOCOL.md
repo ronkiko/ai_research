@@ -68,7 +68,7 @@ stream. Maximum accepted observation payload is 17 MiB.
 | Order | Type | Field |
 |---|---|---|
 | 1 | u8 | opcode = 128 |
-| 2 | u8 | protocol version = 2 |
+| 2 | u8 | protocol version = 3 |
 | 3 | u32 | episode |
 | 4 | u64 | completed physics tick |
 | 5 | u16 | image width |
@@ -95,6 +95,17 @@ read directly from current physics state, not estimated from pixel history.
 Simulation time in seconds is `tick / physics_hz`.
 No camera scaling/cropping is applied in v3.
 
+### Compact observation: opcode 129
+
+Auto mode uses a separate fixed-size packet and never builds or transmits the
+semantic pixel raster. Its struct is
+`!BBIQBIIIIIIIBfBf` (53 bytes): type, version, episode, completed physics
+tick, status, accepted, late, rejected, overrun_ticks, jump_requested,
+jump_applied, event_sequence, last_event, normalized `distance_to_gap`,
+`grounded` (0/1), and normalized `velocity_x`. The three feature values have
+the same semantics and ranges as the realtime `PixelSensors` path. The packet
+contains no coordinates, map data, surfaces, or pixels.
+
 Event sequence persists across resets. Last event repeats until a newer event.
 `jump_requested` counts Jump actions that reached a physical tick; `jump_applied`
 counts only those for which physics found the body supported and started takeoff.
@@ -109,11 +120,13 @@ is authoritative: never infer elapsed simulation time from TCP arrival times or
 frame count. MLP inference runs independently. Controller must choose a
 future target_tick with adequate latency margin and monitor late/overrun counts.
 
-The game holds at most one in-flight and one latest pending observation. An
-in-flight TCP message is completed, never truncated for a newer frame. Send
-stall over 0.5 s disconnects the reader; old kernel-buffered frames can still
-exist before disconnect. The reference MLPClient has a receiving thread that
-continuously drains frames and retains only the latest unread observation.
+Realtime holds at most one in-flight and one latest pending observation. Auto
+compact observations use a bounded FIFO queue so the safe target-delay pipeline
+does not discard observations. An in-flight TCP message is completed, never
+truncated for a newer frame. Send stall over 0.5 s disconnects the reader; old
+kernel-buffered frames can still exist before disconnect. The reference
+MLPClient retains the latest unread realtime frame and drains compact frames in
+FIFO order.
 
 Disconnect releases buttons and cancels queued actions at the next poll.
 An inactive connected MLP is limited by hold_ticks. Simulation continues
