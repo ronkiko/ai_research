@@ -163,6 +163,12 @@ class StatusChannel:
                 self._live = event
             elif event_type == 'snapshot':
                 self._snapshot = event
+            elif event_type == 'session_started':
+                # Do not deliver the previous session's latest values after a
+                # new session marker.
+                self._live = None
+                self._snapshot = None
+                self._events.append(event)
             else:
                 self._events.append(event)
 
@@ -198,12 +204,13 @@ class Statistics:
     rejected: int = 0
     episode: int = 0
     tick: int = 0
+    cumulative_sim_ticks: int = 0
     speed: float = 1.0
 
     def update(self, event: dict) -> None:
         for key in ('attempts', 'successes', 'successes_100', 'episodes_window',
                     'jump_requested', 'jump_applied', 'late', 'rejected',
-                    'episode', 'tick'):
+                    'episode', 'tick', 'cumulative_sim_ticks'):
             if key in event:
                 setattr(self, key, int(event[key]))
         for key in ('success_rate_total', 'success_rate_100', 'mean_terminal_tick_100', 'speed'):
@@ -237,6 +244,9 @@ class SessionController:
         self._runner_thread = None
         self._preview_at = 0.0
         self._auto_started = 0.0
+        self._previous_episode = None
+        self._previous_tick = 0
+        self._cumulative_sim_ticks = 0
         self._lifecycle_lock = threading.RLock()
 
     def _publish(self, event_type: str, **payload) -> None:
@@ -267,6 +277,9 @@ class SessionController:
         self._stop_event = threading.Event()
         self._preview_at = 0.0
         self._auto_started = time.monotonic()
+        self._previous_episode = None
+        self._previous_tick = 0
+        self._cumulative_sim_ticks = 0
         mode = 'human' if config.controller == 'Human' else 'mlp'
         auto = config.controller == 'Bot' and config.bot_mode == 'Training' \
             and config.execution == 'Auto'
@@ -291,16 +304,29 @@ class SessionController:
 
     def _game_snapshot(self, game, body, metadata):
         now = time.monotonic()
+        metadata = dict(metadata)
+        episode, tick = int(metadata.get('episode', 0)), int(metadata.get('tick', 0))
+        if self._previous_episode is None:
+            self._previous_episode = episode
+            self._cumulative_sim_ticks += tick
+            self._previous_tick = tick
+        elif episode != self._previous_episode:
+            self._previous_episode = episode
+            self._previous_tick = tick
+        elif tick >= self._previous_tick:
+            self._cumulative_sim_ticks += tick - self._previous_tick
+            self._previous_tick = tick
+        metadata['cumulative_sim_ticks'] = self._cumulative_sim_ticks
         # Auto observations remain cheap: at most ten wall-clock previews and
         # only the newest one is retained by StatusChannel.
         if self.config is not None and self.config.execution == 'Auto':
             if now - self._preview_at < 0.1:
                 return
             self._preview_at = now
-        metadata = dict(metadata)
         if self.config is not None and self.config.execution == 'Auto':
             elapsed = max(0.000001, now - self._auto_started)
-            metadata['speed'] = metadata['tick'] / 120 / elapsed
+            hz = int(metadata.get('hz', game.config.hz))
+            metadata['speed'] = (self._cumulative_sim_ticks / hz) / elapsed
         else:
             metadata['speed'] = 1.0
         self.status_channel.publish(dict(type='snapshot', body=asdict(body),
