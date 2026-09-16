@@ -1,7 +1,11 @@
 import unittest
 from dataclasses import asdict
 
-from game import Game, GROUND_Y, PIT_LEFT, PIT_RIGHT, SIZE, SPIKES_Y
+from game import GameContainer
+from controls import Action
+
+# Expected geometry of maps/pit.json; the engine has no such constants.
+GROUND_Y, PIT_LEFT, PIT_RIGHT, SIZE, SPIKES_Y = 360, 500, 760, 64, 584
 from physics import Body, PhysicsConfig, PhysicsWorld, Surface
 
 
@@ -168,22 +172,27 @@ class PhysicsTests(unittest.TestCase):
 
 
 class GameTests(unittest.TestCase):
+    def new_game(self):
+        game = GameContainer(mode='agent', port=0)
+        self.addCleanup(game.close)
+        return game
+
     def test_walk_into_pit_emits_one_die(self):
-        game = Game()
+        game = self.new_game()
         events = []
         for _ in range(500):
-            events.extend(game.step(right=True))
+            events.extend(game.step(Action(True)))
         self.assertEqual([e['event'] for e in events], ['die'])
         self.assertEqual(game.body.y + SIZE, SPIKES_Y)
         self.assertFalse(game.body.alive)
 
     def test_running_jump_crosses_pit(self):
-        game = Game()
+        game = self.new_game()
         events, jumped = [], False
         for _ in range(500):
             jump = not jumped and game.body.x >= PIT_LEFT - SIZE / 2
             jumped |= jump
-            events.extend(game.step(right=True, jump=jump))
+            events.extend(game.step(Action(True, jump)))
         self.assertEqual([e['event'] for e in events], ['success'])
         self.assertTrue(game.body.alive)
         self.assertTrue(game.body.grounded)
@@ -191,12 +200,12 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.body.y, GROUND_Y - SIZE)
 
     def test_early_jump_fails(self):
-        game = Game()
+        game = self.new_game()
         events, jumped = [], False
         for _ in range(500):
             jump = not jumped and game.body.x >= 300
             jumped |= jump
-            events.extend(game.step(right=True, jump=jump))
+            events.extend(game.step(Action(True, jump)))
         self.assertEqual([e['event'] for e in events], ['die'])
 
     def test_replay_independent_of_render_batch_size(self):
@@ -204,24 +213,24 @@ class GameTests(unittest.TestCase):
         actions = [(tick < 250, tick == 140) for tick in range(420)]
         traces = []
         for batch_size in (1, 2, 4, 7):
-            game, trace = Game(), []
+            game, trace = self.new_game(), []
             for offset in range(0, len(actions), batch_size):
                 for right, jump in actions[offset:offset + batch_size]:
-                    events = game.step(right, jump)
-                    trace.append((asdict(game.body), events, game.crossed))
+                    events = game.step(Action(right, jump))
+                    trace.append((asdict(game.body), events, (game.status == 2)))
             traces.append(trace)
         for trace in traces[1:]:
             self.assertEqual(trace, traces[0])
 
     def test_restart_is_fresh(self):
-        game = Game()
+        game = self.new_game()
         for _ in range(500):
-            game.step(right=True)
+            game.step(Action(True))
         self.assertFalse(game.body.alive)
-        game = Game()
+        game = self.new_game()
         self.assertTrue(game.body.alive)
         self.assertTrue(game.body.grounded)
-        self.assertFalse(game.crossed)
+        self.assertFalse((game.status == 2))
         self.assertEqual(game.physics.tick, 0)
 
 
