@@ -46,7 +46,7 @@ class ColorRenderer:
         pass
 
 
-class AgentMonitor:
+class MlpMonitor:
     def __init__(self, transport):
         self.transport = transport
 
@@ -97,7 +97,7 @@ class WindowMonitor:
         self.pygame.font.quit()
 
     def poll_close(self):
-        """Spectator window only: keyboard input cannot take over the agent."""
+        """Spectator window only: keyboard input cannot take over the MLP."""
         pygame = self.pygame
         return any(event.type == pygame.QUIT or
                    (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE)

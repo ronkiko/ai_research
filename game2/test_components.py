@@ -6,12 +6,12 @@ import time
 import unittest
 from pathlib import Path
 
-from agent_client import AgentClient
+from mlp_client import MLPClient
 from controls import Action
 from game import GameContainer
 from level import DEFAULT_MAP, load_level
 from protocol import ACTION, ACTION_PACKET, RESET, RESET_PACKET, packet
-from socket_joystick import SocketJoystick
+from mlp_joystick import MlpJoystick
 
 
 class FakeTransport:
@@ -26,7 +26,7 @@ class FakeTransport:
 class JoystickTests(unittest.TestCase):
     def setUp(self):
         self.transport = FakeTransport()
-        self.joystick = SocketJoystick(self.transport)
+        self.joystick = MlpJoystick(self.transport)
 
     def send(self, seq=1, episode=1, tick=5, hold=3, right=1, jump=1):
         self.transport.inbox.append(ACTION_PACKET.pack(ACTION, seq, episode, tick, hold, right, jump))
@@ -87,7 +87,7 @@ class JoystickTests(unittest.TestCase):
 
 class ComponentTests(unittest.TestCase):
     def new_game(self, path=DEFAULT_MAP):
-        game = GameContainer(path, mode='agent', port=0)
+        game = GameContainer(path, mode='mlp', port=0)
         self.addCleanup(game.close)
         return game
 
@@ -114,7 +114,7 @@ class ComponentTests(unittest.TestCase):
                 with self.subTest(name=name):
                     path.write_text(json.dumps(dict(original, **update)))
                     with self.assertRaises(ValueError):
-                        GameContainer(path, mode='agent', port=0)
+                         GameContainer(path, mode='mlp', port=0)
 
     def test_common_frame_is_pixels_only(self):
         game = self.new_game()
@@ -156,10 +156,10 @@ class ComponentTests(unittest.TestCase):
 
 class SocketIntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.game = GameContainer(mode='agent', port=0)
+        self.game = GameContainer(mode='mlp', port=0)
         self.thread = threading.Thread(target=self.game.run)
         self.thread.start()
-        self.client = AgentClient(port=self.game.transport.address[1])
+        self.client = MLPClient(port=self.game.transport.address[1])
 
     def tearDown(self):
         self.client.close()
@@ -181,7 +181,7 @@ class SocketIntegrationTests(unittest.TestCase):
         self.assertNotIn('x', first)
         self.assertNotIn('vx', first)
         self.assertNotIn('surfaces', first)
-        time.sleep(0.15)  # Model thinks; simulation and frame receiver keep running.
+        time.sleep(0.15)  # MLP computes; simulation and frame receiver keep running.
         later = self.client.receive()
         self.assertGreater(later['tick'], first['tick'] + 5)
         self.assertEqual(later['pixels'], first['pixels'])  # Standing still while time runs.
@@ -211,7 +211,7 @@ class SocketIntegrationTests(unittest.TestCase):
         while self.game.body.vx != 0 and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.game.body.vx, 0)
-        self.client = AgentClient(port=self.game.transport.address[1])
+        self.client = MLPClient(port=self.game.transport.address[1])
         new_frame = self.client.receive()
         self.assertEqual(new_frame['accepted'], 0)
 

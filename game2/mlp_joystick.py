@@ -3,7 +3,7 @@ from controls import Action
 from protocol import MAX_FUTURE, RESET, decode_command
 
 
-class SocketJoystick:
+class MlpJoystick:
     def __init__(self, transport):
         self.transport = transport
         self.generation = -1

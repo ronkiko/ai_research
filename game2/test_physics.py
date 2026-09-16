@@ -173,7 +173,7 @@ class PhysicsTests(unittest.TestCase):
 
 class GameTests(unittest.TestCase):
     def new_game(self):
-        game = GameContainer(mode='agent', port=0)
+        game = GameContainer(mode='mlp', port=0)
         self.addCleanup(game.close)
         return game
 

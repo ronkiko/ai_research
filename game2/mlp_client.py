@@ -1,4 +1,4 @@
-"""Binary client adapter: continuously receive frames while a local model thinks."""
+"""Binary client adapter: continuously receive frames while the MLP computes."""
 import socket
 import threading
 
@@ -6,7 +6,7 @@ from protocol import (ACTION, ACTION_PACKET, MAX_FRAME, PREFIX, RESET, RESET_PAC
                       decode_command, decode_frame, packet)
 
 
-class AgentClient:
+class MLPClient:
     def __init__(self, host='127.0.0.1', port=8765, timeout=2):
         self.socket = socket.create_connection((host, port), timeout=timeout)
         self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -47,7 +47,7 @@ class AgentClient:
                 self._error = error
                 self._condition.notify_all()
 
-    def receive(self):
+    def receive(self) -> dict:
         """Newest unread observation; background I/O discards superseded frames."""
         with self._condition:
             ready = self._condition.wait_for(
@@ -60,6 +60,8 @@ class AgentClient:
             if not ready:
                 raise TimeoutError('No observation received')
             frame, self._latest = self._latest, None
+            if frame is None:
+                raise ConnectionError('Observation stream ended')
             return frame
 
     def action(self, *, episode, target_tick, hold_ticks=4, right=False, jump=False):

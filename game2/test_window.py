@@ -12,24 +12,24 @@ from game import GameContainer
 
 @unittest.skipUnless(importlib.util.find_spec('pygame'), 'Pygame is optional for headless tests')
 class WindowTests(unittest.TestCase):
-    def test_human_input_and_agent_render_match(self):
+    def test_human_input_and_mlp_render_match(self):
         import pygame
-        with GameContainer(mode='human') as human, GameContainer(mode='agent', port=0) as agent:
+        with GameContainer(mode='human') as human, GameContainer(mode='mlp', port=0) as mlp:
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT))
             human.advance(human.config.dt)
-            agent.step(Action(True))
-            self.assertEqual(human.frame(), agent.frame())
+            mlp.step(Action(True))
+            self.assertEqual(human.frame(), mlp.frame())
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_UP))
             human.advance(human.config.dt)
-            agent.step(Action(True, True))
-            self.assertEqual(human.frame(), agent.frame())
+            mlp.step(Action(True, True))
+            self.assertEqual(human.frame(), mlp.frame())
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_UP))
             human.advance(human.config.dt)
-            agent.step(Action(True))
-            self.assertEqual(human.frame(), agent.frame())
+            mlp.step(Action(True))
+            self.assertEqual(human.frame(), mlp.frame())
             human.present()
             rgb = pygame.image.tostring(human.monitor.screen.subsurface((0, 0, 1200, 640)), 'RGB')
-            self.assertEqual(rgb, agent.frame().rgb())
+            self.assertEqual(rgb, mlp.frame().rgb())
             pygame.event.post(pygame.event.Event(pygame.WINDOWFOCUSLOST))
             human.advance(human.config.dt)
             self.assertFalse(human.joystick.right)
@@ -40,9 +40,9 @@ class WindowTests(unittest.TestCase):
             human.advance(human.config.dt)
             self.assertTrue(human.quit_requested)
 
-    def test_spectator_cannot_drive_agent(self):
+    def test_spectator_cannot_drive_mlp(self):
         import pygame
-        with GameContainer(mode='agent', port=0, window=True) as game:
+        with GameContainer(mode='mlp', port=0, window=True) as game:
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT))
             game.advance(game.config.dt)
             self.assertEqual(game.body.x, game.level.spawn.x)

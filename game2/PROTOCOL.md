@@ -6,7 +6,7 @@ unsigned, network byte order (big endian). Each message is prefixed with a
 partial or may contain several messages. Neither side assumes packet boundaries.
 No JSON, pickle, arbitrary file paths, or direct world mutation is exposed.
 
-`protocol.py` is the executable codec; `AgentClient` is the Python reference
+`protocol.py` is the executable codec; `MLPClient` is the Python reference
 adapter. A new connection receives a stream of frames without a handshake.
 Only image pixels and timing/status metadata are observations.
 
@@ -95,16 +95,16 @@ on connection change but not episode reset.
 
 Target observation rate is 30 Hz, subject to host scheduling/render time. Tick
 is authoritative: never infer elapsed simulation time from TCP arrival times or
-frame count. Model inference runs independently. Controller must choose a
+frame count. MLP inference runs independently. Controller must choose a
 future target_tick with adequate latency margin and monitor late/overrun counts.
 
 The game holds at most one in-flight and one latest pending observation. An
 in-flight TCP message is completed, never truncated for a newer frame. Send
 stall over 0.5 s disconnects the reader; old kernel-buffered frames can still
-exist before disconnect. The reference AgentClient has a receiving thread that
+exist before disconnect. The reference MLPClient has a receiving thread that
 continuously drains frames and retains only the latest unread observation.
 
 Disconnect releases buttons and cancels queued actions at the next poll.
-An inactive connected model is limited by hold_ticks. Simulation continues
+An inactive connected MLP is limited by hold_ticks. Simulation continues
 without a peer while the episode is running. Closing the client does not close
 the game; stop the game process/window to shut down the container and listener.

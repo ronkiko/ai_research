@@ -6,26 +6,51 @@
 
 Запуск:
   python3 examples/neuron.py            # REPL
-  python3 examples/neuron.py probe      # фикстура
-  python3 examples/neuron.py probe <file>
+  python3 examples/neuron.py probe            # активная модель
+  python3 examples/neuron.py probe xnor       # с фильтром XNOR
+  python3 examples/neuron.py probe <file>     # файл
+  python3 examples/neuron.py probe <file> xor # файл + фильтр
 """
 from __future__ import annotations
 
+import atexit
 import math
+import readline
 import sys
 from pathlib import Path
+from typing import Any
 import torch
 import torch.nn as nn
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.prompt import Prompt
+
+_HISTORY_FILE = Path.home() / ".neuron_history"
+
+try:
+    _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    readline.read_history_file(str(_HISTORY_FILE))
+except FileNotFoundError:
+    pass
+readline.set_history_length(500)
+atexit.register(lambda: readline.write_history_file(str(_HISTORY_FILE)))
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ui.lab_engines.common import parse_weights, classify_mask
+from lab.engines.common import parse_weights, classify_mask
 
 console = Console()
+
+_KNOWN_FILTERS: dict[str, tuple[int, int, int, int]] = {
+    "zero":  (0, 0, 0, 0),
+    "one":   (1, 1, 1, 1),
+    "or":    (0, 1, 1, 1),
+    "and":   (0, 0, 0, 1),
+    "nand":  (1, 1, 1, 0),
+    "nor":   (1, 0, 0, 0),
+    "xor":   (0, 1, 1, 0),
+    "xnor":  (1, 0, 0, 1),
+}
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _FIXTURE = str(_SCRIPT_DIR / "chip_fixtures" / "mlp_lie_detector_xnor_case_a.md")
@@ -135,7 +160,7 @@ def _neuron_status(h_k: list[float], role: str, w: float) -> Text:
     return Text(f"mixed role {role}", style=_STYLE_WARN)
 
 
-def probe_snapshot(body: str, label: str = "") -> list[Any]:
+def probe_snapshot(body: str, label: str = "", expect: tuple[int, int, int, int] | None = None) -> list[Any]:
     model, params = _load_model(body)
     n = len(params["b0"])
     b2 = params["b2"]
@@ -143,7 +168,6 @@ def probe_snapshot(body: str, label: str = "") -> list[Any]:
 
     out_mask = tuple(outputs)
     out_role, _ = classify_mask(out_mask)
-    is_xnor = out_mask == (1, 0, 0, 1)
 
     renders: list[Any] = []
 
@@ -199,7 +223,6 @@ def probe_snapshot(body: str, label: str = "") -> list[Any]:
 
         w_style = _STYLE_OK if params["w1"][k] > 0 else _STYLE_WARN
         w_label = "positive" if params["w1"][k] > 0 else "negative"
-        w_colored = _cell(f"{params['w1'][k]:+.4f} ({w_label})", w_style)
 
         lines = Text.assemble(
             (f"h{k}: w_out = ", _STYLE_LABEL),
@@ -295,10 +318,25 @@ def probe_snapshot(body: str, label: str = "") -> list[Any]:
             decoded.append(t)
         decoded.append("\n")
     decoded.append(Text("\n"))
-    decoded.append(Text.assemble(
-        (f"Result: {out_mask} → ", "bold"),
-        (f"{out_role}", _STYLE_OK if is_xnor else _STYLE_WARN),
-    ))
+    if expect is not None:
+        if out_mask == expect:
+            decoded.append(Text.assemble(
+                (f"Result: {out_mask} → ", "bold"),
+                (f"{out_role}", _STYLE_OK),
+                (f" ✓ matches expected", _STYLE_OK),
+            ))
+        else:
+            exp_role, _ = classify_mask(expect)
+            decoded.append(Text.assemble(
+                (f"Result: {out_mask} → ", "bold"),
+                (f"{out_role}", _STYLE_FAIL),
+                (f" ✗ expected {exp_role}", _STYLE_WARN),
+            ))
+    else:
+        decoded.append(Text.assemble(
+            (f"Result: {out_mask} → ", "bold"),
+            (f"{out_role}", _STYLE_OK),
+        ))
 
     renders.append(Panel(decoded, title="Decoded: how the network solves the function", border_style=_STYLE_DIM))
 
@@ -351,30 +389,46 @@ def _generate_snapshot(arch: str = "") -> str:
 
 # ── Commands ──
 
-def _resolve_body(args: list[str]) -> tuple[str, str]:
-    global _global_body
-    if args:
-        path = Path(args[0])
-        if not path.exists():
-            raise FileNotFoundError(str(path))
-        return path.read_text(encoding="utf-8"), str(path)
-    if _global_body is not None:
-        return _global_body, "(virtual)"
-    return Path(_FIXTURE).read_text(encoding="utf-8"), _FIXTURE_LABEL
-
-
 def cmd_probe(args: list[str]) -> int:
+    expect: tuple[int, int, int, int] | None = None
+    file_args = list(args)
+
+    if args:
+        raw_last = args[-1].lower()
+        if raw_last in _KNOWN_FILTERS:
+            expect = _KNOWN_FILTERS[raw_last]
+            file_args = args[:-1]
+
     try:
-        body, label = _resolve_body(args)
+        body, label = _resolve_body(file_args)
     except FileNotFoundError as e:
-        console.print(f"[{_STYLE_FAIL}]✗[/] Файл не найден: [{_STYLE_BOLD}]{e}[/]")
-        return 1
-    console.print(f"[{_STYLE_HEAD}]=== NEURON PROBE ===[/]")
-    for r in probe_snapshot(body, label=label):
-        if isinstance(r, str):
-            console.print(r)
+        if file_args:
+            last = file_args[-1]
+            # looks like a filter name (no extension, no path separators)
+            if expect is None and not any(c in last for c in "./\\~"):
+                msg = (
+                    f"Неизвестный фильтр: [bold]{last}[/]. "
+                    f"Доступны: {', '.join(_KNOWN_FILTERS)}"
+                )
+            else:
+                msg = f"Файл не найден: [{_STYLE_BOLD}]{e}[/]"
         else:
-            console.print(r)
+            msg = (
+                f"Неизвестный фильтр: [bold]{args[-1]}[/]. "
+                f"Доступны: {', '.join(_KNOWN_FILTERS)}"
+            )
+        console.print(f"[{_STYLE_FAIL}]✗[/] {msg}")
+        return 1
+
+    try:
+        _load_model(body)
+    except (ValueError, KeyError, IndexError) as e:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Модель несовместима с probe: {e}")
+        return 1
+
+    console.print(f"[{_STYLE_HEAD}]=== NEURON PROBE ===[/]")
+    for r in probe_snapshot(body, label=label, expect=expect):
+        console.print(r)
     return 0
 
 
@@ -395,22 +449,230 @@ def _current_source() -> str:
     return f"[{_STYLE_DIM}]file: {_FIXTURE}[/]"
 
 
-def cmd_help() -> int:
-    console.print(f"[{_STYLE_LABEL}]Источник:[/] {_current_source()}")
-    console.print(f"[{_STYLE_HEAD}]Доступные команды:[/]")
-    console.print(f"  [bold]probe[/] [[{_STYLE_DIM}]file[/]]  — прозвонка нейронов")
-    console.print(f"  [bold]new[/]   [[{_STYLE_DIM}]arch[/]]  — создать виртуальную модель (напр. 2-8-1)")
-    console.print(f"  [bold]help[/]          — это сообщение")
-    console.print(f"  [bold]exit[/] / [bold]quit[/]   — выход")
+def _resolve_body(args: list[str]) -> tuple[str, str]:
+    global _global_body
+    if args:
+        path = Path(args[0])
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        return path.read_text(encoding="utf-8"), str(path)
+    if _global_body is not None:
+        return _global_body, "(virtual)"
+    return Path(_FIXTURE).read_text(encoding="utf-8"), _FIXTURE_LABEL
+
+
+def cmd_model(args: list[str]) -> int:
+    """model info / model weights"""
+    if not args:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Укажите подкоманду: [bold]info[/] или [bold]weights[/]")
+        return 1
+
+    sub = args[0]
+    rest = args[1:]
+
+    try:
+        body, label = _resolve_body(rest)
+    except FileNotFoundError as e:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Файл не найден: [{_STYLE_BOLD}]{e}[/]")
+        return 1
+
+    w = parse_weights(body)
+    n = 0
+    while f"0.bias[{n}]" in w:
+        n += 1
+    if n < 1:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Не удалось разобрать архитектуру")
+        return 1
+
+    n_params = 2 * n + n + n + 1  # w0 + b0 + w1 + b2
+
+    if sub == "info":
+        tbl = Table(title=f"Model info — {label}", border_style=_STYLE_DIM, header_style=_STYLE_LABEL)
+        tbl.add_column("Layer", style=_STYLE_LABEL)
+        tbl.add_column("Shape", justify="right")
+        tbl.add_column("Params", justify="right")
+        tbl.add_row("input", "2", "—")
+        tbl.add_row(f"hidden (ReLU)", f"2×{n}", str(2 * n + n))
+        tbl.add_row("output", f"{n}×1", str(n + 1))
+        tbl.add_row("", "", "")
+        tbl.add_row("[bold]Total[/]", "", f"[bold]{n_params}[/]")
+        console.print(tbl)
+
+    elif sub == "weights":
+        w0 = [[w.get(f"0.weight[{k * 2 + in_idx}]", 0.0) for k in range(n)]
+              for in_idx in range(2)]
+        b0 = [w.get(f"0.bias[{k}]", 0.0) for k in range(n)]
+        w1 = [w.get(f"2.weight[{k}]", 0.0) for k in range(n)]
+        b2 = w.get("2.bias[0]", 0.0)
+
+        console.print(Text.assemble(
+            ("Weights — ", _STYLE_HEAD),
+            (label, _STYLE_LABEL),
+        ))
+
+        tbl0 = Table(title=f"Layer 0: Linear(2, {n}) + ReLU", border_style=_STYLE_DIM, header_style=_STYLE_LABEL)
+        tbl0.add_column("Neuron", style=_STYLE_LABEL)
+        tbl0.add_column("w[x₀]", justify="right")
+        tbl0.add_column("w[x₁]", justify="right")
+        tbl0.add_column("bias", justify="right")
+        for k in range(n):
+            tbl0.add_row(f"h{k}", f"{w0[0][k]:+.4f}", f"{w0[1][k]:+.4f}", f"{b0[k]:+.4f}")
+        console.print(Panel(tbl0, border_style=_STYLE_DIM))
+
+        tbl2 = Table(title=f"Layer 2: Linear({n}, 1)", border_style=_STYLE_DIM, header_style=_STYLE_LABEL)
+        tbl2.add_column("Source", style=_STYLE_LABEL)
+        tbl2.add_column("weight", justify="right")
+        for k in range(n):
+            tbl2.add_row(f"h{k}", f"{w1[k]:+.4f}")
+        tbl2.add_row("[dim]bias[/]", f"[dim]{b2:+.4f}[/]")
+        console.print(Panel(tbl2, border_style=_STYLE_DIM))
+
+    else:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Неизвестная подкоманда: [bold]{sub}[/]. Используйте [bold]info[/] или [bold]weights[/]")
+        return 1
+
     return 0
 
 
+_STEPS_PER_PASS = 10_000
+
+
+def _play_ball(passes: int = 1) -> int:
+    from modules.core.mechanics.level0.ball import BallMechanics
+
+    try:
+        body, label = _resolve_body([])
+    except FileNotFoundError as e:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Файл не найден: [{_STYLE_BOLD}]{e}[/]")
+        return 1
+    try:
+        model, _ = _load_model(body)
+    except (ValueError, KeyError, IndexError) as e:
+        console.print(f"[{_STYLE_FAIL}]✗[/] Модель несовместима: {e}")
+        return 1
+
+    game = BallMechanics()
+    game.sit()
+    total_steps = _STEPS_PER_PASS * passes
+
+    import time
+    t0 = time.monotonic()
+    correct = 0
+    total_reward = 0
+
+    label_p = f" ({passes} проходов)" if passes > 1 else ""
+    console.print(f"[{_STYLE_HEAD}]=== PLAY: ball{label_p} ===[/]")
+    console.print(f"[{_STYLE_DIM}]Играет модель: {label}[/]")
+
+    from rich.progress import Progress
+    with Progress(console=console) as progress:
+        task = progress.add_task("Идёт игра...", total=total_steps)
+        for _ in range(passes):
+            game.sit()
+            for step in range(_STEPS_PER_PASS):
+                game.observe()
+                inp = torch.tensor([[0.0, 0.0]], dtype=torch.float32)
+                out = model(inp)
+                action = 1 if out.item() >= 0.0 else 0
+                result = game.step(action)
+                total_reward += result.reward
+                if result.reward == 1:
+                    correct += 1
+                if step % 100 == 0:
+                    progress.update(task, advance=100)
+
+    elapsed = time.monotonic() - t0
+    speed = total_steps / elapsed
+    console.print()
+    console.print(f"[{_STYLE_HEAD}]Результаты:[/]")
+    console.print(f"  Всего ходов:       {total_steps}")
+    console.print(f"  Угадано:           {correct} / {total_steps}")
+    console.print(f"  Точность:          {correct / total_steps * 100:.1f}%")
+    console.print(f"  Суммарная награда:  {total_reward}")
+    console.print(f"  Время:             {elapsed:.2f} с")
+    console.print(f"  Скорость:          {speed:,.0f} шаг/с")
+    return 0
+
+
+def cmd_play(args: list[str]) -> int:
+    if not args:
+        from modules.core.casino import _TABLES
+        tbl = Table(title="Доступные игры", border_style=_STYLE_DIM, header_style=_STYLE_LABEL)
+        tbl.add_column("Ключ", style=_STYLE_LABEL)
+        tbl.add_column("Название", style=_STYLE_OK)
+        tbl.add_column("Описание")
+        for key, cls in _TABLES.items():
+            tbl.add_row(key, cls.TITLE, cls.SUMMARY)
+        console.print(tbl)
+        return 0
+    game = args[0]
+    passes = 1
+    if len(args) > 1 and args[1].startswith("x"):
+        try:
+            passes = int(args[1][1:])
+        except ValueError:
+            pass
+    if game == "ball":
+        return _play_ball(passes)
+    console.print(f"[{_STYLE_HEAD}]=== PLAY: {game} ===[/]")
+    console.print(f"[{_STYLE_DIM}]Игра «{game}» пока не реализована.[/]")
+    return 0
+
+
+def cmd_help() -> int:
+    console.print(f"[{_STYLE_LABEL}]Источник:[/] {_current_source()}")
+    console.print(f"[{_STYLE_HEAD}]Доступные команды:[/]")
+    console.print(f"  [bold]probe[/] [[{_STYLE_DIM}]file[/]] [[{_STYLE_DIM}]filter[/]] — прозвонка нейронов (фильтр: {', '.join(_KNOWN_FILTERS)})")
+    console.print(f"  [bold]new[/]   [[{_STYLE_DIM}]arch[/]]     — создать виртуальную модель (напр. 2-8-1)")
+    console.print(f"  [bold]play[/]  [[{_STYLE_DIM}]game[/]]    — список игр / запустить игру")
+    console.print(f"  [bold]model info[/]              — архитектура текущей модели")
+    console.print(f"  [bold]model weights[/]           — веса текущей модели")
+    console.print(f"  [bold]help[/]                    — это сообщение")
+    console.print(f"  [bold]exit[/] / [bold]quit[/]             — выход")
+    return 0
+
+
+_COMMANDS = ["probe", "new", "model", "play", "help", "exit", "quit"]
+_MODEL_SUB = ["info", "weights"]
+_NEW_ARCHS = ["2-4-1", "2-8-1", "2-16-1"]
+
+
+def _completer(text: str, state: int) -> str | None:
+    line = readline.get_line_buffer()
+    beg = readline.get_begidx()
+
+    if beg == 0:
+        options = [c for c in _COMMANDS if c.startswith(text)]
+    else:
+        parts = line.split()
+        cmd = parts[0] if parts else ""
+        if cmd == "model":
+            options = [s for s in _MODEL_SUB if s.startswith(text)]
+        elif cmd == "probe":
+            options = [f for f in _KNOWN_FILTERS if f.startswith(text)]
+        elif cmd == "new":
+            options = [a for a in _NEW_ARCHS if a.startswith(text)]
+        elif cmd == "play":
+            from modules.core.casino import _TABLES
+            options = [k for k in _TABLES if k.startswith(text)]
+        else:
+            options = []
+    try:
+        return options[state]
+    except IndexError:
+        return None
+
+
 def repl() -> int:
+    readline.set_completer(_completer)
+    readline.parse_and_bind("tab: complete")
     console.print(f"[{_STYLE_HEAD}]neuron REPL[/]  [{_STYLE_LABEL}]Источник:[/] {_current_source()}")
     console.print(f"[{_STYLE_DIM}]Введите help для справки, exit для выхода.[/]")
+    # readline-safe prompt: \001/\002 hide ANSI escapes from cursor tracking
+    _PROMPT = f"\001\033[36m\002neuron\001\033[0m\002 "
     while True:
         try:
-            line = Prompt.ask(f"[{_STYLE_LABEL}]neuron[/]").strip()
+            line = input(_PROMPT).strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             break
@@ -430,6 +692,10 @@ def repl() -> int:
             cmd_probe(rest)
         elif cmd == "new":
             cmd_new(rest)
+        elif cmd == "model":
+            cmd_model(rest)
+        elif cmd == "play":
+            cmd_play(rest)
         else:
             console.print(f"[{_STYLE_FAIL}]✗[/] Неизвестная команда: [bold]{cmd}[/]. [{_STYLE_DIM}]Введите help.[/]")
     return 0
@@ -446,6 +712,10 @@ def main() -> int:
         return cmd_probe(rest)
     if cmd == "new":
         return cmd_new(rest)
+    if cmd == "model":
+        return cmd_model(rest)
+    if cmd == "play":
+        return cmd_play(rest)
     if cmd == "help":
         return cmd_help()
 

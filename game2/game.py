@@ -6,17 +6,17 @@ import time
 from controls import Action
 from joysticks import HumanJoystick
 from level import DEFAULT_MAP, load_level
-from monitors import AgentMonitor, ColorRenderer, WindowMonitor
+from monitors import ColorRenderer, MlpMonitor, WindowMonitor
 from physics import PhysicsConfig, PhysicsWorld
 from socket_io import SocketTransport
-from socket_joystick import SocketJoystick
+from mlp_joystick import MlpJoystick
 
 
 class GameContainer:
     def __init__(self, map_path=DEFAULT_MAP, mode='human', *, port=8765, config=None,
                  monitor_hz=30, window=False):
-        if mode not in ('human', 'agent'):
-            raise ValueError('mode must be human or agent')
+        if mode not in ('human', 'mlp'):
+            raise ValueError('mode must be human or mlp')
         if type(port) is not int or not 0 <= port <= 65535:
             raise ValueError('port must be an integer in [0, 65535]')
         self.config = config or PhysicsConfig()
@@ -42,8 +42,8 @@ class GameContainer:
                 self.joystick = HumanJoystick()
             else:
                 self.transport = SocketTransport(port=port)
-                self.joystick = SocketJoystick(self.transport)
-                self.monitor = AgentMonitor(self.transport)
+                self.joystick = MlpJoystick(self.transport)
+                self.monitor = MlpMonitor(self.transport)
                 if window:
                     self.window = WindowMonitor(self.level.width, self.level.height, spectator=True)
         except BaseException:
@@ -109,7 +109,7 @@ class GameContainer:
         self._accumulator += min(elapsed, 0.25)
         events = []
         while self._accumulator + 1e-12 >= self.config.dt and not self.done:
-            if self.mode == 'agent':
+            if self.mode == 'mlp':
                 operation = self.joystick.poll(self.episode, self.physics.tick)
                 if operation == 'reset':
                     self.reset()
