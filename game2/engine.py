@@ -2,7 +2,7 @@
 import json
 import time
 
-from physics import DT, HEIGHT, HZ, SIZE, SURFACES, WIDTH, World
+from game import Game, HEIGHT, WIDTH
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -11,18 +11,14 @@ DAMAGE = (255, 0, 0)
 HUD_HEIGHT = 88
 
 
-def render_world(target, world, pygame):
+def render_world(target, game, pygame):
     """Clean RGB observation: no HUD, text, shadows or antialiasing."""
     target.fill(WHITE)
-    for surface in SURFACES:
+    for surface in game.physics.surfaces:
         rect = (surface.x, surface.y, surface.width, surface.height)
         pygame.draw.rect(target, DAMAGE if surface.damage else BLACK, rect)
-        if surface.damage:
-            # Teeth are inside the rectangular damage volume, never above it.
-            for x in range(int(surface.x), int(surface.x + surface.width), 20):
-                pygame.draw.polygon(target, WHITE, [(x, surface.y), (x + 10, surface.y + 12),
-                                                   (x + 20, surface.y)])
-    pygame.draw.rect(target, PLAYER, (round(world.x), round(world.y), SIZE, SIZE))
+    body = game.body
+    pygame.draw.rect(target, PLAYER, (round(body.x), round(body.y), body.width, body.height))
 
 
 def main():
@@ -34,7 +30,8 @@ def main():
     observation = pygame.Surface((WIDTH, HEIGHT))
     font = pygame.font.Font(None, 25)
     clock = pygame.time.Clock()
-    world = World()
+    game = Game()
+    dt = game.physics.config.dt
     accumulator = 0.0
     previous = time.perf_counter()
     right = jump_pending = False
@@ -60,25 +57,26 @@ def main():
                 elif event.key == pygame.K_UP:
                     jump_pending = True
                 elif event.key == pygame.K_r:
-                    world = World()
+                    game = Game()
                     accumulator = dropped = 0.0
                     jump_pending = right = False
                     episode += 1
                     print(json.dumps({'event': 'reset', 'episode': episode}), flush=True)
             elif event.type == pygame.KEYUP and event.key == pygame.K_RIGHT:
                 right = False
-        while accumulator >= DT:
-            for event in world.step(right, jump_pending):
+        while accumulator >= dt:
+            for event in game.step(right, jump_pending):
                 print(json.dumps(dict(event, episode=episode)), flush=True)
             jump_pending = False
-            accumulator -= DT
-        render_world(observation, world, pygame)
+            accumulator -= dt
+        render_world(observation, game, pygame)
         screen.blit(observation, (0, 0))
         pygame.draw.rect(screen, (225, 225, 225), (0, HEIGHT, WIDTH, HUD_HEIGHT))
-        status = 'DIE — press R' if not world.alive else ('SUCCESS — press R to retry' if world.crossed else 'ALIVE')
+        body = game.body
+        status = 'DIE — press R' if not body.alive else ('SUCCESS — press R to retry' if game.crossed else 'ALIVE')
         lines = [f'RIGHT: move / accelerate    UP: jump    R: restart    ESC: quit    |    {status}',
-                 f'Physics: {HZ} Hz | Render: {clock.get_fps():.0f} FPS | Tick: {world.tick} | '
-                 f'vx: {world.vx:.0f} | vy: {world.vy:.0f} | Discarded wall time: {dropped:.3f}s']
+                 f'Physics: {game.physics.config.hz} Hz | Render: {clock.get_fps():.0f} FPS | Tick: {game.physics.tick} | '
+                 f'vx: {body.vx:.0f} | vy: {body.vy:.0f} | Discarded wall time: {dropped:.3f}s']
         for i, line in enumerate(lines):
             screen.blit(font.render(line, True, BLACK), (16, HEIGHT + 15 + i * 30))
         pygame.display.flip()
