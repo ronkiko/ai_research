@@ -35,15 +35,44 @@ V2 = ROOT / "game2" / "v2"
 PIT = ROOT / "game2" / "maps" / "pit.json"
 
 
-def _absolute_imports(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def _module_name(path: Path, package_root: Path = V2) -> str:
+    relative = path.relative_to(package_root)
+    parts = relative.with_suffix("").parts
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(("game2", "v2", *parts))
+
+
+def _imports_from_tree(tree: ast.AST, module_name: str, package_name: str | None = None) -> set[str]:
     modules = set()
+    package = package_name or module_name.rsplit(".", 1)[0]
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            modules.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                if node.module:
+                    modules.add(node.module)
+                continue
+
+            package_parts = package.split(".")
+            ascend = node.level - 1
+            if ascend > len(package_parts):
+                continue
+            base = ".".join(package_parts[:len(package_parts) - ascend])
+            if node.module:
+                modules.add(".".join(part for part in (base, node.module) if part))
+            else:
+                modules.add(base)
+                modules.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
     return modules
+
+
+def _absolute_imports(path: Path, package_root: Path = V2) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    module_name = _module_name(path, package_root)
+    package_name = module_name if path.name == "__init__.py" else None
+    return _imports_from_tree(tree, module_name, package_name)
 
 
 class StructureTests(unittest.TestCase):
@@ -93,6 +122,23 @@ class StructureTests(unittest.TestCase):
                           if any(module == prefix or module.startswith(prefix + ".")
                                  for prefix in denied)]
                 self.assertEqual(leaked, [], f"{source}: {leaked}")
+
+    def test_relative_imports_are_normalized_before_boundary_rules(self):
+        tree = ast.parse(
+            "from ..console import something\n"
+            "from ..contracts import JoystickState\n"
+            "from .sibling import helper\n"
+        )
+        imported = _imports_from_tree(tree, "game2.v2.player.foo")
+        self.assertIn("game2.v2.console", imported)
+        self.assertIn("game2.v2.contracts", imported)
+        self.assertIn("game2.v2.player.sibling", imported)
+
+        denied = ("game2.v2.console", "game2.v2.training", "game2.v2.management")
+        leaked = [module for module in imported
+                  if any(module == prefix or module.startswith(prefix + ".")
+                         for prefix in denied)]
+        self.assertEqual(leaked, ["game2.v2.console"])
 
     def test_scripted_player_imports_only_public_v2_modules(self):
         imported = _absolute_imports(V2 / "player" / "scripted" / "main.py")
@@ -144,6 +190,23 @@ class ManifestAndWorldTests(unittest.TestCase):
         self.assertEqual(unpaced.clock_mode, "unpaced")
         self.assertEqual(realtime.controller, "default")
         self.assertEqual(unpaced.controller, "default")
+
+    def test_console_rejects_management_ui_configuration(self):
+        with self.assertRaises(ValueError):
+            SessionConfig.from_dict({"map": str(PIT), "enable_ui": True})
+        self.assertFalse(hasattr(SessionConfig, "enable_ui"))
+        for relative in (
+            "console/config.py", "console/main.py",
+            "console/configs/realtime-smoke.json", "console/configs/unpaced-smoke.json",
+        ):
+            self.assertNotIn("enable_ui", (V2 / relative).read_text(encoding="utf-8"))
+
+    def test_root_readme_describes_the_research_and_realtime_contract(self):
+        readme = (V2 / "README.md").read_text(encoding="utf-8")
+        for concept in ("real-time", "research", "Player", "latency"):
+            self.assertIn(concept, readme)
+        for reference in ("doc/REALTIME_SYSTEM.md", "ARCHITECTURE.md", "console/SPEC.md"):
+            self.assertIn(reference, readme)
 
     def test_map_loader_and_fixed_world(self):
         loaded = load_map(PIT)

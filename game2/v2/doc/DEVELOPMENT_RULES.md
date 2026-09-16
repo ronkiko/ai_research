@@ -1,5 +1,12 @@
 # Development Rules
 
+Before implementing any Game2 V2 feature, verify that it preserves the realtime
+invariants defined in [REALTIME_SYSTEM.md](REALTIME_SYSTEM.md). Any patch that
+blocks the Engine on model inference, ties a physics tick to inference
+completion, or turns world progression into request/response stepping is an
+architectural violation unless the normative realtime contract is explicitly
+changed in the same patch.
+
 Assign every new module to one concrete V2 domain before writing it. Keep
 domain-private implementation details inside that domain.
 

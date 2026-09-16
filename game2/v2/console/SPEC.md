@@ -169,6 +169,9 @@ button forever and does not make Engine wait. After the configured finite
 internal hold, the next Engine opportunity is neutral. Engine timing remains
 independent and continues autonomously.
 
+Console Engine obeys the system-wide realtime invariants in
+[`../doc/REALTIME_SYSTEM.md`](../doc/REALTIME_SYSTEM.md).
+
 The Joystick contract has no physics concepts: no velocity, grounded state,
 gravity, map, collision, Engine, or episode scheduling. It also has no torch,
 sigmoid, threshold, Bernoulli, or model adapter logic. Model adapters own the

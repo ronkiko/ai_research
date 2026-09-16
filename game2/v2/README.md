@@ -1,52 +1,157 @@
 # Game2 V2
 
-Game2 V2 is a process-separated research environment. Its file tree makes the
-five architectural domains explicit:
+Game2 V2 is a laboratory for researching how small neural/MLP agents learn to
+control a physical 2D platform world under real-time constraints. The agent
+must perceive, decide, and act while the game has real physics, its own clock,
+and limited time for every interaction.
+
+**Game2 V2 is a real-time research system. The world never waits for
+intelligence.**
+
+The Console is a means of running the experiment, not the subject of the
+laboratory. The research question is whether an AI/MLP Player can control an
+avatar in a continuously evolving 2D platformer despite perception, decision,
+and model latency.
+
+## Research Goal
+
+The laboratory provides a physical game environment in which future Player and
+Training implementations can be evaluated. It is intended to study learning,
+control quality, timing, and the consequences of acting late, rather than to
+build a game product or a virtual console for its own sake.
+
+## Why Real Time Matters
+
+Game2 was created to study an agent in a world that does not wait for the
+agent. The world:
+
+- has its own clock and fixed physics;
+- continues independently of inference speed;
+- does not pause between decisions;
+- does not use step-on-demand or a turn-based interaction model;
+- is not a classic Gym-style `observation -> action -> step()` loop.
+
+If an agent thinks slowly, the world continues, the avatar remains subject to
+physics, an input opportunity can be missed, and the agent experiences the
+natural consequence of its latency. Model latency is part of the environment
+interaction problem, not merely an implementation metric.
+
+## Fundamental Invariants
+
+- The Engine owns an autonomous world clock and fixed-step physics.
+- Model inference, training, UI, rendering, and sensory work must not block
+  world progression or become gameplay hot-path gates.
+- Player/model interaction reaches gameplay only through formal Player-facing
+  peripherals, currently the Joystick contract.
+- Console, Player, Training, and Management have independent responsibilities
+  and timing domains.
+- The UI is outside the gameplay Console and is not a Console feature toggle.
+- A future design must not silently turn the system into lockstep or turn-based
+  simulation.
+
+The relevant clocks are deliberately separate:
 
 ```text
-game2/v2/
-├── console/      virtual game console and its internal services
-├── player/       external decision maker and model runtimes
-├── training/     external learning domain
-├── management/   operator and "god mode" plane
-├── contracts/    public contracts shared across domains
-└── tests/        cross-domain architectural verification
+world clock != model clock != training clock != UI clock
 ```
 
-`console` owns the authoritative Engine, Controller, Display, internal
-transport, lifecycle, and console configuration. `player` is outside the
-Console and reaches gameplay through the public Joystick contract. `training`
-is an external learning domain. `management` is an operator plane, not a
-gameplay proxy. `contracts` is the only intentional shared public boundary
-between independent domains.
+The normative contract is [doc/REALTIME_SYSTEM.md](doc/REALTIME_SYSTEM.md).
 
-Normative Console contract: [console/SPEC.md](console/SPEC.md)
+## Real-time First Design Rule
 
-System architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+**EVERY DESIGN DECISION IN GAME2 V2 MUST PRESERVE REAL-TIME SYSTEM SEMANTICS.**
 
-Cross-domain rules: [doc/DEPENDENCY_RULES.md](doc/DEPENDENCY_RULES.md)
+For every patch, ask: "Does this secretly turn the system into a lockstep or
+turn-based simulation?" The following designs are forbidden by default:
 
-## Entrypoints
-
-Start the Console:
-
-```bash
-python -m game2.v2.console.main --config game2/v2/console/configs/unpaced-smoke.json
+```text
+model inference -> Engine waits -> action -> physics step
+observation -> wait indefinitely -> action -> world advances
+Trainer manually calls Engine.step()
 ```
 
-Start the external Scripted Player:
+The Engine must not wait for model inference, and training convenience must not
+weaken the realtime contract.
 
-```bash
-python -m game2.v2.player.scripted.main --manifest peripheral-manifest.json
+## Experimental Modes
+
+`realtime` is the canonical behavioral semantics. It runs the fixed-step
+simulation with wall-clock pacing.
+
+`unpaced` is an acceleration/execution mode of that same simulation. It keeps
+the same `dt`, physics transitions, action scheduling rules, and autonomous-world
+semantics. It only removes wall-clock sleep; it does not wait for a model and
+does not turn the Engine into a step RPC.
+
+Unpaced execution is useful for tests, deterministic experiments, and accelerated
+training or benchmarks. An agent trained there must remain compatible with the
+canonical realtime world, including the consequences of its own latency.
+
+## Long-term Research Direction
+
+The final AI Player does not have to be one neural network. The research may
+eventually explore multiple components with different time scales, for example:
+
+```text
+slow strategist / LLM
+          |
+          v
+medium-speed tactician
+          |
+          v
+fast low-level executor / motor policy
+          |
+          v
+Game Console
 ```
 
-Start the management placeholder:
+This is an illustrative research direction, not a required architecture.
 
-```bash
-python -m game2.v2.management.main
-```
+- A strategist may think rarely and create long-term intent.
+- A tactician may produce short tactical commands.
+- A low-level executor may act quickly and realize those commands through the
+  Joystick in realtime.
 
-Run the realtime smoke, which starts Console and Player as separate processes:
+Regardless of the number of AI components, the Console sees only Player-facing
+peripheral interaction. Physical gameplay reaches the Console through the
+formal Joystick contract.
+
+Terminology must stay precise: the **Console Controller** is the technical
+Console input subsystem. A future low-level AI controller belongs to the Player
+domain and should instead be called a low-level executor, motor policy, or
+action policy.
+
+## Management Responsibility
+
+Management is the external operator domain. In the future it decides whether
+to launch the UI, Console, Player/model, and Trainer, and which experiment or
+configuration to use. Console does not receive management configuration and
+does not decide whether a management UI exists.
+
+## Repository Domains
+
+| Domain | Responsibility |
+|---|---|
+| [`console/`](console/) | Authoritative game console and its private subsystems |
+| [`player/`](player/) | External decision maker and future model runtimes |
+| [`training/`](training/) | External learning processes and training contracts |
+| [`management/`](management/) | Experiment selection, process lifecycle, and future UI |
+| [`contracts/`](contracts/) | Public cross-domain capability and peripheral contracts |
+| [`tests/`](tests/) | Structural, boundary, and runtime regression tests |
+
+## Documentation
+
+- [Architecture overview](ARCHITECTURE.md)
+- [Normative realtime contract](doc/REALTIME_SYSTEM.md)
+- [Domain model](doc/DOMAIN_MODEL.md)
+- [Dependency rules](doc/DEPENDENCY_RULES.md)
+- [Development rules](doc/DEVELOPMENT_RULES.md)
+- [Normative Console contract](console/SPEC.md)
+- Domain and subsystem details in the local `README.md` and `doc/` files
+
+## Run and Test
+
+Run the separate-process realtime smoke:
 
 ```bash
 python -m game2.v2.tests.harness \
@@ -65,5 +170,5 @@ Run all Game2 tests:
 python -m unittest discover -s game2 -p 'test*.py' -v
 ```
 
-This structural patch does not add a renderer, MLP, Trainer, REINFORCE, PPO,
-VisionAdapter, audio, reward system, or management UI.
+The current V2 foundation intentionally does not implement an MLP, Trainer,
+hierarchical AI, renderer, or management UI.

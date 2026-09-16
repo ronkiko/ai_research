@@ -2,6 +2,9 @@
 
 Status: architectural overview
 
+Game2 V2 is a real-time research system. The normative realtime contract is
+[doc/REALTIME_SYSTEM.md](doc/REALTIME_SYSTEM.md).
+
 Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
 Game2 V2 consists of five physically separated domains:
@@ -39,6 +42,10 @@ does not control gameplay or expose raw STATE as vision.
 Management is outside the gameplay data path. It may later select configs and
 launch independent Console, Player, and Trainer processes, but it must not hold
 their runtime objects or proxy gameplay messages.
+
+The process architecture also protects independent timing domains: Player/model
+latency, training work, UI work, and rendering must not block the Engine's world
+clock.
 
 Every cross-domain dependency is documented in
 [doc/DEPENDENCY_RULES.md](doc/DEPENDENCY_RULES.md). Local subsystem details live

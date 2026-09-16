@@ -26,8 +26,6 @@ MODULES = {"default": "game2.v2.console.controller.main"}
 def _validate(config: SessionConfig, config_path: Path) -> None:
     if config.controller not in MODULES:
         raise ValueError(f"Unknown controller subsystem: {config.controller}")
-    if config.enable_ui:
-        raise ValueError("UI is a management-plane placeholder and is not implemented")
     if config.enable_display and not config.enable_state:
         raise ValueError("Display requires the Engine STATE channel")
     if not config.enable_telemetry:

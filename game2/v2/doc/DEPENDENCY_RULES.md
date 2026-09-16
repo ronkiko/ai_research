@@ -29,3 +29,10 @@ contracts/*
 private under `console/protocol.py`.
 
 Tests may import all domains because their purpose is to verify these rules.
+
+The architecture test parses the AST rather than grepping source text. It
+normalizes `import x`, absolute `from x import y`, and relative
+`from ..x import y` forms to absolute module paths before applying the
+root-domain rules. Relative imports within the owning domain/subdomain remain
+valid, but a relative import that resolves to a forbidden neighboring domain is
+treated exactly like its absolute equivalent.

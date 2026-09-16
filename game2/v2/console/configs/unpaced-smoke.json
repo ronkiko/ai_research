@@ -3,7 +3,6 @@
   "clock_mode": "unpaced",
   "physics_hz": 120,
   "controller": "default",
-  "enable_ui": false,
   "enable_display": false,
   "enable_state": true,
   "enable_telemetry": true,

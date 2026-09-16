@@ -1,5 +1,9 @@
 # Domain Model
 
+These domains are not only organizational boundaries. They also protect
+independent timing domains: Player/model latency is not Engine/world timing,
+and UI or training work must not become a hidden physics synchronization point.
+
 ## Console
 
 The virtual game console owns world authority, fixed-step execution, input

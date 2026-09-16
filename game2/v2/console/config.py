@@ -32,7 +32,6 @@ class SessionConfig:
     clock_mode: str = "unpaced"
     physics_hz: int = 120
     controller: str = "default"
-    enable_ui: bool = False
     enable_display: bool = False
     enable_state: bool = True
     enable_telemetry: bool = True
@@ -46,8 +45,7 @@ class SessionConfig:
         if not isinstance(data, dict):
             raise ValueError("Session config must be a JSON object")
         allowed = {
-            "map", "clock_mode", "physics_hz", "controller", "enable_ui",
-            "enable_display",
+            "map", "clock_mode", "physics_hz", "controller", "enable_display",
             "enable_state", "enable_telemetry", "enable_events", "seed",
             "episode_limit", "session_ticks",
         }
@@ -64,7 +62,7 @@ class SessionConfig:
             raise ValueError("physics_hz must be a positive integer")
         if not isinstance(values.get("controller", "default"), str) or not values.get("controller", "default"):
             raise ValueError("controller must be a non-empty string")
-        for name in ("enable_ui", "enable_display", "enable_state", "enable_telemetry", "enable_events"):
+        for name in ("enable_display", "enable_state", "enable_telemetry", "enable_events"):
             if type(values.get(name, getattr(cls, name))) is not bool:
                 raise ValueError(f"{name} must be boolean")
         if values.get("seed") is not None and type(values["seed"]) is not int:
