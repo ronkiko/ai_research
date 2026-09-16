@@ -7,6 +7,7 @@ class MlpJoystick:
     def __init__(self, transport):
         self.transport = transport
         self.generation = -1
+        self.connected = False
         self.accepted = self.late = self.rejected = self.last_sequence = 0
         self.reset()
 
@@ -17,6 +18,7 @@ class MlpJoystick:
 
     def poll(self, episode, tick):
         generation, connected, packets = self.transport.drain()
+        self.connected = connected
         if generation != self.generation:
             self.reset()
             self.generation = generation

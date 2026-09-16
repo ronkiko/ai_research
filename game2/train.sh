@@ -3,9 +3,20 @@ set -Eeuo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != auto ) ]]; then
+    printf 'usage: ./train.sh [auto]\n' >&2
+    exit 2
+fi
+
+auto=0
+if [[ "$#" -eq 1 ]]; then
+    auto=1
+fi
+
 python_bin="${PYTHON:-python3}"
 port="${PORT:-8765}"
 episodes="${EPISODES:-1000}"
+speed="${AUTO_SPEED:-100}"
 fresh_args=()
 case "${FRESH:-0}" in
     0|'')
@@ -39,9 +50,15 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-printf 'training_mode=%s episodes=%s port=%s\n' "$training_mode" "$episodes" "$port" >&2
-
-"$python_bin" engine.py --mode mlp --window --port "$port" &
+if [[ "$auto" -eq 1 ]]; then
+    printf 'training_mode=%s episodes=%s port=%s clock_mode=auto speed=%sx renderer=headless\n' \
+        "$training_mode" "$episodes" "$port" "$speed" >&2
+    "$python_bin" engine.py --mode mlp --auto --speed "$speed" --port "$port" &
+else
+    printf 'training_mode=%s episodes=%s port=%s clock_mode=realtime renderer=window\n' \
+        "$training_mode" "$episodes" "$port" >&2
+    "$python_bin" engine.py --mode mlp --window --port "$port" &
+fi
 window_pid=$!
 
 # The MLP runner retries while the window process finishes starting its socket.
@@ -49,8 +66,8 @@ window_pid=$!
     "${fresh_args[@]}" &
 mlp_pid=$!
 
-# Whichever process ends first determines the session: closing the window stops
-# training, and completing/failing training closes the spectator window.
+# Whichever process ends first determines the session: the game or training
+# process ending stops the other process in both realtime and auto modes.
 set +e
 wait -n "$window_pid" "$mlp_pid"
 status=$?

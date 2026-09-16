@@ -110,6 +110,17 @@ FRESH=1 ./train.sh
 EPISODES=5000 FRESH=1 ./train.sh
 ```
 
+Для ускоренного headless-обучения без Pygame-окна:
+
+```bash
+./train.sh auto
+AUTO_SPEED=50 EPISODES=5000 ./train.sh auto
+```
+
+Auto сохраняет физику 120 Hz, observations 30 Hz и tick-based scheduling
+команд. `AUTO_SPEED` задаёт только максимальный wall-clock pacing: если socket
+или MLP не успевают, симуляция замедляется вместо пропуска ticks или команд.
+
 `mlp_runner.py` подключается к TCP-сокету и получает изображения. Канонический
 порядок входов MLP:
 

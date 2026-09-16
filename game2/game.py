@@ -13,6 +13,8 @@ from mlp_joystick import MlpJoystick
 
 
 class GameContainer:
+    AUTO_SPEED = 100
+
     def __init__(self, map_path=DEFAULT_MAP, mode='human', *, port=8765, config=None,
                  monitor_hz=30, window=False):
         if mode not in ('human', 'mlp'):
@@ -160,6 +162,7 @@ class GameContainer:
             self.window.present(frame, metadata, self.body)
 
     def run(self):
+        """Run the existing wall-clock paced loop."""
         previous = time.perf_counter()
         next_frame = previous
         period = 1 / (60 if self.mode == 'human' else self.monitor_hz)
@@ -176,6 +179,136 @@ class GameContainer:
                 self.present()
                 next_frame = now + period
             time.sleep(self.config.dt / 4)
+
+    def run_auto(self, speed=AUTO_SPEED):
+        """Run fixed simulation ticks as fast as the controller can safely follow.
+
+        The controller barrier is deliberately at command acceptance, not at the
+        command's target tick. This keeps the future-action pipeline intact while
+        preventing accelerated simulation from making normal actions late.
+        """
+        self._check_open()
+        if self.mode != 'mlp':
+            raise ValueError('auto mode requires mlp mode')
+        if self.window is not None:
+            raise ValueError('auto mode cannot be combined with --window')
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            raise ValueError('speed must be a positive finite number')
+        if not math.isfinite(speed) or speed <= 0:
+            raise ValueError('speed must be a positive finite number')
+
+        interval = self.config.hz // self.monitor_hz
+        started = time.perf_counter()
+        simulated_ticks = 0
+        try:
+            if self.transport is not None:
+                print(f'game2 socket listening on {self.transport.address[0]}:'
+                      f'{self.transport.address[1]}', file=sys.stderr, flush=True)
+            self._auto_wait_for_connection()
+            while not self.quit_requested:
+                self._publish_observation()
+                if self.done:
+                    operation = self._auto_wait_for_reset()
+                    if operation == 'quit':
+                        break
+                    self.reset()
+                    continue
+
+                accepted_before = self.joystick.accepted
+                operation = self._auto_wait_for_acceptance(accepted_before)
+                if operation == 'quit':
+                    break
+                if operation == 'reset':
+                    self.reset()
+                    continue
+
+                reset_requested = False
+                while not self.done and not self.quit_requested:
+                    for _ in range(interval):
+                        if self.quit_requested:
+                            break
+                        operation = self.joystick.poll(self.episode, self.physics.tick)
+                        if operation == 'quit':
+                            self.quit_requested = True
+                            break
+                        if operation == 'reset':
+                            self.reset()
+                            reset_requested = True
+                            break
+                        self._auto_pace(started, simulated_ticks + 1, speed)
+                        events = self.step(self.joystick.next_action(self.physics.tick + 1))
+                        simulated_ticks += 1
+                        for event in events:
+                            print(event, file=sys.stderr, flush=True)
+                        if self.done:
+                            break
+                    if reset_requested or self.quit_requested or self.done:
+                        break
+                    self._publish_observation()
+                    accepted_before = self.joystick.accepted
+                    operation = self._auto_wait_for_acceptance(accepted_before)
+                    if operation == 'quit':
+                        break
+                    if operation == 'reset':
+                        self.reset()
+                        reset_requested = True
+                        break
+                # A terminal frame is published before waiting for the runner's
+                # reset. For a running game it was already published above.
+        finally:
+            wall_seconds = time.perf_counter() - started
+            simulated_seconds = simulated_ticks / self.config.hz
+            effective_speed = (simulated_seconds / wall_seconds
+                               if wall_seconds > 0 else 0.0)
+            print(f'auto_summary simulated_seconds={simulated_seconds:.6f} '
+                  f'wall_seconds={wall_seconds:.6f} '
+                  f'effective_speed_x={effective_speed:.2f}',
+                  file=sys.stderr, flush=True)
+
+    def _publish_observation(self):
+        self.monitor.present(self.frame(), self.metadata())
+
+    def _auto_wait_for_connection(self):
+        while not self.quit_requested:
+            self.joystick.poll(self.episode, self.physics.tick)
+            if self.joystick.connected:
+                return
+            time.sleep(0.001)
+        return 'quit'
+
+    def _auto_wait_for_acceptance(self, accepted_before):
+        generation = self.joystick.generation
+        while not self.quit_requested:
+            operation = self.joystick.poll(self.episode, self.physics.tick)
+            if operation == 'reset':
+                return 'reset'
+            if not self.joystick.connected:
+                raise ConnectionError('MLP controller disconnected during auto run')
+            if self.joystick.generation != generation:
+                raise ConnectionError('MLP controller reconnected during auto run')
+            if self.joystick.accepted > accepted_before:
+                return None
+            time.sleep(0.001)
+        return 'quit'
+
+    def _auto_wait_for_reset(self):
+        generation = self.joystick.generation
+        while not self.quit_requested:
+            operation = self.joystick.poll(self.episode, self.physics.tick)
+            if operation == 'reset':
+                return 'reset'
+            if not self.joystick.connected:
+                raise ConnectionError('MLP controller disconnected during auto run')
+            if self.joystick.generation != generation:
+                raise ConnectionError('MLP controller reconnected during auto run')
+            time.sleep(0.001)
+        return 'quit'
+
+    def _auto_pace(self, started, simulated_tick, speed):
+        target = simulated_tick / (self.config.hz * speed)
+        delay = started + target - time.perf_counter()
+        if delay > 0:
+            time.sleep(delay)
 
     def _check_open(self):
         if self.closed:
