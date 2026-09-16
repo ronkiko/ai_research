@@ -20,9 +20,10 @@ Game2 V2 consists of five physically separated domains:
             +-- CONTRACTS --+
 ```
 
-`console` is the virtual game console. It owns the authoritative world,
-Controller, Display, internal transport, composition, lifecycle, and private
-topology. `player` is the external subject that acts through peripherals.
+`console` is the virtual game console. It owns the authoritative gameplay
+runtime, its internal World, Controller, Display, internal transport,
+composition, lifecycle, and private topology. `player` is the external subject
+that acts through peripherals.
 `training` contains future learning processes and contracts. `management` is
 the operator or "god mode" plane. `contracts` contains the public agreements
 that do not know their consumers.
@@ -33,6 +34,43 @@ The gameplay path is:
 Player -> Joystick contract -> Console Controller -> Console Engine
 Console Engine -> Console Display
 ```
+
+## Console Internal Decomposition
+
+The Console separates static world definition from live Engine state:
+
+```text
+Console
+├── World
+│   └── immutable tile grid, spawn, goal, decorations, derived collision geometry
+├── Engine
+│   └── mutable Avatar, Physics, episodes, fixed ticks, terminal state
+├── Controller
+└── Display
+```
+
+`WorldDefinition` is the source of truth for the hand-authored semantic tile
+grid. Engine materializes its local physics objects from World geometry. World
+does not import Engine, and Physics remains an Engine hot-path component rather
+than a separate process. Engine never waits for Player while advancing fixed
+ticks.
+
+The future Display domain will provide two read-only presentations of the same
+authoritative state:
+
+```text
+                 WorldDefinition + WorldState
+                              |
+                           Display
+                         /         \
+                     screen       vision
+                    for humans    for models
+```
+
+`screen` may use beautiful assets, sprites, and backgrounds. `vision` will use
+stable semantic tile IDs to represent what exists in the world, not raw Engine
+debug telemetry. Neither presentation changes World or affects Physics. Neither
+interface is implemented in this migration.
 
 The Engine remains the sole mutable world owner. It advances fixed ticks without
 waiting for a Player. The Controller translates public Joystick decisions into

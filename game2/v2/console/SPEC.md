@@ -24,6 +24,24 @@ update to this specification in the same patch.
 | Trainer | external learning process |
 | UI | operator management interface |
 
+## Console Internal Domains
+
+Console keeps the static scene definition separate from the authoritative
+runtime:
+
+```text
+WorldDefinition (immutable tile grid and derived geometry)
+                         |
+                         v
+Engine (mutable Avatar, Physics, episode, clock, terminal state)
+```
+
+`World` owns the map schema, semantic tile IDs, spawn, goal, decorations, and
+derived collision geometry. It does not create an Avatar or a Physics object.
+`Engine` converts World geometry to its local `Surface` objects and advances
+Physics on every fixed tick. Physics is an Engine hot-path component and is not
+a separate process. World never imports Engine runtime code.
+
 ## Planes
 
 The gameplay data plane is:
@@ -32,6 +50,24 @@ The gameplay data plane is:
 Player <-> Joystick <-> Controller <-> Engine
 Engine -> Display -> Screen
 ```
+
+The future Display domain will expose two read-only presentations of the same
+authoritative `WorldState`:
+
+```text
+WorldDefinition + WorldState
+          |
+       Display
+       /     \
+   screen   vision
+   human    model
+```
+
+`screen` will be a human-facing visual renderer using assets. `vision` will be
+a model-facing semantic representation derived from stable tile IDs. Neither
+presentation changes World or affects Physics. Future vision is a representation
+of what exists in the game world, not raw Engine debug telemetry such as x/y or
+velocity.
 
 Future sensory peripherals, such as VisionAdapter and event/audio-like
 adapters, will be separate Player-facing contracts. The management plane is:
@@ -67,9 +103,12 @@ access. Reset/reward contracts, if needed for training, will be specified
 separately later.
 
 Display consumes authoritative Engine STATE and is independent of Controller,
-Player, model, and UI. Display output is a video boundary, not a machine vision
-observation. A future VisionAdapter may consume a related internal source for a
-Player, but Display and VisionAdapter remain distinct consumers.
+Player, model, and UI. The current Display process is only a video boundary with
+internal diagnostics. Future read-only `screen` and `vision` presentations may
+consume the same WorldDefinition and WorldState, but neither can affect World
+or Physics. A future VisionAdapter may expose the semantic `vision` presentation
+through a Player-facing contract; Display and VisionAdapter remain distinct
+consumers, and raw Engine STATE is never their public protocol.
 
 ## Manifests
 
@@ -199,17 +238,21 @@ is introduced here.
 
 ## Display and vision
 
-Display is the Console video subsystem. It consumes Engine STATE and currently
-only maintains internal frame diagnostics; it does not implement visual
-rendering and does not expose raw STATE externally. A future renderer will use:
+Display is the Console presentation subsystem. It consumes Engine STATE and
+currently only maintains internal frame diagnostics; it does not implement
+visual rendering and does not expose raw STATE externally. Future presentation
+interfaces will use:
 
 ```text
-Engine STATE -> Display -> rendered frame -> Screen
+WorldDefinition + WorldState -> Display.screen -> rendered frame -> Screen
+WorldDefinition + WorldState -> Display.vision -> semantic presentation
 ```
 
-Display is not machine vision. `VisionAdapter` is a future separate sensory
-subsystem with its own Player-facing contract; even after rendering exists, it
-must not provide privileged Engine STATE through Display.
+The current patch implements neither interface. `Display.vision` is a
+model-facing representation of what exists in the world, not raw x/y/vx/vy
+telemetry. `VisionAdapter` remains a future separate sensory subsystem with its
+own Player-facing contract; it must not provide privileged Engine STATE through
+Display.
 
 ## External Model and Trainer
 

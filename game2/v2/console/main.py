@@ -17,7 +17,7 @@ from game2.v2.console.config import (ControllerManifest, DisplayManifest, Engine
                               InternalManifest, SessionConfig,
                               allocate_endpoint, new_session_id)
 from game2.v2.contracts.manifests import PeripheralManifest
-from game2.v2.console.engine.map_loader import load_map
+from game2.v2.console.world import load_world
 
 
 MODULES = {"default": "game2.v2.console.controller.main"}
@@ -30,7 +30,7 @@ def _validate(config: SessionConfig, config_path: Path) -> None:
         raise ValueError("Display requires the Engine STATE channel")
     if not config.enable_telemetry:
         raise ValueError("Controller requires the Engine TELEMETRY channel")
-    load_map(config.map_path(config_path))
+    load_world(config.map_path(config_path))
 
 
 def _pump(source, destination):

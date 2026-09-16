@@ -18,11 +18,11 @@ from game2.v2.console.config import (ControllerManifest, DisplayManifest,
 from game2.v2.console.controller.controller import ControllerService
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.engine.engine import Engine, EngineService
-from game2.v2.console.engine.map_loader import load_map
 from game2.v2.console.engine.physics import PhysicsConfig
 from game2.v2.console.main import run_session
 from game2.v2.console.protocol import ActionCommand, action_message
 from game2.v2.console.transport.control_server import ControlEnvelope, ControlServer
+from game2.v2.console.world import load_world
 from game2.v2.console.transport.publisher import EventPublisher, LatestPublisher
 from game2.v2.contracts.framing import ProtocolError, encode_frame, recv_frame
 from game2.v2.contracts.joystick import (JoystickState, decode_joystick_message,
@@ -32,7 +32,7 @@ from game2.v2.tests.harness import run_realtime_smoke
 
 ROOT = Path(__file__).resolve().parents[3]
 V2 = ROOT / "game2" / "v2"
-PIT = ROOT / "game2" / "maps" / "pit.json"
+PIT = V2 / "console" / "world" / "maps" / "pit.json"
 
 
 def _module_name(path: Path, package_root: Path = V2) -> str:
@@ -221,8 +221,8 @@ class ManifestAndWorldTests(unittest.TestCase):
         for reference in ("doc/REALTIME_SYSTEM.md", "ARCHITECTURE.md", "console/SPEC.md"):
             self.assertIn(reference, readme)
 
-    def test_map_loader_and_fixed_world(self):
-        loaded = load_map(PIT)
+    def test_world_loader_and_fixed_world(self):
+        loaded = load_world(PIT)
         self.assertEqual((loaded.width, loaded.height), (1280, 768))
         self.assertEqual(PhysicsConfig(hz=120).dt, 1 / 120)
         with self.assertRaises(ValueError):
@@ -234,7 +234,7 @@ class ManifestAndWorldTests(unittest.TestCase):
         self.assertIsNot(engine.world_state().avatar, engine.avatar)
 
     def test_physical_state_is_immutable(self):
-        state = Engine(load_map(PIT)).world_state()
+        state = Engine(load_world(PIT)).world_state()
         with self.assertRaises(FrozenInstanceError):
             state.avatar.x = 9
 
@@ -274,7 +274,7 @@ class JoystickContractTests(unittest.TestCase):
 
 class InternalSchedulingTests(unittest.TestCase):
     def test_action_timing_remains_private_to_engine_boundary(self):
-        engine = Engine(load_map(PIT))
+        engine = Engine(load_world(PIT))
         self.assertEqual(engine.submit_action(ActionCommand(1, 1, 3, 2, True)), "accepted")
         engine.tick()
         engine.tick()
@@ -288,7 +288,7 @@ class InternalSchedulingTests(unittest.TestCase):
         self.assertLess(engine.avatar.vx, speed)
 
     def test_duplicate_and_late_actions_are_rejected(self):
-        engine = Engine(load_map(PIT))
+        engine = Engine(load_world(PIT))
         command = ActionCommand(1, 1, 3, 1)
         self.assertEqual(engine.submit_action(command), "accepted")
         self.assertEqual(engine.submit_action(command), "duplicate")
@@ -303,7 +303,7 @@ class InternalSchedulingTests(unittest.TestCase):
                                    enable_telemetry=False, enable_events=False, session_ticks=8)
             manifest = InternalManifest("no-player", allocate_endpoint(), None, None, None, run_dir)
             service = EngineService(
-                Engine(load_map(PIT), session_id="no-player"),
+                Engine(load_world(PIT), session_id="no-player"),
                 EngineManifest("no-player", manifest.engine_control, None, None, None, run_dir),
                 config,
             )

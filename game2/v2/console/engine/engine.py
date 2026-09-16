@@ -14,8 +14,8 @@ from ..config import EngineManifest, SessionConfig
 from ..protocol import PROTOCOL_VERSION, ActionCommand
 from ..transport.control_server import ControlServer
 from ..transport.publisher import EventPublisher, LatestPublisher
-from .map_loader import MapData, load_map
-from .physics import PhysicsConfig, PhysicsWorld
+from ..world import WorldDefinition, load_world
+from .physics import AvatarBody, PhysicsConfig, PhysicsWorld, Surface
 from .state import AvatarState, TelemetrySnapshot, WorldState
 
 
@@ -30,17 +30,16 @@ class ActionStats:
 class Engine:
     """The only mutable owner of the world and physical avatar."""
 
-    def __init__(self, map_data: MapData, session_id: str = "local",
+    def __init__(self, world: WorldDefinition, session_id: str = "local",
                  physics_hz: int = 120, episode_limit: int | None = None):
-        self.map = map_data
+        self.world = world
         self.session_id = session_id
         self.physics_config = PhysicsConfig(hz=physics_hz)
         self.episode_limit = episode_limit
         self.episode = 1
         self.episode_tick = 0
         self.session_tick = 0
-        self.avatar = self.map.new_avatar()
-        self.physics = PhysicsWorld(self.avatar, self.map.surfaces, self.physics_config)
+        self._create_physics_instance()
         self.terminal: str | None = None
         self.stats = ActionStats()
         self._scheduled: dict[int, tuple[bool, bool]] = {}
@@ -49,8 +48,17 @@ class Engine:
     @classmethod
     def from_config(cls, config: SessionConfig, config_path: str | Path,
                     session_id: str = "local") -> "Engine":
-        return cls(load_map(config.map_path(config_path)), session_id,
+        return cls(load_world(config.map_path(config_path)), session_id,
                    config.physics_hz, config.episode_limit)
+
+    def _create_physics_instance(self) -> None:
+        """Materialize mutable Engine physics from immutable world geometry."""
+        self.avatar = AvatarBody(self.world.spawn.x, self.world.spawn.y,
+                                 self.world.spawn.width, self.world.spawn.height)
+        surfaces = tuple(Surface(rect.x, rect.y, rect.width, rect.height,
+                                 rect.damage)
+                         for rect in self.world.collision_rects)
+        self.physics = PhysicsWorld(self.avatar, surfaces, self.physics_config)
 
     def submit_action(self, command: ActionCommand) -> str:
         """Validate and schedule without ever exposing the avatar to a client."""
@@ -76,8 +84,7 @@ class Engine:
     def reset(self) -> list[dict]:
         self.episode += 1
         self.episode_tick = 0
-        self.avatar = self.map.new_avatar()
-        self.physics = PhysicsWorld(self.avatar, self.map.surfaces, self.physics_config)
+        self._create_physics_instance()
         self.terminal = None
         self._scheduled.clear()
         return [{"event": "episode_started", "episode": self.episode, "episode_tick": 0}]
@@ -98,7 +105,9 @@ class Engine:
         if any(event["event"] == "death" for event in events):
             self.terminal = "dead"
             events.append({"event": "episode_finished", "result": "dead", "tick": self.episode_tick})
-        elif self.map.completed(self.avatar):
+        elif self.world.completed(self.avatar.x, self.avatar.y, self.avatar.width,
+                                  self.avatar.height, self.avatar.grounded,
+                                  self.avatar.alive):
             self.terminal = "success"
             events.append({"event": "goal_reached", "tick": self.episode_tick})
             events.append({"event": "episode_finished", "result": "success", "tick": self.episode_tick})
@@ -111,7 +120,7 @@ class Engine:
         avatar = self.avatar
         return WorldState(
             self.session_id, self.episode, self.episode_tick, self.session_tick,
-            self.map.map_id,
+            self.world.map_id,
             AvatarState(avatar.x, avatar.y, avatar.vx, avatar.vy, avatar.grounded, avatar.alive),
             self.terminal,
         )
