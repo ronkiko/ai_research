@@ -9,5 +9,5 @@
   "enable_telemetry": true,
   "enable_events": true,
   "seed": 7,
-  "session_ticks": 1000
+  "session_ticks": 10000
 }

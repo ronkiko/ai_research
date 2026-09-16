@@ -13,7 +13,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from game2.v2.config import (InternalManifest, PeripheralManifest, SessionConfig,
+from game2.v2.config import (ControllerManifest, DisplayManifest, EngineManifest,
+                             InternalManifest, PeripheralManifest, SessionConfig,
                              allocate_endpoint, new_session_id)
 from game2.v2.world.map_loader import load_map
 
@@ -28,6 +29,8 @@ def _validate(config: SessionConfig, config_path: Path) -> None:
         raise ValueError("UI is a management-plane placeholder and is not implemented")
     if config.enable_display and not config.enable_state:
         raise ValueError("Display requires the Engine STATE channel")
+    if not config.enable_telemetry:
+        raise ValueError("Controller requires the Engine TELEMETRY channel")
     load_map(config.map_path(config_path))
 
 
@@ -68,8 +71,8 @@ def _launch_ready(command, root: str, log, label: str):
     return process
 
 
-def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[int, dict]:
-    """Run a console integration session, optionally attaching an external test Player."""
+def run_session(config_path: str | Path) -> tuple[int, dict]:
+    """Run the Console and its own subsystems, without attaching a Player."""
     config_path = Path(config_path).resolve()
     config = SessionConfig.from_file(config_path)
     _validate(config, config_path)
@@ -88,25 +91,32 @@ def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[in
     peripheral = PeripheralManifest(
         session_id=session_id,
         joystick=allocate_endpoint(),
-        display=allocate_endpoint() if config.enable_display else None,
     )
     internal_path = run_dir / "internal-manifest.json"
+    engine_manifest_path = run_dir / "engine-manifest.json"
+    controller_manifest_path = run_dir / "controller-manifest.json"
+    display_manifest_path = run_dir / "display-manifest.json"
     peripheral_path = run_dir / "peripheral-manifest.json"
     internal.write(internal_path)
+    EngineManifest(session_id, internal.engine_control, internal.engine_state,
+                   internal.engine_telemetry, internal.engine_events,
+                   internal.run_dir).write(engine_manifest_path)
+    ControllerManifest(session_id, internal.engine_control, internal.engine_telemetry,
+                       peripheral.joystick).write(controller_manifest_path)
+    if config.enable_display:
+        DisplayManifest(session_id, internal.engine_state).write(display_manifest_path)
     peripheral.write(peripheral_path)
 
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
     engine_log = (run_dir / "engine.log").open("w", encoding="utf-8")
     controller_log = (run_dir / "controller.log").open("w", encoding="utf-8")
     display_log = (run_dir / "display.log").open("w", encoding="utf-8") if config.enable_display else None
-    player_log = (run_dir / "player.log").open("w", encoding="utf-8") if launch_player else None
     console_log.write(json.dumps({"session_id": session_id,
                                   "internal_manifest": str(internal_path),
                                   "peripheral_manifest": str(peripheral_path)}, sort_keys=True) + "\n")
     console_log.flush()
 
-    engine = controller = display = player = None
-    pump_threads = []
+    engine = controller = display = None
     interrupted = threading.Event()
 
     def stop(_signum, _frame):
@@ -120,29 +130,22 @@ def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[in
         root = str(Path(__file__).resolve().parents[2])
         engine = _launch_ready(
             [sys.executable, "-m", "game2.v2.engine", "--config", str(config_path),
-             "--manifest", str(internal_path)], root, engine_log, "Engine")
+             "--manifest", str(engine_manifest_path)], root, engine_log, "Engine")
         controller = _launch_ready(
             [sys.executable, "-m", MODULES[config.controller],
-             "--internal-manifest", str(internal_path),
-             "--peripheral-manifest", str(peripheral_path)],
+             "--manifest", str(controller_manifest_path)],
             root, controller_log, "Controller")
         if config.enable_display:
             display = _launch_ready(
                 [sys.executable, "-m", "game2.v2.display",
-                 "--internal-manifest", str(internal_path),
-                 "--peripheral-manifest", str(peripheral_path)],
+                 "--manifest", str(display_manifest_path)],
                 root, display_log, "Display")
 
-        # This is the integration harness boundary: the Console publishes the
-        # peripheral manifest, then an independent Player may connect to it.
-        console_log.write("READY " + json.dumps(peripheral.to_dict(), sort_keys=True) + "\n")
+        # An external Player may attach only after all Console-owned services are ready.
+        ready = {"session_id": session_id, **peripheral.to_dict()}
+        console_log.write("READY " + json.dumps(ready, sort_keys=True) + "\n")
         console_log.flush()
-        if launch_player and engine.poll() is None:
-            player = subprocess.Popen(
-                [sys.executable, "-m", "game2.v2.players.scripted",
-                 "--manifest", str(peripheral_path), "--ticks", str(config.session_ticks)],
-                cwd=root, stdout=player_log, stderr=subprocess.STDOUT,
-            )
+        print("READY " + json.dumps(ready, sort_keys=True), flush=True)
 
         while True:
             if interrupted.is_set():
@@ -150,14 +153,9 @@ def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[in
             if engine.poll() is not None:
                 status = 0 if engine.returncode == 0 else 1
                 break
-            if player and player.poll() is not None and player.returncode != 0:
-                _terminate(engine)
-                status = 1
-                break
             time.sleep(0.01)
         if interrupted.is_set():
             status = 1
-        _terminate(player)
         _terminate(controller)
         _terminate(display)
         _terminate(engine)
@@ -168,19 +166,18 @@ def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[in
         console_log.write(json.dumps({"engine_returncode": engine.returncode if engine else None,
                                       "controller_returncode": controller.returncode if controller else None,
                                       "display_returncode": display.returncode if display else None,
-                                      "player_returncode": player.returncode if player else None,
                                       "status": status}, sort_keys=True) + "\n")
         console_log.flush()
     except Exception as exc:
         console_log.write(f"ERROR {type(exc).__name__}: {exc}\n")
         console_log.flush()
-        for process in (player, display, controller, engine):
+        for process in (display, controller, engine):
             _terminate(process)
         status = 1
     finally:
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
-        for handle in (console_log, engine_log, controller_log, display_log, player_log):
+        for handle in (console_log, engine_log, controller_log, display_log):
             if handle:
                 handle.close()
     return status, summary
@@ -189,10 +186,8 @@ def run_session(config_path: str | Path, launch_player: bool = True) -> tuple[in
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Compose and supervise Game2 V2 console subsystems")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--scripted-player", action="store_true",
-                        help="attach the external scripted Player integration harness")
     args = parser.parse_args(argv)
-    status, summary = run_session(args.config, launch_player=args.scripted_player)
+    status, summary = run_session(args.config)
     if summary:
         print("session_id=" + summary.get("session_id", "unknown"))
         print("console=ready")

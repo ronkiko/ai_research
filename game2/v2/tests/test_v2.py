@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import inspect
+import io
 import json
 import socket
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
-from game2.v2.config import (Endpoint, InternalManifest, PeripheralManifest,
-                             SessionConfig, allocate_endpoint)
+from game2.v2.config import (ControllerManifest, DisplayManifest, Endpoint,
+                              EngineManifest, InternalManifest, PeripheralManifest,
+                              SessionConfig, allocate_endpoint)
 from game2.v2.console import run_session
 from game2.v2.controller import ControllerService
 from game2.v2.display import DisplayService
@@ -23,6 +26,7 @@ from game2.v2.transport.control_server import ControlEnvelope, ControlServer
 from game2.v2.transport.publisher import EventPublisher, LatestPublisher
 from game2.v2.world.map_loader import load_map
 from game2.v2.world.physics import PhysicsConfig
+from game2.v2.tests.harness import run_realtime_smoke
 
 ROOT = Path(__file__).resolve().parents[3]
 V2 = ROOT / "game2" / "v2"
@@ -36,6 +40,7 @@ class ManifestAndWorldTests(unittest.TestCase):
         peripheral = PeripheralManifest("session", Endpoint("127.0.0.1", 12347))
         self.assertEqual(InternalManifest.from_dict(internal.to_dict()), internal)
         self.assertEqual(PeripheralManifest.from_dict(peripheral.to_dict()), peripheral)
+        self.assertEqual(set(peripheral.to_dict()), {"session_id", "joystick"})
         self.assertNotIn("engine_control", peripheral.to_dict())
         self.assertNotIn("engine_state", peripheral.to_dict())
         self.assertNotIn("engine_telemetry", peripheral.to_dict())
@@ -45,8 +50,24 @@ class ManifestAndWorldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PeripheralManifest.from_dict({
                 "session_id": "s", "joystick": {"host": "127.0.0.1", "port": 1},
-                "display": None, "engine_control": {"host": "127.0.0.1", "port": 2},
+                 "engine_control": {"host": "127.0.0.1", "port": 2},
             })
+
+    def test_subsystem_manifests_have_only_required_capabilities(self):
+        control = Endpoint("127.0.0.1", 12345)
+        telemetry = Endpoint("127.0.0.1", 12346)
+        state = Endpoint("127.0.0.1", 12347)
+        joystick = Endpoint("127.0.0.1", 12348)
+        controller = ControllerManifest("s", control, telemetry, joystick)
+        display = DisplayManifest("s", state)
+        engine = EngineManifest("s", control, state, telemetry, None, "/tmp/run")
+        self.assertEqual(set(controller.to_dict()),
+                         {"session_id", "engine_control", "engine_telemetry", "joystick"})
+        self.assertEqual(set(display.to_dict()), {"session_id", "engine_state"})
+        self.assertEqual(set(engine.to_dict()),
+                         {"session_id", "control", "state", "telemetry", "events", "run_dir"})
+        self.assertNotIn("engine_state", controller.to_dict())
+        self.assertNotIn("engine_control", display.to_dict())
 
     def test_config_has_distinct_realtime_and_unpaced_smokes(self):
         realtime = SessionConfig.from_file(V2 / "configs" / "realtime-smoke.json")
@@ -137,7 +158,11 @@ class InternalSchedulingTests(unittest.TestCase):
             config = SessionConfig(map=str(PIT), clock_mode="unpaced", enable_state=False,
                                    enable_telemetry=False, enable_events=False, session_ticks=8)
             manifest = InternalManifest("no-player", allocate_endpoint(), None, None, None, run_dir)
-            service = EngineService(Engine(load_map(PIT), session_id="no-player"), manifest, config)
+            service = EngineService(
+                Engine(load_map(PIT), session_id="no-player"),
+                EngineManifest("no-player", manifest.engine_control, None, None, None, run_dir),
+                config,
+            )
             summary = service.run()
             self.assertEqual(summary["session_ticks"], 8)
 
@@ -202,48 +227,59 @@ class BoundaryTests(unittest.TestCase):
         console = (V2 / "console.py").read_text(encoding="utf-8")
         self.assertNotIn("InternalManifest", player)
         self.assertNotRegex(player, r"(?:import|from).*engine|ActionCommand")
+        self.assertNotIn("target_tick", player)
+        self.assertNotIn("hold_ticks", player)
         self.assertNotRegex(controller, r"(?:import|from).*display|(?:import|from).*ui")
         self.assertNotRegex(display, r"(?:import|from).*(?:controller|player|model|ui)")
-        self.assertNotRegex(engine, r"(?:import|from)\s+(?:pygame|torch|controller|display|ui)")
+        self.assertNotRegex(engine, r"(?:import|from)\s+(?:pygame|torch|controller|display|ui|model|trainer|training)")
         self.assertNotIn("joystick.send", console)
         self.assertNotIn("recv_frame", console)
         self.assertNotIn("torch", console)
         self.assertNotIn("pygame", console)
+        self.assertNotIn("players.scripted", console)
+        self.assertNotIn("ScriptedPlayer", console)
+        self.assertNotIn("launch_player", console)
+        self.assertNotIn("player.log", console)
         self.assertNotIn("engine", (V2 / "ui.py").read_text(encoding="utf-8").lower())
         joystick_source = (V2 / "joystick.py").read_text(encoding="utf-8")
         self.assertNotIn("torch", joystick_source)
         self.assertNotIn("physics", joystick_source)
+        self.assertNotIn("model", joystick_source)
 
     def test_controller_and_display_capabilities_are_narrow(self):
-        controller_source = (V2 / "controller.py").read_text(encoding="utf-8")
-        display_source = (V2 / "display.py").read_text(encoding="utf-8")
-        self.assertIn("engine_control", controller_source)
-        self.assertIn("joystick", controller_source)
-        self.assertIn("engine_state", display_source)
-        self.assertNotIn("JoystickState", display_source)
-        self.assertNotIn("engine_control", display_source)
-        self.assertNotIn("display", controller_source.split("from game2.v2", 1)[0])
+        controller = ControllerManifest("s", Endpoint("127.0.0.1", 1),
+                                       Endpoint("127.0.0.1", 2), Endpoint("127.0.0.1", 3))
+        display = DisplayManifest("s", Endpoint("127.0.0.1", 4))
+        self.assertEqual(set(controller.to_dict()),
+                         {"session_id", "engine_control", "engine_telemetry", "joystick"})
+        self.assertEqual(set(display.to_dict()), {"session_id", "engine_state"})
+        self.assertNotIn("engine_state", controller.to_dict())
+        self.assertNotIn("engine_control", display.to_dict())
+        self.assertNotIn("engine_telemetry", display.to_dict())
+        self.assertNotIn("joystick", display.to_dict())
 
     def test_console_uses_separate_processes(self):
         source = (V2 / "console.py").read_text(encoding="utf-8")
         self.assertIn('"game2.v2.controller"', source)
         self.assertIn('"game2.v2.display"', source)
         self.assertNotIn("router", source)
+        self.assertNotIn("trainer", source.lower())
+        self.assertNotIn("model", source.lower())
 
     def test_realtime_player_vertical_and_logs(self):
-        status, summary = run_session(V2 / "configs" / "realtime-smoke.json")
-        self.assertEqual(status, 0)
-        self.assertEqual(summary["clock"], "realtime")
-        self.assertEqual(summary["result"], "success")
-        run_dir = V2 / "runs" / summary["session_id"]
+        status, player_status, ready = run_realtime_smoke(
+            V2 / "configs" / "realtime-smoke.json")
+        self.assertEqual((status, player_status), (0, 0))
+        run_dir = V2 / "runs" / ready["session_id"]
         self.assertTrue((run_dir / "console.log").exists())
         self.assertTrue((run_dir / "controller.log").exists())
         self.assertTrue((run_dir / "display.log").exists())
-        self.assertTrue((run_dir / "player.log").exists())
+        self.assertFalse((run_dir / "player.log").exists())
+        display_log = (run_dir / "display.log").read_text(encoding="utf-8")
+        self.assertNotRegex(display_log, r"state|avatar|\bx\b|\by\b|\bvx\b|\bvy\b|grounded")
 
     def test_unpaced_smoke_and_ui_trainer_absence(self):
-        status, summary = run_session(V2 / "configs" / "unpaced-smoke.json",
-                                       launch_player=False)
+        status, summary = run_session(V2 / "configs" / "unpaced-smoke.json")
         self.assertEqual(status, 0)
         self.assertEqual(summary["clock"], "unpaced")
         self.assertFalse(summary["display"])
@@ -262,6 +298,58 @@ class BoundaryTests(unittest.TestCase):
             on_status, on = run_session(paths[1])
         self.assertEqual((off_status, on_status), (0, 0))
         self.assertEqual(off["avatar"], on["avatar"])
+
+    def test_display_has_no_public_video_payload(self):
+        service = DisplayService(DisplayManifest("s", Endpoint("127.0.0.1", 12345)))
+        self.assertFalse(hasattr(service, "output"))
+        self.assertFalse(hasattr(service, "publish"))
+        source = (V2 / "display.py").read_text(encoding="utf-8")
+        self.assertNotIn("video_frame", source)
+        self.assertNotIn('"state": snapshot', source)
+        self.assertNotIn("ControlServer", source)
+
+    def test_controller_ack_waits_for_engine_and_maps_late(self):
+        manifest = ControllerManifest("s", Endpoint("127.0.0.1", 12345),
+                                     Endpoint("127.0.0.1", 12346), Endpoint("127.0.0.1", 12347))
+        service = ControllerService(manifest)
+        responses = []
+
+        class FakeJoystick:
+            def respond(self, client_id, payload):
+                responses.append((client_id, payload))
+
+        class FakeEngine:
+            def __init__(self):
+                self.sent = []
+
+            def sendall(self, payload):
+                self.sent.append(payload)
+
+        service.joystick = FakeJoystick()
+        service.engine_control = FakeEngine()
+        service.latest = {"episode": 1, "episode_tick": 10}
+        service._handle_joystick(ControlEnvelope(7, JoystickState(1, True, False)))
+        self.assertEqual(responses, [])
+        self.assertIn(1, service.pending)
+        service._handle_engine_ack({"type": "action_ack", "sequence": 1, "status": "accepted"})
+        self.assertEqual(responses[0][0], 7)
+        self.assertEqual(responses[0][1]["status"], "accepted")
+        service._handle_joystick(ControlEnvelope(8, JoystickState(2, True, False)))
+        self.assertEqual(len(responses), 1)
+        service._handle_engine_ack({"type": "action_ack", "sequence": 2, "status": "late"})
+        self.assertEqual(responses[1][0], 8)
+        self.assertEqual(responses[1][1]["status"], "rejected")
+
+    def test_controller_does_not_claim_ready_without_engine_control(self):
+        manifest = ControllerManifest("s", Endpoint("127.0.0.1", 1),
+                                     Endpoint("127.0.0.1", 2), Endpoint("127.0.0.1", 3))
+        service = ControllerService(manifest, connect_timeout=0.05)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = service.run()
+        self.assertEqual(status, 1)
+        self.assertNotIn("READY ", stdout.getvalue())
+        self.assertIn("startup failed", stderr.getvalue())
 
 
 if __name__ == "__main__":

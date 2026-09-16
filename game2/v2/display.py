@@ -11,9 +11,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from game2.v2.config import InternalManifest, PeripheralManifest
+from game2.v2.config import DisplayManifest
 from game2.v2.protocol import recv_frame
-from game2.v2.transport.publisher import LatestPublisher
 
 
 def _connect(endpoint, timeout=5.0):
@@ -30,24 +29,18 @@ def _connect(endpoint, timeout=5.0):
 
 
 class DisplayService:
-    """Receives authoritative snapshots and counts/render-publishes latest frames."""
+    """Consumes authoritative snapshots while rendering remains a future patch."""
 
-    def __init__(self, internal: InternalManifest, peripheral: PeripheralManifest):
-        if internal.engine_state is None:
-            raise ValueError("Display requires an Engine STATE endpoint")
-        self.internal = internal
-        self.peripheral = peripheral
-        self.frames = 0
-        self.output = (LatestPublisher(peripheral.display.host, peripheral.display.port)
-                       if peripheral.display else None)
+    def __init__(self, manifest: DisplayManifest):
+        self.manifest = manifest
+        self.frames_received = 0
+        self._latest_state: dict | None = None
         self.state: socket.socket | None = None
 
     def run(self) -> int:
-        if self.output:
-            self.output.start()
-        self.state = _connect(self.internal.engine_state)
-        print("READY " + json.dumps({"session_id": self.internal.session_id,
-                                     "frames": self.frames}, sort_keys=True), flush=True)
+        self.state = _connect(self.manifest.engine_state)
+        print("READY " + json.dumps({"session_id": self.manifest.session_id,
+                                     "frames": self.frames_received}, sort_keys=True), flush=True)
         try:
             while True:
                 try:
@@ -56,27 +49,21 @@ class DisplayService:
                     continue
                 if snapshot.get("type") != "state":
                     continue
-                self.frames += 1
-                if self.output:
-                    self.output.publish({"version": 1, "type": "video_frame",
-                                         "session_id": self.internal.session_id,
-                                         "frame": self.frames, "state": snapshot})
+                self.frames_received += 1
+                self._latest_state = snapshot
         except (EOFError, OSError, socket.timeout, ValueError):
             return 0
         finally:
             if self.state:
                 self.state.close()
-            if self.output:
-                self.output.close()
+            print(f"DIAGNOSTICS frames_received={self.frames_received}", flush=True)
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Game2 V2 Display subsystem")
-    parser.add_argument("--internal-manifest", required=True)
-    parser.add_argument("--peripheral-manifest", required=True)
+    parser.add_argument("--manifest", required=True)
     args = parser.parse_args(argv)
-    return DisplayService(InternalManifest.from_file(args.internal_manifest),
-                          PeripheralManifest.from_file(args.peripheral_manifest)).run()
+    return DisplayService(DisplayManifest.from_file(args.manifest)).run()
 
 
 if __name__ == "__main__":

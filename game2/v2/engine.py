@@ -16,7 +16,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from game2.v2.config import InternalManifest, SessionConfig
+from game2.v2.config import EngineManifest, SessionConfig
 from game2.v2.protocol import PROTOCOL_VERSION, ActionCommand
 from game2.v2.transport.control_server import ControlServer
 from game2.v2.transport.publisher import EventPublisher, LatestPublisher
@@ -132,15 +132,15 @@ class Engine:
 
 
 class EngineService:
-    def __init__(self, engine: Engine, manifest: InternalManifest,
+    def __init__(self, engine: Engine, manifest: EngineManifest,
                  config: SessionConfig, clock: Callable[[], float] | None = None,
                  sleeper: Callable[[float], None] | None = None):
         self.engine, self.manifest, self.config = engine, manifest, config
-        self.control = ControlServer(manifest.engine_control.host, manifest.engine_control.port,
+        self.control = ControlServer(manifest.control.host, manifest.control.port,
                                      on_rejected=self._control_rejected)
-        self.state = self._publisher(manifest.engine_state, LatestPublisher)
-        self.telemetry = self._publisher(manifest.engine_telemetry, LatestPublisher)
-        self.events = self._publisher(manifest.engine_events, EventPublisher)
+        self.state = self._publisher(manifest.state, LatestPublisher)
+        self.telemetry = self._publisher(manifest.telemetry, LatestPublisher)
+        self.events = self._publisher(manifest.events, EventPublisher)
         self.quit_requested = False
         self._rejection_count = 0
         self._started_at = 0.0
@@ -208,7 +208,7 @@ class EngineService:
     def run(self) -> dict:
         self.start()
         print("READY " + json.dumps({"session_id": self.engine.session_id,
-                                     "control": self.manifest.engine_control.as_dict()}, sort_keys=True),
+                                      "control": self.manifest.control.as_dict()}, sort_keys=True),
               flush=True)
         next_tick = self._clock()
         events = [{"event": "episode_started", "episode": 1, "episode_tick": 0}]
@@ -262,7 +262,7 @@ def main(argv=None) -> int:
     parser.add_argument("--manifest", required=True)
     args = parser.parse_args(argv)
     config = SessionConfig.from_file(args.config)
-    manifest = InternalManifest.from_file(args.manifest)
+    manifest = EngineManifest.from_file(args.manifest)
     service = EngineService(Engine.from_config(config, args.config, manifest.session_id), manifest, config)
     service.run()
     return 0

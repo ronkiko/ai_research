@@ -1,4 +1,4 @@
-"""Session configuration and the two V2 manifest boundaries."""
+"""Session configuration and typed V2 capability manifests."""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ import socket
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def _strict_json(text: str) -> Any:
@@ -155,36 +155,142 @@ class InternalManifest:
         Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
 
 
+def _manifest_endpoint(value: Any, required: bool = True) -> Endpoint | None:
+    if value is None:
+        if required:
+            raise ValueError("required endpoint is missing")
+        return None
+    if not isinstance(value, dict) or set(value) != {"host", "port"}:
+        raise ValueError("Invalid endpoint")
+    return Endpoint(value["host"], value["port"])
+
+
+def _manifest_session(data: dict[str, Any], fields: set[str]) -> str:
+    if not isinstance(data, dict) or set(data) != fields:
+        raise ValueError("Manifest fields are invalid")
+    session_id = data.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("session_id must be non-empty")
+    return session_id
+
+
+@dataclass(frozen=True)
+class EngineManifest:
+    """Only the endpoints and run directory required by Engine."""
+
+    session_id: str
+    control: Endpoint
+    state: Endpoint | None
+    telemetry: Endpoint | None
+    events: Endpoint | None
+    run_dir: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id, "control": self.control.as_dict(),
+                "state": self.state.as_dict() if self.state else None,
+                "telemetry": self.telemetry.as_dict() if self.telemetry else None,
+                "events": self.events.as_dict() if self.events else None,
+                "run_dir": self.run_dir}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EngineManifest":
+        session_id = _manifest_session(data, {"session_id", "control", "state",
+                                               "telemetry", "events", "run_dir"})
+        run_dir = data["run_dir"]
+        if not isinstance(run_dir, str) or not run_dir:
+            raise ValueError("run_dir must be non-empty")
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["control"])),
+                   _manifest_endpoint(data["state"], False),
+                   _manifest_endpoint(data["telemetry"], False),
+                   _manifest_endpoint(data["events"], False), run_dir)
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "EngineManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class ControllerManifest:
+    """Controller capabilities: input ingress and its private scheduling feeds."""
+
+    session_id: str
+    engine_control: Endpoint
+    engine_telemetry: Endpoint
+    joystick: Endpoint
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id,
+                "engine_control": self.engine_control.as_dict(),
+                "engine_telemetry": self.engine_telemetry.as_dict(),
+                "joystick": self.joystick.as_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ControllerManifest":
+        session_id = _manifest_session(data, {"session_id", "engine_control",
+                                               "engine_telemetry", "joystick"})
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_control"])),
+                   cast(Endpoint, _manifest_endpoint(data["engine_telemetry"])),
+                   cast(Endpoint, _manifest_endpoint(data["joystick"])))
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "ControllerManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class DisplayManifest:
+    """Display capability: the authoritative STATE input only."""
+
+    session_id: str
+    engine_state: Endpoint
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id,
+                "engine_state": self.engine_state.as_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DisplayManifest":
+        session_id = _manifest_session(data, {"session_id", "engine_state"})
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_state"])))
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "DisplayManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
 @dataclass(frozen=True)
 class PeripheralManifest:
-    """Public game-console ports. It deliberately has no Engine endpoint fields."""
+    """Public Player-facing capability. It deliberately has no Engine fields."""
 
     session_id: str
     joystick: Endpoint
-    display: Endpoint | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"session_id": self.session_id, "joystick": self.joystick.as_dict(),
-                "display": self.display.as_dict() if self.display else None}
+        return {"session_id": self.session_id, "joystick": self.joystick.as_dict()}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PeripheralManifest":
-        if not isinstance(data, dict) or set(data) != {"session_id", "joystick", "display"}:
+        if not isinstance(data, dict) or set(data) != {"session_id", "joystick"}:
             raise ValueError("Peripheral manifest fields are invalid")
-
-        def endpoint(value):
-            if value is None:
-                return None
-            if not isinstance(value, dict) or set(value) != {"host", "port"}:
-                raise ValueError("Invalid endpoint")
-            return Endpoint(value["host"], value["port"])
 
         if not isinstance(data["session_id"], str) or not data["session_id"]:
             raise ValueError("session_id must be non-empty")
-        joystick = endpoint(data["joystick"])
+        joystick = _manifest_endpoint(data["joystick"])
         if joystick is None:
             raise ValueError("joystick endpoint is required")
-        return cls(data["session_id"], joystick, endpoint(data["display"]))
+        return cls(data["session_id"], joystick)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "PeripheralManifest":
@@ -204,3 +310,8 @@ def allocate_endpoint() -> Endpoint:
 
 def new_session_id() -> str:
     return uuid.uuid4().hex
+
+
+__all__ = ["ControllerManifest", "DisplayManifest", "Endpoint", "EngineManifest",
+           "InternalManifest", "PeripheralManifest", "SessionConfig",
+           "allocate_endpoint", "new_session_id"]
