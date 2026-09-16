@@ -1,0 +1,13 @@
+{
+  "map": "../../../maps/pit.json",
+  "clock_mode": "realtime",
+  "physics_hz": 120,
+  "controller": "default",
+  "enable_ui": false,
+  "enable_display": true,
+  "enable_state": true,
+  "enable_telemetry": true,
+  "enable_events": true,
+  "seed": 7,
+  "session_ticks": 1000
+}

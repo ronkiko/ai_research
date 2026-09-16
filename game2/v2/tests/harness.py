@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from game2.v2.config import PeripheralManifest
+from game2.v2.contracts.manifests import PeripheralManifest
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -36,7 +36,7 @@ def run_realtime_smoke(config_path: str | Path) -> tuple[int, int, dict]:
     """Start Console and ScriptedPlayer as separate processes."""
     config_path = Path(config_path).resolve()
     console = subprocess.Popen(
-        [sys.executable, "-m", "game2.v2.console", "--config", str(config_path)],
+        [sys.executable, "-m", "game2.v2.console.main", "--config", str(config_path)],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
@@ -48,7 +48,7 @@ def run_realtime_smoke(config_path: str | Path) -> tuple[int, int, dict]:
             manifest_path = Path(directory) / "peripheral-manifest.json"
             manifest.write(manifest_path)
             player = subprocess.Popen(
-                 [sys.executable, "-m", "game2.v2.players.scripted",
+                 [sys.executable, "-m", "game2.v2.player.scripted.main",
                  "--manifest", str(manifest_path), "--ticks", "400"],
                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True,

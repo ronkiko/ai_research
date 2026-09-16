@@ -1,53 +1,56 @@
 # Game2 V2
 
-Game2 V2 is the virtual-console foundation for the Game2 behavioral research
-environment. An external Player reaches the world only through the Joystick;
-the Console owns Engine, Controller, and optional Display.
+Game2 V2 is a process-separated research environment. Its file tree makes the
+five architectural domains explicit:
 
 ```text
-External Player
-     |
-  Joystick
-     |
- Controller
-     |
-  Engine
-     |
-  Display
+game2/v2/
+├── console/      virtual game console and its internal services
+├── player/       external decision maker and model runtimes
+├── training/     external learning domain
+├── management/   operator and "god mode" plane
+├── contracts/    public contracts shared across domains
+└── tests/        cross-domain architectural verification
 ```
 
-## Current Stage
+`console` owns the authoritative Engine, Controller, Display, internal
+transport, lifecycle, and console configuration. `player` is outside the
+Console and reaches gameplay through the public Joystick contract. `training`
+is an external learning domain. `management` is an operator plane, not a
+gameplay proxy. `contracts` is the only intentional shared public boundary
+between independent domains.
 
-The fixed-step Engine, narrow subsystem capability manifests, Controller input
-bridge, and Display STATE process boundary are implemented. Display does not
-render video yet. Model runtime, Trainer, VisionAdapter, and UI remain external
-or future work.
+Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
-Canonical entrypoint: `console.py`
+System architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 
-Normative spec: [CONSOLE_SPEC.md](CONSOLE_SPEC.md)
+Cross-domain rules: [doc/DEPENDENCY_RULES.md](doc/DEPENDENCY_RULES.md)
 
-Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md)
+## Entrypoints
 
-## Run
-
-Start the Console without an external Player:
+Start the Console:
 
 ```bash
-python -m game2.v2.console --config game2/v2/configs/realtime-smoke.json
+python -m game2.v2.console.main --config game2/v2/console/configs/unpaced-smoke.json
 ```
 
-Run the realtime integration smoke. The test-only harness starts Console and
-ScriptedPlayer as separate processes:
+Start the external Scripted Player:
 
 ```bash
-python -m game2.v2.tests.harness --config game2/v2/configs/realtime-smoke.json
+python -m game2.v2.player.scripted.main --manifest peripheral-manifest.json
 ```
 
-Run the unpaced Console smoke without a Player:
+Start the management placeholder:
 
 ```bash
-python -m game2.v2.console --config game2/v2/configs/unpaced-smoke.json
+python -m game2.v2.management.main
+```
+
+Run the realtime smoke, which starts Console and Player as separate processes:
+
+```bash
+python -m game2.v2.tests.harness \
+  --config game2/v2/console/configs/realtime-smoke.json
 ```
 
 Run V2 tests:
@@ -62,7 +65,5 @@ Run all Game2 tests:
 python -m unittest discover -s game2 -p 'test*.py' -v
 ```
 
-## Deliberate Non-Goals
-
-No MLP, REINFORCE, PPO, reward or training API, renderer, cockpit UI,
-VisionAdapter, audio, or model/trainer integration is part of this foundation.
+This structural patch does not add a renderer, MLP, Trainer, REINFORCE, PPO,
+VisionAdapter, audio, reward system, or management UI.

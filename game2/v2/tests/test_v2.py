@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import io
 import json
@@ -11,26 +12,93 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
-from game2.v2.config import (ControllerManifest, DisplayManifest, Endpoint,
-                              EngineManifest, InternalManifest, PeripheralManifest,
-                              SessionConfig, allocate_endpoint)
-from game2.v2.console import run_session
-from game2.v2.controller import ControllerService
-from game2.v2.display import DisplayService
-from game2.v2.engine import Engine, EngineService
-from game2.v2.joystick import (JoystickState, decode_joystick_message,
-                               joystick_ack, joystick_message)
-from game2.v2.protocol import (ActionCommand, ProtocolError, action_message,
-                               encode_frame, recv_frame)
-from game2.v2.transport.control_server import ControlEnvelope, ControlServer
-from game2.v2.transport.publisher import EventPublisher, LatestPublisher
-from game2.v2.world.map_loader import load_map
-from game2.v2.world.physics import PhysicsConfig
+from game2.v2.console.config import (ControllerManifest, DisplayManifest,
+                                      EngineManifest, InternalManifest, SessionConfig,
+                                      allocate_endpoint)
+from game2.v2.console.controller.controller import ControllerService
+from game2.v2.console.display.display import DisplayService
+from game2.v2.console.engine.engine import Engine, EngineService
+from game2.v2.console.engine.map_loader import load_map
+from game2.v2.console.engine.physics import PhysicsConfig
+from game2.v2.console.main import run_session
+from game2.v2.console.protocol import ActionCommand, action_message
+from game2.v2.console.transport.control_server import ControlEnvelope, ControlServer
+from game2.v2.console.transport.publisher import EventPublisher, LatestPublisher
+from game2.v2.contracts.framing import ProtocolError, encode_frame, recv_frame
+from game2.v2.contracts.joystick import (JoystickState, decode_joystick_message,
+                                          joystick_ack, joystick_message)
+from game2.v2.contracts.manifests import Endpoint, PeripheralManifest
 from game2.v2.tests.harness import run_realtime_smoke
 
 ROOT = Path(__file__).resolve().parents[3]
 V2 = ROOT / "game2" / "v2"
 PIT = ROOT / "game2" / "maps" / "pit.json"
+
+
+def _absolute_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module)
+    return modules
+
+
+class StructureTests(unittest.TestCase):
+    def test_required_domains_have_readmes_and_docs(self):
+        for name in ("console", "player", "training", "management", "contracts"):
+            domain = V2 / name
+            self.assertTrue(domain.is_dir(), name)
+            self.assertTrue((domain / "__init__.py").is_file(), name)
+            self.assertTrue((domain / "README.md").is_file(), name)
+            self.assertTrue((domain / "doc").is_dir(), name)
+
+    def test_required_subsystems_have_readmes_and_docs(self):
+        for relative in (
+            "console/engine", "console/controller", "console/display", "console/transport",
+            "player/scripted", "tests",
+        ):
+            directory = V2 / relative
+            self.assertTrue((directory / "README.md").is_file(), relative)
+            self.assertTrue((directory / "doc").is_dir(), relative)
+
+    def test_relocated_entrypoints_and_flat_modules(self):
+        for relative in (
+            "console/main.py", "console/engine/main.py", "console/controller/main.py",
+            "console/display/main.py", "player/scripted/main.py", "management/main.py",
+        ):
+            self.assertTrue((V2 / relative).is_file(), relative)
+        for relative in (
+            "console.py", "config.py", "controller.py", "display.py", "engine.py",
+            "joystick.py", "protocol.py", "ui.py", "players/scripted.py",
+        ):
+            self.assertFalse((V2 / relative).exists(), relative)
+
+    def test_domain_import_boundaries(self):
+        forbidden = {
+            "console": ("game2.v2.player", "game2.v2.training", "game2.v2.management"),
+            "player": ("game2.v2.console", "game2.v2.training", "game2.v2.management"),
+            "training": ("game2.v2.console", "game2.v2.management"),
+            "management": ("game2.v2.console.engine", "game2.v2.console.controller",
+                            "game2.v2.console.display", "game2.v2.player", "game2.v2.training"),
+            "contracts": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
+                          "game2.v2.management"),
+        }
+        for domain, denied in forbidden.items():
+            for source in (V2 / domain).rglob("*.py"):
+                imported = _absolute_imports(source)
+                leaked = [module for module in imported
+                          if any(module == prefix or module.startswith(prefix + ".")
+                                 for prefix in denied)]
+                self.assertEqual(leaked, [], f"{source}: {leaked}")
+
+    def test_scripted_player_imports_only_public_v2_modules(self):
+        imported = _absolute_imports(V2 / "player" / "scripted" / "main.py")
+        v2_imports = {module for module in imported if module.startswith("game2.v2.")}
+        self.assertTrue(v2_imports)
+        self.assertTrue(all(module.startswith("game2.v2.contracts") for module in v2_imports))
 
 
 class ManifestAndWorldTests(unittest.TestCase):
@@ -70,8 +138,8 @@ class ManifestAndWorldTests(unittest.TestCase):
         self.assertNotIn("engine_control", display.to_dict())
 
     def test_config_has_distinct_realtime_and_unpaced_smokes(self):
-        realtime = SessionConfig.from_file(V2 / "configs" / "realtime-smoke.json")
-        unpaced = SessionConfig.from_file(V2 / "configs" / "unpaced-smoke.json")
+        realtime = SessionConfig.from_file(V2 / "console" / "configs" / "realtime-smoke.json")
+        unpaced = SessionConfig.from_file(V2 / "console" / "configs" / "unpaced-smoke.json")
         self.assertEqual(realtime.clock_mode, "realtime")
         self.assertEqual(unpaced.clock_mode, "unpaced")
         self.assertEqual(realtime.controller, "default")
@@ -121,11 +189,11 @@ class JoystickContractTests(unittest.TestCase):
         self.assertEqual(joystick_ack(42, "rejected")["status"], "rejected")
 
     def test_player_is_not_an_engine_command_client(self):
-        source = (V2 / "players" / "scripted.py").read_text(encoding="utf-8")
+        source = (V2 / "player" / "scripted" / "main.py").read_text(encoding="utf-8")
         self.assertNotIn("InternalManifest", source)
         self.assertNotIn("ActionCommand", source)
         self.assertNotIn("engine_control", source)
-        self.assertNotIn("game2.v2.engine", source)
+        self.assertNotIn("game2.v2.console", source)
 
 
 class InternalSchedulingTests(unittest.TestCase):
@@ -183,7 +251,7 @@ class ChannelTests(unittest.TestCase):
             right.close()
 
     def test_joystick_server_uses_joystick_decoder(self):
-        from game2.v2.joystick import decode_joystick_message
+        from game2.v2.contracts.joystick import decode_joystick_message
         server = ControlServer("127.0.0.1", 0, decoder=decode_joystick_message)
         server.start()
         client = socket.create_connection((server.host, server.port))
@@ -220,11 +288,11 @@ class ChannelTests(unittest.TestCase):
 
 class BoundaryTests(unittest.TestCase):
     def test_static_import_boundaries(self):
-        player = inspect.getsource(__import__("game2.v2.players.scripted", fromlist=["main"]))
-        controller = inspect.getsource(__import__("game2.v2.controller", fromlist=["main"]))
-        display = inspect.getsource(__import__("game2.v2.display", fromlist=["main"]))
-        engine = (V2 / "engine.py").read_text(encoding="utf-8")
-        console = (V2 / "console.py").read_text(encoding="utf-8")
+        player = inspect.getsource(__import__("game2.v2.player.scripted.main", fromlist=["main"]))
+        controller = inspect.getsource(__import__("game2.v2.console.controller.controller", fromlist=["main"]))
+        display = inspect.getsource(__import__("game2.v2.console.display.display", fromlist=["main"]))
+        engine = (V2 / "console" / "engine" / "engine.py").read_text(encoding="utf-8")
+        console = (V2 / "console" / "main.py").read_text(encoding="utf-8")
         self.assertNotIn("InternalManifest", player)
         self.assertNotRegex(player, r"(?:import|from).*engine|ActionCommand")
         self.assertNotIn("target_tick", player)
@@ -240,8 +308,8 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn("ScriptedPlayer", console)
         self.assertNotIn("launch_player", console)
         self.assertNotIn("player.log", console)
-        self.assertNotIn("engine", (V2 / "ui.py").read_text(encoding="utf-8").lower())
-        joystick_source = (V2 / "joystick.py").read_text(encoding="utf-8")
+        self.assertNotIn("engine", (V2 / "management" / "main.py").read_text(encoding="utf-8").lower())
+        joystick_source = (V2 / "contracts" / "joystick.py").read_text(encoding="utf-8")
         self.assertNotIn("torch", joystick_source)
         self.assertNotIn("physics", joystick_source)
         self.assertNotIn("model", joystick_source)
@@ -259,18 +327,18 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn("joystick", display.to_dict())
 
     def test_console_uses_separate_processes(self):
-        source = (V2 / "console.py").read_text(encoding="utf-8")
-        self.assertIn('"game2.v2.controller"', source)
-        self.assertIn('"game2.v2.display"', source)
+        source = (V2 / "console" / "main.py").read_text(encoding="utf-8")
+        self.assertIn('"game2.v2.console.controller.main"', source)
+        self.assertIn('"game2.v2.console.display.main"', source)
         self.assertNotIn("router", source)
         self.assertNotIn("trainer", source.lower())
         self.assertNotIn("model", source.lower())
 
     def test_realtime_player_vertical_and_logs(self):
         status, player_status, ready = run_realtime_smoke(
-            V2 / "configs" / "realtime-smoke.json")
+            V2 / "console" / "configs" / "realtime-smoke.json")
         self.assertEqual((status, player_status), (0, 0))
-        run_dir = V2 / "runs" / ready["session_id"]
+        run_dir = V2 / "console" / "runs" / ready["session_id"]
         self.assertTrue((run_dir / "console.log").exists())
         self.assertTrue((run_dir / "controller.log").exists())
         self.assertTrue((run_dir / "display.log").exists())
@@ -279,14 +347,14 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotRegex(display_log, r"state|avatar|\bx\b|\by\b|\bvx\b|\bvy\b|grounded")
 
     def test_unpaced_smoke_and_ui_trainer_absence(self):
-        status, summary = run_session(V2 / "configs" / "unpaced-smoke.json")
+        status, summary = run_session(V2 / "console" / "configs" / "unpaced-smoke.json")
         self.assertEqual(status, 0)
         self.assertEqual(summary["clock"], "unpaced")
         self.assertFalse(summary["display"])
 
     def test_display_does_not_change_authoritative_result(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = {**json.loads((V2 / "configs" / "realtime-smoke.json").read_text()),
+            base = {**json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text()),
                     "map": str(PIT)}
             paths = []
             for enabled in (False, True):
@@ -303,7 +371,7 @@ class BoundaryTests(unittest.TestCase):
         service = DisplayService(DisplayManifest("s", Endpoint("127.0.0.1", 12345)))
         self.assertFalse(hasattr(service, "output"))
         self.assertFalse(hasattr(service, "publish"))
-        source = (V2 / "display.py").read_text(encoding="utf-8")
+        source = (V2 / "console" / "display" / "display.py").read_text(encoding="utf-8")
         self.assertNotIn("video_frame", source)
         self.assertNotIn('"state": snapshot', source)
         self.assertNotIn("ControlServer", source)
