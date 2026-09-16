@@ -49,7 +49,7 @@ class StructureTests(unittest.TestCase):
         for relative in (
             "console/engine", "console/controller", "console/display", "console/transport",
             "console/display/screen", "console/display/vision",
-            "player/scripted", "tests",
+            "player/scripted", "player/human", "tests",
         ):
             directory = V2 / relative
             self.assertTrue((directory / "README.md").is_file(), relative)
@@ -58,7 +58,8 @@ class StructureTests(unittest.TestCase):
     def test_relocated_entrypoints_and_flat_modules(self):
         for relative in (
             "console/main.py", "console/engine/main.py", "console/controller/main.py",
-            "console/display/main.py", "player/scripted/main.py", "management/main.py",
+            "console/display/main.py", "player/scripted/main.py", "player/human/main.py",
+            "management/main.py",
         ):
             self.assertTrue((V2 / relative).is_file(), relative)
         for relative in (
@@ -122,6 +123,20 @@ class StructureTests(unittest.TestCase):
         v2_imports = {module for module in imported if module.startswith("game2.v2.")}
         self.assertTrue(v2_imports)
         self.assertTrue(all(module.startswith("game2.v2.contracts") for module in v2_imports))
+
+    def test_human_player_imports_only_public_contracts_and_local_modules(self):
+        for source in (V2 / "player" / "human").rglob("*.py"):
+            imported = absolute_imports(source, V2)
+            v2_imports = {module for module in imported if module.startswith("game2.v2.")}
+            self.assertTrue(all(
+                module.startswith("game2.v2.contracts")
+                or module.startswith("game2.v2.player.human")
+                for module in v2_imports
+            ), str(source))
+            text = source.read_text(encoding="utf-8")
+            for forbidden in ("ActionCommand", "target_tick", "hold_ticks", "InternalManifest",
+                              "ControllerManifest", "DisplayManifest"):
+                self.assertNotIn(forbidden, text, str(source))
 
 
 class ManifestAndWorldTests(unittest.TestCase):

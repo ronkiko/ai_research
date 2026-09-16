@@ -329,7 +329,7 @@ class ScreenRendererTests(unittest.TestCase):
     def test_pygame_import_is_confined_to_screen_or_demo_control(self):
         for source in V2.rglob("*.py"):
             if ("tests" in source.parts or "screen" in source.parts
-                    or source == V2 / "demo.py"):
+                    or "human" in source.parts or source == V2 / "demo.py"):
                 continue
             text = source.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^\s*(?:from|import)\s+pygame(?:\s|$)",
