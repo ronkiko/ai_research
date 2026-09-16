@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 
 from controls import Action
+from diagnostics import console_message
 from joysticks import ExternalHumanJoystick, HumanJoystick
 from level import DEFAULT_MAP, load_level
 from monitors import AutoMonitor, ColorRenderer, MlpMonitor, WindowMonitor
@@ -18,6 +19,10 @@ class GameContainer:
     AUTO_SPEED = 100
     AUTO_TARGET_DELAY = 32
     AUTO_MAX_TICKS = 600
+
+    def _log(self, *args, **kwargs):
+        if self.console_output:
+            console_message(*args, **kwargs)
 
     def __init__(self, map_path=DEFAULT_MAP, mode='human', *, port=8765, config=None,
                  monitor_hz=30, window=False, auto=False, external=False,
@@ -36,6 +41,7 @@ class GameContainer:
         if type(monitor_hz) is not int or monitor_hz < 1 or self.config.hz % monitor_hz:
             raise ValueError('monitor_hz must be a positive divisor of physics Hz')
         self.monitor_hz = monitor_hz
+        self.console_output = not external
         self.mode = mode
         self.auto = bool(auto)
         self.map_path = map_path
@@ -183,14 +189,14 @@ class GameContainer:
         next_frame = previous
         period = 1 / (60 if self.mode == 'human' else self.monitor_hz)
         if self.transport is not None:
-            print(f'game2 socket listening on {self.transport.address[0]}:{self.transport.address[1]}',
+            self._log(f'game2 socket listening on {self.transport.address[0]}:{self.transport.address[1]}',
                   file=sys.stderr, flush=True)
         while not self.quit_requested:
             now = time.perf_counter()
             events = self.advance(now - previous)
             previous = now
             for event in events:
-                print(event, file=sys.stderr, flush=True)
+                self._log(event, file=sys.stderr, flush=True)
             if now >= next_frame:
                 self.present()
                 next_frame = now + period
@@ -223,7 +229,7 @@ class GameContainer:
                                   mlp_wait_ms=0.0)
         try:
             if self.transport is not None:
-                print(f'game2 socket listening on {self.transport.address[0]}:'
+                self._log(f'game2 socket listening on {self.transport.address[0]}:'
                       f'{self.transport.address[1]}', file=sys.stderr, flush=True)
             if self._auto_wait_for_connection() == 'quit':
                 return
@@ -274,7 +280,7 @@ class GameContainer:
                         self._auto_metrics['physics_ms'] += (time.perf_counter() - physics_started) * 1000
                         simulated_ticks += 1
                         for event in events:
-                            print(event, file=sys.stderr, flush=True)
+                            self._log(event, file=sys.stderr, flush=True)
                         if self.done:
                             break
                     if reset_requested or self.quit_requested or self.done:
@@ -299,7 +305,7 @@ class GameContainer:
             simulated_seconds = simulated_ticks / self.config.hz
             effective_speed = (simulated_seconds / wall_seconds
                                if wall_seconds > 0 else 0.0)
-            print(f'auto_summary simulated_seconds={simulated_seconds:.6f} '
+            self._log(f'auto_summary simulated_seconds={simulated_seconds:.6f} '
                   f'wall_seconds={wall_seconds:.6f} '
                   f'effective_speed_x={effective_speed:.2f} '
                   f'observations={getattr(self, "_auto_metrics", {}).get("observations", 0)} '

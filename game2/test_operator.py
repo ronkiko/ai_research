@@ -168,6 +168,12 @@ class OperatorGuiTests(unittest.TestCase):
         self.app.presenter.controller.exit()
         self.pygame.quit()
 
+    def test_x11_window_requests_floating_dialog_type(self):
+        self.assertEqual(
+            os.environ["SDL_X11_WINDOW_TYPE"], "_NET_WM_WINDOW_TYPE_DIALOG"
+        )
+        self.assertEqual(os.environ["SDL_VIDEO_CENTERED"], "1")
+
     def test_panels_have_separate_bounds_at_all_supported_sizes(self):
         for size in ((960, 640), (1024, 768), (1280, 720), (1440, 900)):
             self.app.screen = self.pygame.display.set_mode(size)
@@ -246,14 +252,34 @@ class OperatorGuiTests(unittest.TestCase):
         self.assertIsNone(p.controller.game)
         self.assertIsNone(self.app.controls.menu)
 
-    def test_error_is_modal_and_can_be_dismissed(self):
-        self.app.presenter.error = "Missing checkpoint " * 100
-        self.app.draw()
-        self.assertEqual(set(self.app.controls.items), {"dismiss"})
+    def test_error_keeps_world_and_controls_available(self):
+        p = self.app.presenter
+        p.error = "Missing checkpoint " * 100
+        with patch.object(p, "start") as start, patch.object(p, "close") as close:
+            self.app.draw()
+            self.assertIsNotNone(self.app.monitor.cache)
+            self.assertFalse(self.app.log_open)
+            self.assertTrue(
+                {"start", "stop", "exit", "journal", "dismiss_error"}.issubset(
+                    self.app.controls.items
+                )
+            )
+            for key in ("start", "journal", "exit"):
+                rect = self.app.controls.items[key][0]
+                self.app.handle_event(
+                    self.pygame.event.Event(
+                        self.pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center
+                    )
+                )
+                self.app.draw()
+            start.assert_called_once()
+            close.assert_called_once()
+            self.assertTrue(self.app.log_open)
         self.app.handle_event(
             self.pygame.event.Event(self.pygame.KEYDOWN, key=self.pygame.K_ESCAPE)
         )
-        self.assertEqual(self.app.presenter.error, "")
+        self.assertEqual(p.error, "")
+        self.assertFalse(self.app.log_open)
 
 
 class DemoRegressionTests(unittest.TestCase):
@@ -357,6 +383,44 @@ class DemoRegressionTests(unittest.TestCase):
             p.controller.stop()
             self.assertIsNone(p.controller.game)
             self.assertIsNone(p.controller._runner_thread)
+
+    def test_training_completes_with_unavailable_stdout_and_stderr(self):
+        import sys
+        import errno
+
+        class BrokenTerminal:
+            def write(self, text):
+                raise OSError(errno.EIO, "Input/output error")
+
+            def flush(self):
+                raise OSError(errno.EIO, "Input/output error")
+
+        with tempfile.TemporaryDirectory() as directory:
+            controller = SessionController()
+            self.addCleanup(controller.exit)
+            config = SessionConfig(
+                controller="Bot",
+                bot_mode="Training",
+                execution="Auto",
+                episodes=2,
+                checkpoint_file=str(Path(directory) / "weights.pt"),
+            )
+            with patch.object(sys, "stdout", BrokenTerminal()), patch.object(
+                sys, "stderr", BrokenTerminal()
+            ):
+                self.assertTrue(controller.apply(config))
+                controller._runner_thread.join(timeout=15)
+                events = controller.status_channel.drain()
+                status = controller.status
+                controller.stop()
+            self.assertEqual(status, "Finished", events)
+            self.assertFalse(any(event["type"] == "error" for event in events), events)
+            terminal = [
+                event for event in events if event["type"] == "episode_finished"
+            ]
+            self.assertEqual(len(terminal), 2)
+            self.assertTrue(all(event["updated"] for event in terminal))
+            self.assertTrue(config.checkpoint_path().is_file())
 
     def test_stop_cleans_up_even_when_checkpoint_save_fails(self):
         controller = SessionController()

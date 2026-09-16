@@ -226,6 +226,10 @@ class LabPresenter:
                 self.history.append(record)
             elif kind == "error":
                 self.message(event.get("message", "Ошибка сессии"), error=True)
+                if event.get("details"):
+                    self.messages.append(
+                        (time.strftime("%H:%M:%S"), event["details"], True)
+                    )
             elif kind == "checkpoint_saved":
                 self.message("Веса сохранены: " + event["path"])
             elif kind == "session_finished":

@@ -1,6 +1,8 @@
 """Connect a local 3-8-2 MLP to the game2 TCP controller."""
 from __future__ import annotations
 
+from diagnostics import console_message
+
 import argparse
 from collections import deque
 import json
@@ -64,7 +66,9 @@ def connect(host: str, port: int, timeout: int, wait: float, stop_event=None) ->
 class MlpRunner:
     def __init__(self, client: MLPClient, policy: MLP382Policy, *, training: bool,
                  episodes: int, checkpoint: Path, max_ticks: int, target_delay: int,
-                 hold_ticks: int, save_every: int, event_sink=None, stop_event=None):
+                 hold_ticks: int, save_every: int, event_sink=None, stop_event=None,
+                 console_output: bool = True):
+        self.console_output = console_output
         self.client = client
         self.policy = policy
         self.training = training
@@ -170,7 +174,8 @@ class MlpRunner:
                 **self.policy.stats(),
             }
             self._emit('episode_finished', **metrics)
-            print(json.dumps(metrics), flush=True)
+            if self.console_output:
+                console_message(json.dumps(metrics), flush=True)
             if completed == self.episodes:
                 return
             frame = self._reset(frame)

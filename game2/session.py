@@ -8,6 +8,7 @@ import math
 import os
 import tempfile
 import shutil
+import traceback
 from pathlib import Path
 import threading
 import time
@@ -343,7 +344,7 @@ class SessionController:
             config.validate()
             # Validate first: an invalid draft must not kill a running experiment.
         except (OSError, ValueError, TypeError) as error:
-            self._publish("error", message=str(error))
+            self._publish("error", message=str(error), details=traceback.format_exc())
             return False
         self.stop()
         self.config = config
@@ -373,7 +374,7 @@ class SessionController:
             )
         except (OSError, ValueError, RuntimeError) as error:
             self.status = "Error"
-            self._publish("error", message=str(error))
+            self._publish("error", message=str(error), details=traceback.format_exc())
             return False
         self._publish("session_started", config=_config_dict(config), auto=auto)
         self.status = "Running"
@@ -446,7 +447,9 @@ class SessionController:
         except Exception as error:
             if not self._stop_event.is_set():
                 self.status = "Error"
-                self._publish("error", message=str(error))
+                self._publish(
+                    "error", message=str(error), details=traceback.format_exc()
+                )
                 self._stop_event.set()
                 game.quit_requested = True
                 if game.transport is not None:
@@ -509,6 +512,7 @@ class SessionController:
                     target_delay=32,
                     hold_ticks=48,
                     save_every=10,
+                    console_output=False,
                     event_sink=self.status_channel.publish,
                     stop_event=self._stop_event,
                 )
@@ -519,7 +523,9 @@ class SessionController:
         except Exception as error:
             if not self._stop_event.is_set():
                 self.status = "Error"
-                self._publish("error", message=str(error))
+                self._publish(
+                    "error", message=str(error), details=traceback.format_exc()
+                )
                 self._stop_event.set()
                 game.quit_requested = True
         finally:

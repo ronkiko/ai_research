@@ -15,6 +15,10 @@ class OperatorApp:
     GUI_HZ = 60
 
     def __init__(self, *, settings_path=SETTINGS_PATH, pygame_module=None):
+        # Ask X11 tiling managers for a floating window, like the original game.
+        # SDL ignores this hint on other platforms; no WM configuration is changed.
+        os.environ.setdefault("SDL_X11_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG")
+        os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
         pg.init()
         info = pg.display.Info()
         self.screen = pg.display.set_mode(
@@ -98,7 +102,29 @@ class OperatorApp:
                 MUTED,
                 width=280,
             )
-        if p.error or self.log_open:
+        if p.error:
+            rect = pg.Rect(
+                b.monitor.x + 12, b.monitor.bottom - 82, b.monitor.w - 24, 70
+            )
+            pg.draw.rect(self.screen, CARD, rect, border_radius=8)
+            pg.draw.rect(self.screen, RED, rect, 1, border_radius=8)
+            c.text(
+                "Ошибка · подробности в журнале",
+                rect.x + 12,
+                rect.y + 8,
+                13,
+                RED,
+                width=rect.w - 130,
+            )
+            c.text(p.error, rect.x + 12, rect.y + 32, 13, TEXT, width=rect.w - 130)
+            self.controls.button(
+                c,
+                "dismiss_error",
+                "Скрыть",
+                pg.Rect(rect.right - 104, rect.y + 17, 92, 34),
+                self.dismiss,
+            )
+        if self.log_open:
             self.release()
             self.controls.menu = None
             rect = pg.Rect(
@@ -108,10 +134,9 @@ class OperatorApp:
             pg.draw.rect(
                 self.screen, RED if p.error else MUTED, rect, 1, border_radius=10
             )
-            self.controls.items = {}
             self.log_view = pg.Rect(rect.x + 16, rect.y + 44, rect.w - 32, rect.h - 100)
             c.text(
-                "Ошибка" if p.error else "Журнал событий · прокрутка колёсиком",
+                "Журнал событий · прокрутка колёсиком",
                 rect.x + 16,
                 rect.y + 14,
                 13,
@@ -123,11 +148,7 @@ class OperatorApp:
                 self.log_scroll, max(0, self.log_height - self.log_view.h)
             )
             y = self.log_view.y - self.log_scroll
-            entries = (
-                [p.error]
-                if p.error
-                else [t + "  " + m for t, m, _ in reversed(p.messages)]
-            )
+            entries = [t + "  " + m for t, m, _ in reversed(p.messages)]
             for entry in entries:
                 y = (
                     c.wrap(
@@ -178,16 +199,27 @@ class OperatorApp:
             self.release()
         if self.controls.event(event):
             return
-        if p.error or self.log_open:
+        if self.log_open:
             self.release()
-            if event.type == pg.MOUSEWHEEL:
+            if event.type == pg.MOUSEWHEEL and self.log_view.collidepoint(
+                pg.mouse.get_pos()
+            ):
                 self.log_scroll = max(0, self.log_scroll - event.y * 36)
+                return
             if event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE:
                 self.dismiss()
+                return
+        if event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE and p.error:
+            self.dismiss()
             return
         if self.setup.event(event):
             return
-        if event.type == pg.KEYDOWN and p.active_human and not self.controls.focus:
+        if (
+            event.type == pg.KEYDOWN
+            and p.active_human
+            and not self.controls.focus
+            and not self.log_open
+        ):
             if event.key == pg.K_RIGHT:
                 self.right = True
             elif event.key == pg.K_r:
