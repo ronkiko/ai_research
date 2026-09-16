@@ -27,6 +27,8 @@ from game2.v2.console.config import SessionConfig  # noqa: E402
 from game2.v2.console.engine.engine import Engine  # noqa: E402
 from game2.v2.console.engine.physics import (AvatarBody, PhysicsConfig,
                                               PhysicsWorld, Surface)  # noqa: E402
+from game2.v2.tests.architecture_helpers import (absolute_imports,
+                                                  imports_from_tree)  # noqa: E402
 from game2.v2.console.world import (CollisionRect, TileID,
                                     load_world)  # noqa: E402
 
@@ -215,6 +217,36 @@ class PhysicsParityTests(unittest.TestCase):
 
 
 class RuntimeIsolationTests(unittest.TestCase):
+    def test_import_resolver_normalizes_local_world_and_v1_relative_paths(self):
+        world_module = "game2.v2.console.world.foo"
+        world_imports = imports_from_tree(ast.parse(
+            "from ..engine import physics\n"
+            "from .model import WorldDefinition\n"
+        ), world_module)
+        self.assertIn("game2.v2.console.engine", world_imports)
+        self.assertIn("game2.v2.console.world.model", world_imports)
+
+        v1_imports = imports_from_tree(ast.parse(
+            "from ....physics import PhysicsWorld\n"
+            "from game2 import physics\n"
+        ), world_module)
+        self.assertIn("game2.physics", v1_imports)
+
+    def test_world_sources_do_not_import_console_runtime_subsystems(self):
+        forbidden = (
+            "game2.v2.console.engine",
+            "game2.v2.console.controller",
+            "game2.v2.console.display",
+            "game2.v2.console.transport",
+        )
+        world_root = V2 / "console" / "world"
+        for source in world_root.rglob("*.py"):
+            imported = absolute_imports(source, V2)
+            leaked = [module for module in imported
+                      if any(module == prefix or module.startswith(prefix + ".")
+                             for prefix in forbidden)]
+            self.assertEqual(leaked, [], str(source))
+
     def test_v2_production_sources_do_not_import_v1_runtime(self):
         forbidden = {
             "game2.physics", "game2.level", "game2.game", "game2.monitors",
@@ -224,13 +256,7 @@ class RuntimeIsolationTests(unittest.TestCase):
         for source in V2.rglob("*.py"):
             if "tests" in source.parts:
                 continue
-            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-            imported = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    imported.update(alias.name for alias in node.names)
-                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                    imported.add(node.module)
+            imported = absolute_imports(source, V2)
             leaked = [module for module in imported
                       if module in forbidden or any(
                           module.startswith(prefix + ".") for prefix in forbidden)]

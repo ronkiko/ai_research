@@ -28,51 +28,12 @@ from game2.v2.contracts.framing import ProtocolError, encode_frame, recv_frame
 from game2.v2.contracts.joystick import (JoystickState, decode_joystick_message,
                                           joystick_ack, joystick_message)
 from game2.v2.contracts.manifests import Endpoint, PeripheralManifest
+from game2.v2.tests.architecture_helpers import absolute_imports, imports_from_tree
 from game2.v2.tests.harness import run_realtime_smoke
 
 ROOT = Path(__file__).resolve().parents[3]
 V2 = ROOT / "game2" / "v2"
 PIT = V2 / "console" / "world" / "maps" / "pit.json"
-
-
-def _module_name(path: Path, package_root: Path = V2) -> str:
-    relative = path.relative_to(package_root)
-    parts = relative.with_suffix("").parts
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join(("game2", "v2", *parts))
-
-
-def _imports_from_tree(tree: ast.AST, module_name: str, package_name: str | None = None) -> set[str]:
-    modules = set()
-    package = package_name or module_name.rsplit(".", 1)[0]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                if node.module:
-                    modules.add(node.module)
-                continue
-
-            package_parts = package.split(".")
-            ascend = node.level - 1
-            if ascend > len(package_parts):
-                continue
-            base = ".".join(package_parts[:len(package_parts) - ascend])
-            if node.module:
-                modules.add(".".join(part for part in (base, node.module) if part))
-            else:
-                modules.add(base)
-                modules.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
-    return modules
-
-
-def _absolute_imports(path: Path, package_root: Path = V2) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    module_name = _module_name(path, package_root)
-    package_name = module_name if path.name == "__init__.py" else None
-    return _imports_from_tree(tree, module_name, package_name)
 
 
 class StructureTests(unittest.TestCase):
@@ -116,7 +77,7 @@ class StructureTests(unittest.TestCase):
         }
         for domain, denied in forbidden.items():
             for source in (V2 / domain).rglob("*.py"):
-                imported = _absolute_imports(source)
+                imported = absolute_imports(source, V2)
                 leaked = [module for module in imported
                           if any(module == prefix or module.startswith(prefix + ".")
                                  for prefix in denied)]
@@ -128,7 +89,7 @@ class StructureTests(unittest.TestCase):
             "from ..contracts import JoystickState\n"
             "from .sibling import helper\n"
         )
-        imported = _imports_from_tree(player_tree, "game2.v2.player.foo")
+        imported = imports_from_tree(player_tree, "game2.v2.player.foo")
         self.assertIn("game2.v2.console", imported)
         self.assertIn("game2.v2.contracts", imported)
         self.assertIn("game2.v2.player.sibling", imported)
@@ -146,15 +107,17 @@ class StructureTests(unittest.TestCase):
         )
         denied = ("game2.v2.console", "game2.v2.player", "game2.v2.training")
         for source in cases:
-            imported = _imports_from_tree(ast.parse(source), "game2.v2.management.foo")
+            imported = imports_from_tree(ast.parse(source), "game2.v2.management.foo")
             self.assertIn("game2.v2.console.main", imported)
             leaked = [module for module in imported
                       if any(module == prefix or module.startswith(prefix + ".")
                              for prefix in denied)]
-            self.assertEqual(leaked, ["game2.v2.console.main"])
+            self.assertIn("game2.v2.console.main", leaked)
+            self.assertTrue(all(module.startswith("game2.v2.console.main")
+                                for module in leaked))
 
     def test_scripted_player_imports_only_public_v2_modules(self):
-        imported = _absolute_imports(V2 / "player" / "scripted" / "main.py")
+        imported = absolute_imports(V2 / "player" / "scripted" / "main.py", V2)
         v2_imports = {module for module in imported if module.startswith("game2.v2.")}
         self.assertTrue(v2_imports)
         self.assertTrue(all(module.startswith("game2.v2.contracts") for module in v2_imports))
