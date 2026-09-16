@@ -35,7 +35,7 @@ class MlpTests(unittest.TestCase):
     def test_is_242_and_training_changes_weights(self):
         policy = MLP242Policy(seed=1)
         self.assertEqual(policy.stats()['parameters'], 22)
-        decision = policy.sample((0.1, 1.0), jump_allowed=True)
+        decision = policy.sample((0.1, 1.0))
         self.assertIsInstance(decision.right, bool)
         self.assertIsInstance(decision.jump, bool)
         before = [value.detach().clone() for value in policy.network.parameters()]
@@ -45,7 +45,7 @@ class MlpTests(unittest.TestCase):
 
     def test_checkpoint_round_trip(self):
         policy = MLP242Policy(seed=3)
-        decision = policy.sample((0.1, 1.0), jump_allowed=True)
+        decision = policy.sample((0.1, 1.0))
         policy.update([decision.log_probability], [decision.entropy], 1.0)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'policy.pt'
@@ -72,9 +72,9 @@ class RegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'policy.pt'
             policy.save(path)
-            expected = [policy.sample((0.1, 1), jump_allowed=True) for _ in range(10)]
+            expected = [policy.sample((0.1, 1)) for _ in range(10)]
             policy.load(path)
-            actual = [policy.sample((0.1, 1), jump_allowed=True) for _ in range(10)]
+            actual = [policy.sample((0.1, 1)) for _ in range(10)]
             self.assertEqual([(d.right, d.jump) for d in expected],
                              [(d.right, d.jump) for d in actual])
 
@@ -109,7 +109,7 @@ class RegressionTests(unittest.TestCase):
                 policy = MLP242Policy(seed=1)
                 runner = MlpRunner(Client(rejected), policy, training=True, episodes=1,
                                    checkpoint=Path(directory)/'weights.pt', max_ticks=600,
-                                   target_delay=32, hold_ticks=48, jump_window=.08, save_every=1)
+                                   target_delay=32, hold_ticks=48, save_every=1)
                 with contextlib.redirect_stdout(io.StringIO()):
                     runner.run()
                 self.assertEqual(policy.steps, expected_steps)

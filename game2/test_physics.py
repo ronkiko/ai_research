@@ -92,6 +92,18 @@ class PhysicsTests(unittest.TestCase):
             b.step(move=-1 if tick % 2 else 0)
         self.assertTrue(a.body.grounded)
 
+    def test_jump_after_landing_is_allowed(self):
+        world = self.flat_world()
+        world.step(jump=True)
+        for _ in range(150):
+            world.step()
+            if world.body.grounded:
+                break
+        self.assertTrue(world.body.grounded)
+        world.step(jump=True)
+        self.assertFalse(world.body.grounded)
+        self.assertLess(world.body.vy, 0)
+
     def test_walking_off_edge_does_not_allow_jump(self):
         world = PhysicsWorld(Body(99, 36, vx=340), [Surface(0, 100, 100, 20)])
         world.step(move=1)

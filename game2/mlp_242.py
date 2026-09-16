@@ -23,8 +23,8 @@ class MLP242Policy:
     """Two independent Bernoulli outputs trained with episodic REINFORCE.
 
     Output zero controls Right and output one controls the one-tick Jump edge.
-    The runner prevents repeated jump attempts within one episode; the decision
-    to hold or release Right remains under MLP control on every observation.
+    The decision to hold or release either button remains under MLP control on
+    every observation. Physics alone decides whether a jump has an effect.
     """
 
     ARCHITECTURE = '2-4-2'
@@ -61,26 +61,23 @@ class MLP242Policy:
         with torch.no_grad():
             return tuple(torch.sigmoid(self._logits(features)).tolist())
 
-    def sample(self, features: tuple[float, float], *, jump_allowed: bool) -> MlpDecision:
+    def sample(self, features: tuple[float, float]) -> MlpDecision:
         logits = self._logits(features)
         right_distribution = torch.distributions.Bernoulli(logits=logits[0])
         right_action = right_distribution.sample()
         log_probability = right_distribution.log_prob(right_action)
         entropy = right_distribution.entropy()
-        jump_action = torch.tensor(0.0)
-        if jump_allowed:
-            jump_distribution = torch.distributions.Bernoulli(logits=logits[1])
-            jump_action = jump_distribution.sample()
-            log_probability = log_probability + jump_distribution.log_prob(jump_action)
-            entropy = entropy + jump_distribution.entropy()
+        jump_distribution = torch.distributions.Bernoulli(logits=logits[1])
+        jump_action = jump_distribution.sample()
+        log_probability = log_probability + jump_distribution.log_prob(jump_action)
+        entropy = entropy + jump_distribution.entropy()
         probabilities = tuple(torch.sigmoid(logits).detach().tolist())
         return MlpDecision(bool(right_action.item()), bool(jump_action.item()),
                            log_probability, entropy, probabilities)
 
-    def greedy(self, features: tuple[float, float], *, jump_allowed: bool) -> MlpDecision:
+    def greedy(self, features: tuple[float, float]) -> MlpDecision:
         probabilities = self.probabilities(features)
-        return MlpDecision(probabilities[0] >= 0.5,
-                           jump_allowed and probabilities[1] >= 0.5,
+        return MlpDecision(probabilities[0] >= 0.5, probabilities[1] >= 0.5,
                            torch.tensor(0.0), torch.tensor(0.0), probabilities)
 
     def update(self, log_probabilities: list[torch.Tensor], entropies: list[torch.Tensor],

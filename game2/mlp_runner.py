@@ -33,7 +33,7 @@ def connect(host: str, port: int, timeout: int, wait: float) -> MLPClient:
 class MlpRunner:
     def __init__(self, client: MLPClient, policy: MLP242Policy, *, training: bool,
                  episodes: int, checkpoint: Path, max_ticks: int, target_delay: int,
-                 hold_ticks: int, jump_window: float, save_every: int):
+                 hold_ticks: int, save_every: int):
         self.client = client
         self.policy = policy
         self.training = training
@@ -42,7 +42,6 @@ class MlpRunner:
         self.max_ticks = max_ticks
         self.target_delay = target_delay
         self.hold_ticks = hold_ticks
-        self.jump_window = jump_window
         self.save_every = save_every
         self.sensors = PixelSensors()
 
@@ -64,7 +63,6 @@ class MlpRunner:
             episode = frame['episode']
             started_tick = frame['tick']
             transport_start = (frame['late'], frame['rejected'])
-            jumped = False
             pending = []
             last_tick = -1
             while frame['episode'] == episode and frame['status'] == 0:
@@ -75,17 +73,15 @@ class MlpRunner:
                     continue
                 last_tick = frame['tick']
                 reading = self.sensors.read(frame)
-                jump_allowed = not jumped and reading.grounded and reading.features[0] <= self.jump_window
                 if self.training:
-                    decision = self.policy.sample(reading.features, jump_allowed=jump_allowed)
+                    decision = self.policy.sample(reading.features)
                 else:
-                    decision = self.policy.greedy(reading.features, jump_allowed=jump_allowed)
+                    decision = self.policy.greedy(reading.features)
                 target = frame['tick'] + self.target_delay
                 sequence = self.client.action(episode=episode, target_tick=target,
                                               hold_ticks=self.hold_ticks,
                                               right=decision.right, jump=decision.jump)
                 pending.append((sequence, target, decision))
-                jumped = jumped or decision.jump
                 frame = self.client.receive()
 
             same_episode = frame['episode'] == episode
@@ -136,8 +132,6 @@ def parse_args(argv=None):
     parser.add_argument('--target-delay', type=int, default=32,
                         help='future physics ticks used to absorb inference latency')
     parser.add_argument('--hold-ticks', type=int, default=48)
-    parser.add_argument('--jump-window', type=float, default=0.08,
-                        help='maximum normalized distance at which jumping is considered')
     parser.add_argument('--save-every', type=int, default=10)
     return parser.parse_args(argv)
 
@@ -148,8 +142,8 @@ def main(argv=None):
         raise SystemExit('--episodes and --save-every must be positive')
     if not 1 <= args.target_delay <= MAX_FUTURE or not 1 <= args.hold_ticks <= MAX_HOLD:
         raise SystemExit('--target-delay and --hold-ticks must be in [1, 120]')
-    if args.max_ticks <= args.target_delay or not 0 <= args.jump_window <= 1 or args.wait < 0:
-        raise SystemExit('Invalid max-ticks, jump-window or wait')
+    if args.max_ticks <= args.target_delay or args.wait < 0:
+        raise SystemExit('Invalid max-ticks or wait')
     # A 22-parameter network gains nothing from a large CPU thread pool.
     torch.set_num_threads(1)
     policy = MLP242Policy(seed=args.seed)
@@ -163,7 +157,7 @@ def main(argv=None):
             MlpRunner(client, policy, training=args.mode == 'train',
                       episodes=args.episodes, checkpoint=args.checkpoint,
                       max_ticks=args.max_ticks, target_delay=args.target_delay,
-                      hold_ticks=args.hold_ticks, jump_window=args.jump_window,
+                       hold_ticks=args.hold_ticks,
                       save_every=args.save_every).run()
     except (ConnectionError, OSError, TimeoutError, ValueError) as error:
         print(f'game2 MLP: {error}', file=sys.stderr)
