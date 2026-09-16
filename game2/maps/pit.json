@@ -1,16 +1,55 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "Run-up pit",
-  "width": 1200,
-  "height": 640,
-  "spawn": {"x": 100, "y": 296, "width": 64, "height": 64},
-  "goal": {"x": 760, "y": 296, "width": 440, "height": 64},
-  "surfaces": [
-    {"x": 0, "y": 360, "width": 500, "height": 280, "damage": false},
-    {"x": 760, "y": 360, "width": 440, "height": 280, "damage": false},
-    {"x": 500, "y": 584, "width": 260, "height": 56, "damage": true},
-    {"x": -64, "y": -64, "width": 64, "height": 704, "damage": false},
-    {"x": 1200, "y": -64, "width": 64, "height": 704, "damage": false},
-    {"x": 0, "y": -64, "width": 1200, "height": 64, "damage": false}
+  "tile_size": 64,
+  "columns": 20,
+  "rows": 12,
+  "spawn": {
+    "column": 2,
+    "row": 6,
+    "columns": 1,
+    "rows": 1
+  },
+  "goal": {
+    "column": 12,
+    "row": 6,
+    "columns": 8,
+    "rows": 1
+  },
+  "terrain": [
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "########....########",
+    "########....########",
+    "########....########",
+    "########^^^^########",
+    "########^^^^########"
+  ],
+  "decorations": [
+    {
+      "sprite": "tree",
+      "column": 0,
+      "baseline": 7
+    },
+    {
+      "sprite": "bush",
+      "column": 5,
+      "baseline": 7
+    },
+    {
+      "sprite": "tree",
+      "column": 12,
+      "baseline": 7
+    },
+    {
+      "sprite": "ruin",
+      "column": 18,
+      "baseline": 7
+    }
   ]
 }

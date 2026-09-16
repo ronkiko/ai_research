@@ -84,7 +84,8 @@ stream. Maximum accepted observation payload is 17 MiB.
 
 Coordinates: top left, row-major, y down. Index palette: 0 white `(255,255,255)`,
 1 black `(0,0,0)`, 2 player blue `(0,102,255)`, 3 damage red `(255,0,0)`.
-No HUD is encoded. Simulation time in seconds is `tick / physics_hz`.
+No HUD, background art, or decorations are encoded. The socket carries the
+semantic collider raster, while the window can show a graphical tileset. Simulation time in seconds is `tick / physics_hz`.
 No camera scaling/cropping is applied in v1.
 
 Event sequence persists across resets. Last event repeats until a newer event.

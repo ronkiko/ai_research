@@ -1,4 +1,4 @@
-"""Validated, immutable level data loaded from JSON; no rendering or game loop."""
+"""Tile-map data and conversion to colliders; the physics engine stays pixel-based."""
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +6,10 @@ from controls import fields, strict_json
 from physics import Body, Surface
 
 DEFAULT_MAP = Path(__file__).with_name('maps') / 'pit.json'
+TILE_SIZE = 64
+SOURCE_TILE_SIZE = 16
+DECOR_SPRITES = {'tree': (16, 0, 80, 112), 'bush': (112, 96, 48, 16),
+                 'ruin': (176, 80, 32, 32)}
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,13 @@ class Rect:
 
 
 @dataclass(frozen=True)
+class Decoration:
+    sprite: str
+    column: int
+    baseline: int
+
+
+@dataclass(frozen=True)
 class Level:
     name: str
     width: int
@@ -29,6 +40,9 @@ class Level:
     spawn: Rect
     surfaces: tuple
     goal: Rect
+    terrain: tuple[str, ...]
+    decorations: tuple[Decoration, ...]
+    tile_size: int = TILE_SIZE
 
     def new_body(self):
         return Body(self.spawn.x, self.spawn.y, self.spawn.width, self.spawn.height)
@@ -43,12 +57,12 @@ def integer(value, name, minimum, maximum):
     return value
 
 
-def rectangle(data):
-    fields(data, ('x', 'y', 'width', 'height'))
-    return Rect(integer(data['x'], 'x', -8192, 8192),
-                integer(data['y'], 'y', -8192, 8192),
-                integer(data['width'], 'width', 1, 8192),
-                integer(data['height'], 'height', 1, 8192))
+def tile_rectangle(data):
+    fields(data, ('column', 'row', 'columns', 'rows'))
+    return Rect(integer(data['column'], 'column', 0, 63) * TILE_SIZE,
+                integer(data['row'], 'row', 0, 63) * TILE_SIZE,
+                integer(data['columns'], 'columns', 1, 64) * TILE_SIZE,
+                integer(data['rows'], 'rows', 1, 64) * TILE_SIZE)
 
 
 def load_level(path):
@@ -57,25 +71,51 @@ def load_level(path):
     if len(text) > 1_000_000:
         raise ValueError('Map exceeds 1 MB')
     data = strict_json(text)
-    fields(data, ('schema_version', 'name', 'width', 'height', 'spawn', 'surfaces', 'goal'))
-    integer(data['schema_version'], 'schema_version', 1, 1)
+    fields(data, ('schema_version', 'name', 'tile_size', 'columns', 'rows',
+                  'spawn', 'terrain', 'goal', 'decorations'))
+    integer(data['schema_version'], 'schema_version', 2, 2)
+    integer(data['tile_size'], 'tile_size', TILE_SIZE, TILE_SIZE)
     if not isinstance(data['name'], str) or not 1 <= len(data['name']) <= 100:
         raise ValueError('Map name must contain 1..100 characters')
-    width = integer(data['width'], 'world width', 64, 4096)
-    height = integer(data['height'], 'world height', 64, 4096)
-    spawn, goal = rectangle(data['spawn']), rectangle(data['goal'])
+    columns = integer(data['columns'], 'columns', 2, 64)
+    rows = integer(data['rows'], 'rows', 2, 64)
+    width, height = columns * TILE_SIZE, rows * TILE_SIZE
+    spawn, goal = tile_rectangle(data['spawn']), tile_rectangle(data['goal'])
     extent = Rect(0, 0, width, height)
     if not extent.contains(spawn) or not extent.contains(goal):
         raise ValueError('Spawn and goal must fit inside the image')
     if goal.width < spawn.width or goal.height < spawn.height:
         raise ValueError('Goal must fit the entire player')
-    if not isinstance(data['surfaces'], list) or not 1 <= len(data['surfaces']) <= 512:
-        raise ValueError('Map requires 1..512 surfaces')
+    terrain = data['terrain']
+    if (not isinstance(terrain, list) or len(terrain) != rows
+            or any(not isinstance(row, str) or len(row) != columns
+                   or set(row) - set('.#^') for row in terrain)):
+        raise ValueError('terrain requires rows of columns cells: . empty, # solid, ^ damage')
     surfaces = []
-    for item in data['surfaces']:
-        fields(item, ('x', 'y', 'width', 'height', 'damage'))
-        if type(item['damage']) is not bool:
-            raise ValueError('damage must be a boolean')
-        rect = rectangle({k: item[k] for k in ('x', 'y', 'width', 'height')})
-        surfaces.append(Surface(rect.x, rect.y, rect.width, rect.height, item['damage']))
-    return Level(data['name'], width, height, spawn, tuple(surfaces), goal)
+    # Merge equal horizontal runs: tile-authoring precision, few physics colliders.
+    for y, row in enumerate(terrain):
+        x = 0
+        while x < columns:
+            end = x + 1
+            while end < columns and row[end] == row[x]:
+                end += 1
+            if row[x] != '.':
+                surfaces.append(Surface(x * TILE_SIZE, y * TILE_SIZE,
+                                        (end - x) * TILE_SIZE, TILE_SIZE, row[x] == '^'))
+            x = end
+    # Arena boundary walls are one tile thick, just outside the image.
+    surfaces.extend((Surface(-TILE_SIZE, -TILE_SIZE, TILE_SIZE, height + TILE_SIZE),
+                     Surface(width, -TILE_SIZE, TILE_SIZE, height + TILE_SIZE),
+                     Surface(0, -TILE_SIZE, width, TILE_SIZE)))
+    if not isinstance(data['decorations'], list) or len(data['decorations']) > 256:
+        raise ValueError('decorations must be a list of at most 256 entries')
+    decorations = []
+    for item in data['decorations']:
+        fields(item, ('sprite', 'column', 'baseline'))
+        if not isinstance(item['sprite'], str) or item['sprite'] not in DECOR_SPRITES:
+            raise ValueError('Unknown decoration sprite')
+        column = integer(item['column'], 'decoration column', 0, columns - 1)
+        baseline = integer(item['baseline'], 'decoration baseline', 0, rows)
+        decorations.append(Decoration(item['sprite'], column, baseline))
+    return Level(data['name'], width, height, spawn, tuple(surfaces), goal,
+                 tuple(terrain), tuple(decorations))

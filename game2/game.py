@@ -38,14 +38,14 @@ class GameContainer:
         self.closed = self.quit_requested = False
         try:
             if mode == 'human':
-                self.monitor = WindowMonitor(self.level.width, self.level.height)
+                self.monitor = WindowMonitor(self.level)
                 self.joystick = HumanJoystick()
             else:
                 self.transport = SocketTransport(port=port)
                 self.joystick = MlpJoystick(self.transport)
                 self.monitor = MlpMonitor(self.transport)
                 if window:
-                    self.window = WindowMonitor(self.level.width, self.level.height, spectator=True)
+                    self.window = WindowMonitor(self.level, spectator=True)
         except BaseException:
             self.close()
             raise
@@ -142,9 +142,12 @@ class GameContainer:
     def present(self):
         self._check_open()
         frame, metadata = self.frame(), self.metadata()
-        self.monitor.present(frame, metadata)
+        if self.mode == 'human':
+            self.monitor.present(frame, metadata, self.body)
+        else:
+            self.monitor.present(frame, metadata)
         if self.window is not None:
-            self.window.present(frame, metadata)
+            self.window.present(frame, metadata, self.body)
 
     def run(self):
         previous = time.perf_counter()

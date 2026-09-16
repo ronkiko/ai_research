@@ -5,7 +5,7 @@ from game import GameContainer
 from controls import Action
 
 # Expected geometry of maps/pit.json; the engine has no such constants.
-GROUND_Y, PIT_LEFT, PIT_RIGHT, SIZE, SPIKES_Y = 360, 500, 760, 64, 584
+GROUND_Y, PIT_LEFT, PIT_RIGHT, SIZE, SPIKES_Y = 448, 512, 768, 64, 640
 from physics import Body, PhysicsConfig, PhysicsWorld, Surface
 
 

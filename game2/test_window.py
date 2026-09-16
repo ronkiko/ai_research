@@ -12,7 +12,7 @@ from game import GameContainer
 
 @unittest.skipUnless(importlib.util.find_spec('pygame'), 'Pygame is optional for headless tests')
 class WindowTests(unittest.TestCase):
-    def test_human_input_and_mlp_render_match(self):
+    def test_same_geometry_but_separate_visual_and_semantic_monitors(self):
         import pygame
         with GameContainer(mode='human') as human, GameContainer(mode='mlp', port=0) as mlp:
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT))
@@ -28,8 +28,12 @@ class WindowTests(unittest.TestCase):
             mlp.step(Action(True))
             self.assertEqual(human.frame(), mlp.frame())
             human.present()
-            rgb = pygame.image.tostring(human.monitor.screen.subsurface((0, 0, 1200, 640)), 'RGB')
-            self.assertEqual(rgb, mlp.frame().rgb())
+            rgb = pygame.image.tostring(human.monitor.screen.subsurface(
+                (0, 0, human.level.width, human.level.height)), 'RGB')
+            self.assertNotEqual(rgb, mlp.frame().rgb())
+            self.assertEqual(set(mlp.frame().pixels), {0, 1, 2, 3})
+            self.assertEqual(human.monitor.renderer.ground.get_size(),
+                             (human.level.width, human.level.height))
             pygame.event.post(pygame.event.Event(pygame.WINDOWFOCUSLOST))
             human.advance(human.config.dt)
             self.assertFalse(human.joystick.right)

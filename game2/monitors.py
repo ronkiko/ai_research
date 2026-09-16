@@ -1,4 +1,4 @@
-"""One color rasterizer, two presentation adapters; no simulation or input logic."""
+"""Semantic MLP raster and asset-based window; no simulation or input logic."""
 from dataclasses import dataclass
 
 from protocol import encode_frame
@@ -60,7 +60,8 @@ class MlpMonitor:
 class WindowMonitor:
     HUD_HEIGHT = 80
 
-    def __init__(self, width, height, spectator=False):
+    def __init__(self, level, spectator=False):
+        width, height = level.width, level.height
         import os
         os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
         import pygame
@@ -72,15 +73,15 @@ class WindowMonitor:
             self.screen = pygame.display.set_mode((width, height + self.HUD_HEIGHT))
             pygame.display.set_caption('game2 — physics laboratory')
             self.font = pygame.font.Font(None, 24)
+            from tile_renderer import TileRenderer
+            self.renderer = TileRenderer(pygame, level)
         except BaseException:
             self.close()
             raise
 
-    def present(self, frame, metadata):
+    def present(self, frame, metadata, player):
         pygame = self.pygame
-        rgb = frame.rgb()
-        image = pygame.image.frombuffer(rgb, (frame.width, frame.height), 'RGB')
-        self.screen.blit(image, (0, 0))
+        self.renderer.present(self.screen, player)
         pygame.draw.rect(self.screen, (225, 225, 225), (0, frame.height, frame.width, self.HUD_HEIGHT))
         status = ('ALIVE', 'DIE', 'SUCCESS')[metadata['status']]
         controls = ('MODEL CONTROL    ESC: exit' if self.spectator

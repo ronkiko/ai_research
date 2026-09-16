@@ -92,7 +92,7 @@ class ComponentTests(unittest.TestCase):
         return game
 
     def test_two_maps_with_same_engine_and_different_dimensions(self):
-        for path, jump_x in [(DEFAULT_MAP, 468), (DEFAULT_MAP.with_name('short_pit.json'), 368)]:
+        for path, jump_x in [(DEFAULT_MAP, 480), (DEFAULT_MAP.with_name('short_pit.json'), 352)]:
             game = self.new_game(path)
             self.assertEqual((game.frame().width, game.frame().height),
                              (game.level.width, game.level.height))
@@ -107,10 +107,10 @@ class ComponentTests(unittest.TestCase):
         original = json.loads(DEFAULT_MAP.read_text())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'bad.json'
-            for name, update in [('version', {'schema_version': 2}),
-                                 ('dimensions', {'width': True}),
+            for name, update in [('version', {'schema_version': 1}),
+                                 ('dimensions', {'columns': True}),
                                  ('unknown', {'cheat': 1}),
-                                 ('overlap', {'spawn': {'x': 10, 'y': 400, 'width': 64, 'height': 64}})]:
+                                 ('overlap', {'spawn': {'column': 0, 'row': 7, 'columns': 1, 'rows': 1}})]:
                 with self.subTest(name=name):
                     path.write_text(json.dumps(dict(original, **update)))
                     with self.assertRaises(ValueError):
@@ -121,7 +121,7 @@ class ComponentTests(unittest.TestCase):
         frame = game.frame()
         self.assertIs(game.frame(), frame)
         self.assertEqual(len(frame.pixels), frame.width * frame.height)
-        for x, y, color in [(0, 0, 0), (110, 310, 2), (100, 400, 1), (600, 584, 3)]:
+        for x, y, color in [(0, 0, 0), (140, 400, 2), (100, 460, 1), (600, 640, 3)]:
             self.assertEqual(frame.pixels[y * frame.width + x], color)
         self.assertEqual(len(frame.rgb()), len(frame.pixels) * 3)
         game.step(Action(True))
