@@ -151,6 +151,7 @@ class AutoTests(unittest.TestCase):
                           for command in transport.commands],
                          [(32, 48), (36, 48), (40, 48)])
         self.assertEqual(game.physics.tick, 12)
+        self.assertEqual(game.total_sim_ticks, 12)
         self.assertEqual((game.joystick.late, game.joystick.rejected), (0, 0))
         self.assertEqual((game.config.hz, game.monitor_hz, game.config.dt), (120, 30, 1 / 120))
         self.assertIn('observations=4 physics_ticks=12', summary.getvalue())
@@ -164,6 +165,7 @@ class AutoTests(unittest.TestCase):
 
         self.assertEqual([frame['tick'] for frame in transport.frames], [0, 5, 10])
         self.assertEqual(game.physics.tick, 10)
+        self.assertEqual(game.total_sim_ticks, 10)
 
     def test_auto_replays_same_physics_as_fixed_step_path(self):
         transport = AutoTransport(stop_tick=120)

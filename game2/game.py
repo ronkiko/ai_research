@@ -52,6 +52,7 @@ class GameContainer:
         self.feature_provider = AutoFeatureProvider(self.level) if self.auto else None
         self.transport = self.monitor = self.joystick = self.window = None
         self.episode = 1
+        self.total_sim_ticks = 0
         self.status = self.event_sequence = self.last_event = 0
         self.jump_requested = self.jump_applied = 0
         self._accumulator = self._discarded = 0.0
@@ -101,6 +102,7 @@ class GameContainer:
             return []
         was_grounded = self.body.grounded
         events = self.physics.step(move=int(action.right), jump=action.jump)
+        self.total_sim_ticks += 1
         if self.mode == 'mlp' and action.jump:
             self.jump_requested += 1
             # Physics applies Jump exactly when the body is supported at input.
@@ -223,7 +225,6 @@ class GameContainer:
 
         interval = self.config.hz // self.monitor_hz
         started = time.perf_counter()
-        simulated_ticks = 0
         self._auto_metrics = dict(observations=0, feature_build_ms=0.0,
                                   transport_wait_ms=0.0, physics_ms=0.0,
                                   mlp_wait_ms=0.0)
@@ -274,11 +275,10 @@ class GameContainer:
                             pending.pop(0)
                         if reset_requested or self.quit_requested or operation == 'quit':
                             break
-                        self._auto_pace(started, simulated_ticks + 1, speed)
+                        self._auto_pace(started, self.total_sim_ticks + 1, speed)
                         physics_started = time.perf_counter()
                         events = self.step(self.joystick.next_action(self.physics.tick + 1))
                         self._auto_metrics['physics_ms'] += (time.perf_counter() - physics_started) * 1000
-                        simulated_ticks += 1
                         for event in events:
                             self._log(event, file=sys.stderr, flush=True)
                         if self.done:
@@ -302,6 +302,7 @@ class GameContainer:
                 # reset. For a running game it was already published above.
         finally:
             wall_seconds = time.perf_counter() - started
+            simulated_ticks = self.total_sim_ticks
             simulated_seconds = simulated_ticks / self.config.hz
             effective_speed = (simulated_seconds / wall_seconds
                                if wall_seconds > 0 else 0.0)

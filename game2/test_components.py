@@ -125,6 +125,7 @@ class ComponentTests(unittest.TestCase):
 
     def test_common_frame_is_pixels_only(self):
         game = self.new_game()
+        self.assertEqual(game.total_sim_ticks, 0)
         frame = game.frame()
         self.assertIs(game.frame(), frame)
         self.assertEqual(len(frame.pixels), frame.width * frame.height)
@@ -132,7 +133,14 @@ class ComponentTests(unittest.TestCase):
             self.assertEqual(frame.pixels[y * frame.width + x], color)
         self.assertEqual(len(frame.rgb()), len(frame.pixels) * 3)
         game.step(Action(True))
+        self.assertEqual(game.total_sim_ticks, 1)
         self.assertIsNot(frame, game.frame())
+
+    def test_realtime_advance_counts_each_executed_physics_tick(self):
+        game = self.new_game()
+        for _ in range(120):
+            game.advance(game.config.dt)
+        self.assertEqual(game.total_sim_ticks, 120)
 
     def test_jump_telemetry_distinguishes_requested_and_applied(self):
         game = self.new_game()
@@ -166,8 +174,10 @@ class ComponentTests(unittest.TestCase):
         tick = game.physics.tick
         game.advance(0.1)
         self.assertEqual(game.physics.tick, tick)
+        total_ticks = game.total_sim_ticks
         game.reset()
         self.assertEqual((game.episode, game.physics.tick, game.status, game.last_event), (2, 0, 0, 3))
+        self.assertEqual(game.total_sim_ticks, total_ticks)
         self.assertEqual(game.body.x, game.level.spawn.x)
         game.close()
         self.assertFalse(game.transport._thread.is_alive())

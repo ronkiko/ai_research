@@ -132,20 +132,30 @@ class SessionLifecycleTests(unittest.TestCase):
         channel.publish({"type": "session_started", "config": {}})
         self.assertEqual(channel.drain(), [{"type": "session_started", "config": {}}])
 
-    def test_cumulative_sim_ticks_survive_episode_reset(self):
+    def test_snapshot_uses_authoritative_ticks_when_preview_is_throttled(self):
         controller = SessionController()
         controller.config = SessionConfig(
             controller="Bot", bot_mode="Training", execution="Auto"
         )
-        controller._auto_started = time.monotonic() - 10
-        game = type("Game", (), {"config": type("Config", (), {"hz": 120})()})()
+        controller._auto_started = 0
+        game = type("Game", (), {
+            "config": type("Config", (), {"hz": 120})(),
+            "total_sim_ticks": 0,
+        })()
         body = Body(0, 0)
-        controller._game_snapshot(game, body, {"episode": 1, "tick": 300, "hz": 120})
-        controller._game_snapshot(game, body, {"episode": 2, "tick": 0, "hz": 120})
+        game.total_sim_ticks = 250
+        with patch("session.time.monotonic", return_value=10):
+            controller._game_snapshot(game, body, {"episode": 1, "tick": 250, "hz": 120})
+        # No preview is published while the first episode advances to terminal.
+        game.total_sim_ticks = 360
+        game.total_sim_ticks = 390
         controller._preview_at = 0
-        controller._game_snapshot(game, body, {"episode": 2, "tick": 120, "hz": 120})
+        with patch("session.time.monotonic", return_value=10):
+            controller._game_snapshot(game, body, {"episode": 2, "tick": 30, "hz": 120})
         events = controller.status_channel.drain()
-        self.assertEqual(events[-1]["metadata"]["cumulative_sim_ticks"], 420)
+        self.assertEqual(events[-1]["metadata"]["cumulative_sim_ticks"], 390)
+        self.assertEqual(events[-1]["metadata"]["speed"],
+                         (390 / 120) / 10)
         self.assertGreaterEqual(events[-1]["metadata"]["speed"], 0)
 
 
