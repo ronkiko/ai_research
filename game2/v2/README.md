@@ -75,17 +75,24 @@ weaken the realtime contract.
 
 ## Experimental Modes
 
-`realtime` is the canonical behavioral semantics. It runs the fixed-step
-simulation with wall-clock pacing.
+`realtime` is the canonical mode for latency-sensitive agent evaluation. It
+runs the fixed-step simulation with wall-clock pacing, so the relationship
+between model speed and world speed remains part of the experiment.
 
-`unpaced` is an acceleration/execution mode of that same simulation. It keeps
-the same `dt`, physics transitions, action scheduling rules, and autonomous-world
-semantics. It only removes wall-clock sleep; it does not wait for a model and
-does not turn the Engine into a step RPC.
+`unpaced` is an acceleration/execution mode with the same fixed-step world
+semantics, but not the same wall-clock relationship between model and world.
+For an identical tick-indexed history of actions, it must produce the same
+physics result as `realtime`. It keeps the same `dt`, physics transitions,
+action scheduling rules, and autonomous-world semantics, and only removes
+wall-clock sleep.
 
-Unpaced execution is useful for tests, deterministic experiments, and accelerated
-training or benchmarks. An agent trained there must remain compatible with the
-canonical realtime world, including the consequences of its own latency.
+The same 20 ms of inference latency in `realtime` and `unpaced` is not
+equivalent: during those 20 ms, an unpaced Engine may advance many more ticks.
+Latency-sensitive agent reaction and control research must therefore be
+evaluated in `realtime`. Unpaced execution is useful for deterministic physics
+tests, accelerated simulation, and experiments where wall-clock agent latency
+is not the measured quantity. It does not wait for a model or turn the Engine
+into a step RPC.
 
 ## Long-term Research Direction
 

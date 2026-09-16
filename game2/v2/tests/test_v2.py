@@ -110,8 +110,7 @@ class StructureTests(unittest.TestCase):
             "console": ("game2.v2.player", "game2.v2.training", "game2.v2.management"),
             "player": ("game2.v2.console", "game2.v2.training", "game2.v2.management"),
             "training": ("game2.v2.console", "game2.v2.management"),
-            "management": ("game2.v2.console.engine", "game2.v2.console.controller",
-                            "game2.v2.console.display", "game2.v2.player", "game2.v2.training"),
+            "management": ("game2.v2.console", "game2.v2.player", "game2.v2.training"),
             "contracts": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
                           "game2.v2.management"),
         }
@@ -124,12 +123,12 @@ class StructureTests(unittest.TestCase):
                 self.assertEqual(leaked, [], f"{source}: {leaked}")
 
     def test_relative_imports_are_normalized_before_boundary_rules(self):
-        tree = ast.parse(
+        player_tree = ast.parse(
             "from ..console import something\n"
             "from ..contracts import JoystickState\n"
             "from .sibling import helper\n"
         )
-        imported = _imports_from_tree(tree, "game2.v2.player.foo")
+        imported = _imports_from_tree(player_tree, "game2.v2.player.foo")
         self.assertIn("game2.v2.console", imported)
         self.assertIn("game2.v2.contracts", imported)
         self.assertIn("game2.v2.player.sibling", imported)
@@ -139,6 +138,20 @@ class StructureTests(unittest.TestCase):
                   if any(module == prefix or module.startswith(prefix + ".")
                          for prefix in denied)]
         self.assertEqual(leaked, ["game2.v2.console"])
+
+    def test_management_rejects_absolute_and_relative_domain_imports(self):
+        cases = (
+            "from game2.v2.console.main import run_session\n",
+            "from ..console.main import run_session\n",
+        )
+        denied = ("game2.v2.console", "game2.v2.player", "game2.v2.training")
+        for source in cases:
+            imported = _imports_from_tree(ast.parse(source), "game2.v2.management.foo")
+            self.assertIn("game2.v2.console.main", imported)
+            leaked = [module for module in imported
+                      if any(module == prefix or module.startswith(prefix + ".")
+                             for prefix in denied)]
+            self.assertEqual(leaked, ["game2.v2.console.main"])
 
     def test_scripted_player_imports_only_public_v2_modules(self):
         imported = _absolute_imports(V2 / "player" / "scripted" / "main.py")

@@ -39,22 +39,30 @@ explicitly changed in the same architectural decision.
 
 ## Canonical and Unpaced Execution
 
-`realtime` is the canonical behavioral semantics. Its wall-clock pacing makes
-the fixed-step simulation run at its intended real-time rate.
+`realtime` is the canonical mode for latency-sensitive agent evaluation. Its
+wall-clock pacing makes the fixed-step simulation run at its intended rate, so
+the relationship between model speed and world speed remains observable.
 
-`unpaced` is only an acceleration/execution mode of the same fixed-step
-simulation. It preserves:
+`unpaced` is an acceleration/execution mode with the same fixed-step world
+semantics, but it does not preserve the wall-clock relationship between model
+and world. For an identical tick-indexed history of actions, it must produce the
+same physics result as `realtime`. It preserves:
 
 - the same `dt`;
 - the same physics transitions;
 - the same action scheduling rules;
-- the same autonomous-world semantics;
-- the same consequences of a missing or late decision.
+- the same autonomous-world semantics.
 
-Unpaced execution removes wall-clock sleep for tests, deterministic experiments,
-and accelerated training or benchmarks. It does not wait for model inference,
-skip physics opportunities, or turn the Engine into a step RPC. Realtime remains
-the canonical meaning of behavior even when execution is accelerated.
+The same 20 ms of inference latency in `realtime` and `unpaced` is not
+equivalent. In those 20 ms, an unpaced Engine may advance significantly more
+ticks. Real experiments about latency, reaction, and time-sensitive control
+must therefore be evaluated in `realtime`.
+
+Unpaced execution removes wall-clock sleep for deterministic physics tests,
+accelerated simulation, and experiments where wall-clock agent latency is not a
+measured quantity. It does not wait for model inference, skip physics
+opportunities, or turn the Engine into a step RPC. Realtime remains the
+canonical behavioral semantics.
 
 ## Independent Timing Domains
 

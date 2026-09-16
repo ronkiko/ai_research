@@ -16,8 +16,10 @@ training/*
     MUST NOT import console/* or management/* runtime internals
 
 management/*
-    MAY know public configs/contracts and launch processes
-    MUST NOT import runtime implementation internals from console/player/training
+    MAY import contracts/* and launch domains as processes
+    MUST NOT import console/*
+    MUST NOT import player/*
+    MUST NOT import training/*
 
 contracts/*
     MUST NOT import console/*, player/*, training/*, or management/*
