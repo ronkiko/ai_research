@@ -20,6 +20,7 @@ from typing import Callable, TextIO
 
 from game import GameContainer
 from level import DEFAULT_MAP, load_level
+from physics import PhysicsConfig
 
 
 def make_policy(**kwargs):
@@ -271,6 +272,8 @@ class Statistics:
     effective_speed_x: float = 0.0
     physics_ticks: int = 0
     wall_seconds: float = 0.0
+    completed_sim_ticks: int = 0
+    speed_known: bool = False
 
     def update(self, event: dict) -> None:
         for key in (
@@ -286,6 +289,7 @@ class Statistics:
             "tick",
             "cumulative_sim_ticks",
             "physics_ticks",
+            "completed_sim_ticks",
         ):
             if key in event:
                 setattr(self, key, int(event[key]))
@@ -301,6 +305,9 @@ class Statistics:
                 setattr(self, key, float(event[key]))
         if "effective_speed_x" in event:
             self.speed = float(event["effective_speed_x"])
+            self.speed_known = True
+        if "speed" in event:
+            self.speed_known = True
         if event.get("type") == "episode_finished":
             self.updated_episodes += int(bool(event.get("updated", False)))
             self.last_loss = float(event.get("loss", 0.0))
@@ -315,6 +322,90 @@ class Statistics:
             self.late = int(event["late"])
         if "rejected" in event:
             self.rejected = int(event["rejected"])
+
+
+class RunnerTelemetryTail:
+    """Read complete runner JSON lines without entering the runtime hot path."""
+
+    POLL_INTERVAL = 0.05
+
+    def __init__(self, path: str | Path, publish: Callable, *, started_at: float,
+                 physics_hz: int):
+        self.path = Path(path)
+        self.publish = publish
+        self.started_at = started_at
+        self.physics_hz = physics_hz
+        self.completed_sim_ticks = 0
+        self.offset = 0
+        self._partial = ""
+        self._stop = threading.Event()
+        self._read_lock = threading.Lock()
+        self._thread = None
+
+    @property
+    def thread(self):
+        return self._thread
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run, name="game2-runner-telemetry", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=3)
+        # A final read observes lines flushed just before process shutdown.
+        self._read_available()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._read_available()
+            self._stop.wait(self.POLL_INTERVAL)
+
+    def _read_available(self) -> None:
+        with self._read_lock:
+            try:
+                with self.path.open("r", encoding="utf-8") as source:
+                    source.seek(self.offset)
+                    chunk = source.read()
+                    self.offset = source.tell()
+            except OSError:
+                return
+            if not chunk:
+                return
+            self._partial += chunk
+            lines = self._partial.splitlines(keepends=True)
+            self._partial = ""
+            for line in lines:
+                if not line.endswith(("\n", "\r")):
+                    self._partial = line
+                    break
+                self._parse_line(line.rstrip("\r\n"))
+
+    def _parse_line(self, line: str) -> None:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict) or "episode" not in event or "result" not in event:
+            return
+        try:
+            terminal_tick = int(event["tick"])
+        except (KeyError, TypeError, ValueError):
+            return
+        self.completed_sim_ticks += terminal_tick
+        wall_seconds = max(0.000001, time.monotonic() - self.started_at)
+        live_speed = (self.completed_sim_ticks / self.physics_hz) / wall_seconds
+        event = dict(event)
+        event.pop("type", None)
+        event["completed_sim_ticks"] = self.completed_sim_ticks
+        event["speed"] = live_speed
+        event["live_speed"] = live_speed
+        self.publish(dict(type="episode_finished", **event))
 
 
 class SessionController:
@@ -333,7 +424,12 @@ class SessionController:
         self.external_runner_process: subprocess.Popen | None = None
         self.external_port = None
         self.external_log_path = None
-        self._external_log: TextIO | None = None
+        self.external_engine_log_path = None
+        self.external_runner_log_path = None
+        self._external_engine_log: TextIO | None = None
+        self._external_runner_log: TextIO | None = None
+        self._external_tail = None
+        self._external_started_at = None
         self._external_watch_thread = None
         self._external_stop_requested = False
         self._preview_at = 0.0
@@ -384,6 +480,7 @@ class SessionController:
                 return False
             self._publish("session_started", config=_config_dict(config), auto=True)
             self.status = "Running"
+            self._start_external_tail()
             self._external_watch_thread = threading.Thread(
                 target=self._watch_external, name="game2-external-watch", daemon=True
             )
@@ -435,10 +532,19 @@ class SessionController:
 
         log_dir = ROOT / "runs" / "cockpit"
         log_dir.mkdir(parents=True, exist_ok=True)
-        self.external_log_path = log_dir / (
-            f"auto-runtime-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}.log"
+        session_name = (
+            f"auto-runtime-{time.strftime('%Y%m%d-%H%M%S')}-"
+            f"{time.time_ns() % 1000000:06d}"
         )
-        self._external_log = self.external_log_path.open(
+        self.external_engine_log_path = log_dir / f"{session_name}-engine.log"
+        self.external_runner_log_path = log_dir / f"{session_name}-runner.log"
+        # Keep the old attribute as the runner log for callers that only need
+        # the session's episode output.
+        self.external_log_path = self.external_runner_log_path
+        self._external_engine_log = self.external_engine_log_path.open(
+            "w", encoding="utf-8", buffering=1
+        )
+        self._external_runner_log = self.external_runner_log_path.open(
             "w", encoding="utf-8", buffering=1
         )
         self.external_port = self._free_local_port()
@@ -473,19 +579,21 @@ class SessionController:
         ]
         if config.checkpoint_mode == "Fresh":
             runner_args.append("--fresh")
-        log = self._external_log
-        if log is None:
-            raise RuntimeError("External runtime log is not open")
+        engine_log = self._external_engine_log
+        runner_log = self._external_runner_log
+        if engine_log is None or runner_log is None:
+            raise RuntimeError("External runtime logs are not open")
         try:
             self.external_game_process = subprocess.Popen(
-                engine_args, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT
+                engine_args, cwd=str(ROOT), stdout=engine_log, stderr=subprocess.STDOUT
             )
             self.external_runner_process = subprocess.Popen(
-                runner_args, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT
+                runner_args, cwd=str(ROOT), stdout=runner_log, stderr=subprocess.STDOUT
             )
+            self._external_started_at = time.monotonic()
         except BaseException:
             self._terminate_external_processes()
-            self._close_external_log()
+            self._close_external_logs()
             raise
 
     def _terminate_external_processes(self) -> None:
@@ -508,22 +616,39 @@ class SessionController:
                 except subprocess.TimeoutExpired:
                     process.wait()
 
-    def _close_external_log(self) -> None:
-        if self._external_log is not None:
-            self._external_log.close()
-            self._external_log = None
+    def _close_external_logs(self) -> None:
+        for name in ("_external_engine_log", "_external_runner_log"):
+            log = getattr(self, name)
+            if log is not None:
+                log.close()
+                setattr(self, name, None)
+
+    def _start_external_tail(self) -> None:
+        if self.external_runner_log_path is None or self._external_started_at is None:
+            return
+        self._external_tail = RunnerTelemetryTail(
+            self.external_runner_log_path,
+            self.status_channel.publish,
+            started_at=self._external_started_at,
+            physics_hz=PhysicsConfig().hz,
+        )
+        self._external_tail.start()
+
+    def _stop_external_tail(self) -> None:
+        if self._external_tail is not None:
+            self._external_tail.stop()
 
     def _parse_external_log(self) -> tuple[list[dict], dict | None]:
-        self._close_external_log()
-        episodes = []
+        self._close_external_logs()
         summary = None
-        if self.external_log_path is None:
-            return episodes, summary
+        path = self.external_engine_log_path or self.external_log_path
+        if path is None:
+            return [], summary
         try:
-            lines = self.external_log_path.read_text(encoding="utf-8").splitlines()
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
         except OSError as error:
             self._publish("notice", message=f"Runtime log unavailable: {error}")
-            return episodes, summary
+            return [], summary
         for line in lines:
             marker = "auto_summary "
             if marker in line:
@@ -538,13 +663,7 @@ class SessionController:
                         values[key] = value
                 summary = values
                 continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict) and "result" in event and "episode" in event:
-                episodes.append(event)
-        return episodes, summary
+        return [], summary
 
     def _watch_external(self) -> None:
         game = self.external_game_process
@@ -580,9 +699,8 @@ class SessionController:
             self._terminate_external_processes()
         game_code = game.poll() if game is not None else 1
         runner_code = runner.poll() if runner is not None else 1
-        episodes, summary = self._parse_external_log()
-        for event in episodes:
-            self._publish("episode_finished", **event)
+        self._stop_external_tail()
+        _, summary = self._parse_external_log()
         if summary is not None:
             self._publish("auto_summary", **summary)
         self.external_port = None
@@ -608,10 +726,15 @@ class SessionController:
             )
 
     def _clear_external_runtime(self) -> None:
-        self._close_external_log()
+        self._stop_external_tail()
+        self._close_external_logs()
         self.external_game_process = None
         self.external_runner_process = None
         self.external_port = None
+        self.external_engine_log_path = None
+        self.external_runner_log_path = None
+        self._external_started_at = None
+        self._external_tail = None
         self._external_watch_thread = None
         self._external_stop_requested = False
 

@@ -41,15 +41,35 @@ class MonitorPanel:
             width=rect.w - 36,
         )
         if active and active.controller == "Bot" and active.bot_mode == "Training" and active.execution == "Auto":
-            c.text("Fast Auto Training", area.x, area.y + 42, 24, ACCENT, width=area.w)
-            c.text(
-                "External runtime\nWorld preview disabled for benchmark",
-                area.x,
-                area.y + 92,
-                15,
-                MUTED,
-                width=area.w,
+            c.text("FAST AUTO TRAINING", area.x, area.y + 20, 24, ACCENT, width=area.w)
+            controller = p.controller
+            process_states = (
+                ("Game process", controller.external_game_process),
+                ("Model process", controller.external_runner_process),
             )
+            y = area.y + 66
+            for label, process in process_states:
+                if process is None:
+                    state = "starting"
+                else:
+                    code = process.poll()
+                    state = "running" if code is None else ("stopped" if code == 0 else "error")
+                c.text(label, area.x, y, 15, MUTED)
+                c.text(state, area.x + 170, y, 15, ACCENT if state == "running" else RED)
+                y += 28
+            speed = f"{p.statistics.speed:.1f}x" if p.statistics.speed_known else "measuring..."
+            values = (
+                ("Episode", f"{p.statistics.attempts} / {active.episodes}"),
+                ("Speed", speed),
+                ("Late", str(p.statistics.late)),
+                ("Rejected", str(p.statistics.rejected)),
+                ("Elapsed", f"{p.elapsed:.0f} s"),
+            )
+            for label, value in values:
+                c.text(label, area.x, y, 15, MUTED)
+                c.text(value, area.x + 170, y, 15, TEXT)
+                y += 28
+            c.text("World preview disabled", area.x, y + 12, 15, MUTED, width=area.w)
             return
         if path != self.path:
             self.level = load_level(path)

@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import tempfile
 import time
@@ -19,6 +20,7 @@ from session import (
     SessionController,
     Statistics,
     StatusChannel,
+    RunnerTelemetryTail,
     discover_levels,
     load_settings,
     save_settings,
@@ -495,6 +497,137 @@ class FakeExternalProcess:
 
     def wait(self, timeout=None):
         return self.returncode
+
+
+class RunnerTelemetryTests(unittest.TestCase):
+    def wait_for_events(self, channel, count=1):
+        deadline = time.monotonic() + 1
+        events = []
+        while time.monotonic() < deadline:
+            events.extend(channel.drain())
+            if len(events) >= count:
+                return events
+            time.sleep(0.01)
+        return events
+
+    def make_tail(self, path, channel, *, started_at=None):
+        return RunnerTelemetryTail(
+            path,
+            channel.publish,
+            started_at=time.monotonic() - 1 if started_at is None else started_at,
+            physics_hz=120,
+        )
+
+    def episode(self, number, result="success", tick=120):
+        return json.dumps({
+            "episode": number,
+            "result": result,
+            "tick": tick,
+            "attempts": number,
+            "successes": number if result == "success" else number - 1,
+            "success_rate_total": 1.0,
+            "successes_100": number,
+            "success_rate_100": 1.0,
+            "episodes_window": number,
+            "late": 0,
+            "rejected": 0,
+            "updated": True,
+        })
+
+    def test_tail_publishes_complete_episode_before_process_end(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runner.log"
+            path.touch()
+            channel = StatusChannel()
+            tail = self.make_tail(path, channel)
+            tail.start()
+            path.write_text(self.episode(1) + "\n", encoding="utf-8")
+            events = self.wait_for_events(channel)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["type"], "episode_finished")
+            tail.stop()
+
+    def test_partial_json_waits_for_newline_and_malformed_lines_are_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runner.log"
+            path.touch()
+            channel = StatusChannel()
+            tail = self.make_tail(path, channel)
+            tail.start()
+            with path.open("w", encoding="utf-8") as output:
+                output.write("not json\n" + self.episode(1)[:-1])
+                output.flush()
+            time.sleep(0.15)
+            self.assertEqual(channel.drain(), [])
+            with path.open("a", encoding="utf-8") as output:
+                output.write("}\n")
+                output.flush()
+            events = self.wait_for_events(channel)
+            tail.stop()
+            self.assertEqual([event["episode"] for event in events], [1])
+
+    def test_statistics_and_history_update_for_multiple_live_episodes(self):
+        channel = StatusChannel()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runner.log"
+            path.touch()
+            tail = self.make_tail(path, channel)
+            tail._parse_line(self.episode(1, tick=120))
+            tail._parse_line(self.episode(2, result="die", tick=240))
+        events = channel.drain()
+        stats = Statistics()
+        history = []
+        for event in events:
+            stats.update(event)
+            history.append(event)
+        self.assertEqual((stats.attempts, stats.successes, stats.episodes_window), (2, 1, 2))
+        self.assertEqual(len(history), 2)
+        self.assertEqual(stats.completed_sim_ticks, 360)
+
+    def test_live_speed_uses_completed_terminal_ticks(self):
+        channel = StatusChannel()
+        tail = RunnerTelemetryTail(
+            "unused.log", channel.publish, started_at=2, physics_hz=120
+        )
+        with patch("session.time.monotonic", return_value=12):
+            tail._parse_line(self.episode(1, tick=600))
+        event = channel.drain()[0]
+        self.assertEqual(event["completed_sim_ticks"], 600)
+        self.assertAlmostEqual(event["speed"], 0.5)
+
+    def test_final_summary_is_authoritative_and_final_parser_has_no_episode_duplicates(self):
+        channel = StatusChannel()
+        stats = Statistics()
+        live = {"type": "episode_finished", "episode": 1, "result": "success",
+                "attempts": 1, "successes": 1, "episodes_window": 1, "speed": 8.0}
+        stats.update(live)
+        stats.update({"type": "auto_summary", "effective_speed_x": 12.5,
+                      "physics_ticks": 600, "wall_seconds": 0.4})
+        self.assertEqual(stats.attempts, 1)
+        self.assertEqual(stats.speed, 12.5)
+        self.assertTrue(stats.speed_known)
+
+        with tempfile.TemporaryDirectory() as directory:
+            controller = SessionController(channel)
+            engine_log = Path(directory) / "engine.log"
+            runner_log = Path(directory) / "runner.log"
+            engine_log.write_text("auto_summary effective_speed_x=12.5\n", encoding="utf-8")
+            runner_log.write_text(self.episode(1) + "\n", encoding="utf-8")
+            controller.external_engine_log_path = engine_log
+            controller.external_runner_log_path = runner_log
+            controller.external_log_path = runner_log
+            episodes, summary = controller._parse_external_log()
+            self.assertEqual(episodes, [])
+            self.assertEqual(summary["effective_speed_x"], 12.5)
+
+    def test_stop_joins_tail_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runner.log"
+            path.touch()
+            tail = self.make_tail(path, StatusChannel())
+            tail.start()
+            tail.stop()
+            self.assertFalse(tail.thread.is_alive())
 
 
 class ExternalRuntimeTests(unittest.TestCase):
