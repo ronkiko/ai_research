@@ -23,9 +23,25 @@ The Controller is an external process and can only send framed commands over TCP
 
 Engine runs fixed physics ticks at `dt = 1 / physics_hz`. `unpaced` executes the
 same ticks without wall-clock sleep; `realtime` paces them against a monotonic
-wall clock. Controller timing never advances the clock. Actions contain episode,
-sequence, target tick, and hold ticks. The Engine accepts them into a bounded
-command queue and applies them only at their scheduled tick.
+wall clock. Controller timing never advances the clock or delays a tick. If no
+action is scheduled for a tick, Engine applies neutral input (`right = false`,
+`jump = false`). A hold exists only because a Controller explicitly scheduled it
+for a finite number of ticks.
+
+## Controller latency
+
+Controller timing never controls world timing. A slow Controller may produce a
+late command. Late commands are rejected; the world is never rewound and Engine
+is never paused to wait for inference. Realtime and unpaced differ only in
+wall-clock pacing. There is no control horizon barrier, lockstep model/world
+step, or implicit previous-input hold.
+
+Actions contain episode, sequence, target tick, and hold ticks. The Engine
+accepts them into a bounded command queue and applies them only at their
+scheduled tick. Every processed action receives an authoritative versioned
+`action_ack` on the same CONTROL connection, including its sequence, status,
+episode tick, and session tick. Reset receives a `reset_ack`; session tick stays
+monotonic while episode tick returns to zero.
 
 `episode_tick` resets on Engine reset. `session_tick` is monotonic for the whole
 process. A reset is executed by Engine after a Controller request; the requester
@@ -35,7 +51,7 @@ does not receive direct world access.
 
 | Channel | Direction | Payload | Backpressure |
 |---|---|---|---|
-| CONTROL | Controller -> Engine | Action, reset, quit | bounded command queue; reject on full |
+| CONTROL | Controller -> Engine | Action, reset, quit; Engine returns versioned ACKs | bounded command and outbound ACK queues; reject or disconnect on full |
 | STATE | Engine -> observers | physical immutable snapshot | latest value; old snapshot discarded |
 | TELEMETRY | Engine -> observers | numeric/scalar snapshot | latest value; old snapshot discarded |
 | EVENTS | Engine -> observers | discrete world events | bounded FIFO per subscriber; oldest discarded |
@@ -53,14 +69,19 @@ ENGINE --EVENTS-----> EventAdapter ------------/
 
 If a channel has no subscribers, the Engine does not serialize its payload. A
 publisher's socket sender can block on a slow observer, but that sender is not the
-Engine tick thread. Thus an observer can never stop physics. UI is currently absent
+Engine tick thread. STATE and TELEMETRY retain only the latest value; EVENTS
+retain a bounded FIFO. CONTROL ACKs likewise use a bounded per-client writer
+queue, so a slow Controller reader cannot stop physics. Thus an observer or
+Controller can never stop physics. UI is currently absent
 and the Engine does not import or require pygame, torch, or a renderer.
 
 ## Lifecycle and determinism
 
 The Router validates config and map, allocates loopback endpoints, writes an
-immutable `RuntimeManifest`, starts Engine, waits for its `READY` line, then starts
-the critical Controller. It supervises both processes, treats Engine and Controller
+immutable `RuntimeManifest`, starts Engine, waits for its `READY` line (all enabled
+CONTROL, STATE, TELEMETRY, and EVENTS listeners are already listening), then
+starts the critical Controller. Engine starts world ticks immediately after READY
+regardless of Controller startup. The Router supervises both processes, treats Engine and Controller
 as critical, reaps every child, and stops Engine last. Optional observer modules can
 be added without becoming Engine dependencies; an observer failure is not a world
 failure.

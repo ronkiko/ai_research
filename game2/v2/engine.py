@@ -10,13 +10,14 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from typing import Callable
 from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from game2.v2.config import RuntimeManifest, SessionConfig
-from game2.v2.protocol import ActionCommand
+from game2.v2.protocol import PROTOCOL_VERSION, ActionCommand
 from game2.v2.transport.control_server import ControlServer
 from game2.v2.transport.publisher import EventPublisher, LatestPublisher
 from game2.v2.world.map_loader import MapData, load_map
@@ -132,7 +133,8 @@ class Engine:
 
 class EngineService:
     def __init__(self, engine: Engine, manifest: RuntimeManifest,
-                 config: SessionConfig):
+                 config: SessionConfig, clock: Callable[[], float] | None = None,
+                 sleeper: Callable[[float], None] | None = None):
         self.engine, self.manifest, self.config = engine, manifest, config
         self.control = ControlServer(manifest.control.host, manifest.control.port,
                                      on_rejected=self._control_rejected)
@@ -142,6 +144,8 @@ class EngineService:
         self.quit_requested = False
         self._rejection_count = 0
         self._started_at = 0.0
+        self._clock = clock or time.monotonic
+        self._sleeper = sleeper or time.sleep
 
     @staticmethod
     def _publisher(endpoint, kind):
@@ -155,7 +159,7 @@ class EngineService:
         for publisher in (self.state, self.telemetry, self.events):
             if publisher:
                 publisher.start()
-        self._started_at = time.monotonic()
+        self._started_at = self._clock()
 
     def publish_events(self, events: list[dict]) -> None:
         if not self.events:
@@ -166,7 +170,7 @@ class EngineService:
                                  **event})
 
     def publish(self) -> None:
-        elapsed = max(time.monotonic() - self._started_at, 1e-9)
+        elapsed = max(self._clock() - self._started_at, 1e-9)
         speed = self.engine.session_tick / elapsed / self.config.physics_hz
         if self.state and self.state.subscriber_count():
             self.state.publish(self.engine.world_state().to_payload())
@@ -175,11 +179,28 @@ class EngineService:
 
     def handle_commands(self) -> list[dict]:
         events = []
-        for command in self.control.drain():
+        for envelope in self.control.drain():
+            command = envelope.command
             if isinstance(command, ActionCommand):
-                self.engine.submit_action(command)
+                status = self.engine.submit_action(command)
+                self.control.respond(envelope.client_id, {
+                    "version": PROTOCOL_VERSION,
+                    "type": "action_ack",
+                    "episode": self.engine.episode,
+                    "sequence": command.sequence,
+                    "status": status,
+                    "episode_tick": self.engine.episode_tick,
+                    "session_tick": self.engine.session_tick,
+                })
             elif command == "reset":
                 events.extend(self.engine.reset())
+                self.control.respond(envelope.client_id, {
+                    "version": PROTOCOL_VERSION,
+                    "type": "reset_ack",
+                    "episode": self.engine.episode,
+                    "episode_tick": self.engine.episode_tick,
+                    "session_tick": self.engine.session_tick,
+                })
             elif command == "quit":
                 self.quit_requested = True
         return events
@@ -189,9 +210,7 @@ class EngineService:
         print("READY " + json.dumps({"session_id": self.engine.session_id,
                                      "control": self.manifest.control.as_dict()}, sort_keys=True),
               flush=True)
-        # Avoid an unpaced engine outrunning a controller during process startup.
-        self.control.command_event.wait(timeout=5.0)
-        next_tick = time.monotonic()
+        next_tick = self._clock()
         events = [{"event": "episode_started", "episode": 1, "episode_tick": 0}]
         self.publish_events(events)
         self.publish()
@@ -207,11 +226,11 @@ class EngineService:
                 self.publish()
                 if self.config.clock_mode == "realtime":
                     next_tick += self.engine.physics_config.dt
-                    delay = next_tick - time.monotonic()
+                    delay = next_tick - self._clock()
                     if delay > 0:
-                        time.sleep(delay)
+                        self._sleeper(delay)
                     else:
-                        next_tick = time.monotonic()
+                        next_tick = self._clock()
             result = self.engine.terminal or "incomplete"
             summary = {"session_id": self.engine.session_id, "clock": self.config.clock_mode,
                        "episode": self.engine.episode, "session_ticks": self.engine.session_tick,

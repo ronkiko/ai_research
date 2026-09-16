@@ -54,11 +54,15 @@ class _LatestClient:
         except OSError:
             pass
 
+    def wait_closed(self):
+        if self.thread is not threading.current_thread():
+            self.thread.join(timeout=1)
+
 
 class _EventClient:
     def __init__(self, sock: socket.socket, max_events: int):
         self.sock = sock
-        self.events: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=max_events)
+        self.events: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=max_events)
         self.closed = False
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._send_loop, name="v2-event-sender", daemon=True)
@@ -68,17 +72,17 @@ class _EventClient:
         with self.lock:
             if self.closed:
                 return
-        try:
-            self.events.put_nowait(payload)
-        except queue.Full:
-            try:
-                self.events.get_nowait()
-            except queue.Empty:
-                pass
             try:
                 self.events.put_nowait(payload)
             except queue.Full:
-                pass
+                try:
+                    self.events.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self.events.put_nowait(payload)
+                except queue.Full:
+                    pass
 
     def _send_loop(self):
         try:
@@ -97,10 +101,20 @@ class _EventClient:
             if self.closed:
                 return
             self.closed = True
+            while True:
+                try:
+                    self.events.get_nowait()
+                except queue.Empty:
+                    break
+            self.events.put_nowait(None)
         try:
             self.sock.close()
         except OSError:
             pass
+
+    def wait_closed(self):
+        if self.thread is not threading.current_thread():
+            self.thread.join(timeout=1)
 
 
 class _Publisher:
@@ -153,12 +167,14 @@ class _Publisher:
                 self.server.close()
             except OSError:
                 pass
+        if self.thread:
+            self.thread.join(timeout=1)
         with self.lock:
             clients, self.clients = self.clients, []
         for client in clients:
             client.close()
-        if self.thread:
-            self.thread.join(timeout=1)
+        for client in clients:
+            client.wait_closed()
 
 
 class LatestPublisher(_Publisher):

@@ -38,6 +38,21 @@ def _drain_observer(sock):
             return
 
 
+def _current_observation(observers):
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        for sock in observers:
+            try:
+                message = recv_frame(sock)
+            except socket.timeout:
+                continue
+            except (EOFError, OSError, ValueError):
+                continue
+            if message.get("type") in {"state", "telemetry"}:
+                return message
+    return {"episode": 1, "episode_tick": 0}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Game2 V2 scripted controller")
     parser.add_argument("--manifest", required=True)
@@ -53,16 +68,35 @@ def main(argv=None) -> int:
             except OSError:
                 pass
     try:
-        # Let publisher acceptors register before the first command releases Engine.
-        time.sleep(0.02)
-        # This tape is independent of engine timing and crosses the reference pit.
-        commands = [ActionCommand(1, 1, 1, 124, True, False),
-                    ActionCommand(1, 2, 125, 1, True, True),
-                    ActionCommand(1, 3, 126, max(1, args.ticks - 125), True, False)]
+        observation = _current_observation(observers)
+        episode = observation["episode"]
+        base_tick = observation.get("episode_tick", observation.get("tick", 0))
+        # Build the tape from an observed world tick; Engine startup is not a
+        # synchronization point and may already have advanced.
+        first_tick = base_tick + 8
+        commands = [ActionCommand(episode, 1, first_tick, 124, True, False),
+                    ActionCommand(episode, 2, first_tick + 124, 1, True, True),
+                    ActionCommand(episode, 3, first_tick + 125,
+                                  max(1, args.ticks - first_tick - 125), True, False)]
         for command in commands:
             control.sendall(encode_frame(action_message(command)))
         for observer in observers:
             threading.Thread(target=_drain_observer, args=(observer,), daemon=True).start()
+        acknowledgements = {}
+        deadline = time.monotonic() + 5.0
+        while len(acknowledgements) < len(commands) and time.monotonic() < deadline:
+            try:
+                ack = recv_frame(control)
+            except socket.timeout:
+                continue
+            except (EOFError, OSError, ValueError):
+                break
+            if ack.get("type") == "action_ack":
+                acknowledgements[ack.get("sequence")] = ack
+        if len(acknowledgements) != len(commands) or any(
+                acknowledgements[command.sequence].get("status") != "accepted"
+                for command in commands):
+            return 1
         # CONTROL closes only when Engine has completed or the session shuts down.
         while True:
             try:
