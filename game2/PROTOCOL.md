@@ -1,4 +1,4 @@
-# game2 socket protocol v2
+# game2 socket protocol v3
 
 Transport: TCP, default `127.0.0.1:8765`, one controller. All integers are
 unsigned, network byte order (big endian). Each message is prefixed with a
@@ -8,7 +8,8 @@ No JSON, pickle, arbitrary file paths, or direct world mutation is exposed.
 
 `protocol.py` is the executable codec; `MLPClient` is the Python reference
 adapter. A new connection receives a stream of frames without a handshake.
-Only image pixels and timing/status metadata are observations.
+Observation metadata also includes normalized horizontal velocity from the
+physics body. No world coordinates, map data, or other physics state is exposed.
 
 ## Controller → game
 
@@ -60,7 +61,7 @@ rejected. Incoming reset/action packets never block the physics loop.
 
 ### Observation: opcode 128
 
-Header struct: `!BBIQHHHHBIIIIIIIB` (52 bytes), followed by a zlib stream containing
+Header struct: `!BBIQHHHHBIIIIIIIBf` (56 bytes), followed by a zlib stream containing
 exactly `width * height` index8 pixels. Payload length includes header and zlib
 stream. Maximum accepted observation payload is 17 MiB.
 
@@ -83,12 +84,16 @@ stream. Maximum accepted observation payload is 17 MiB.
 | 15 | u32 | jump_applied, cumulative Jump actions that started takeoff |
 | 16 | u32 | event_sequence, increments on die/success/reset |
 | 17 | u8 | last_event: 0 none, 1 die, 2 success, 3 reset |
+| 18 | float32 | velocity_x, `body.vx / PhysicsConfig.max_speed`, network byte order |
 
 Coordinates: top left, row-major, y down. Index palette: 0 white `(255,255,255)`,
 1 black `(0,0,0)`, 2 player blue `(0,102,255)`, 3 damage red `(255,0,0)`.
 No HUD, background art, or decorations are encoded. The socket carries the
-semantic collider raster, while the window can show a graphical tileset. Simulation time in seconds is `tick / physics_hz`.
-No camera scaling/cropping is applied in v2.
+semantic collider raster, while the window can show a graphical tileset. The
+velocity field is an IEEE-754 float32 in the expected range `-1.0..+1.0` and is
+read directly from current physics state, not estimated from pixel history.
+Simulation time in seconds is `tick / physics_hz`.
+No camera scaling/cropping is applied in v3.
 
 Event sequence persists across resets. Last event repeats until a newer event.
 `jump_requested` counts Jump actions that reached a physical tick; `jump_applied`

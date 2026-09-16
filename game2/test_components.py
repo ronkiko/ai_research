@@ -150,6 +150,13 @@ class ComponentTests(unittest.TestCase):
         game.step(Action(jump=True))
         self.assertEqual((game.metadata()['jump_requested'], game.metadata()['jump_applied']), (3, 2))
 
+    def test_velocity_metadata_is_normalized_from_physics(self):
+        game = self.new_game()
+        self.assertEqual(game.metadata()['velocity_x'], 0.0)
+        game.step(Action(True))
+        self.assertGreater(game.metadata()['velocity_x'], 0.0)
+        self.assertLessEqual(game.metadata()['velocity_x'], 1.0)
+
     def test_terminal_reset_and_close_lifecycle(self):
         game = self.new_game()
         events = []
@@ -202,8 +209,12 @@ class SocketIntegrationTests(unittest.TestCase):
     def test_realtime_pixels_actions_late_reset_and_latest_observation(self):
         first = self.client.receive()
         self.assertNotIn('x', first)
+        self.assertNotIn('y', first)
         self.assertNotIn('vx', first)
+        self.assertNotIn('vy', first)
+        self.assertNotIn('grounded', first)
         self.assertNotIn('surfaces', first)
+        self.assertEqual(first['velocity_x'], 0.0)
         self.assertEqual(first['jump_requested'], 0)
         self.assertEqual(first['jump_applied'], 0)
         time.sleep(0.15)  # MLP computes; simulation and frame receiver keep running.
@@ -215,6 +226,8 @@ class SocketIntegrationTests(unittest.TestCase):
         self.until(lambda f: f['accepted'] == seq)
         moved = self.until(lambda f: f['tick'] >= later['tick'] + 30)
         self.assertNotEqual(moved['pixels'], first['pixels'])
+        self.assertGreater(moved['velocity_x'], 0.0)
+        self.assertLessEqual(moved['velocity_x'], 1.0)
         self.client.action(episode=moved['episode'], target_tick=1, right=True)
         self.until(lambda f: f['late'] >= 1)
         self.client.reset(moved['episode'])
@@ -222,6 +235,7 @@ class SocketIntegrationTests(unittest.TestCase):
         self.assertEqual(reset['last_event'], 3)
         self.assertEqual(reset['status'], 0)
         self.assertEqual(reset['pixels'], first['pixels'])
+        self.assertEqual(reset['velocity_x'], 0.0)
 
     def test_fragmented_tcp_and_disconnect_release(self):
         frame = self.client.receive()

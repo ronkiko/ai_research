@@ -1,12 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
-from mlp_242 import MLP242Policy
+from mlp_382 import MLP382Policy
 from sensors import PixelSensors
 
 
-def frame(player_x=100, player_y=296):
+def frame(player_x=100, player_y=296, velocity_x=0.0):
     width, height = 1200, 640
     pixels = bytearray(width * height)
     for y in range(360, height):
@@ -17,7 +18,8 @@ def frame(player_x=100, player_y=296):
     for y in range(player_y, player_y + 64):
         for x in range(player_x, player_x + 64):
             pixels[y * width + x] = 2
-    return {'width': width, 'height': height, 'pixels': bytes(pixels)}
+    return {'width': width, 'height': height, 'pixels': bytes(pixels),
+            'velocity_x': velocity_x}
 
 
 class SensorTests(unittest.TestCase):
@@ -25,6 +27,7 @@ class SensorTests(unittest.TestCase):
         reading = PixelSensors().read(frame())
         self.assertAlmostEqual(reading.features[0], (500 - 164) / 1200)
         self.assertEqual(reading.features[1], 1.0)
+        self.assertEqual(reading.features[2], 0.0)
         self.assertEqual(reading.gap_left, 500)
 
         airborne = PixelSensors().read(frame(player_y=200))
@@ -32,10 +35,13 @@ class SensorTests(unittest.TestCase):
 
 
 class MlpTests(unittest.TestCase):
-    def test_is_242_and_training_changes_weights(self):
-        policy = MLP242Policy(seed=1)
-        self.assertEqual(policy.stats()['parameters'], 22)
-        decision = policy.sample((0.1, 1.0))
+    def test_is_382_and_training_changes_weights(self):
+        policy = MLP382Policy(seed=1)
+        self.assertEqual(policy.ARCHITECTURE, '3-8-2')
+        self.assertEqual((policy.network[0].in_features, policy.network[0].out_features), (3, 8))
+        self.assertEqual((policy.network[2].in_features, policy.network[2].out_features), (8, 2))
+        self.assertEqual(policy.stats()['parameters'], 50)
+        decision = policy.sample((0.1, 1.0, 0.0))
         self.assertIsInstance(decision.right, bool)
         self.assertIsInstance(decision.jump, bool)
         before = [value.detach().clone() for value in policy.network.parameters()]
@@ -44,17 +50,24 @@ class MlpTests(unittest.TestCase):
                             zip(before, policy.network.parameters())))
 
     def test_checkpoint_round_trip(self):
-        policy = MLP242Policy(seed=3)
-        decision = policy.sample((0.1, 1.0))
+        policy = MLP382Policy(seed=3)
+        decision = policy.sample((0.1, 1.0, 0.0))
         policy.update([decision.log_probability], [decision.entropy], 1.0)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'policy.pt'
             policy.save(path)
-            restored = MLP242Policy(seed=99)
+            restored = MLP382Policy(seed=99)
             restored.load(path)
             self.assertEqual(policy.stats(), restored.stats())
-            self.assertEqual(policy.probabilities((0.2, 1.0)),
-                             restored.probabilities((0.2, 1.0)))
+            self.assertEqual(policy.probabilities((0.2, 1.0, 0.5)),
+                             restored.probabilities((0.2, 1.0, 0.5)))
+
+    def test_policy_requires_exactly_three_features(self):
+        policy = MLP382Policy(seed=4)
+        with self.assertRaises(ValueError):
+            policy.sample(cast(tuple[float, float, float], (0.1, 1.0)))
+        with self.assertRaises(ValueError):
+            policy.sample(cast(tuple[float, float, float], (0.1, 1.0, 0.0, 0.0)))
 
     def test_play_does_not_update_weights(self):
         import contextlib
@@ -87,7 +100,7 @@ class MlpTests(unittest.TestCase):
                 self.sequence += 1
                 return self.sequence
 
-        policy = MLP242Policy(seed=7)
+        policy = MLP382Policy(seed=7)
         before = [value.detach().clone() for value in policy.network.parameters()]
         runner = MlpRunner(Client(), policy, training=False, episodes=1,
                            checkpoint=Path('unused.pt'), max_ticks=600,
@@ -150,14 +163,26 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(falling.gap_left, 500)
         self.assertFalse(falling.grounded)
 
+    def test_velocity_comes_from_metadata_not_pixel_history(self):
+        sensors = PixelSensors()
+        stopped = sensors.read(frame(velocity_x=0.0))
+        running = sensors.read(frame(velocity_x=0.75))
+        self.assertEqual(stopped.features[:2], running.features[:2])
+        self.assertEqual(stopped.features[2], 0.0)
+        self.assertEqual(running.features[2], 0.75)
+
+        for velocity_x in (None, float('nan'), -1.01, 1.01, True):
+            with self.subTest(velocity_x=velocity_x), self.assertRaises(ValueError):
+                sensors.read(frame(velocity_x=velocity_x))
+
     def test_checkpoint_restores_random_sampling(self):
-        policy = MLP242Policy(seed=15)
+        policy = MLP382Policy(seed=15)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'policy.pt'
             policy.save(path)
-            expected = [policy.sample((0.1, 1)) for _ in range(10)]
+            expected = [policy.sample((0.1, 1, 0)) for _ in range(10)]
             policy.load(path)
-            actual = [policy.sample((0.1, 1)) for _ in range(10)]
+            actual = [policy.sample((0.1, 1, 0)) for _ in range(10)]
             self.assertEqual([(d.right, d.jump) for d in expected],
                              [(d.right, d.jump) for d in actual])
 
@@ -189,7 +214,7 @@ class RegressionTests(unittest.TestCase):
 
         for rejected, expected_steps in [(0, 1), (1, 0)]:
             with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as directory:
-                policy = MLP242Policy(seed=1)
+                policy = MLP382Policy(seed=1)
                 runner = MlpRunner(Client(rejected), policy, training=True, episodes=1,
                                    checkpoint=Path(directory)/'weights.pt', max_ticks=600,
                                    target_delay=32, hold_ticks=48, save_every=1)
@@ -197,6 +222,58 @@ class RegressionTests(unittest.TestCase):
                     runner.run()
                 self.assertEqual(policy.steps, expected_steps)
                 self.assertEqual(policy.episodes, int(expected_steps > 0))
+
+    def test_old_checkpoint_is_rejected(self):
+        import torch
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'old.pt'
+            torch.save({'version': 2, 'architecture': '2-4-2', 'network': {}}, path)
+            with self.assertRaisesRegex(ValueError, '3-8-2'):
+                MLP382Policy().load(path)
+
+    def test_default_checkpoint_uses_new_directory(self):
+        from mlp_runner import DEFAULT_CHECKPOINT
+
+        self.assertEqual(DEFAULT_CHECKPOINT.parts[-3:], ('models', '3-8-2', 'weights.pt'))
+
+    def test_terminal_json_uses_previous_episode_tick_after_external_reset(self):
+        import contextlib
+        import io
+        import json
+        from mlp_runner import MlpRunner
+
+        class Client:
+            def __init__(self):
+                self.sequence = 0
+                observation = frame()
+                self.frames = iter([
+                    dict(observation, episode=1, tick=100, status=1, accepted=0,
+                         late=0, rejected=0),
+                    dict(observation, episode=2, tick=100, status=0, accepted=1,
+                         late=0, rejected=0),
+                    dict(observation, episode=3, tick=0, status=0, accepted=2,
+                         late=0, rejected=0),
+                ])
+
+            def receive(self):
+                return next(self.frames)
+
+            def reset(self, episode):
+                self.sequence += 1
+                return self.sequence
+
+            def action(self, **kwargs):
+                self.sequence += 1
+                return self.sequence
+
+        output = io.StringIO()
+        runner = MlpRunner(Client(), MLP382Policy(seed=8), training=False, episodes=1,
+                           checkpoint=Path('unused.pt'), max_ticks=600,
+                           target_delay=32, hold_ticks=48, save_every=1)
+        with contextlib.redirect_stdout(output):
+            runner.run()
+        self.assertEqual(json.loads(output.getvalue())['tick'], 100)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
-"""Pixel-only sensors for the first game2 controller."""
+"""Pixel sensors plus current velocity metadata for the game2 controller."""
 from dataclasses import dataclass
+import math
 import re
 
 
@@ -11,10 +12,11 @@ GROUND = 1
 class SensorReading:
     """Features extracted from one raster, with no access to game internals."""
 
-    features: tuple[float, float]
+    features: tuple[float, float, float]
     player: tuple[int, int, int, int]
     gap_left: int
     grounded: bool
+    velocity_x: float
 
 
 def _runs(row: bytes, value: int) -> list[tuple[int, int]]:
@@ -24,15 +26,19 @@ def _runs(row: bytes, value: int) -> list[tuple[int, int]]:
 class PixelSensors:
     """Find the player and the next ground gap using only palette pixels.
 
-    The two MLP inputs are normalized distance from the player's right edge to
-    the next gap and a binary grounded flag. Coordinates are intermediate sensor
-    results, not values read from PhysicsWorld or the map file.
+    The MLP inputs are normalized distance from the player's right edge to the
+    next gap, a binary grounded flag, and normalized horizontal velocity. The
+    first two come from pixels; velocity is supplied as observation metadata.
     """
 
     def read(self, frame: dict) -> SensorReading:
         width, height, pixels = frame['width'], frame['height'], frame['pixels']
         if len(pixels) != width * height:
             raise ValueError('Invalid observation size')
+        velocity_x = frame.get('velocity_x')
+        if (isinstance(velocity_x, bool) or not isinstance(velocity_x, (int, float))
+                or not math.isfinite(velocity_x) or not -1.0 <= velocity_x <= 1.0):
+            raise ValueError('Invalid velocity_x metadata')
         # The player is a solid, axis-aligned rectangle. bytes.find/rfind run in C.
         first, last = pixels.find(bytes([PLAYER])), pixels.rfind(bytes([PLAYER]))
         if first < 0:
@@ -44,8 +50,10 @@ class PixelSensors:
         distance = (gap_left - right) / width
         distance = max(-1.0, min(1.0, distance))
         grounded = bottom < height and GROUND in pixels[bottom * width + left:bottom * width + right]
-        return SensorReading((distance, 1.0 if grounded else 0.0),
-                             (left, top, right - left, bottom - top), gap_left, grounded)
+        normalized_grounded = 1.0 if grounded else 0.0
+        return SensorReading((distance, normalized_grounded, float(velocity_x)),
+                             (left, top, right - left, bottom - top), gap_left,
+                             grounded, float(velocity_x))
 
     @staticmethod
     def _next_gap_left(width: int, height: int, pixels: bytes, player_left: int) -> int:

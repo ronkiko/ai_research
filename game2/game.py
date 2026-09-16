@@ -140,6 +140,7 @@ class GameContainer:
     def metadata(self):
         return dict(episode=self.episode, tick=self.physics.tick, hz=self.config.hz,
                     monitor_hz=self.monitor_hz, status=self.status,
+                    velocity_x=self.body.vx / self.config.max_speed,
                     accepted=getattr(self.joystick, 'accepted', 0),
                     late=getattr(self.joystick, 'late', 0),
                     rejected=getattr(self.joystick, 'rejected', 0),

@@ -1,7 +1,8 @@
-"""The first trainable game2 policy: a PyTorch MLP with shape 2-4-2."""
+"""The trainable game2 policy: a PyTorch MLP with shape 3-8-2."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import os
 import tempfile
@@ -19,7 +20,7 @@ class MlpDecision:
     probabilities: tuple[float, float]
 
 
-class MLP242Policy:
+class MLP382Policy:
     """Two independent Bernoulli outputs trained with episodic REINFORCE.
 
     Output zero controls Right and output one controls the one-tick Jump edge.
@@ -27,7 +28,7 @@ class MLP242Policy:
     every observation. Physics alone decides whether a jump has an effect.
     """
 
-    ARCHITECTURE = '2-4-2'
+    ARCHITECTURE = '3-8-2'
     LEARNING_RATE = 0.01
     ENTROPY_COEF = 0.01
 
@@ -35,9 +36,9 @@ class MLP242Policy:
         if seed is not None:
             torch.manual_seed(seed)
         self.network = nn.Sequential(
-            nn.Linear(2, 4),
+            nn.Linear(3, 8),
             nn.ReLU(),
-            nn.Linear(4, 2),
+            nn.Linear(8, 2),
         )
         # A useful neutral prior: run is likely, jumping is uncertain. Both
         # buttons are still selected by the network and can be learned away.
@@ -49,19 +50,26 @@ class MLP242Policy:
         self.baseline = 0.0
 
     @staticmethod
-    def _tensor(features: tuple[float, float]) -> torch.Tensor:
-        if len(features) != 2:
-            raise ValueError('2-4-2 policy expects exactly two features')
+    def _tensor(features: tuple[float, float, float]) -> torch.Tensor:
+        if len(features) != 3:
+            raise ValueError('3-8-2 policy expects exactly three features')
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) for value in features):
+            raise ValueError('Policy features must be finite numbers')
+        if not -1.0 <= features[0] <= 1.0 or features[1] not in (0.0, 1.0):
+            raise ValueError('Policy features are outside their normalized ranges')
+        if not -1.0 <= features[2] <= 1.0:
+            raise ValueError('Policy features are outside their normalized ranges')
         return torch.tensor([features], dtype=torch.float32)
 
-    def _logits(self, features: tuple[float, float]) -> torch.Tensor:
+    def _logits(self, features: tuple[float, float, float]) -> torch.Tensor:
         return self.network(self._tensor(features)).reshape(2)
 
-    def probabilities(self, features: tuple[float, float]) -> tuple[float, float]:
+    def probabilities(self, features: tuple[float, float, float]) -> tuple[float, float]:
         with torch.no_grad():
             return tuple(torch.sigmoid(self._logits(features)).tolist())
 
-    def sample(self, features: tuple[float, float]) -> MlpDecision:
+    def sample(self, features: tuple[float, float, float]) -> MlpDecision:
         logits = self._logits(features)
         right_distribution = torch.distributions.Bernoulli(logits=logits[0])
         right_action = right_distribution.sample()
@@ -75,7 +83,7 @@ class MLP242Policy:
         return MlpDecision(bool(right_action.item()), bool(jump_action.item()),
                            log_probability, entropy, probabilities)
 
-    def greedy(self, features: tuple[float, float]) -> MlpDecision:
+    def greedy(self, features: tuple[float, float, float]) -> MlpDecision:
         probabilities = self.probabilities(features)
         return MlpDecision(probabilities[0] >= 0.5, probabilities[1] >= 0.5,
                            torch.tensor(0.0), torch.tensor(0.0), probabilities)
@@ -127,7 +135,7 @@ class MLP242Policy:
         if checkpoint.get('version') not in (1, 2):
             raise ValueError('Unsupported checkpoint version')
         if checkpoint.get('architecture') != self.ARCHITECTURE:
-            raise ValueError('Checkpoint architecture is not 2-4-2')
+            raise ValueError('Checkpoint architecture is not 3-8-2')
         self.network.load_state_dict(checkpoint['network'])
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])

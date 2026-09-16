@@ -1,9 +1,10 @@
-"""Version 2 binary socket protocol; all integers are network byte order."""
+"""Version 3 binary socket protocol; integers and floats use network byte order."""
+import math
 import struct
 import zlib
 from dataclasses import dataclass
 
-VERSION = 2
+VERSION = 3
 ACTION, RESET, FRAME = 1, 2, 128
 PREFIX = struct.Struct('!I')
 ACTION_PACKET = struct.Struct('!BIIQHBB')
@@ -11,8 +12,8 @@ RESET_PACKET = struct.Struct('!BII')
 # type, version, episode, tick, w, h, physics_hz, monitor_hz, status,
 # last accepted action/reset sequence, late, rejected, overrun_ticks,
 # jump_requested, jump_applied, event_sequence, last_event
-# (0 none, 1 die, 2 success, 3 reset).
-FRAME_HEADER = struct.Struct('!BBIQHHHHBIIIIIIIB')
+# (0 none, 1 die, 2 success, 3 reset); normalized velocity_x follows.
+FRAME_HEADER = struct.Struct('!BBIQHHHHBIIIIIIIBf')
 MAX_COMMAND = 64
 MAX_FRAME = 17 * 1024 * 1024
 MAX_HOLD = MAX_FUTURE = 120
@@ -49,11 +50,14 @@ def packet(payload):
 
 def encode_frame(frame, *, episode, tick, hz, monitor_hz, status, accepted,
                  late, rejected, overrun_ticks, jump_requested, jump_applied,
-                 event_sequence, last_event):
+                 event_sequence, last_event, velocity_x):
+    if (isinstance(velocity_x, bool) or not isinstance(velocity_x, (int, float))
+            or not math.isfinite(velocity_x) or not -1.0 <= velocity_x <= 1.0):
+        raise ValueError('velocity_x must be finite and in [-1, 1]')
     header = FRAME_HEADER.pack(FRAME, VERSION, episode, tick, frame.width, frame.height,
                                hz, monitor_hz, status, accepted, late, rejected,
                                overrun_ticks, jump_requested, jump_applied,
-                               event_sequence, last_event)
+                               event_sequence, last_event, velocity_x)
     return header + zlib.compress(frame.pixels, level=1)
 
 
@@ -65,11 +69,14 @@ def decode_frame(payload):
         raise ValueError('Unsupported frame protocol')
     names = ('type', 'version', 'episode', 'tick', 'width', 'height', 'physics_hz',
              'monitor_hz', 'status', 'accepted', 'late', 'rejected', 'overrun_ticks',
-             'jump_requested', 'jump_applied', 'event_sequence', 'last_event')
+             'jump_requested', 'jump_applied', 'event_sequence', 'last_event',
+             'velocity_x')
     result: dict = dict(zip(names, values))
     width, height = result['width'], result['height']
     if not 64 <= width <= 4096 or not 64 <= height <= 4096:
         raise ValueError('Invalid frame dimensions')
+    if not math.isfinite(result['velocity_x']) or not -1.0 <= result['velocity_x'] <= 1.0:
+        raise ValueError('Invalid velocity_x')
     decoder = zlib.decompressobj()
     try:
         pixels = decoder.decompress(payload[FRAME_HEADER.size:], width * height + 1)

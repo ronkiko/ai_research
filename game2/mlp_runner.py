@@ -1,4 +1,4 @@
-"""Connect a local 2-4-2 MLP to the game2 TCP controller."""
+"""Connect a local 3-8-2 MLP to the game2 TCP controller."""
 from __future__ import annotations
 
 import argparse
@@ -13,11 +13,11 @@ import torch
 from protocol import MAX_FUTURE, MAX_HOLD
 
 from mlp_client import MLPClient
-from mlp_242 import MLP242Policy
+from mlp_382 import MLP382Policy
 from sensors import PixelSensors
 
 
-DEFAULT_CHECKPOINT = Path(__file__).with_name('models') / '2-4-2' / 'weights.pt'
+DEFAULT_CHECKPOINT = Path(__file__).with_name('models') / '3-8-2' / 'weights.pt'
 
 
 class RollingEpisodeStats:
@@ -60,7 +60,7 @@ def connect(host: str, port: int, timeout: int, wait: float) -> MLPClient:
 
 
 class MlpRunner:
-    def __init__(self, client: MLPClient, policy: MLP242Policy, *, training: bool,
+    def __init__(self, client: MLPClient, policy: MLP382Policy, *, training: bool,
                  episodes: int, checkpoint: Path, max_ticks: int, target_delay: int,
                  hold_ticks: int, save_every: int):
         self.client = client
@@ -141,7 +141,7 @@ class MlpRunner:
                       'die' if same_episode and frame['status'] == 1 else 'timeout_or_reset')
             print(json.dumps({
                 'episode': episode, 'result': result, 'reward': reward,
-                'loss': round(loss, 6), 'tick': frame['tick'],
+                'loss': round(loss, 6), 'tick': terminal_tick,
                 'jump_requested': jump_requested,
                 'jump_applied': jump_applied,
                 'executed_actions': len(executed),
@@ -157,7 +157,7 @@ class MlpRunner:
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description='game2 2-4-2 MLP')
+    parser = argparse.ArgumentParser(description='game2 3-8-2 MLP')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--mode', choices=('train', 'play'), default='train')
@@ -184,9 +184,9 @@ def main(argv=None):
         raise SystemExit('--target-delay and --hold-ticks must be in [1, 120]')
     if args.max_ticks <= args.target_delay or args.wait < 0:
         raise SystemExit('Invalid max-ticks or wait')
-    # A 22-parameter network gains nothing from a large CPU thread pool.
+    # A 50-parameter network gains nothing from a large CPU thread pool.
     torch.set_num_threads(1)
-    policy = MLP242Policy(seed=args.seed)
+    policy = MLP382Policy(seed=args.seed)
     if args.mode == 'play' or (args.mode == 'train' and not args.fresh
                                and args.checkpoint.exists()):
         if not args.checkpoint.exists():
