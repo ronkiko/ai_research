@@ -21,6 +21,11 @@ E = NeighborMask.EAST
 S = NeighborMask.SOUTH
 W = NeighborMask.WEST
 
+# The copied Tileset.png is a 3x2 atlas. Keeping this list beside the mapping
+# prevents presentation code from inventing visual cells that are not shipped.
+AVAILABLE_ATLAS_CELLS = frozenset(
+    (cell_x, cell_y) for cell_y in (0, 1) for cell_x in (0, 1, 2))
+
 
 @dataclass(frozen=True)
 class TileVariant:
@@ -68,8 +73,12 @@ class AutoTiler:
             top = not bool(mask & NeighborMask.NORTH)
             cell_x = 0 if not left else 2 if not right else 1
             cell_y = 0 if top else 1
-            return TileVariant(tile, mask, (cell_x, cell_y))
+            atlas_cell = (cell_x, cell_y)
+            if atlas_cell not in AVAILABLE_ATLAS_CELLS:
+                raise RuntimeError(f"unavailable Tileset.png cell: {atlas_cell}")
+            return TileVariant(tile, mask, atlas_cell)
         return TileVariant(tile, mask)
 
 
-__all__ = ["AutoTiler", "E", "N", "NeighborMask", "S", "TileVariant", "W"]
+__all__ = ["AVAILABLE_ATLAS_CELLS", "AutoTiler", "E", "N", "NeighborMask", "S",
+           "TileVariant", "W"]

@@ -8,5 +8,5 @@
   "enable_state": true,
   "enable_telemetry": true,
   "enable_events": true,
-  "session_ticks": 3600
+  "session_ticks": 1296000
 }

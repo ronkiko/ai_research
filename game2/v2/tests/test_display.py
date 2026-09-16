@@ -326,13 +326,29 @@ class ScreenRendererTests(unittest.TestCase):
         for name in ("BG1.png", "BG2.png", "BG3.png", "Tileset.png", "Decors.png"):
             self.assertTrue((renderer_source.parent / "assets" / name).is_file(), name)
 
-    def test_pygame_import_is_confined_to_screen(self):
+    def test_pygame_import_is_confined_to_screen_or_demo_control(self):
         for source in V2.rglob("*.py"):
-            if "tests" in source.parts or "screen" in source.parts:
+            if ("tests" in source.parts or "screen" in source.parts
+                    or source == V2 / "demo.py"):
                 continue
             text = source.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^\s*(?:from|import)\s+pygame(?:\s|$)",
                                 str(source))
+
+    def test_screen_static_scene_keeps_avatar_goal_and_hazard_visible(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        world = load_world(PIT)
+        renderer = ScreenRenderer(world)
+        try:
+            static = renderer.static_scene
+            self.assertNotEqual(static.get_at((9 * 64 + 32, 10 * 64 + 48)),
+                                static.get_at((7 * 64 + 32, 10 * 64 + 48)))
+            self.assertGreater(static.get_at((world.goal.x + 24, world.goal.y + 8))[0], 200)
+            before = static.get_at((128 + 32, 384 + 32))
+            after = renderer.present(_view(world, x=128, y=384)).get_at((128 + 32, 384 + 32))
+            self.assertNotEqual(before, after)
+        finally:
+            renderer.close()
 
 
 if __name__ == "__main__":

@@ -177,6 +177,26 @@ Run all Game2 tests:
 python -m unittest discover -s game2 -p 'test*.py' -v
 ```
 
+## Temporary visual demo
+
+```bash
+./game2/v2/demo.sh
+```
+
+`demo.sh` is temporary developer tooling. It starts the realtime V2 Console with
+`screen-demo.json`; no Player is attached, so the world runs with neutral input.
+The separate `[Exit]` control stops the whole demo session through the Console
+process owner. This is not the final boot or startup design.
+
+The future startup flow will provide a boot screen, lifecycle/startup selection,
+Console startup, and then a Game session with Player/Trainer or an experiment.
+The next gameplay patch will connect a Human Keyboard Player through the existing
+Player-facing Joystick contract:
+
+```text
+Human Keyboard Player -> Joystick -> Controller -> Engine
+```
+
 The current V2 foundation intentionally does not implement an MLP, Trainer,
 hierarchical AI, Player VisionAdapter, or management UI. Console Display provides
 a headless semantic `vision` renderer by default and an explicit human-facing
