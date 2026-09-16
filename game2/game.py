@@ -33,6 +33,7 @@ class GameContainer:
         self.transport = self.monitor = self.joystick = self.window = None
         self.episode = 1
         self.status = self.event_sequence = self.last_event = 0
+        self.jump_requested = self.jump_applied = 0
         self._accumulator = self._discarded = 0.0
         self._frame_key = self._frame = None
         self.closed = self.quit_requested = False
@@ -77,7 +78,13 @@ class GameContainer:
             raise ValueError('step requires Action')
         if self.done:
             return []
+        was_grounded = self.body.grounded
         events = self.physics.step(move=int(action.right), jump=action.jump)
+        if self.mode == 'mlp' and action.jump:
+            self.jump_requested += 1
+            # Physics applies Jump exactly when the body is supported at input.
+            if was_grounded:
+                self.jump_applied += 1
         if not self.body.alive:
             self.status = self.last_event = 1
         elif self.level.completed(self.body):
@@ -136,6 +143,8 @@ class GameContainer:
                     accepted=getattr(self.joystick, 'accepted', 0),
                     late=getattr(self.joystick, 'late', 0),
                     rejected=getattr(self.joystick, 'rejected', 0),
+                    jump_requested=self.jump_requested,
+                    jump_applied=self.jump_applied,
                     overrun_ticks=int(self._discarded * self.config.hz),
                     event_sequence=self.event_sequence, last_event=self.last_event)
 

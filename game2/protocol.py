@@ -1,17 +1,18 @@
-"""Version 1 binary socket protocol; all integers are network byte order."""
+"""Version 2 binary socket protocol; all integers are network byte order."""
 import struct
 import zlib
 from dataclasses import dataclass
 
-VERSION = 1
+VERSION = 2
 ACTION, RESET, FRAME = 1, 2, 128
 PREFIX = struct.Struct('!I')
 ACTION_PACKET = struct.Struct('!BIIQHBB')
 RESET_PACKET = struct.Struct('!BII')
 # type, version, episode, tick, w, h, physics_hz, monitor_hz, status,
 # last accepted action/reset sequence, late, rejected, overrun_ticks,
-# event_sequence, last_event (0 none, 1 die, 2 success, 3 reset).
-FRAME_HEADER = struct.Struct('!BBIQHHHHBIIIIIB')
+# jump_requested, jump_applied, event_sequence, last_event
+# (0 none, 1 die, 2 success, 3 reset).
+FRAME_HEADER = struct.Struct('!BBIQHHHHBIIIIIIIB')
 MAX_COMMAND = 64
 MAX_FRAME = 17 * 1024 * 1024
 MAX_HOLD = MAX_FUTURE = 120
@@ -47,10 +48,12 @@ def packet(payload):
 
 
 def encode_frame(frame, *, episode, tick, hz, monitor_hz, status, accepted,
-                 late, rejected, overrun_ticks, event_sequence, last_event):
+                 late, rejected, overrun_ticks, jump_requested, jump_applied,
+                 event_sequence, last_event):
     header = FRAME_HEADER.pack(FRAME, VERSION, episode, tick, frame.width, frame.height,
                                hz, monitor_hz, status, accepted, late, rejected,
-                               overrun_ticks, event_sequence, last_event)
+                               overrun_ticks, jump_requested, jump_applied,
+                               event_sequence, last_event)
     return header + zlib.compress(frame.pixels, level=1)
 
 
@@ -62,8 +65,8 @@ def decode_frame(payload):
         raise ValueError('Unsupported frame protocol')
     names = ('type', 'version', 'episode', 'tick', 'width', 'height', 'physics_hz',
              'monitor_hz', 'status', 'accepted', 'late', 'rejected', 'overrun_ticks',
-             'event_sequence', 'last_event')
-    result = dict(zip(names, values))
+             'jump_requested', 'jump_applied', 'event_sequence', 'last_event')
+    result: dict = dict(zip(names, values))
     width, height = result['width'], result['height']
     if not 64 <= width <= 4096 or not 64 <= height <= 4096:
         raise ValueError('Invalid frame dimensions')

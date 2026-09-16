@@ -1,4 +1,4 @@
-# game2 socket protocol v1
+# game2 socket protocol v2
 
 Transport: TCP, default `127.0.0.1:8765`, one controller. All integers are
 unsigned, network byte order (big endian). Each message is prefixed with a
@@ -60,14 +60,14 @@ rejected. Incoming reset/action packets never block the physics loop.
 
 ### Observation: opcode 128
 
-Header struct: `!BBIQHHHHBIIIIIB` (44 bytes), followed by a zlib stream containing
+Header struct: `!BBIQHHHHBIIIIIIIB` (52 bytes), followed by a zlib stream containing
 exactly `width * height` index8 pixels. Payload length includes header and zlib
 stream. Maximum accepted observation payload is 17 MiB.
 
 | Order | Type | Field |
 |---|---|---|
 | 1 | u8 | opcode = 128 |
-| 2 | u8 | protocol version = 1 |
+| 2 | u8 | protocol version = 2 |
 | 3 | u32 | episode |
 | 4 | u64 | completed physics tick |
 | 5 | u16 | image width |
@@ -79,16 +79,21 @@ stream. Maximum accepted observation payload is 17 MiB.
 | 11 | u32 | late command count |
 | 12 | u32 | rejected command count |
 | 13 | u32 | overrun_ticks: discarded wall time expressed in physical ticks |
-| 14 | u32 | event_sequence, increments on die/success/reset |
-| 15 | u8 | last_event: 0 none, 1 die, 2 success, 3 reset |
+| 14 | u32 | jump_requested, cumulative Jump actions executed by physics |
+| 15 | u32 | jump_applied, cumulative Jump actions that started takeoff |
+| 16 | u32 | event_sequence, increments on die/success/reset |
+| 17 | u8 | last_event: 0 none, 1 die, 2 success, 3 reset |
 
 Coordinates: top left, row-major, y down. Index palette: 0 white `(255,255,255)`,
 1 black `(0,0,0)`, 2 player blue `(0,102,255)`, 3 damage red `(255,0,0)`.
 No HUD, background art, or decorations are encoded. The socket carries the
 semantic collider raster, while the window can show a graphical tileset. Simulation time in seconds is `tick / physics_hz`.
-No camera scaling/cropping is applied in v1.
+No camera scaling/cropping is applied in v2.
 
 Event sequence persists across resets. Last event repeats until a newer event.
+`jump_requested` counts Jump actions that reached a physical tick; `jump_applied`
+counts only those for which physics found the body supported and started takeoff.
+Both counters are diagnostic and persist for the container lifetime.
 Status is persistent. Frames continue after terminal status with the same tick;
 reset is needed to start a new episode. Late/rejected counts last for the
 container lifetime; overrun_ticks resets each episode. Accepted sequence resets

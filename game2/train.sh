@@ -6,6 +6,20 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 python_bin="${PYTHON:-python3}"
 port="${PORT:-8765}"
 episodes="${EPISODES:-1000}"
+fresh_args=()
+case "${FRESH:-0}" in
+    0|'')
+        training_mode='resume'
+        ;;
+    1)
+        training_mode='fresh'
+        fresh_args=(--fresh)
+        ;;
+    *)
+        printf 'FRESH must be 0 or 1\n' >&2
+        exit 2
+        ;;
+esac
 window_pid=''
 mlp_pid=''
 
@@ -25,11 +39,14 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+printf 'training_mode=%s episodes=%s port=%s\n' "$training_mode" "$episodes" "$port" >&2
+
 "$python_bin" engine.py --mode mlp --window --port "$port" &
 window_pid=$!
 
 # The MLP runner retries while the window process finishes starting its socket.
-"$python_bin" mlp_runner.py --mode train --episodes "$episodes" --port "$port" &
+"$python_bin" mlp_runner.py --mode train --episodes "$episodes" --port "$port" \
+    "${fresh_args[@]}" &
 mlp_pid=$!
 
 # Whichever process ends first determines the session: closing the window stops

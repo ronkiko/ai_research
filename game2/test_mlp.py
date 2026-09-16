@@ -56,8 +56,91 @@ class MlpTests(unittest.TestCase):
             self.assertEqual(policy.probabilities((0.2, 1.0)),
                              restored.probabilities((0.2, 1.0)))
 
+    def test_play_does_not_update_weights(self):
+        import contextlib
+        import io
+        import json
+        from mlp_runner import MlpRunner
+
+        observation = frame()
+
+        class Client:
+            def __init__(self):
+                self.sequence = 0
+                self.frames = iter([
+                    dict(observation, episode=1, tick=100, status=1, accepted=0,
+                         late=0, rejected=0, jump_requested=0, jump_applied=0),
+                    dict(observation, episode=2, tick=0, status=0, accepted=1,
+                         late=0, rejected=0, jump_requested=0, jump_applied=0),
+                    dict(observation, episode=2, tick=50, status=2, accepted=2,
+                         late=0, rejected=0, jump_requested=2, jump_applied=1),
+                ])
+
+            def receive(self):
+                return next(self.frames)
+
+            def reset(self, episode):
+                self.sequence += 1
+                return self.sequence
+
+            def action(self, **kwargs):
+                self.sequence += 1
+                return self.sequence
+
+        policy = MLP242Policy(seed=7)
+        before = [value.detach().clone() for value in policy.network.parameters()]
+        runner = MlpRunner(Client(), policy, training=False, episodes=1,
+                           checkpoint=Path('unused.pt'), max_ticks=600,
+                           target_delay=32, hold_ticks=48, save_every=1)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            runner.run()
+        self.assertTrue(all(value.equal(after) for value, after in
+                            zip(before, policy.network.parameters())))
+        self.assertEqual(policy.steps, 0)
+        self.assertEqual(policy.episodes, 0)
+        result = json.loads(output.getvalue())
+        self.assertFalse(result['updated'])
+        self.assertEqual((result['jump_requested'], result['jump_applied']), (2, 1))
+
+
+class StatsTests(unittest.TestCase):
+    def test_rolling_stats_window_and_mean(self):
+        from mlp_runner import RollingEpisodeStats
+
+        stats = RollingEpisodeStats()
+        stats.record(True, 10)
+        stats.record(False, 20)
+        self.assertEqual(stats.summary(), {
+            'success_rate_100': 0.5,
+            'successes_100': 1,
+            'episodes_window': 2,
+            'mean_terminal_tick_100': 15.0,
+            'attempts': 2,
+            'successes': 1,
+            'success_rate_total': 0.5,
+        })
+
+        for tick in range(3, 103):
+            stats.record(False, tick)
+        stats.record(True, 1000)
+        summary = stats.summary()
+        self.assertEqual(summary['episodes_window'], 100)
+        self.assertEqual(summary['successes_100'], 1)
+        self.assertEqual(summary['attempts'], 103)
+        self.assertEqual(summary['successes'], 2)
+        self.assertAlmostEqual(summary['success_rate_100'], 0.01)
+        self.assertAlmostEqual(summary['mean_terminal_tick_100'],
+                               (sum(range(4, 103)) + 1000) / 100)
+
 
 class RegressionTests(unittest.TestCase):
+    def test_runner_keeps_free_jump_action_space(self):
+        source = Path(__file__).with_name('mlp_runner.py').read_text()
+        self.assertNotIn('jump_window', source)
+        self.assertNotIn('jump_allowed', source)
+        self.assertNotIn('jumped', source)
+
     def test_gap_remains_visible_while_player_straddles_edge(self):
         reading = PixelSensors().read(frame(player_x=468))
         self.assertEqual(reading.gap_left, 500)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 import sys
 import time
@@ -17,6 +18,34 @@ from sensors import PixelSensors
 
 
 DEFAULT_CHECKPOINT = Path(__file__).with_name('models') / '2-4-2' / 'weights.pt'
+
+
+class RollingEpisodeStats:
+    WINDOW = 100
+
+    def __init__(self):
+        self._window = deque(maxlen=self.WINDOW)
+        self.attempts = 0
+        self.successes = 0
+
+    def record(self, success: bool, terminal_tick: int) -> None:
+        self._window.append((bool(success), int(terminal_tick)))
+        self.attempts += 1
+        self.successes += int(success)
+
+    def summary(self) -> dict:
+        episodes_window = len(self._window)
+        successes_window = sum(success for success, _ in self._window)
+        terminal_ticks = [tick for _, tick in self._window]
+        return {
+            'success_rate_100': successes_window / episodes_window,
+            'successes_100': successes_window,
+            'episodes_window': episodes_window,
+            'mean_terminal_tick_100': sum(terminal_ticks) / episodes_window,
+            'attempts': self.attempts,
+            'successes': self.successes,
+            'success_rate_total': self.successes / self.attempts,
+        }
 
 
 def connect(host: str, port: int, timeout: int, wait: float) -> MLPClient:
@@ -44,6 +73,7 @@ class MlpRunner:
         self.hold_ticks = hold_ticks
         self.save_every = save_every
         self.sensors = PixelSensors()
+        self.episode_stats = RollingEpisodeStats()
 
     def _reset(self, frame):
         episode = frame['episode']
@@ -63,8 +93,10 @@ class MlpRunner:
             episode = frame['episode']
             started_tick = frame['tick']
             transport_start = (frame['late'], frame['rejected'])
+            jump_start = (frame.get('jump_requested', 0), frame.get('jump_applied', 0))
             pending = []
             last_tick = -1
+            last_frame = frame
             while frame['episode'] == episode and frame['status'] == 0:
                 if frame['tick'] - started_tick >= self.max_ticks:
                     break
@@ -82,6 +114,7 @@ class MlpRunner:
                                               hold_ticks=self.hold_ticks,
                                               right=decision.right, jump=decision.jump)
                 pending.append((sequence, target, decision))
+                last_frame = frame
                 frame = self.client.receive()
 
             same_episode = frame['episode'] == episode
@@ -92,6 +125,11 @@ class MlpRunner:
                         if same_episode and seq <= frame['accepted'] and target <= frame['tick']]
             reward = 1.0 if same_episode and frame['status'] == 2 else -1.0
             trainable = same_episode and clean_transport and bool(executed)
+            terminal_frame = frame if same_episode else last_frame
+            jump_requested = max(0, terminal_frame.get('jump_requested', 0) - jump_start[0])
+            jump_applied = max(0, terminal_frame.get('jump_applied', 0) - jump_start[1])
+            terminal_tick = terminal_frame['tick']
+            self.episode_stats.record(reward > 0, terminal_tick)
             loss = 0.0
             if self.training and trainable:
                 loss = self.policy.update([d.log_probability for d in executed],
@@ -104,11 +142,13 @@ class MlpRunner:
             print(json.dumps({
                 'episode': episode, 'result': result, 'reward': reward,
                 'loss': round(loss, 6), 'tick': frame['tick'],
-                'jumped': any(d.jump for d in executed),
+                'jump_requested': jump_requested,
+                'jump_applied': jump_applied,
                 'executed_actions': len(executed),
                 'updated': self.training and trainable,
                 'late': frame['late'] - transport_start[0],
                 'rejected': frame['rejected'] - transport_start[1],
+                **self.episode_stats.summary(),
                 **self.policy.stats(),
             }), flush=True)
             if completed == self.episodes:

@@ -40,6 +40,13 @@ class JoystickTests(unittest.TestCase):
         self.assertEqual(self.joystick.next_action(7), Action(True, False))
         self.assertEqual(self.joystick.next_action(8), Action())
 
+    def test_repeated_jump_commands_are_not_masked(self):
+        self.send(seq=1, tick=5, jump=1)
+        self.send(seq=2, tick=10, jump=1)
+        self.joystick.poll(1, 0)
+        self.assertTrue(self.joystick.next_action(5).jump)
+        self.assertTrue(self.joystick.next_action(10).jump)
+
     def test_late_future_stale_and_malformed_do_not_act(self):
         self.send(seq=1, tick=10)
         self.send(seq=2, tick=131)
@@ -127,6 +134,22 @@ class ComponentTests(unittest.TestCase):
         game.step(Action(True))
         self.assertIsNot(frame, game.frame())
 
+    def test_jump_telemetry_distinguishes_requested_and_applied(self):
+        game = self.new_game()
+        game.step(Action(jump=True))
+        self.assertEqual((game.metadata()['jump_requested'], game.metadata()['jump_applied']), (1, 1))
+
+        game.step(Action(jump=True))
+        self.assertEqual((game.metadata()['jump_requested'], game.metadata()['jump_applied']), (2, 1))
+
+        for _ in range(150):
+            game.step(Action())
+            if game.body.grounded:
+                break
+        self.assertTrue(game.body.grounded)
+        game.step(Action(jump=True))
+        self.assertEqual((game.metadata()['jump_requested'], game.metadata()['jump_applied']), (3, 2))
+
     def test_terminal_reset_and_close_lifecycle(self):
         game = self.new_game()
         events = []
@@ -181,6 +204,8 @@ class SocketIntegrationTests(unittest.TestCase):
         self.assertNotIn('x', first)
         self.assertNotIn('vx', first)
         self.assertNotIn('surfaces', first)
+        self.assertEqual(first['jump_requested'], 0)
+        self.assertEqual(first['jump_applied'], 0)
         time.sleep(0.15)  # MLP computes; simulation and frame receiver keep running.
         later = self.client.receive()
         self.assertGreater(later['tick'], first['tick'] + 5)
