@@ -1,4 +1,6 @@
 """Human input adapter; it receives no world coordinates or physics objects."""
+import threading
+
 from controls import Action
 
 
@@ -38,6 +40,53 @@ class HumanJoystick:
         action = Action(self.right, self.jump_pending)
         self.jump_pending = False
         return action
+
+    def close(self):
+        self.reset()
+
+
+class ExternalHumanJoystick:
+    """Thread-safe human input adapter for an operator-owned Pygame window."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._action = Action()
+        self._jump_pending = False
+        self._operation = None
+
+    def set_action(self, *, right=False, jump=False):
+        if type(right) is not bool or type(jump) is not bool:
+            raise ValueError('right and jump must be booleans')
+        with self._lock:
+            self._action = Action(right, False)
+            self._jump_pending = self._jump_pending or jump
+
+    def request_reset(self):
+        with self._lock:
+            self._operation = 'reset'
+            self._action = Action()
+            self._jump_pending = False
+
+    def request_quit(self):
+        with self._lock:
+            self._operation = 'quit'
+
+    def poll(self):
+        with self._lock:
+            operation, self._operation = self._operation, None
+            return operation
+
+    def next_action(self):
+        with self._lock:
+            action = Action(self._action.right, self._jump_pending)
+            self._jump_pending = False
+            return action
+
+    def reset(self):
+        with self._lock:
+            self._action = Action()
+            self._jump_pending = False
+            self._operation = None
 
     def close(self):
         self.reset()

@@ -48,21 +48,23 @@ class RollingEpisodeStats:
         }
 
 
-def connect(host: str, port: int, timeout: int, wait: float) -> MLPClient:
+def connect(host: str, port: int, timeout: int, wait: float, stop_event=None) -> MLPClient:
     deadline = time.monotonic() + wait
     while True:
+        if stop_event is not None and stop_event.is_set():
+            raise ConnectionError('MLP connection cancelled')
         try:
             return MLPClient(host=host, port=port, timeout=timeout)
         except OSError:
             if time.monotonic() >= deadline:
                 raise
-            time.sleep(0.25)
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
 
 
 class MlpRunner:
     def __init__(self, client: MLPClient, policy: MLP382Policy, *, training: bool,
                  episodes: int, checkpoint: Path, max_ticks: int, target_delay: int,
-                 hold_ticks: int, save_every: int):
+                 hold_ticks: int, save_every: int, event_sink=None, stop_event=None):
         self.client = client
         self.policy = policy
         self.training = training
@@ -72,8 +74,17 @@ class MlpRunner:
         self.target_delay = target_delay
         self.hold_ticks = hold_ticks
         self.save_every = save_every
+        self.event_sink = event_sink
+        self.stop_event = stop_event
         self.sensors = ObservationSensors()
         self.episode_stats = RollingEpisodeStats()
+
+    def _emit(self, event, **payload):
+        if self.event_sink is not None:
+            self.event_sink(dict(type=event, **payload))
+
+    def _stopping(self):
+        return self.stop_event is not None and self.stop_event.is_set()
 
     def _reset(self, frame):
         episode = frame['episode']
@@ -90,6 +101,8 @@ class MlpRunner:
         frame = self._reset(self.client.receive())
         completed = 0
         while completed < self.episodes:
+            if self._stopping():
+                return
             episode = frame['episode']
             started_tick = frame['tick']
             transport_start = (frame['late'], frame['rejected'])
@@ -98,6 +111,8 @@ class MlpRunner:
             last_tick = -1
             last_frame = frame
             while frame['episode'] == episode and frame['status'] == 0:
+                if self._stopping():
+                    return
                 if frame['tick'] - started_tick >= self.max_ticks:
                     break
                 if frame['tick'] == last_tick:
@@ -115,6 +130,9 @@ class MlpRunner:
                                               right=decision.right, jump=decision.jump)
                 pending.append((sequence, target, decision))
                 last_frame = frame
+                self._emit('live_stats', episode=episode, tick=frame['tick'],
+                           result='running', late=frame['late'] - transport_start[0],
+                           rejected=frame['rejected'] - transport_start[1])
                 frame = self.client.receive()
 
             same_episode = frame['episode'] == episode
@@ -139,7 +157,7 @@ class MlpRunner:
                 self.policy.save(self.checkpoint)
             result = ('success' if reward > 0 else
                       'die' if same_episode and frame['status'] == 1 else 'timeout_or_reset')
-            print(json.dumps({
+            metrics = {
                 'episode': episode, 'result': result, 'reward': reward,
                 'loss': round(loss, 6), 'tick': terminal_tick,
                 'jump_requested': jump_requested,
@@ -150,10 +168,17 @@ class MlpRunner:
                 'rejected': frame['rejected'] - transport_start[1],
                 **self.episode_stats.summary(),
                 **self.policy.stats(),
-            }), flush=True)
+            }
+            self._emit('episode_finished', **metrics)
+            print(json.dumps(metrics), flush=True)
             if completed == self.episodes:
                 return
             frame = self._reset(frame)
+
+    def save_checkpoint(self):
+        """Persist the current policy after a controlled GUI shutdown."""
+        if self.training:
+            self.policy.save(self.checkpoint)
 
 
 def parse_args(argv=None):

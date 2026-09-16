@@ -2,9 +2,10 @@
 import math
 import sys
 import time
+from dataclasses import replace
 
 from controls import Action
-from joysticks import HumanJoystick
+from joysticks import ExternalHumanJoystick, HumanJoystick
 from level import DEFAULT_MAP, load_level
 from monitors import AutoMonitor, ColorRenderer, MlpMonitor, WindowMonitor
 from physics import PhysicsConfig, PhysicsWorld
@@ -19,7 +20,8 @@ class GameContainer:
     AUTO_MAX_TICKS = 600
 
     def __init__(self, map_path=DEFAULT_MAP, mode='human', *, port=8765, config=None,
-                 monitor_hz=30, window=False, auto=False):
+                 monitor_hz=30, window=False, auto=False, external=False,
+                 snapshot_callback=None):
         if mode not in ('human', 'mlp'):
             raise ValueError('mode must be human or mlp')
         if auto and mode != 'mlp':
@@ -37,6 +39,7 @@ class GameContainer:
         self.mode = mode
         self.auto = bool(auto)
         self.map_path = map_path
+        self.snapshot_callback = snapshot_callback
         self.level = load_level(map_path)
         self.physics = PhysicsWorld(self.level.new_body(), self.level.surfaces, self.config)
         self.renderer = None if self.auto else ColorRenderer()
@@ -50,8 +53,8 @@ class GameContainer:
         self.closed = self.quit_requested = False
         try:
             if mode == 'human':
-                self.monitor = WindowMonitor(self.level)
-                self.joystick = HumanJoystick()
+                self.monitor = None if external else WindowMonitor(self.level)
+                self.joystick = ExternalHumanJoystick() if external else HumanJoystick()
             else:
                 self.transport = SocketTransport(port=port)
                 self.joystick = MlpJoystick(self.transport)
@@ -167,7 +170,8 @@ class GameContainer:
         self._check_open()
         frame, metadata = self.frame(), self.metadata()
         if self.mode == 'human':
-            self.monitor.present(frame, metadata, self.body)
+            if self.monitor is not None:
+                self.monitor.present(frame, metadata, self.body)
         else:
             self.monitor.present(frame, metadata)
         if self.window is not None:
@@ -192,7 +196,7 @@ class GameContainer:
                 next_frame = now + period
             time.sleep(self.config.dt / 4)
 
-    def run_auto(self, speed=AUTO_SPEED):
+    def run_auto(self, speed: float = AUTO_SPEED):
         """Run fixed simulation ticks as fast as the controller can safely follow.
 
         The controller barrier is deliberately at command acceptance, not at the
@@ -313,6 +317,11 @@ class GameContainer:
         self._auto_metrics['feature_build_ms'] += (time.perf_counter() - started) * 1000
         self._auto_metrics['observations'] += 1
         self.monitor.present(reading, self.metadata())
+        self._publish_snapshot()
+
+    def _publish_snapshot(self):
+        if self.snapshot_callback is not None:
+            self.snapshot_callback(self, replace(self.body), self.metadata())
 
     def _auto_wait_for_connection(self):
         while not self.quit_requested:
