@@ -1,6 +1,6 @@
 # Game2 V2 Architecture
 
-Status: architectural overview
+Status: Patch 3 implementation complete
 
 Game2 V2 is a real-time research system. The normative realtime contract is
 [doc/REALTIME_SYSTEM.md](doc/REALTIME_SYSTEM.md).

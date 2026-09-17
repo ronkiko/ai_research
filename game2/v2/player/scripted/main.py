@@ -15,7 +15,7 @@ if __package__ in (None, ""):
 
 from game2.v2.contracts.framing import encode_frame, recv_frame
 from game2.v2.contracts.joystick import JoystickState, joystick_message
-from game2.v2.contracts.manifests import PeripheralManifest
+from game2.v2.contracts.manifests import PeripheralManifest, PlayerManifest
 from game2.v2.contracts.vision import VisionFrame, recv_vision_frame
 
 
@@ -94,7 +94,7 @@ def _connect(endpoint, timeout=5.0):
 class VisionReceiver:
     """Read the public Vision stream without entering the action loop."""
 
-    def __init__(self, manifest: PeripheralManifest):
+    def __init__(self, manifest: PlayerManifest):
         if manifest.vision is None:
             raise ValueError("Vision capability is missing")
         self.manifest = manifest
@@ -204,7 +204,11 @@ def main(argv=None) -> int:
     parser.add_argument("--forever", action="store_true",
                         help="keep sending decisions until the public Joystick closes")
     args = parser.parse_args(argv)
-    manifest = PeripheralManifest.from_file(args.manifest)
+    try:
+        manifest = PlayerManifest.from_file(args.manifest)
+    except ValueError:
+        # Keep the finite compatibility smoke on its older public manifest.
+        manifest = PeripheralManifest.from_file(args.manifest)
     if manifest.vision is None:
         raise ValueError("Scripted Player requires the public Vision capability")
     joystick = _connect(manifest.joystick)
@@ -233,7 +237,8 @@ def main(argv=None) -> int:
                                       name="v2-scripted-joystick-acks", daemon=True)
         ack_thread.start()
         print("READY " + json.dumps({"session_id": manifest.session_id,
-                                     "vision": vision is not None}, sort_keys=True), flush=True)
+                                     "vision": vision is not None,
+                                     "status": "armed"}, sort_keys=True), flush=True)
         limit = None if args.forever else max(0, args.ticks)
         sequence = 1
         next_send = time.monotonic()
@@ -249,13 +254,17 @@ def main(argv=None) -> int:
                 frame = vision.latest
                 if frame is not None and frame.world_tick != latest_tick:
                     latest_tick = frame.world_tick
-                    decision = decide(frame)
-                    if not decision.jump:
-                        jump_armed = True
-                    elif jump_armed:
-                        jump_pending = True
-                        jump_armed = False
+                    # ATTACH exposes Vision before START. Do not emit gameplay
+                    # input until this perspective contains SELF.
+                    if _avatar_bounds(frame) is not None:
+                        decision = decide(frame)
+                        if not decision.jump:
+                            jump_armed = True
+                        elif jump_armed:
+                            jump_pending = True
+                            jump_armed = False
             if decision is None:
+                time.sleep(0.005)
                 continue
             # The Player supplies decisions; Controller owns all world scheduling.
             state = JoystickState(sequence, decision.right, jump_pending)

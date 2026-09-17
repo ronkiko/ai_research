@@ -79,4 +79,52 @@ class PeripheralManifest:
         Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
 
 
-__all__ = ["Endpoint", "PeripheralManifest"]
+@dataclass(frozen=True)
+class PlayerManifest:
+    """Strict public capabilities allocated for one dynamic Player connection."""
+
+    session_id: str
+    player_id: str
+    actor_id: str
+    joystick: Endpoint
+    vision: Endpoint
+
+    def __post_init__(self) -> None:
+        for name in ("session_id", "player_id", "actor_id"):
+            value = getattr(self, name)
+            if type(value) is not str or not value:
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.player_id == self.actor_id:
+            raise ValueError("player_id and actor_id must be distinct")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id, "player_id": self.player_id,
+                "actor_id": self.actor_id, "joystick": self.joystick.as_dict(),
+                "vision": self.vision.as_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PlayerManifest":
+        if not isinstance(data, dict) or set(data) != {
+                "session_id", "player_id", "actor_id", "joystick", "vision"}:
+            raise ValueError("Player manifest fields are invalid")
+        values = {name: data[name] for name in ("session_id", "player_id", "actor_id")}
+        for name, value in values.items():
+            if type(value) is not str or not value:
+                raise ValueError(f"{name} must be a non-empty string")
+        joystick = _manifest_endpoint(data["joystick"])
+        vision = _manifest_endpoint(data["vision"])
+        if joystick is None or vision is None:
+            raise ValueError("Player peripheral endpoints are required")
+        return cls(values["session_id"], values["player_id"], values["actor_id"],
+                   joystick, vision)
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "PlayerManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
+__all__ = ["Endpoint", "PeripheralManifest", "PlayerManifest"]

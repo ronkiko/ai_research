@@ -59,7 +59,39 @@ def reset_message(actor_id: str) -> dict[str, int | str]:
     return respawn_message(actor_id)
 
 
-def decode_control_message(message: dict[str, Any]) -> ActionCommand | RespawnCommand | str:
+@dataclass(frozen=True)
+class SpawnCommand:
+    player_id: str
+    actor_id: str
+
+    def __post_init__(self):
+        if (type(self.player_id) is not str or not self.player_id or
+                type(self.actor_id) is not str or not self.actor_id):
+            raise ProtocolError("player_id and actor_id must be non-empty strings")
+        if self.player_id == self.actor_id:
+            raise ProtocolError("player_id and actor_id must be distinct")
+
+
+def spawn_message(player_id: str, actor_id: str) -> dict[str, Any]:
+    return {"version": PROTOCOL_VERSION, "type": "spawn", "player_id": player_id,
+            "actor_id": actor_id}
+
+
+@dataclass(frozen=True)
+class DespawnCommand:
+    actor_id: str
+
+    def __post_init__(self):
+        if type(self.actor_id) is not str or not self.actor_id:
+            raise ProtocolError("actor_id must be a non-empty string")
+
+
+def despawn_message(actor_id: str) -> dict[str, Any]:
+    DespawnCommand(actor_id)
+    return {"version": PROTOCOL_VERSION, "type": "despawn", "actor_id": actor_id}
+
+
+def decode_control_message(message: dict[str, Any]) -> ActionCommand | DespawnCommand | RespawnCommand | SpawnCommand | str:
     if not isinstance(message, dict) or message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError("unsupported control protocol version")
     kind = message.get("type")
@@ -71,6 +103,14 @@ def decode_control_message(message: dict[str, Any]) -> ActionCommand | RespawnCo
         if set(message) != {"version", "type", "actor_id"}:
             raise ProtocolError("respawn fields are invalid")
         return RespawnCommand(message["actor_id"])
+    if kind == "spawn":
+        if set(message) != {"version", "type", "player_id", "actor_id"}:
+            raise ProtocolError("spawn fields are invalid")
+        return SpawnCommand(message["player_id"], message["actor_id"])
+    if kind == "despawn":
+        if set(message) != {"version", "type", "actor_id"}:
+            raise ProtocolError("despawn fields are invalid")
+        return DespawnCommand(message["actor_id"])
     if kind != "action":
         raise ProtocolError("unknown control command")
     expected = {"version", "type", "actor_id", "sequence", "target_world_tick", "hold_ticks",
@@ -81,5 +121,6 @@ def decode_control_message(message: dict[str, Any]) -> ActionCommand | RespawnCo
                           message["hold_ticks"], message["right"], message["jump"])
 
 
-__all__ = ["ActionCommand", "MAX_HOLD_TICKS", "RespawnCommand", "action_message",
-           "decode_control_message", "reset_message", "respawn_message"]
+__all__ = ["ActionCommand", "DespawnCommand", "MAX_HOLD_TICKS", "RespawnCommand",
+            "SpawnCommand", "action_message", "decode_control_message", "despawn_message",
+            "reset_message", "respawn_message", "spawn_message"]

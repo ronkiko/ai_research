@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import EngineManifest, SessionConfig
-from ..protocol import PROTOCOL_VERSION, ActionCommand, RespawnCommand
+from ..protocol import (PROTOCOL_VERSION, ActionCommand, DespawnCommand, RespawnCommand,
+                        SpawnCommand)
 from ..transport.control_server import ControlServer
 from ..transport.publisher import EventPublisher, LatestPublisher
 from ..world import WorldDefinition, load_world
@@ -157,8 +158,8 @@ class Engine:
         actor = ActorRuntime(binding.actor_id, binding.player_id, body,
                              self.world_tick)
         self.actors[actor_id] = actor
-        self._lifecycle_events.append({"event": "actor_spawned", "actor_id": actor_id,
-                                       "world_tick": self.world_tick})
+        self._lifecycle_events.append({"event": "actor_spawned", "player_id": player_id,
+                                       "actor_id": actor_id, "world_tick": self.world_tick})
         return actor
 
     def despawn_actor(self, actor_id: str) -> ActorRuntime:
@@ -381,6 +382,32 @@ class EngineService:
                     "status": status,
                     "world_tick": self.engine.world_tick,
                 })
+            elif isinstance(command, SpawnCommand):
+                try:
+                    self.engine.spawn_actor(command.player_id, command.actor_id)
+                    status = "accepted"
+                except (KeyError, ValueError):
+                    status = "rejected"
+                self.control.respond(envelope.client_id, {
+                    "version": PROTOCOL_VERSION,
+                    "type": "spawn_ack",
+                    "actor_id": command.actor_id,
+                    "status": status,
+                    "world_tick": self.engine.world_tick,
+                })
+            elif isinstance(command, DespawnCommand):
+                try:
+                    self.engine.despawn_actor(command.actor_id)
+                    status = "accepted"
+                except KeyError:
+                    status = "rejected"
+                self.control.respond(envelope.client_id, {
+                    "version": PROTOCOL_VERSION,
+                    "type": "despawn_ack",
+                    "actor_id": command.actor_id,
+                    "status": status,
+                    "world_tick": self.engine.world_tick,
+                })
             elif command == "quit":
                 self.quit_requested = True
         return self.engine.drain_lifecycle_events()
@@ -395,7 +422,9 @@ class EngineService:
         self.publish()
         summary = None
         try:
-            while not self.quit_requested and self.engine.world_tick < self.config.world_ticks:
+            while (not self.quit_requested and
+                   (self.config.world_ticks is None or
+                    self.engine.world_tick < self.config.world_ticks)):
                 command_events = self.handle_commands()
                 self.publish_events(command_events)
                 if self.quit_requested:

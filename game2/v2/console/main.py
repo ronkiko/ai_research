@@ -19,6 +19,7 @@ from game2.v2.console.config import (ControllerManifest, DisplayManifest, Engine
                                allocate_endpoint, new_session_id)
 from game2.v2.contracts.manifests import PeripheralManifest
 from game2.v2.console.world import load_world
+from game2.v2.console.server import run_server
 
 
 MODULES = {"default": "game2.v2.console.controller.main"}
@@ -212,11 +213,15 @@ def run_session(config_path: str | Path,
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Compose and supervise Game2 V2 console subsystems")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--server", action="store_true",
+                        help="run the persistent zero-player Console server")
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
     parser.add_argument("--control-capability",
                         help="private embedded-demo lifecycle CONTROL capability output path")
     args = parser.parse_args(argv)
+    if args.server:
+        return run_server(args.config)
     status, summary = run_session(args.config, args.state_capability,
                                   args.control_capability)
     if summary:

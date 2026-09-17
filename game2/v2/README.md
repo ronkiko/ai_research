@@ -157,6 +157,36 @@ does not decide whether a management UI exists.
 - [Normative Console contract](console/SPEC.md)
 - Domain and subsystem details in the local `README.md` and `doc/` files
 
+## Canonical Persistent Console
+
+Patch 3 makes Console a long-lived local server. Start it independently of any
+Player:
+
+```bash
+./game2/v2/boot.sh
+```
+
+It creates one `pit` World, one Engine, and one realtime `world_tick` with zero
+Players and zero Actors. The public attach point is atomically published at
+`game2/v2/runtime/current-console.json`. Each client gets a distinct
+Player/Actor identity, Joystick endpoint, Vision perspective, and lifecycle
+Connection:
+
+```bash
+./game2/v2/vision.sh
+```
+
+`vision.sh` attaches to the existing Console, waits for the examiner and
+Scripted Player to become ARMED, then exposes an explicit `START` button. START
+spawns only that Actor. A terminal result is delivered as a Player lifecycle
+event; `RESPAWN` is actor-local. Closing the window detaches that Player and
+despawns only its Actor. Console, World, other Players, and `world_tick` remain
+alive. `vision.sh` never starts or restarts Console.
+
+The canonical server has no global Display: Vision Display is allocated per
+attached Player. STATE, TELEMETRY, and EVENTS remain private Console channels.
+Training Episode remains outside Console and is not an Engine lifecycle.
+
 ## Run and Test
 
 Run the separate-process realtime smoke:
@@ -184,7 +214,7 @@ python -m unittest discover -s game2 -p 'test*.py' -v
 ./game2/v2/demo.sh
 ```
 
-`demo.sh` is temporary developer tooling. It starts the realtime V2 Console with
+`demo.sh` is temporary compatibility tooling. It starts the realtime V2 Console with
 `embedded-demo.json`, waits for its public `PeripheralManifest` and private
 operator-only STATE and actor-scoped lifecycle CONTROL capabilities, then hosts
 the Human keyboard adapter in-process. Console explicitly creates one
@@ -211,10 +241,9 @@ Actor is frozen and new actions for it are rejected, while the global
 `world_tick` and other Actors continue. Screen displays the self Actor result; R
 respawns only that Actor without restarting Console or the shell.
 
-The future startup flow will provide a boot screen, lifecycle/startup selection,
-Console startup, and then a Game session with Player/Trainer or an experiment.
 The temporary gameplay flow connects a Human keyboard adapter through the
-existing Player-facing Joystick contract:
+existing Player-facing Joystick contract. It is separate from the persistent
+server workflow above:
 
 ```text
 HumanKeyboardInput -> HumanJoystickClient -> Joystick -> Controller -> Engine

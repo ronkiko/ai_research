@@ -102,12 +102,14 @@ class _ControlClient:
 class ControlServer:
     def __init__(self, host: str, port: int, max_commands: int = 512,
                  on_rejected: Callable[[str], None] | None = None,
-                 max_responses: int = 256, decoder: Callable[[dict], object] = decode_control_message):
+                 max_responses: int = 256, decoder: Callable[[dict], object] = decode_control_message,
+                 on_closed: Callable[[int], None] | None = None):
         self.host, self.port = host, port
         self.commands: queue.Queue[ControlEnvelope] = queue.Queue(maxsize=max_commands)
         self.max_responses = max_responses
         self.on_rejected = on_rejected
         self.decoder = decoder
+        self.on_closed = on_closed
         self.server: socket.socket | None = None
         self.stop_event = threading.Event()
         self.connected_event = threading.Event()
@@ -157,6 +159,8 @@ class ControlServer:
     def _client_closed(self, client_id: int) -> None:
         with self.lock:
             self.clients.pop(client_id, None)
+        if self.on_closed:
+            self.on_closed(client_id)
 
     def _reject(self, reason: str) -> None:
         if self.on_rejected:

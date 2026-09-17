@@ -83,10 +83,7 @@ class ControllerService:
                 if message.get("type") != "telemetry":
                     continue
                 actors = message.get("actors")
-                if (not isinstance(actors, list) or
-                        not any(isinstance(actor, dict) and
-                                actor.get("actor_id") == self.manifest.actor_id
-                                for actor in actors)):
+                if not isinstance(actors, list):
                     continue
                 with self.lock:
                     self.latest = message
@@ -146,7 +143,10 @@ class ControllerService:
             if state.sequence <= self.last_sequence:
                 status = "duplicate" if state.sequence in self.sequences else "rejected"
                 response = joystick_ack(state.sequence, status)
-            elif self.latest is None or self.engine_closed.is_set():
+            elif (self.latest is None or self.engine_closed.is_set() or
+                  not any(isinstance(actor, dict) and
+                          actor.get("actor_id") == self.manifest.actor_id
+                          for actor in self.latest.get("actors", []))):
                 self.last_sequence = state.sequence
                 self.sequences.add(state.sequence)
                 response = joystick_ack(state.sequence, "rejected")
