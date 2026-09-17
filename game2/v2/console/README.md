@@ -24,5 +24,10 @@ state and has no dependency on Engine or the physics implementation.
 Console does not own Player, model, Trainer, or management UI. It may import
 public `contracts/*`; it must not import the other external domains.
 
+The temporary embedded demo runs Console with `enable_state: true` and
+`enable_display: false`. Console can write a private operator-only STATE
+capability for that host; it remains separate from the public Player
+`PeripheralManifest`.
+
 Entrypoint: `main.py`. Normative contract: `SPEC.md`. Local documentation:
 `doc/`.

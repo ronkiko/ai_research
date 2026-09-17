@@ -18,9 +18,11 @@ from game2.v2.contracts.framing import PROTOCOL_VERSION, ProtocolError, recv_fra
 from game2.v2.contracts.joystick import (JoystickState, decode_joystick_message,
                                           joystick_ack, joystick_message)
 from game2.v2.contracts.manifests import Endpoint, PeripheralManifest
+from game2.v2.console.config import DisplayManifest
+from game2.v2.console.display.display import DisplayService
 from game2.v2.player.human.client import ACK_DIAGNOSTICS_LIMIT, HumanJoystickClient
-from game2.v2.player.human.keyboard import (KeyboardState, KeyboardWindow, button_for_key,
-                                             state_from_keys)
+from game2.v2.player.human.keyboard import (HumanKeyboardInput, KeyboardState,
+                                             KeyboardWindow, button_for_key, state_from_keys)
 from game2.v2.player.human.main import run_player
 
 
@@ -404,6 +406,26 @@ class KeyboardMappingTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_embedded_adapter_consumes_host_events_without_creating_window(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+
+        adapter = HumanKeyboardInput(pygame)
+        with mock.patch.object(pygame.display, "set_mode") as set_mode, \
+                mock.patch.object(pygame.event, "get") as get_events:
+            adapter.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_d))
+            self.assertEqual(adapter.state, KeyboardState(True, False))
+            adapter.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_d))
+            self.assertEqual(adapter.state, KeyboardState(False, False))
+            adapter.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
+            self.assertEqual(adapter.state, KeyboardState(False, True))
+            adapter.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LEFT))
+            self.assertEqual(adapter.state, KeyboardState(False, True))
+            adapter.handle_event(pygame.event.Event(pygame.WINDOWFOCUSLOST))
+            self.assertEqual(adapter.state, KeyboardState(False, False))
+            set_mode.assert_not_called()
+            get_events.assert_not_called()
+
 
 class PublicJoystickIntegrationTests(unittest.TestCase):
     def test_human_client_reaches_controller_and_engine(self):
@@ -423,9 +445,20 @@ class PublicJoystickIntegrationTests(unittest.TestCase):
                 manifest = wait_console_ready(console, timeout=10, output=io.StringIO())
                 client = HumanJoystickClient(manifest)
                 client.connect()
+                import pygame
+                keyboard = HumanKeyboardInput(pygame)
                 states = [(True, False)] * 20 + [(True, True)] + [(True, False)] * 20
                 for right, jump in states:
-                    client.send_state(right, jump)
+                    if right:
+                        keyboard.handle_event(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_d))
+                    if jump:
+                        keyboard.handle_event(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
+                    client.send_state(keyboard.state.right, keyboard.state.jump)
+                    if jump:
+                        keyboard.handle_event(
+                            pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))
                     time.sleep(0.002)
                 console_status = console.wait(timeout=5)
                 self.assertEqual(console_status, 0)
@@ -439,6 +472,81 @@ class PublicJoystickIntegrationTests(unittest.TestCase):
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
                 self.assertGreater(summary["avatar"]["x"], 128)
             finally:
+                if client is not None:
+                    client.close()
+                if console.poll() is None:
+                    console.terminate()
+                    console.wait(timeout=5)
+                if console.stdout is not None:
+                    console.stdout.close()
+
+    def test_embedded_state_feed_and_keyboard_joystick_path(self):
+        base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
+        base.update({"map": str(PIT), "enable_display": False, "session_ticks": 240})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            config_path = directory / "embedded-integration.json"
+            capability_path = directory / "state-capability.json"
+            config_path.write_text(json.dumps(base), encoding="utf-8")
+            console = subprocess.Popen(
+                [sys.executable, "-m", "game2.v2.console.main", "--config",
+                 str(config_path), "--state-capability", str(capability_path)],
+                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            client = None
+            display = None
+
+            class RecordingRenderer:
+                def __init__(self):
+                    self.views = []
+
+                def render(self, view):
+                    self.views.append(view)
+                    return view
+
+                def close(self):
+                    return None
+
+            renderer = RecordingRenderer()
+            try:
+                from game2.v2.demo import wait_console_ready
+                manifest = wait_console_ready(console, timeout=10, output=io.StringIO())
+                capability = DisplayManifest.from_file(capability_path)
+                display = DisplayService(capability, renderer=renderer)
+                display.start()
+                client = HumanJoystickClient(manifest)
+                client.connect()
+                import pygame
+                keyboard = HumanKeyboardInput(pygame)
+                keyboard.handle_event(
+                    pygame.event.Event(pygame.KEYDOWN, key=pygame.K_d))
+                for index in range(30):
+                    if index == 10:
+                        keyboard.handle_event(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
+                    client.send_state(keyboard.state.right, keyboard.state.jump)
+                    if index == 10:
+                        keyboard.handle_event(
+                            pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))
+                    display.present_latest()
+                    time.sleep(0.003)
+                keyboard.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_d))
+                client.send_state(keyboard.state.right, keyboard.state.jump)
+                self.assertEqual(console.wait(timeout=5), 0)
+                run_dir = V2 / "console" / "runs" / manifest.session_id
+                self.assertFalse((run_dir / "display.log").exists())
+                deadline = time.monotonic() + 1
+                while (not renderer.views or
+                       max(view.avatar.x for view in renderer.views) <= 128) and \
+                        time.monotonic() < deadline:
+                    display.present_latest()
+                    time.sleep(0.001)
+                self.assertTrue(renderer.views)
+                self.assertGreater(max(view.avatar.x for view in renderer.views), 128)
+            finally:
+                if display is not None:
+                    display.close()
                 if client is not None:
                     client.close()
                 if console.poll() is None:

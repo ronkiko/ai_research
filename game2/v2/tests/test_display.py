@@ -9,6 +9,7 @@ import time
 import unittest
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
+from unittest import mock
 
 from game2.v2.console.config import DisplayManifest, SessionConfig
 from game2.v2.console.display.display import DisplayService
@@ -287,6 +288,12 @@ class DisplayServiceTests(unittest.TestCase):
         self.assertEqual((config.clock_mode, config.enable_display, config.display_mode),
                          ("realtime", True, "screen"))
 
+    def test_embedded_demo_keeps_state_and_disables_display_process(self):
+        config = SessionConfig.from_file(V2 / "console" / "configs" / "embedded-demo.json")
+        self.assertEqual((config.clock_mode, config.enable_state,
+                          config.enable_telemetry, config.enable_display),
+                         ("realtime", True, True, False))
+
     def test_rendering_mode_does_not_change_authoritative_result(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
@@ -326,6 +333,36 @@ class DisplayServiceTests(unittest.TestCase):
 
 
 class ScreenRendererTests(unittest.TestCase):
+    def test_embedded_renderer_uses_target_without_display_or_event_ownership(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+
+        pygame.display.init()
+        target = pygame.Surface((1280, 768))
+        try:
+            with mock.patch.object(pygame.display, "set_mode",
+                                   wraps=pygame.display.set_mode) as set_mode, \
+                    mock.patch.object(pygame.display, "flip",
+                                      wraps=pygame.display.flip) as flip, \
+                    mock.patch.object(pygame.event, "get",
+                                      wraps=pygame.event.get) as get_events:
+                renderer = ScreenRenderer(load_world(PIT), target_surface=target,
+                                          pygame_module=pygame)
+                try:
+                    self.assertFalse(renderer.owns_display)
+                    self.assertIs(renderer.screen, target)
+                    renderer.present(_view(load_world(PIT), x=192))
+                    renderer.present(_view(load_world(PIT), x=192, terminal="success"))
+                    self.assertFalse(renderer.poll_close())
+                    self.assertEqual(set_mode.call_count, 0)
+                    flip.assert_not_called()
+                    get_events.assert_not_called()
+                    self.assertTrue(pygame.display.get_init())
+                finally:
+                    renderer.close()
+        finally:
+            pygame.display.quit()
+
     def test_dummy_screen_loads_v2_assets_and_dynamic_avatar(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         world = load_world(PIT)
@@ -353,7 +390,8 @@ class ScreenRendererTests(unittest.TestCase):
 
     def test_pygame_import_is_confined_to_screen_or_human_player(self):
         for source in V2.rglob("*.py"):
-            if "tests" in source.parts or "screen" in source.parts or "human" in source.parts:
+            if ("tests" in source.parts or "screen" in source.parts or
+                    "human" in source.parts or source.name == "demo.py"):
                 continue
             text = source.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^\s*(?:from|import)\s+pygame(?:\s|$)",

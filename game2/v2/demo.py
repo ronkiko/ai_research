@@ -1,8 +1,4 @@
-"""Temporary developer wrapper for a playable Game2 V2 session.
-
-The wrapper owns only the external Console and Human Player processes. Console
-continues to compose and supervise its private Engine, Controller, and Display.
-"""
+"""Temporary single-window desktop shell for a playable Game2 V2 session."""
 from __future__ import annotations
 
 import argparse
@@ -18,37 +14,40 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from game2.v2.console.config import DisplayManifest
+from game2.v2.console.display.display import DisplayService
+from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
+from game2.v2.console.world import load_world
 from game2.v2.contracts.manifests import PeripheralManifest
+from game2.v2.player.human.client import HumanJoystickClient
+from game2.v2.player.human.keyboard import HumanKeyboardInput
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = Path(__file__).resolve().parent / "console" / "configs" / "screen-demo.json"
+CONFIG_PATH = Path(__file__).resolve().parent / "console" / "configs" / "embedded-demo.json"
 CONSOLE_MODULE = "game2.v2.console.main"
-HUMAN_PLAYER_MODULE = "game2.v2.player.human.main"
 CONSOLE_READY_TIMEOUT = 10.0
-PLAYER_READY_TIMEOUT = 10.0
-# Keep the existing keyword stable; it now means time to receive Player READY.
-PLAYER_STARTUP_TIMEOUT = PLAYER_READY_TIMEOUT
+INPUT_HZ = 120
+RENDER_HZ = 60
+SIDEBAR_WIDTH = 320
 _OUTPUT_END = object()
 
 
 def console_command(python: str | None = None,
-                    config_path: str | Path = CONFIG_PATH) -> list[str]:
-    """Build the canonical Console command without addressing private services."""
-    return [python or sys.executable, "-m", CONSOLE_MODULE,
-            "--config", str(Path(config_path).resolve())]
-
-
-def player_command(manifest_path: str | Path,
-                   python: str | None = None) -> list[str]:
-    """Build the canonical external Human Player command."""
-    return [python or sys.executable, "-m", HUMAN_PLAYER_MODULE,
-            "--manifest", str(Path(manifest_path).resolve())]
+                    config_path: str | Path = CONFIG_PATH,
+                    state_capability_path: str | Path | None = None) -> list[str]:
+    """Build the Console command and request a private demo STATE capability."""
+    command = [python or sys.executable, "-m", CONSOLE_MODULE, "--config",
+               str(Path(config_path).resolve())]
+    if state_capability_path is not None:
+        command.extend(("--state-capability", str(Path(state_capability_path).resolve())))
+    return command
 
 
 def launch_console(popen_factory: Callable[..., subprocess.Popen] | None = None,
                    python: str | None = None,
                    config_path: str | Path = CONFIG_PATH,
+                   state_capability_path: str | Path | None = None,
                    capture_output: bool = False) -> subprocess.Popen:
     """Start Console in its own session so a hard stop can reap descendants."""
     popen = popen_factory or subprocess.Popen
@@ -56,17 +55,7 @@ def launch_console(popen_factory: Callable[..., subprocess.Popen] | None = None,
     if capture_output:
         kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                       text=True, bufsize=1)
-    return popen(console_command(python, config_path), **kwargs)
-
-
-def launch_player(manifest_path: str | Path,
-                  popen_factory: Callable[..., subprocess.Popen] | None = None,
-                  python: str | None = None) -> subprocess.Popen:
-    """Start Human Player as a separate external process."""
-    popen = popen_factory or subprocess.Popen
-    return popen(player_command(manifest_path, python), cwd=str(ROOT),
-                 start_new_session=True, stdout=subprocess.PIPE,
-                 stderr=subprocess.STDOUT, text=True, bufsize=1)
+    return popen(console_command(python, config_path, state_capability_path), **kwargs)
 
 
 def _strict_ready_json(text: str):
@@ -89,30 +78,12 @@ def parse_console_ready(line: str) -> PeripheralManifest:
     if not isinstance(line, str) or not line.startswith("READY "):
         raise ValueError("Console did not provide a READY line")
     try:
-        payload = _strict_ready_json(line[6:])
-        return PeripheralManifest.from_dict(payload)
+        return PeripheralManifest.from_dict(_strict_ready_json(line[6:]))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("Console READY is not a public PeripheralManifest") from exc
 
 
-def parse_player_ready(line: str, expected_session_id: str | None = None) -> str:
-    """Validate the Human Player READY payload without exposing Console data."""
-    if not isinstance(line, str) or not line.startswith("READY "):
-        raise ValueError("Human Player did not provide a READY line")
-    try:
-        payload = _strict_ready_json(line[6:])
-        if (not isinstance(payload, dict) or set(payload) != {"session_id"}
-                or type(payload["session_id"]) is not str or not payload["session_id"]):
-            raise ValueError("Human Player READY fields are invalid")
-        if (expected_session_id is not None
-                and payload["session_id"] != expected_session_id):
-            raise ValueError("Human Player READY session does not match Console")
-        return payload["session_id"]
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("Human Player READY is malformed") from exc
-
-
-def _queue_console_output(source, lines: queue.Queue) -> None:
+def _queue_output(source, lines: queue.Queue) -> None:
     try:
         for line in source:
             lines.put(line)
@@ -120,7 +91,7 @@ def _queue_console_output(source, lines: queue.Queue) -> None:
         lines.put(_OUTPUT_END)
 
 
-def _pump_queued_output(lines: queue.Queue, destination) -> None:
+def _pump_output(lines: queue.Queue, destination) -> None:
     while True:
         line = lines.get()
         if line is _OUTPUT_END:
@@ -140,9 +111,8 @@ def _wait_process_ready(process: subprocess.Popen, timeout: float, parser,
         raise RuntimeError(f"{label} stdout is unavailable")
     destination = sys.stdout if output is None else output
     lines: queue.Queue = queue.Queue()
-    threading.Thread(target=_queue_console_output, args=(source, lines),
-                     name=f"v2-demo-{label.lower().replace(' ', '-')}-output",
-                     daemon=True).start()
+    threading.Thread(target=_queue_output, args=(source, lines),
+                     name=f"v2-demo-{label.lower()}-output", daemon=True).start()
     deadline = time.monotonic() + timeout
     while True:
         if shutdown_event is not None and shutdown_event.is_set():
@@ -163,26 +133,46 @@ def _wait_process_ready(process: subprocess.Popen, timeout: float, parser,
                 ready = parser(line)
             except ValueError as exc:
                 raise RuntimeError(f"{label} READY is malformed: {exc}") from exc
-            threading.Thread(target=_pump_queued_output, args=(lines, destination),
-                              name=f"v2-demo-{label.lower().replace(' ', '-')}-output-pump",
-                              daemon=True).start()
+            threading.Thread(target=_pump_output, args=(lines, destination),
+                             name=f"v2-demo-{label.lower()}-output-pump", daemon=True).start()
             return ready
 
 
 def wait_console_ready(process: subprocess.Popen, timeout: float = CONSOLE_READY_TIMEOUT,
-                       output=None, shutdown_event: threading.Event | None = None) -> PeripheralManifest:
-    """Read and validate public Console READY while continuously draining stdout."""
+                        output=None, shutdown_event: threading.Event | None = None) -> PeripheralManifest:
+    """Read and validate public Console READY while draining its output."""
     return _wait_process_ready(process, timeout, parse_console_ready, "Console", output,
                                shutdown_event)
 
 
-def wait_player_ready(process: subprocess.Popen, timeout: float = PLAYER_READY_TIMEOUT,
-                      output=None, shutdown_event: threading.Event | None = None,
-                      expected_session_id: str | None = None) -> str:
-    """Wait for the external Player READY and keep its output visible afterwards."""
-    parser = lambda line: parse_player_ready(line, expected_session_id)
-    return _wait_process_ready(process, timeout, parser, "Human Player", output,
-                               shutdown_event)
+def wait_state_capability(path: str | Path, timeout: float = CONSOLE_READY_TIMEOUT,
+                          shutdown_event: threading.Event | None = None,
+                          expected_session_id: str | None = None) -> DisplayManifest:
+    """Read the private state capability emitted for this privileged shell."""
+    deadline = time.monotonic() + timeout
+    path = Path(path)
+    while True:
+        if shutdown_event is not None and shutdown_event.is_set():
+            raise KeyboardInterrupt
+        capability = None
+        try:
+            capability = DisplayManifest.from_file(path)
+        except FileNotFoundError:
+            capability = None
+        except (OSError, ValueError) as exc:
+            if path.exists():
+                raise RuntimeError(f"embedded state capability is malformed: {exc}") from exc
+        if capability is not None:
+            if capability.mode != "screen":
+                raise ValueError("embedded state capability is not a screen capability")
+            if (expected_session_id is not None and
+                    capability.session_id != expected_session_id):
+                raise ValueError("embedded state capability session does not match Console")
+            return capability
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Console did not emit embedded state capability")
+        time.sleep(min(0.01, remaining))
 
 
 def _kill_console_process_group(process: subprocess.Popen) -> None:
@@ -193,7 +183,6 @@ def _kill_console_process_group(process: subprocess.Popen) -> None:
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
-        # The process may have exited between wait() and this cleanup.
         pass
 
 
@@ -207,8 +196,6 @@ def _stop_process(process: subprocess.Popen | None, timeout: float = 5.0) -> int
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        # kill() makes the expected child lifecycle explicit; killpg() also
-        # covers Engine, Controller, or Display if Console is stuck.
         process.kill()
         _kill_console_process_group(process)
         return process.wait()
@@ -219,25 +206,161 @@ def stop_console(process: subprocess.Popen | None, timeout: float = 5.0) -> int 
     return _stop_process(process, timeout)
 
 
-def stop_player(process: subprocess.Popen | None, timeout: float = 5.0) -> int | None:
-    """Gracefully stop Human Player and its process group."""
-    return _stop_process(process, timeout)
+class DemoShell:
+    """The sole desktop owner: embedded presentation plus keyboard host."""
+
+    def __init__(self, capability: DisplayManifest, manifest: PeripheralManifest,
+                 *, client=None, pygame_module=None,
+                 shutdown_event: threading.Event | None = None,
+                 console_process=None, client_factory=HumanJoystickClient,
+                 clock=time.monotonic, sleeper=time.sleep):
+        if capability.mode != "screen":
+            raise ValueError("DemoShell requires a screen state capability")
+        if capability.session_id != manifest.session_id:
+            raise ValueError("DemoShell capability session does not match Player session")
+        self.capability = capability
+        self.manifest = manifest
+        self.client = client if client is not None else client_factory(manifest)
+        self.shutdown_event = shutdown_event or threading.Event()
+        self.console_process = console_process
+        self.clock = clock
+        self.sleeper = sleeper
+        self.pygame = pygame_module
+        self.world = None
+        self.window = None
+        self.game_surface = None
+        self.sidebar_surface = None
+        self.renderer = None
+        self.display_service = None
+        self.keyboard = None
+        self.title_font = None
+        self.section_font = None
+        self.body_font = None
+        self._display_initialized = False
+        self._closed = False
+        try:
+            if not self.client.connected:
+                self.client.connect()
+            if self.pygame is None:
+                os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+                import pygame
+                self.pygame = pygame
+            self.world = load_world(capability.world_file)
+            pygame = self.pygame
+            pygame.display.init()
+            pygame.font.init()
+            self._display_initialized = True
+            self.title_font = pygame.font.Font(None, 34)
+            self.section_font = pygame.font.Font(None, 23)
+            self.body_font = pygame.font.Font(None, 22)
+            self.window = pygame.display.set_mode(
+                (self.world.width + SIDEBAR_WIDTH, self.world.height))
+            pygame.display.set_caption("Game2 V2")
+            self.game_surface = pygame.Surface((self.world.width, self.world.height))
+            self.sidebar_surface = pygame.Surface((SIDEBAR_WIDTH, self.world.height))
+            self.renderer = ScreenRenderer(
+                self.world, target_surface=self.game_surface, pygame_module=pygame)
+            self.display_service = DisplayService(
+                capability, world=self.world, renderer=self.renderer)
+            self.keyboard = HumanKeyboardInput(pygame)
+            self.display_service.start()
+        except BaseException:
+            self.close()
+            raise
+
+    def _draw_sidebar(self) -> None:
+        pygame = self.pygame
+        assert pygame is not None
+        assert self.sidebar_surface is not None
+        assert self.display_service is not None
+        assert self.title_font is not None
+        assert self.section_font is not None
+        assert self.body_font is not None
+        self.sidebar_surface.fill((17, 27, 40))
+        bright = (235, 243, 247)
+        accent = (255, 218, 82)
+        lines = (
+            ("Game2 V2", self.title_font, 34, bright),
+            ("CONTROLS", self.section_font, 112, accent),
+            ("D / Right Arrow   Move", self.body_font, 151, bright),
+            ("Space / Up / W    Jump", self.body_font, 181, bright),
+            ("Player: Connected" if self.client.connected else "Player: Disconnected",
+             self.body_font, 274, bright if self.client.connected else (245, 118, 118)),
+            ("State:", self.section_font, 338, accent),
+        )
+        state = self.display_service.latest_state
+        status = terminal_label(state.terminal) if state and state.terminal else "Running"
+        lines += ((status, self.body_font, 372, bright),)
+        for text, font, y, color in lines:
+            rendered = font.render(text, True, color)
+            self.sidebar_surface.blit(rendered, (24, y))
+
+    def run(self) -> int:
+        """Run one 120 Hz input / 60 Hz presentation loop."""
+        assert self.pygame is not None
+        assert self.world is not None
+        assert self.window is not None
+        assert self.game_surface is not None
+        assert self.sidebar_surface is not None
+        assert self.display_service is not None
+        assert self.keyboard is not None
+        pygame = self.pygame
+        input_period = 1 / INPUT_HZ
+        render_period = 1 / RENDER_HZ
+        next_input = self.clock()
+        next_render = next_input
+        while True:
+            if self.shutdown_event.is_set():
+                return 0
+            if self.console_process is not None and self.console_process.poll() is not None:
+                return 0 if self.console_process.returncode == 0 else 1
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return 0
+                self.keyboard.handle_event(event)
+
+            now = self.clock()
+            while now >= next_input:
+                if self.client.failed:
+                    raise ConnectionError(f"Joystick transport failed: {self.client.error}")
+                state = self.keyboard.state
+                self.client.send_state(state.right, state.jump)
+                next_input += input_period
+                if next_input < now - input_period * 4:
+                    next_input = now + input_period
+            if now >= next_render:
+                self.display_service.present_latest()
+                self._draw_sidebar()
+                self.window.blit(self.game_surface, (0, 0))
+                self.window.blit(self.sidebar_surface, (self.world.width, 0))
+                pygame.display.flip()
+                next_render += render_period
+                if next_render < now - render_period * 4:
+                    next_render = now + render_period
+            delay = min(next_input, next_render) - self.clock()
+            if delay > 0:
+                self.sleeper(delay)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.display_service is not None:
+            self.display_service.close()
+        if self.client is not None:
+            self.client.close()
+        if self._display_initialized and self.pygame is not None:
+            self.pygame.quit()
 
 
 def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
-             shutdown_timeout: float = 5.0,
-             poll_interval: float = 1 / 60,
-             startup_timeout: float = CONSOLE_READY_TIMEOUT,
-             player_startup_timeout: float = PLAYER_STARTUP_TIMEOUT) -> int:
-    """Run Console plus Human Player until the operator stops the session."""
+             shell_factory=DemoShell, shutdown_timeout: float = 5.0,
+             startup_timeout: float = CONSOLE_READY_TIMEOUT) -> int:
+    """Run Console and the in-process Human Player inside one desktop window."""
     if shutdown_timeout <= 0:
         raise ValueError("shutdown timeout must be positive")
-    if poll_interval < 0:
-        raise ValueError("poll interval must not be negative")
     if startup_timeout <= 0:
         raise ValueError("startup timeout must be positive")
-    if player_startup_timeout <= 0:
-        raise ValueError("Player READY timeout must be positive")
 
     shutdown_requested = threading.Event()
 
@@ -247,68 +370,35 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
     previous_int = signal.signal(signal.SIGINT, request_shutdown)
     previous_term = signal.signal(signal.SIGTERM, request_shutdown)
     process = None
-    player = None
+    shell = None
     temporary_directory = None
     status = 1
     try:
-        process = launch_console(popen_factory=popen_factory, capture_output=True)
-        try:
-            manifest = wait_console_ready(process, timeout=startup_timeout,
-                                          shutdown_event=shutdown_requested)
-        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
-            print(f"ERROR Console startup failed: {exc}", file=sys.stderr, flush=True)
-            return 1
-
         temporary_directory = tempfile.TemporaryDirectory(prefix="game2-v2-demo-")
-        manifest_path = Path(temporary_directory.name) / "peripheral-manifest.json"
-        try:
-            manifest.write(manifest_path)
-        except OSError as exc:
-            print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
-            return 1
-        try:
-            player = launch_player(manifest_path, popen_factory=popen_factory)
-        except OSError as exc:
-            print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
-            return 1
-        try:
-            wait_player_ready(player, timeout=player_startup_timeout,
-                              shutdown_event=shutdown_requested,
-                              expected_session_id=manifest.session_id)
-        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
-            print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
-            return 1
-        player_detached = False
-
-        while True:
-            if process.poll() is not None:
-                status = process.wait()
-                if player is not None and player.poll() is None:
-                    stop_player(player, shutdown_timeout)
-                break
-            if not player_detached and player is not None and player.poll() is not None:
-                player_detached = True
-                print("Human Player detached", flush=True)
-            if shutdown_requested.is_set():
-                stop_player(player, shutdown_timeout)
-                stop_console(process, shutdown_timeout)
-                status = 0
-                break
-            time.sleep(poll_interval)
+        capability_path = Path(temporary_directory.name) / "embedded-state-capability.json"
+        process = launch_console(popen_factory=popen_factory, capture_output=True,
+                                 state_capability_path=capability_path)
+        manifest = wait_console_ready(process, timeout=startup_timeout,
+                                      shutdown_event=shutdown_requested)
+        capability = wait_state_capability(capability_path, timeout=startup_timeout,
+                                            shutdown_event=shutdown_requested,
+                                            expected_session_id=manifest.session_id)
+        shell = shell_factory(capability, manifest, shutdown_event=shutdown_requested,
+                              console_process=process)
+        status = shell.run()
     except KeyboardInterrupt:
-        # This also covers an interrupted blocking call in a host terminal.
         status = 0
-    except BaseException:
-        raise
+    except (OSError, RuntimeError, TimeoutError, ValueError, ConnectionError) as exc:
+        print(f"ERROR Game2 V2 demo failed: {exc}", file=sys.stderr, flush=True)
+        status = 1
     finally:
-        if player is not None and player.poll() is None:
-            stop_player(player, shutdown_timeout)
+        if shell is not None:
+            shell.close()
         if process is not None and process.poll() is None:
             stop_console(process, shutdown_timeout)
-        for child in (process, player):
-            output_stream = getattr(child, "stdout", None) if child is not None else None
-            if output_stream is not None:
-                output_stream.close()
+        output_stream = getattr(process, "stdout", None) if process is not None else None
+        if output_stream is not None:
+            output_stream.close()
         if temporary_directory is not None:
             temporary_directory.cleanup()
         signal.signal(signal.SIGINT, previous_int)
@@ -317,11 +407,11 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Temporary Game2 V2 gameplay demo")
+    parser = argparse.ArgumentParser(description="Temporary single-window Game2 V2 demo")
     parser.add_argument("--shutdown-timeout", type=float, default=5.0,
-                        help="seconds to wait for each process before hard kill")
+                        help="seconds to wait for Console before hard kill")
     parser.add_argument("--startup-timeout", type=float, default=CONSOLE_READY_TIMEOUT,
-                        help="seconds to wait for public Console READY")
+                        help="seconds to wait for Console READY and state capability")
     args = parser.parse_args(argv)
     return run_demo(shutdown_timeout=args.shutdown_timeout,
                     startup_timeout=args.startup_timeout)

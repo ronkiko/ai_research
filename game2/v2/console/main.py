@@ -70,7 +70,8 @@ def _launch_ready(command, root: str, log, label: str):
     return process
 
 
-def run_session(config_path: str | Path) -> tuple[int, dict]:
+def run_session(config_path: str | Path,
+                state_capability_path: str | Path | None = None) -> tuple[int, dict]:
     """Run the Console and its own subsystems, without attaching a Player."""
     config_path = Path(config_path).resolve()
     config = SessionConfig.from_file(config_path)
@@ -105,7 +106,13 @@ def run_session(config_path: str | Path) -> tuple[int, dict]:
     if config.enable_display:
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,
-                        config.display_mode).write(display_manifest_path)
+                         config.display_mode).write(display_manifest_path)
+    if state_capability_path is not None:
+        if not config.enable_state or internal.engine_state is None:
+            raise ValueError("embedded state capability requires Engine STATE")
+        world_file = str(config.map_path(config_path).resolve())
+        DisplayManifest(session_id, internal.engine_state, world_file,
+                         "screen").write(state_capability_path)
     peripheral.write(peripheral_path)
 
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
@@ -194,8 +201,10 @@ def run_session(config_path: str | Path) -> tuple[int, dict]:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Compose and supervise Game2 V2 console subsystems")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--state-capability",
+                        help="private embedded-demo STATE capability output path")
     args = parser.parse_args(argv)
-    status, summary = run_session(args.config)
+    status, summary = run_session(args.config, args.state_capability)
     if summary:
         print("session_id=" + summary.get("session_id", "unknown"))
         print("console=ready")

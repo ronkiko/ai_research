@@ -1,0 +1,12 @@
+{
+  "map": "../world/maps/pit.json",
+  "clock_mode": "realtime",
+  "physics_hz": 120,
+  "controller": "default",
+  "enable_display": false,
+  "display_mode": "screen",
+  "enable_state": true,
+  "enable_telemetry": true,
+  "enable_events": true,
+  "session_ticks": 1296000
+}

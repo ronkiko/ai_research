@@ -184,8 +184,10 @@ python -m unittest discover -s game2 -p 'test*.py' -v
 ```
 
 `demo.sh` is temporary developer tooling. It starts the realtime V2 Console with
-`screen-demo.json`, waits for its public `PeripheralManifest`, and then starts a
-separate Human Keyboard Player. The Player controls are:
+`embedded-demo.json`, waits for its public `PeripheralManifest` and a private
+operator-only STATE capability, then hosts the Human keyboard adapter in-process.
+The demo owns exactly one native Pygame window: a 1280x768 game viewport plus a
+sidebar. The Player controls are:
 
 ```text
 RIGHT / D    move right
@@ -193,10 +195,10 @@ SPACE / Up / W jump
 Ctrl+C       stop the whole demo
 ```
 
-The Player sends only the public Joystick contract. Closing its window detaches
-the Player while the Engine and Screen continue running with neutral input.
-The terminal supervisor stops both external processes on `Ctrl+C`. This is not
-the final boot or startup design.
+Keyboard input still sends only the public Joystick contract. Engine STATE is
+consumed separately by the embedded Screen presentation and is never passed to
+the Human Player. Closing the native window stops the temporary shell and
+Console. This is not the final boot or startup design.
 
 Engine terminal state is authoritative. After `success`, `dead`, or `timeout`,
 the physical episode is frozen and new gameplay actions are rejected, while the
@@ -205,11 +207,11 @@ future explicit contract.
 
 The future startup flow will provide a boot screen, lifecycle/startup selection,
 Console startup, and then a Game session with Player/Trainer or an experiment.
-The temporary gameplay flow connects a Human Keyboard Player through the
+The temporary gameplay flow connects a Human keyboard adapter through the
 existing Player-facing Joystick contract:
 
 ```text
-Human Keyboard Player -> Joystick -> Controller -> Engine
+HumanKeyboardInput -> HumanJoystickClient -> Joystick -> Controller -> Engine
 ```
 
 The current V2 foundation intentionally does not implement an MLP, Trainer,

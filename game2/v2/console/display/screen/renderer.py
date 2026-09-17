@@ -39,27 +39,35 @@ class ScreenRenderer:
 
     FPS = 60
 
-    def __init__(self, world: WorldDefinition, fps: int = FPS):
+    def __init__(self, world: WorldDefinition, fps: int = FPS,
+                 target_surface=None, pygame_module=None):
         if type(fps) is not int or fps <= 0:
             raise ValueError("screen fps must be a positive integer")
         self.world = world
         self.width, self.height = world.width, world.height
         self.fps = fps
-        self.pygame = None
-        self.screen = None
+        self.owns_display = target_surface is None
+        self.target_surface = target_surface
+        self.pygame = pygame_module
+        self.screen = target_surface
         self.static_scene = None
         self.clock = None
         self._closed = False
         self._terminal_fonts = None
         try:
-            import os
-            os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-            import pygame
-            self.pygame = pygame
-            pygame.display.init()
-            self.screen = pygame.display.set_mode((self.width, self.height))
-            pygame.display.set_caption("Game2 V2")
-            self.clock = pygame.time.Clock()
+            if self.pygame is None:
+                import os
+                os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+                import pygame
+                self.pygame = pygame
+            pygame = self._pygame()
+            if self.owns_display:
+                pygame.display.init()
+                self.screen = pygame.display.set_mode((self.width, self.height))
+                pygame.display.set_caption("Game2 V2")
+                self.clock = pygame.time.Clock()
+            elif self.screen is None or self.screen.get_size() != (self.width, self.height):
+                raise ValueError("embedded screen target must match World dimensions")
             self.static_scene = self._build_static_scene()
         except BaseException:
             self.close()
@@ -70,7 +78,8 @@ class ScreenRenderer:
         if not path.is_file():
             raise FileNotFoundError(f"screen asset is missing: {path}")
         pygame = self._pygame()
-        return pygame.image.load(str(path)).convert_alpha()
+        image = pygame.image.load(str(path))
+        return image.convert_alpha() if self._has_display_surface() else image
 
     def _scale_pixel_art(self, source, width: int, height: int):
         """Scale without filtering so copied pixel-art keeps hard edges."""
@@ -81,9 +90,16 @@ class ScreenRenderer:
             raise RuntimeError("Pygame is not initialized")
         return self.pygame
 
+    def _has_display_surface(self) -> bool:
+        display = getattr(self._pygame(), "display", None)
+        get_surface = getattr(display, "get_surface", None)
+        return bool(get_surface and get_surface() is not None)
+
     def _build_background(self):
         pygame = self._pygame()
-        background = pygame.Surface((self.width, self.height)).convert()
+        background = pygame.Surface((self.width, self.height))
+        if self._has_display_surface():
+            background = background.convert()
         background.fill((80, 130, 200))
         scale = self.world.tile_size // SOURCE_TILE_SIZE
         for name in ("BG1.png", "BG2.png", "BG3.png"):
@@ -234,7 +250,8 @@ class ScreenRenderer:
         pygame.draw.rect(self.screen, (205, 241, 247), visor)
         pygame.draw.rect(self.screen, (17, 36, 57), rect, 3)
         self._draw_terminal_overlay(view.terminal)
-        pygame.display.flip()
+        if self.owns_display:
+            pygame.display.flip()
         return self.screen
 
     def _draw_terminal_overlay(self, terminal: str | None) -> None:
@@ -246,19 +263,15 @@ class ScreenRenderer:
         if not pygame.font.get_init():
             pygame.font.init()
         if self._terminal_fonts is None:
-            self._terminal_fonts = (pygame.font.Font(None, 74),
-                                    pygame.font.Font(None, 24))
-        title_font, subtitle_font = self._terminal_fonts
-        panel_width = min(self.width - 80, 640)
-        panel_height = min(self.height - 80, 190)
+            self._terminal_fonts = (pygame.font.Font(None, 74),)
+        title_font = self._terminal_fonts[0]
+        panel_width = max(1, min(self.width - 16, 640))
+        panel_height = max(1, min(self.height - 16, 190))
         panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
         panel.fill((8, 18, 30, 214))
         pygame.draw.rect(panel, (224, 235, 238, 225), panel.get_rect(), 2)
         title = title_font.render(label, True, (255, 247, 205))
-        subtitle = subtitle_font.render("Press Ctrl+C to exit demo", True,
-                                       (218, 230, 235))
         panel.blit(title, title.get_rect(center=(panel_width // 2, panel_height // 2 - 24)))
-        panel.blit(subtitle, subtitle.get_rect(center=(panel_width // 2, panel_height // 2 + 42)))
         self.screen.blit(panel, panel.get_rect(center=(self.width // 2, self.height // 2)))
 
     render = present
@@ -266,20 +279,22 @@ class ScreenRenderer:
     def poll_close(self) -> bool:
         if self._closed:
             return True
+        if not self.owns_display:
+            return False
         pygame = self._pygame()
         return any(event.type == pygame.QUIT or
                    (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE)
                    for event in pygame.event.get())
 
     def pace(self) -> None:
-        if self.clock is not None and not self._closed:
+        if self.owns_display and self.clock is not None and not self._closed:
             self.clock.tick(self.fps)
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        if self.pygame is not None:
+        if self.owns_display and self.pygame is not None:
             self.pygame.display.quit()
         self.screen = None
         self.static_scene = None

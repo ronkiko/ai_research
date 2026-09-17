@@ -17,5 +17,9 @@ WorldDefinition + latest WorldState
 headless semantic raster. Neither presentation controls Engine, receives
 Joystick input, reads TELEMETRY/EVENTS, or changes World/Physics.
 
+`DisplayService` exposes the same latest-state reader as `start()`,
+`present_latest()`, and `close()` for the temporary embedded shell; `run()`
+remains the standalone process wrapper.
+
 Process entrypoint: `main.py`; runtime: `display.py`. Local documentation is in
 `doc/`, `screen/`, and `vision/`.

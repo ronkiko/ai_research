@@ -13,5 +13,6 @@ independently of Engine physics cadence, and renders only a newer latest STATE;
 it never replays a backlog.
 
 When authoritative STATE contains `success`, `dead`, or `timeout`, Screen draws a
-simple result overlay over the frozen scene (`VICTORY`, `GAME OVER`, or `TIME OUT`)
-with a temporary-demo Ctrl+C hint. The overlay never sends commands.
+simple result overlay over the frozen scene (`VICTORY`, `GAME OVER`, or `TIME OUT`).
+The overlay never sends commands. In embedded mode the shell, rather than Screen,
+owns `QUIT`, focus, keyboard events, and the display flip.

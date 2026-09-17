@@ -42,6 +42,7 @@ class DisplayService:
         self._reader_done = threading.Event()
         self._reader_thread: threading.Thread | None = None
         self._state_socket: socket.socket | None = None
+        self._closed = False
         self.renderer = renderer if renderer is not None else self._create_renderer()
 
     def _create_renderer(self):
@@ -90,7 +91,7 @@ class DisplayService:
                 return None
             return self._latest_view
 
-    def _present_latest(self) -> bool:
+    def present_latest(self) -> bool:
         view = self._next_view()
         if view is None:
             return False
@@ -100,18 +101,20 @@ class DisplayService:
         self.rendered_frames += 1
         return True
 
+    _present_latest = present_latest
+
     def consume(self, snapshot: dict) -> bool:
         """Ingest and immediately present one in-process STATE payload."""
         if not self.ingest(snapshot):
             return False
-        self._present_latest()
+        self.present_latest()
         return True
 
     def consume_state(self, state) -> bool:
         """In-process helper for an immutable state-shaped value."""
         if not self.ingest_state(state):
             return False
-        self._present_latest()
+        self.present_latest()
         return True
 
     def _poll_close(self) -> bool:
@@ -142,20 +145,32 @@ class DisplayService:
                 return
             self._state_condition.wait(timeout)
 
+    def start(self) -> None:
+        """Start the latest-state reader without starting a presentation loop."""
+        if self._closed:
+            raise RuntimeError("DisplayService is closed")
+        if self._reader_thread is not None:
+            raise RuntimeError("DisplayService is already started")
+        try:
+            self._state_socket = _connect(self.manifest.engine_state)
+            state_socket = self._state_socket
+            self._reader_thread = threading.Thread(
+                target=self._read_states, args=(state_socket,),
+                name="v2-display-state-reader", daemon=True)
+            self._reader_thread.start()
+        except BaseException:
+            self.close()
+            raise
+
     def run(self) -> int:
-        self._state_socket = _connect(self.manifest.engine_state)
-        state_socket = self._state_socket
-        self._reader_thread = threading.Thread(
-            target=self._read_states, args=(state_socket,),
-            name="v2-display-state-reader", daemon=True)
-        self._reader_thread.start()
+        self.start()
         print("READY " + json.dumps({"session_id": self.manifest.session_id,
                                      "mode": self.manifest.mode}, sort_keys=True), flush=True)
         try:
             while True:
                 if self.manifest.mode == "screen" and self._poll_close():
                     return 0
-                self._present_latest()
+                self.present_latest()
                 if self._reader_done.is_set() and self._next_view() is None:
                     return 0
                 if self.manifest.mode == "screen":
@@ -167,18 +182,24 @@ class DisplayService:
         except (EOFError, OSError, socket.timeout, ValueError):
             return 0
         finally:
-            self._reader_stop.set()
-            with self._state_condition:
-                self._state_condition.notify_all()
-            if self._state_socket:
-                try:
-                    self._state_socket.close()
-                except OSError:
-                    pass
-            if self._reader_thread and self._reader_thread is not threading.current_thread():
-                self._reader_thread.join(timeout=1)
-            close = getattr(self.renderer, "close", None)
-            if close:
-                close()
+            self.close()
             print(f"DIAGNOSTICS frames_received={self.frames_received} "
                   f"frames_rendered={self.rendered_frames}", flush=True)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._reader_stop.set()
+        with self._state_condition:
+            self._state_condition.notify_all()
+        if self._state_socket:
+            try:
+                self._state_socket.close()
+            except OSError:
+                pass
+        if self._reader_thread and self._reader_thread is not threading.current_thread():
+            self._reader_thread.join(timeout=1)
+        close = getattr(self.renderer, "close", None)
+        if close:
+            close()
