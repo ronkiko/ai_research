@@ -224,71 +224,7 @@ def stop_player(process: subprocess.Popen | None, timeout: float = 5.0) -> int |
     return _stop_process(process, timeout)
 
 
-def _set_player_status(control, attached: bool) -> None:
-    setter = getattr(control, "set_player_attached", None)
-    if setter:
-        setter(attached)
-
-
-class DemoControl:
-    """A deliberately tiny, temporary control surface with one action."""
-
-    SIZE = (360, 180)
-    BUTTON = (96, 96, 168, 52)
-
-    def __init__(self):
-        os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-        import pygame
-
-        self.pygame = pygame
-        pygame.display.init()
-        pygame.font.init()
-        self.surface = pygame.display.set_mode(self.SIZE)
-        pygame.display.set_caption("Game2 V2 Demo")
-        self.title_font = pygame.font.Font(None, 30)
-        self.button_font = pygame.font.Font(None, 26)
-        self.button = pygame.Rect(self.BUTTON)
-        self.player_attached = True
-        self.closed = False
-
-    def set_player_attached(self, attached: bool) -> None:
-        self.player_attached = attached
-
-    def poll_exit(self) -> bool:
-        pygame = self.pygame
-        return any(
-            event.type == pygame.QUIT
-            or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE)
-            or (event.type == pygame.MOUSEBUTTONUP and event.button == 1
-                and self.button.collidepoint(event.pos))
-            for event in pygame.event.get()
-        )
-
-    def draw(self) -> None:
-        pygame = self.pygame
-        self.surface.fill((20, 28, 42))
-        title = self.title_font.render("Game2 V2 Demo", True, (231, 239, 247))
-        self.surface.blit(title, title.get_rect(center=(self.SIZE[0] // 2, 42)))
-        status = "Human Player: attached" if self.player_attached else "Human Player: detached"
-        status_surface = self.button_font.render(status, True, (231, 239, 247))
-        self.surface.blit(status_surface,
-                          status_surface.get_rect(center=(self.SIZE[0] // 2, 78)))
-        pygame.draw.rect(self.surface, (49, 105, 145), self.button, border_radius=8)
-        pygame.draw.rect(self.surface, (133, 205, 226), self.button, width=2,
-                         border_radius=8)
-        label = self.button_font.render("Exit", True, (245, 250, 252))
-        self.surface.blit(label, label.get_rect(center=self.button.center))
-        pygame.display.flip()
-
-    def close(self) -> None:
-        if self.closed:
-            return
-        self.closed = True
-        self.pygame.display.quit()
-
-
 def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
-             control_factory: Callable[[], DemoControl] | None = None,
              shutdown_timeout: float = 5.0,
              poll_interval: float = 1 / 60,
              startup_timeout: float = CONSOLE_READY_TIMEOUT,
@@ -312,7 +248,6 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
     previous_term = signal.signal(signal.SIGTERM, request_shutdown)
     process = None
     player = None
-    control = None
     temporary_directory = None
     status = 1
     try:
@@ -343,28 +278,22 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
         except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
             print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
             return 1
-        player_attached = True
+        player_detached = False
 
-        control = (control_factory or DemoControl)()
-        _set_player_status(control, player_attached)
-        if not player_attached:
-            print("Human Player detached", flush=True)
         while True:
             if process.poll() is not None:
                 status = process.wait()
                 if player is not None and player.poll() is None:
                     stop_player(player, shutdown_timeout)
                 break
-            if player_attached and player is not None and player.poll() is not None:
-                player_attached = False
-                _set_player_status(control, False)
+            if not player_detached and player is not None and player.poll() is not None:
+                player_detached = True
                 print("Human Player detached", flush=True)
-            if shutdown_requested.is_set() or control.poll_exit():
+            if shutdown_requested.is_set():
                 stop_player(player, shutdown_timeout)
                 stop_console(process, shutdown_timeout)
                 status = 0
                 break
-            control.draw()
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         # This also covers an interrupted blocking call in a host terminal.
@@ -380,8 +309,6 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
             output_stream = getattr(child, "stdout", None) if child is not None else None
             if output_stream is not None:
                 output_stream.close()
-        if control is not None:
-            control.close()
         if temporary_directory is not None:
             temporary_directory.cleanup()
         signal.signal(signal.SIGINT, previous_int)

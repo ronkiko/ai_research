@@ -326,10 +326,9 @@ class ScreenRendererTests(unittest.TestCase):
         for name in ("BG1.png", "BG2.png", "BG3.png", "Tileset.png", "Decors.png"):
             self.assertTrue((renderer_source.parent / "assets" / name).is_file(), name)
 
-    def test_pygame_import_is_confined_to_screen_or_demo_control(self):
+    def test_pygame_import_is_confined_to_screen_or_human_player(self):
         for source in V2.rglob("*.py"):
-            if ("tests" in source.parts or "screen" in source.parts
-                    or "human" in source.parts or source == V2 / "demo.py"):
+            if "tests" in source.parts or "screen" in source.parts or "human" in source.parts:
                 continue
             text = source.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^\s*(?:from|import)\s+pygame(?:\s|$)",

@@ -190,13 +190,13 @@ separate Human Keyboard Player. The Player controls are:
 ```text
 RIGHT / D    move right
 SPACE / Up / W jump
-[Exit]       stop the whole demo
+Ctrl+C       stop the whole demo
 ```
 
 The Player sends only the public Joystick contract. Closing its window detaches
 the Player while the Engine and Screen continue running with neutral input.
-The separate `[Exit]` control stops both external processes. This is not the
-final boot or startup design.
+The terminal supervisor stops both external processes on `Ctrl+C`. This is not
+the final boot or startup design.
 
 The future startup flow will provide a boot screen, lifecycle/startup selection,
 Console startup, and then a Game session with Player/Trainer or an experiment.
