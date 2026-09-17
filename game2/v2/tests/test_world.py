@@ -177,15 +177,13 @@ class PhysicsParityTests(unittest.TestCase):
             [V1Surface(*surface) for surface in surfaces],
             V1PhysicsConfig(),
         )
-        v2_world = PhysicsWorld(
-            v2_body,
-            [Surface(*surface) for surface in surfaces],
-            PhysicsConfig(),
-        )
+        v2_world = PhysicsWorld([Surface(*surface) for surface in surfaces],
+                                PhysicsConfig())
+        v2_world.initialize(v2_body)
         self.assertEqual(_state(v1_body), _state(v2_body))
         for tick, (move, jump) in enumerate(actions, 1):
             v1_world.step(move=move, jump=jump)
-            v2_world.step(move=move, jump=jump)
+            v2_world.step(v2_body, move=move, jump=jump)
             self.assertEqual(_state(v1_body), _state(v2_body),
                              f"physical state diverged at tick {tick}")
 

@@ -82,11 +82,14 @@ class ControllerService:
                     continue
                 if message.get("type") != "telemetry":
                     continue
+                actors = message.get("actors")
+                if (not isinstance(actors, list) or
+                        not any(isinstance(actor, dict) and
+                                actor.get("actor_id") == self.manifest.actor_id
+                                for actor in actors)):
+                    continue
                 with self.lock:
-                    previous_episode = self.latest.get("episode") if self.latest else None
                     self.latest = message
-                    if message.get("episode") != previous_episode:
-                        self.next_target = 0
                     self.telemetry_ready.set()
         except (EOFError, OSError, ValueError):
             self.engine_closed.set()
@@ -154,8 +157,9 @@ class ControllerService:
                 target_world_tick = max(current_world_tick + self.lead_ticks,
                                         self.next_target + 1)
                 self.next_target = target_world_tick + self.hold_ticks - 1
-                command = ActionCommand(state.sequence, target_world_tick, self.hold_ticks,
-                                         state.right, state.jump)
+                command = ActionCommand(self.manifest.actor_id, state.sequence,
+                                        target_world_tick, self.hold_ticks,
+                                        state.right, state.jump)
                 try:
                     assert self.engine_control is not None
                     self.pending[command.sequence] = (envelope.client_id, state.sequence)

@@ -16,7 +16,7 @@ VISION_FIELDS = frozenset({
 })
 PIXEL_FORMAT = "u8-semantic"
 SEMANTIC_CLASS_MIN = 0
-SEMANTIC_CLASS_MAX = 4
+SEMANTIC_CLASS_MAX = 5
 _ALLOWED_SEMANTIC_CLASSES = bytes(range(SEMANTIC_CLASS_MIN,
                                         SEMANTIC_CLASS_MAX + 1))
 

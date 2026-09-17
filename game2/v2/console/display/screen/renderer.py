@@ -45,12 +45,14 @@ class ScreenRenderer:
     FPS = 60
 
     def __init__(self, world: WorldDefinition, fps: int = FPS,
-                 target_surface=None, pygame_module=None):
+                 target_surface=None, pygame_module=None,
+                 self_actor_id: str | None = None):
         if type(fps) is not int or fps <= 0:
             raise ValueError("screen fps must be a positive integer")
         self.world = world
         self.width, self.height = world.width, world.height
         self.fps = fps
+        self.self_actor_id = self_actor_id
         self.owns_display = target_surface is None
         self.target_surface = target_surface
         self.pygame = pygame_module
@@ -235,16 +237,19 @@ class ScreenRenderer:
                 raise ValueError("ScreenRenderer is bound to a different world")
             candidate = state
         if isinstance(candidate, DisplayState):
-            return DisplayState.from_state(candidate, candidate.session_id, self.world)
+            return DisplayState.from_state(candidate, candidate.session_id, self.world,
+                                           self.self_actor_id)
         if isinstance(candidate, Mapping):
             session_id = candidate.get("session_id")
             if not isinstance(session_id, str):
                 raise ValueError("STATE session_id is required")
-            return DisplayState.from_payload(candidate, session_id, self.world)
+            return DisplayState.from_payload(candidate, session_id, self.world,
+                                             self.self_actor_id)
         session_id = getattr(candidate, "session_id", None)
         if not isinstance(session_id, str):
             raise ValueError("state session_id is required")
-        return DisplayState.from_state(candidate, session_id, self.world)
+        return DisplayState.from_state(candidate, session_id, self.world,
+                                       self.self_actor_id)
 
     def present(self, world_or_state, state=None):
         if self._closed or self.screen is None:
@@ -254,20 +259,28 @@ class ScreenRenderer:
         if self.static_scene is None:
             raise RuntimeError("static scene is not initialized")
         self.screen.blit(self.static_scene, (0, 0))
-        rect = pygame.Rect(round(view.avatar.x), round(view.avatar.y),
+        for actor in view.other_actors:
+            self._draw_actor(actor, (145, 91, 198) if actor.alive else (190, 54, 64))
+        if view.self_actor is not None:
+            self._draw_actor(view.self_actor,
+                             (42, 145, 224) if view.self_actor.alive else (190, 54, 64))
+        self._draw_terminal_overlay(view.self_actor.result if view.self_actor else None)
+        if self.owns_display:
+            pygame.display.flip()
+        return self.screen
+
+    def _draw_actor(self, actor, color) -> None:
+        pygame = self._pygame()
+        assert self.screen is not None
+        rect = pygame.Rect(round(actor.x), round(actor.y),
                            self.world.spawn.width, self.world.spawn.height)
-        color = (42, 145, 224) if view.avatar.alive else (190, 54, 64)
         pygame.draw.rect(self.screen, (17, 36, 57), rect)
         inner = rect.inflate(-8, -8)
         pygame.draw.rect(self.screen, color, inner)
         visor = pygame.Rect(inner.left + 10, inner.top + 11,
-                           max(8, inner.width - 20), max(5, inner.height // 5))
+                            max(8, inner.width - 20), max(5, inner.height // 5))
         pygame.draw.rect(self.screen, (205, 241, 247), visor)
         pygame.draw.rect(self.screen, (17, 36, 57), rect, 3)
-        self._draw_terminal_overlay(view.terminal)
-        if self.owns_display:
-            pygame.display.flip()
-        return self.screen
 
     def _draw_terminal_overlay(self, terminal: str | None) -> None:
         label = terminal_label(terminal)

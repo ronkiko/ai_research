@@ -11,6 +11,10 @@ from typing import Any, cast
 from ..contracts.manifests import Endpoint
 
 
+COMPATIBILITY_PLAYER_ID = "compatibility-player"
+COMPATIBILITY_ACTOR_ID = "compatibility-actor"
+
+
 def _strict_json(text: str) -> Any:
     def pairs(items):
         result = {}
@@ -174,25 +178,38 @@ class EngineManifest:
     telemetry: Endpoint | None
     events: Endpoint | None
     run_dir: str
+    player_id: str | None = None
+    actor_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.player_id is None) != (self.actor_id is None):
+            raise ValueError("Engine compatibility binding requires player_id and actor_id")
+        for name in ("player_id", "actor_id"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not str or not value):
+                raise ValueError(f"{name} must be a non-empty string or null")
 
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id, "control": self.control.as_dict(),
                 "state": self.state.as_dict() if self.state else None,
                 "telemetry": self.telemetry.as_dict() if self.telemetry else None,
                 "events": self.events.as_dict() if self.events else None,
-                "run_dir": self.run_dir}
+                "run_dir": self.run_dir, "player_id": self.player_id,
+                "actor_id": self.actor_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EngineManifest":
         session_id = _manifest_session(data, {"session_id", "control", "state",
-                                               "telemetry", "events", "run_dir"})
+                                               "telemetry", "events", "run_dir",
+                                               "player_id", "actor_id"})
         run_dir = data["run_dir"]
         if not isinstance(run_dir, str) or not run_dir:
             raise ValueError("run_dir must be non-empty")
         return cls(session_id, cast(Endpoint, _manifest_endpoint(data["control"])),
                    _manifest_endpoint(data["state"], False),
                    _manifest_endpoint(data["telemetry"], False),
-                   _manifest_endpoint(data["events"], False), run_dir)
+                   _manifest_endpoint(data["events"], False), run_dir,
+                   data["player_id"], data["actor_id"])
 
     @classmethod
     def from_file(cls, path: str | Path) -> "EngineManifest":
@@ -211,20 +228,25 @@ class ControllerManifest:
     engine_control: Endpoint
     engine_telemetry: Endpoint
     joystick: Endpoint
+    actor_id: str = COMPATIBILITY_ACTOR_ID
+
+    def __post_init__(self) -> None:
+        if type(self.actor_id) is not str or not self.actor_id:
+            raise ValueError("actor_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id,
                 "engine_control": self.engine_control.as_dict(),
                 "engine_telemetry": self.engine_telemetry.as_dict(),
-                "joystick": self.joystick.as_dict()}
+                "joystick": self.joystick.as_dict(), "actor_id": self.actor_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ControllerManifest":
         session_id = _manifest_session(data, {"session_id", "engine_control",
-                                               "engine_telemetry", "joystick"})
+                                               "engine_telemetry", "joystick", "actor_id"})
         return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_control"])),
                    cast(Endpoint, _manifest_endpoint(data["engine_telemetry"])),
-                   cast(Endpoint, _manifest_endpoint(data["joystick"])))
+                   cast(Endpoint, _manifest_endpoint(data["joystick"])), data["actor_id"])
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ControllerManifest":
@@ -244,6 +266,7 @@ class DisplayManifest:
     world_file: str
     mode: str
     vision: Endpoint | None = None
+    self_actor_id: str = COMPATIBILITY_ACTOR_ID
 
     def __post_init__(self) -> None:
         if not isinstance(self.world_file, str) or not self.world_file:
@@ -252,20 +275,24 @@ class DisplayManifest:
             raise ValueError("mode must be vision or screen")
         if self.mode == "screen" and self.vision is not None:
             raise ValueError("screen Display cannot bind a Vision endpoint")
+        if type(self.self_actor_id) is not str or not self.self_actor_id:
+            raise ValueError("self_actor_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id,
                 "engine_state": self.engine_state.as_dict(),
                 "world_file": self.world_file, "mode": self.mode,
-                "vision": self.vision.as_dict() if self.vision else None}
+                "vision": self.vision.as_dict() if self.vision else None,
+                "self_actor_id": self.self_actor_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DisplayManifest":
         session_id = _manifest_session(data, {"session_id", "engine_state",
-                                               "world_file", "mode", "vision"})
+                                               "world_file", "mode", "vision",
+                                               "self_actor_id"})
         return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_state"])),
                    data["world_file"], data["mode"],
-                   _manifest_endpoint(data["vision"], False))
+                   _manifest_endpoint(data["vision"], False), data["self_actor_id"])
 
     @classmethod
     def from_file(cls, path: str | Path) -> "DisplayManifest":
@@ -282,14 +309,21 @@ class OperatorControlManifest:
 
     session_id: str
     control: Endpoint
+    actor_id: str = COMPATIBILITY_ACTOR_ID
+
+    def __post_init__(self) -> None:
+        if type(self.actor_id) is not str or not self.actor_id:
+            raise ValueError("actor_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"session_id": self.session_id, "control": self.control.as_dict()}
+        return {"session_id": self.session_id, "control": self.control.as_dict(),
+                "actor_id": self.actor_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "OperatorControlManifest":
-        session_id = _manifest_session(data, {"session_id", "control"})
-        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["control"])))
+        session_id = _manifest_session(data, {"session_id", "control", "actor_id"})
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["control"])),
+                   data["actor_id"])
 
     @classmethod
     def from_file(cls, path: str | Path) -> "OperatorControlManifest":
@@ -311,6 +345,6 @@ def new_session_id() -> str:
     return uuid.uuid4().hex
 
 
-__all__ = ["ControllerManifest", "DisplayManifest", "EngineManifest",
+__all__ = ["COMPATIBILITY_ACTOR_ID", "COMPATIBILITY_PLAYER_ID", "ControllerManifest", "DisplayManifest", "EngineManifest",
            "InternalManifest", "OperatorControlManifest", "SessionConfig",
            "allocate_endpoint", "new_session_id"]

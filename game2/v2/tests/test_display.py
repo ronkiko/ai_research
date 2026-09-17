@@ -9,6 +9,7 @@ import time
 import unittest
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from game2.v2.console.config import DisplayManifest, SessionConfig
@@ -17,7 +18,7 @@ from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
 from game2.v2.console.display.screen.renderer import (CHECKER_CELL_SIZE, CHECKER_COLUMNS,
                                                        CHECKER_ROWS, ScreenRenderer,
                                                        terminal_label)
-from game2.v2.console.display.view_state import AvatarView, DisplayState
+from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionFrame, VisionRenderer
 from game2.v2.console.main import run_session
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
@@ -45,7 +46,14 @@ def _tiny_world() -> WorldDefinition:
 
 
 def _view(world, x=2, y=2, world_tick=0, terminal=None, alive=True):
-    return DisplayState("session", world_tick, world.map_id, AvatarView(x, y, alive), terminal)
+    actor = ActorView("actor-a", "player-a", x, y, 0, 0, True, alive, terminal)
+    return DisplayState("session", world_tick, world.map_id, (actor,), "actor-a")
+
+
+def _actor_payload(x: Any = 2, y: Any = 2, actor_id="actor-a", player_id="player-a", **extra):
+    return {"actor_id": actor_id, "player_id": player_id, "x": x, "y": y,
+            "vx": 0, "vy": 0, "grounded": True, "alive": True,
+            "result": None, **extra}
 
 
 class DisplayStateTests(unittest.TestCase):
@@ -53,24 +61,28 @@ class DisplayStateTests(unittest.TestCase):
         world = _tiny_world()
         base = {
             "type": "state", "session_id": "session", "world_tick": 1,
-            "map": "tiny", "avatar": {"x": 2, "y": 2, "alive": True},
+            "map": "tiny", "actors": [_actor_payload()],
         }
         for terminal in (None, "success", "dead", "timeout"):
             with self.subTest(terminal=terminal):
-                state = DisplayState.from_payload({**base, "terminal": terminal},
+                state = DisplayState.from_payload({**base,
+                                                   "actors": [_actor_payload(result=terminal)]},
                                                    "session", world)
-                self.assertEqual(state.terminal, terminal)
+                self.assertEqual(state.self_actor.result, terminal)
 
         for invalid in ("won", "death", 1, False):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
-                    DisplayState.from_payload({**base, "terminal": invalid},
+                    DisplayState.from_payload({**base,
+                                               "actors": [_actor_payload(result=invalid)]},
                                                "session", world)
 
     def test_terminal_direct_value_is_validated(self):
         world = _tiny_world()
         with self.assertRaises(ValueError):
-            DisplayState("session", 0, world.map_id, AvatarView(2, 2, True), "won")
+            DisplayState("session", 0, world.map_id,
+                         (ActorView("actor-a", "player-a", 2, 2, 0, 0,
+                                    True, True, "won"),), "actor-a")
 
 
 class AutoTilerTests(unittest.TestCase):
@@ -155,7 +167,7 @@ class DisplayServiceTests(unittest.TestCase):
         valid = {
             "version": 1, "type": "state", "session_id": "session",
             "world_tick": 7, "map": "tiny",
-            "avatar": {"x": 2, "y": 2, "alive": True},
+            "actors": [_actor_payload()],
         }
         self.assertTrue(service.consume(valid))
         self.assertEqual(service.frames_received, 1)
@@ -164,7 +176,7 @@ class DisplayServiceTests(unittest.TestCase):
             {**valid, "type": "telemetry"},
             {**valid, "session_id": "other"},
             {**valid, "map": "other"},
-            {**valid, "avatar": {"x": "bad", "y": 2}},
+            {**valid, "actors": [_actor_payload(x="bad")]},
         ):
             self.assertFalse(service.consume(invalid))
         self.assertEqual(service.frames_received, 1)
@@ -183,7 +195,7 @@ class DisplayServiceTests(unittest.TestCase):
                                  renderer=RecordingRenderer())
         self.assertTrue(service.consume({
             "type": "state", "session_id": "session", "world_tick": 2,
-            "map": "tiny", "avatar": {"x": 2, "y": 2},
+            "map": "tiny", "actors": [_actor_payload()],
         }))
         self.assertEqual(calls[0].map_id, world.map_id)
         self.assertEqual(service.frames_received, 1)
@@ -194,12 +206,12 @@ class DisplayServiceTests(unittest.TestCase):
         valid = {
             "version": 1, "type": "state", "session_id": "session",
             "world_tick": 10, "map": "tiny",
-            "avatar": {"x": 2, "y": 2, "alive": True},
+            "actors": [_actor_payload()],
         }
         self.assertTrue(service.ingest(valid))
         self.assertFalse(service.ingest({**valid, "world_tick": 9}))
         self.assertFalse(service.ingest({**valid, "world_tick": 11,
-                                         "avatar": {"x": "bad", "y": 2}}))
+                                         "actors": [_actor_payload(x="bad")] }))
         self.assertEqual(service.latest_state.world_tick, 10)
         self.assertEqual(service.frames_received, 1)
         self.assertEqual(service.rendered_frames, 0)
@@ -243,14 +255,14 @@ class DisplayServiceTests(unittest.TestCase):
             client, _ = listener.accept()
             client.sendall(encode_frame({
                 "version": 1, "type": "state", "session_id": "session",
-                "world_tick": 1, "map": "tiny", "avatar": {"x": 2, "y": 2},
+                "world_tick": 1, "map": "tiny", "actors": [_actor_payload()],
             }))
             self.assertTrue(renderer.first_render_started.wait(1))
             for tick in range(2, 6):
                 client.sendall(encode_frame({
                     "version": 1, "type": "state", "session_id": "session",
                     "world_tick": tick, "map": "tiny",
-                    "avatar": {"x": 2 + tick, "y": 2},
+                    "actors": [_actor_payload(x=2 + tick)],
                 }))
 
             deadline = time.monotonic() + 1
@@ -310,7 +322,7 @@ class DisplayServiceTests(unittest.TestCase):
                 path.write_text(json.dumps(config), encoding="utf-8")
                 status, summary = run_session(path)
                 self.assertEqual(status, 0)
-                results.append(summary["avatar"])
+                results.append(summary["actors"])
         self.assertEqual(results[0], results[1])
         self.assertEqual(results[0], results[2])
 

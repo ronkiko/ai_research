@@ -20,7 +20,9 @@ from game2.v2.contracts.vision import VisionFrame, recv_vision_frame
 
 
 SOLID = 1
-AVATAR = 3
+SELF = 3
+# The policy still uses the stable class value 3 as its own Actor.
+AVATAR = SELF
 LOOKAHEAD_PIXELS = 22
 
 
@@ -34,7 +36,7 @@ def _avatar_bounds(frame: VisionFrame) -> tuple[int, int, int, int] | None:
     left = frame.width
     top = frame.height
     right = bottom = -1
-    avatar_byte = bytes((AVATAR,))
+    avatar_byte = bytes((SELF,))
     for y in range(frame.height):
         row = frame.pixels[y * frame.width:(y + 1) * frame.width]
         row_left = row.find(avatar_byte)

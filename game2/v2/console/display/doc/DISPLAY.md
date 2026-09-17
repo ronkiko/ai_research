@@ -1,11 +1,12 @@
 # Display Boundary
 
 Display is a read-only Console presentation service. Its private manifest
-contains exactly the Engine STATE endpoint, the immutable `world_file`, and the
-selected `mode` (`vision` or `screen`), in addition to `session_id`.
+contains the Engine STATE endpoint, the immutable `world_file`, selected
+`mode` (`vision` or `screen`), and private `self_actor_id`, in addition to
+`session_id`.
 
 For every valid snapshot Display validates `type == "state"`, the session, the
-map ID, and the avatar coordinates before rendering. Invalid snapshots are
+map ID, and every Actor entry before rendering. Invalid snapshots are
 discarded; TELEMETRY and EVENTS are never used as fallbacks. The service keeps
 only the latest validated view and does not expose a raw state socket or a
 public raw-state object. STATE transport is latest-only: presentation is not

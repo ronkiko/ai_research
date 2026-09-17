@@ -177,11 +177,14 @@ class ManifestAndWorldTests(unittest.TestCase):
         display = DisplayManifest("s", state, str(PIT), "vision")
         engine = EngineManifest("s", control, state, telemetry, None, "/tmp/run")
         self.assertEqual(set(controller.to_dict()),
-                         {"session_id", "engine_control", "engine_telemetry", "joystick"})
+                         {"session_id", "engine_control", "engine_telemetry", "joystick",
+                          "actor_id"})
         self.assertEqual(set(display.to_dict()),
-                         {"session_id", "engine_state", "world_file", "mode", "vision"})
+                         {"session_id", "engine_state", "world_file", "mode", "vision",
+                          "self_actor_id"})
         self.assertEqual(set(engine.to_dict()),
-                         {"session_id", "control", "state", "telemetry", "events", "run_dir"})
+                         {"session_id", "control", "state", "telemetry", "events", "run_dir",
+                          "player_id", "actor_id"})
         self.assertNotIn("engine_state", controller.to_dict())
         self.assertNotIn("engine_control", display.to_dict())
 
@@ -230,17 +233,23 @@ class ManifestAndWorldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PhysicsConfig(hz=0)
         engine = Engine(loaded)
-        self.assertIs(engine.avatar, engine.physics.body)
+        self.assertEqual(engine.actors, {})
+        self.assertEqual(engine.world_tick, 0)
         engine.tick()
         self.assertEqual(engine.world_tick, 1)
         self.assertFalse(hasattr(engine, "session_tick"))
         self.assertFalse(hasattr(engine, "episode_tick"))
-        self.assertIsNot(engine.world_state().avatar, engine.avatar)
+        self.assertEqual(engine.world_state().actors, ())
+        self.assertFalse(hasattr(engine, "avatar"))
+        self.assertFalse(hasattr(engine, "terminal"))
+        self.assertFalse(hasattr(engine, "episode"))
 
     def test_physical_state_is_immutable(self):
-        state = Engine(load_world(PIT)).world_state()
+        engine = Engine(load_world(PIT))
+        engine.spawn_actor("player-a", "actor-a")
+        state = engine.world_state()
         with self.assertRaises(FrozenInstanceError):
-            state.avatar.x = 9
+            state.actors[0].x = 9
 
 
 class JoystickContractTests(unittest.TestCase):
@@ -277,70 +286,67 @@ class JoystickContractTests(unittest.TestCase):
 
 
 class InternalSchedulingTests(unittest.TestCase):
-    def test_action_timing_remains_private_to_engine_boundary(self):
-        engine = Engine(load_world(PIT))
-        self.assertEqual(engine.submit_action(ActionCommand(1, 3, 2, True)), "accepted")
-        engine.tick()
-        engine.tick()
-        self.assertEqual(engine.avatar.vx, 0)
-        engine.tick()
-        self.assertGreater(engine.avatar.vx, 0)
-        speed = engine.avatar.vx
-        engine.tick()
-        engine.tick()
-        engine.tick()
-        self.assertLess(engine.avatar.vx, speed)
+    def _engine(self, *, episode_limit=None):
+        engine = Engine(load_world(PIT), episode_limit=episode_limit)
+        engine.spawn_actor("player-a", "actor-a")
+        return engine
 
-    def test_duplicate_and_late_actions_are_rejected(self):
-        engine = Engine(load_world(PIT))
-        command = ActionCommand(1, 3, 1)
+    def test_action_timing_remains_private_to_engine_boundary(self):
+        engine = self._engine()
+        actor = engine.actors["actor-a"]
+        self.assertEqual(
+            engine.submit_action(ActionCommand("actor-a", 1, 3, 2, True)), "accepted")
+        engine.tick()
+        engine.tick()
+        self.assertEqual(actor.body.vx, 0)
+        engine.tick()
+        self.assertGreater(actor.body.vx, 0)
+        speed = actor.body.vx
+        for _ in range(3):
+            engine.tick()
+        self.assertLess(actor.body.vx, speed)
+
+    def test_duplicate_and_late_actions_are_rejected_per_actor(self):
+        engine = self._engine()
+        command = ActionCommand("actor-a", 1, 3, 1)
         self.assertEqual(engine.submit_action(command), "accepted")
         self.assertEqual(engine.submit_action(command), "duplicate")
-        engine.tick()
-        engine.tick()
-        engine.tick()
-        self.assertEqual(engine.submit_action(ActionCommand(2, 1, 1)), "late")
+        for _ in range(3):
+            engine.tick()
+        self.assertEqual(engine.submit_action(ActionCommand("actor-a", 2, 1, 1)), "late")
 
-    def test_action_validation_uses_global_world_time_not_episode(self):
-        engine = Engine(load_world(PIT))
-        engine.tick()
-        engine.reset()
-        self.assertEqual(engine.world_tick, 1)
-        self.assertEqual(engine.submit_action(ActionCommand(1, 3, 1)), "accepted")
-
-    def test_action_command_has_only_global_target_time(self):
-        command = ActionCommand(sequence=1, target_world_tick=7, hold_ticks=2,
+    def test_action_command_has_actor_and_global_target_time(self):
+        command = ActionCommand(actor_id="actor-a", sequence=1,
+                                target_world_tick=7, hold_ticks=2,
                                 right=True, jump=False)
         message = action_message(command)
         self.assertEqual(set(message), {
-            "version", "type", "sequence", "target_world_tick", "hold_ticks",
-            "right", "jump",
+            "version", "type", "actor_id", "sequence", "target_world_tick",
+            "hold_ticks", "right", "jump",
         })
         self.assertEqual(decode_control_message(message), command)
         with self.assertRaises(ProtocolError):
             decode_control_message({**message, "episode": 1})
-        with self.assertRaises(ProtocolError):
-            decode_control_message({**message, "target_tick": 7})
 
     def test_state_and_telemetry_publish_one_canonical_world_timestamp(self):
         engine = Engine(load_world(PIT))
         for payload in (engine.world_state().to_payload(), engine.telemetry().to_payload()):
             self.assertIn("world_tick", payload)
-            for legacy in ("tick", "session_tick", "episode_tick"):
+            self.assertNotIn("episode", payload)
+            for legacy in ("tick", "session_tick", "episode_tick", "avatar", "terminal"):
                 self.assertNotIn(legacy, payload)
 
-    def test_compatibility_reset_restarts_elapsed_origin_not_global_time(self):
-        engine = Engine(load_world(PIT))
+    def test_actor_respawn_restarts_lifetime_origin_not_global_time(self):
+        engine = self._engine()
         engine.tick()
         engine.tick()
         old_world_tick = engine.world_tick
-        reset_events = engine.reset()
+        engine.actors["actor-a"].result = "dead"
+        engine.actors["actor-a"].lifecycle = "terminal"
+        engine.respawn_actor("actor-a")
         self.assertEqual(engine.world_tick, old_world_tick)
-        self.assertEqual(engine.episode_elapsed, 0)
-        self.assertEqual(reset_events[0]["world_tick"], old_world_tick)
-        engine.tick()
-        self.assertGreater(engine.world_tick, old_world_tick)
-        self.assertEqual(engine.episode_elapsed, 1)
+        self.assertEqual(engine.actors["actor-a"].spawn_world_tick, old_world_tick)
+        self.assertIsNone(engine.actors["actor-a"].result)
 
     def test_engine_has_one_runtime_clock_and_physics_has_no_second_clock(self):
         engine_source = (V2 / "console" / "engine" / "engine.py").read_text(encoding="utf-8")
@@ -365,105 +371,39 @@ class InternalSchedulingTests(unittest.TestCase):
             )
             summary = service.run()
             self.assertEqual(summary["world_ticks"], 8)
+            self.assertEqual(summary["actors"], [])
 
 
 class TerminalStateTests(unittest.TestCase):
-    def _schedule_future_action(self, engine):
-        self.assertEqual(engine.submit_action(ActionCommand(1, 10, 5, True)),
-                         "accepted")
-        self.assertEqual(len(engine._scheduled), 5)
-
-    @staticmethod
-    def _avatar_state(engine):
-        avatar = engine.avatar
-        return (avatar.x, avatar.y, avatar.vx, avatar.vy,
-                avatar.grounded, avatar.alive)
-
-    def test_dead_terminal_freezes_physics_and_rejects_future_actions(self):
+    def test_terminal_isolation_keeps_other_actor_running(self):
         world = load_world(PIT)
         engine = Engine(world)
-        engine.avatar.x, engine.avatar.y = 512, 500
-        engine.avatar.vx, engine.avatar.vy = 0, 30_000
-        engine.avatar.grounded = False
-        self._schedule_future_action(engine)
-
-        events = engine.tick()
-
-        self.assertIn({"event": "death", "reason": "damage_surface", "world_tick": 1}, events)
-        self.assertEqual(engine.terminal, "dead")
-        self.assertEqual(len(engine._scheduled), 0)
-        world_state = engine.world_state()
-        self.assertEqual(world_state.terminal, "dead")
-        self.assertEqual(world_state.to_payload()["terminal"], "dead")
-        display_state = DisplayState.from_payload(
-            world_state.to_payload(), "local", world)
-        self.assertEqual(display_state.terminal, "dead")
-        avatar = self._avatar_state(engine)
-        world_tick = engine.world_tick
-        with mock.patch.object(engine.physics, "step", wraps=engine.physics.step) as step:
-            for sequence in range(2, 52):
-                self.assertEqual(
-                    engine.submit_action(ActionCommand(sequence, 100, 1)),
-                    "rejected",
-                )
-                engine.tick()
-            step.assert_not_called()
-        self.assertEqual(self._avatar_state(engine), avatar)
-        self.assertEqual(engine.terminal, "dead")
-        self.assertEqual(engine.world_tick, world_tick + 50)
-        self.assertEqual(len(engine._scheduled), 0)
-        self.assertEqual(engine.stats.rejected, 50)
-
-    def test_success_terminal_freezes_physics_and_reaches_display(self):
-        world = load_world(PIT)
-        engine = Engine(world)
-        engine.avatar.x, engine.avatar.y = world.goal.x, world.goal.y
-        engine.avatar.vx = engine.avatar.vy = 0
-        engine.avatar.grounded = True
-        self._schedule_future_action(engine)
-
-        events = engine.tick()
-
-        self.assertIn({"event": "goal_reached", "world_tick": 1}, events)
-        self.assertEqual(engine.terminal, "success")
-        self.assertEqual(len(engine._scheduled), 0)
-        world_state = engine.world_state()
-        self.assertEqual(world_state.terminal, "success")
-        self.assertEqual(world_state.to_payload()["terminal"], "success")
-        display_state = DisplayState.from_payload(
-            world_state.to_payload(), "local", world)
-        self.assertEqual(display_state.terminal, "success")
-        avatar = self._avatar_state(engine)
-        world_tick = engine.world_tick
-        with mock.patch.object(engine.physics, "step", wraps=engine.physics.step) as step:
-            for sequence in range(2, 52):
-                self.assertEqual(
-                    engine.submit_action(ActionCommand(sequence, 100, 1)),
-                    "rejected",
-                )
-                engine.tick()
-            step.assert_not_called()
-        self.assertEqual(self._avatar_state(engine), avatar)
-        self.assertEqual(engine.terminal, "success")
-        self.assertEqual(engine.world_tick, world_tick + 50)
-        self.assertEqual(len(engine._scheduled), 0)
-        self.assertEqual(engine.stats.rejected, 50)
-
-    def test_timeout_terminal_clears_actions_and_rejects_commands(self):
-        engine = Engine(load_world(PIT), episode_limit=1)
-        self._schedule_future_action(engine)
-
+        engine.spawn_actor("player-a", "actor-a")
+        engine.spawn_actor("player-b", "actor-b")
+        actor_a, actor_b = engine.actors["actor-a"], engine.actors["actor-b"]
+        actor_a.body.x, actor_a.body.y = 512, 500
+        actor_a.body.vy = 30_000
+        actor_a.body.grounded = False
+        engine.submit_action(ActionCommand("actor-b", 1, 1, 5, True))
         engine.tick()
+        self.assertEqual(actor_a.result, "dead")
+        self.assertIsNone(actor_b.result)
+        before = actor_b.body.x
+        engine.tick()
+        self.assertEqual(actor_a.result, "dead")
+        self.assertGreater(actor_b.body.x, before)
+        self.assertEqual(engine.world_tick, 2)
 
-        self.assertEqual(engine.terminal, "timeout")
-        self.assertEqual(len(engine._scheduled), 0)
-        for sequence in range(2, 102):
-            self.assertEqual(
-                engine.submit_action(ActionCommand(sequence, 100, 1)),
-                "rejected",
-            )
-        self.assertEqual(engine.stats.rejected, 100)
-        self.assertEqual(len(engine._scheduled), 0)
+    def test_terminal_actor_rejects_only_its_actions(self):
+        engine = Engine(load_world(PIT))
+        engine.spawn_actor("player-a", "actor-a")
+        engine.spawn_actor("player-b", "actor-b")
+        engine.actors["actor-a"].result = "dead"
+        engine.actors["actor-a"].lifecycle = "terminal"
+        self.assertEqual(engine.submit_action(ActionCommand("actor-a", 1, 10, 1)),
+                         "rejected")
+        self.assertEqual(engine.submit_action(ActionCommand("actor-b", 1, 10, 1)),
+                         "accepted")
 
 class ChannelTests(unittest.TestCase):
     def test_partial_tcp_reads_and_malformed_packet(self):
@@ -549,9 +489,11 @@ class BoundaryTests(unittest.TestCase):
                                        Endpoint("127.0.0.1", 2), Endpoint("127.0.0.1", 3))
         display = DisplayManifest("s", Endpoint("127.0.0.1", 4), str(PIT), "vision")
         self.assertEqual(set(controller.to_dict()),
-                         {"session_id", "engine_control", "engine_telemetry", "joystick"})
+                         {"session_id", "engine_control", "engine_telemetry", "joystick",
+                          "actor_id"})
         self.assertEqual(set(display.to_dict()),
-                         {"session_id", "engine_state", "world_file", "mode", "vision"})
+                         {"session_id", "engine_state", "world_file", "mode", "vision",
+                          "self_actor_id"})
         self.assertNotIn("engine_state", controller.to_dict())
         self.assertNotIn("engine_control", display.to_dict())
         self.assertNotIn("engine_telemetry", display.to_dict())
@@ -598,7 +540,7 @@ class BoundaryTests(unittest.TestCase):
             off_status, off = run_session(paths[0])
             on_status, on = run_session(paths[1])
         self.assertEqual((off_status, on_status), (0, 0))
-        self.assertEqual(off["avatar"], on["avatar"])
+        self.assertEqual(off["actors"], on["actors"])
 
     def test_display_has_no_public_video_payload(self):
         service = DisplayService(DisplayManifest("s", Endpoint("127.0.0.1", 12345),
@@ -630,12 +572,14 @@ class BoundaryTests(unittest.TestCase):
 
         service.joystick = FakeJoystick()
         service.engine_control = FakeEngine()
-        service.latest = {"episode": 1, "world_tick": 10}
+        service.latest = {"world_tick": 10,
+                          "actors": [{"actor_id": service.manifest.actor_id}]}
         service._handle_joystick(ControlEnvelope(7, JoystickState(1, True, False)))
         self.assertEqual(responses, [])
         self.assertIn(1, service.pending)
         first_command = decode_frame(service.engine_control.sent[0][4:])
         self.assertEqual(first_command["target_world_tick"], 14)
+        self.assertEqual(first_command["actor_id"], service.manifest.actor_id)
         self.assertNotIn("episode", first_command)
         self.assertNotIn("target_tick", first_command)
         service._handle_engine_ack({"type": "action_ack", "sequence": 1, "status": "accepted"})

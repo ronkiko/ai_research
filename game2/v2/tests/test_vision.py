@@ -37,7 +37,7 @@ class VisionContractTests(unittest.TestCase):
 
     def test_raw_frame_round_trip_has_only_public_observation_fields(self):
         left, right = socket.socketpair()
-        frame = VisionFrame(2, 2, bytes((0, 1, 2, 4)), 123)
+        frame = VisionFrame(2, 2, bytes((0, 1, 2, 5)), 123)
         try:
             send_vision_frame(left, "session", frame)
             received = recv_vision_frame(right, "session")
@@ -78,7 +78,7 @@ class VisionContractTests(unittest.TestCase):
             ({**valid, "extra": True}, "session", b"\x00"),
             ({**valid, "session_tick": 1}, "session", b"\x00"),
             ({**valid, "episode_tick": 1}, "session", b"\x00"),
-            (valid, "session", b"\x05"),
+            (valid, "session", b"\x06"),
         ):
             left, right = socket.socketpair()
             try:
@@ -233,7 +233,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
                 second = recv_vision_frame(viewer, manifest.session_id)
                 self.assertEqual((first.width, first.height), (1280, 768))
                 self.assertEqual(len(first.pixels), first.width * first.height)
-                self.assertTrue(set(first.pixels) <= {0, 1, 2, 3, 4})
+                self.assertTrue(set(first.pixels) <= {0, 1, 2, 3, 4, 5})
                 self.assertGreater(second.world_tick, first.world_tick)
                 self.assertEqual(player.wait(timeout=10), 0)
                 player_output = player.stdout.read() if player.stdout else ""
@@ -282,7 +282,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
                 self.assertEqual(console.wait(timeout=12), 0)
                 summary = (V2 / "console" / "runs" / manifest.session_id /
                            "summary.json").read_text(encoding="utf-8")
-                self.assertEqual(json.loads(summary)["result"], "success")
+                self.assertEqual(json.loads(summary)["actors"][0]["result"], "success")
             finally:
                 if player is not None and player.poll() is None:
                     player.terminate()

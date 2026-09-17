@@ -14,7 +14,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     config = SessionConfig.from_file(args.config)
     manifest = EngineManifest.from_file(args.manifest)
-    service = EngineService(Engine.from_config(config, args.config, manifest.session_id), manifest, config)
+    engine = Engine.from_config(config, args.config, manifest.session_id)
+    if manifest.player_id is not None and manifest.actor_id is not None:
+        engine.spawn_actor(manifest.player_id, manifest.actor_id)
+    service = EngineService(engine, manifest, config)
     service.run()
     return 0
 

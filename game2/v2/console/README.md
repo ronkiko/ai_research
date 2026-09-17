@@ -14,12 +14,13 @@ Console
 └── Display
 ```
 
-`WorldDefinition` is loaded before Engine starts. Engine materializes its
-transitional mutable `AvatarBody` and physics surfaces from that definition. Display loads
-the same immutable world resource independently and combines it with the latest
-Engine STATE for its `screen` or `vision` presentation. Physics remains an
-Engine hot-path component, not a separate process. World contains no runtime
-state and has no dependency on Engine or the physics implementation.
+`WorldDefinition` is loaded before Engine starts. Engine materializes one shared
+physics/rules object and independent `ActorBody` values from that definition.
+Display loads the same immutable world resource independently and combines it
+with the latest multi-Actor Engine STATE for its `screen` or `vision`
+presentation. Physics remains an Engine hot-path component, not a separate
+process. World contains no runtime state and has no dependency on Engine or the
+physics implementation.
 
 The target MMO-like Console model is normative in
 [`doc/MMO_SERVER_MODEL.md`](doc/MMO_SERVER_MODEL.md). Console does not own

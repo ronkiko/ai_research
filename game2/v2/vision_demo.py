@@ -31,8 +31,9 @@ PALETTE = (
     (17, 27, 40),       # EMPTY
     (205, 211, 216),    # SOLID
     (226, 62, 62),      # HAZARD
-    (59, 132, 255),     # AVATAR
+    (59, 132, 255),     # SELF
     (247, 214, 70),     # GOAL
+    (189, 111, 224),    # OTHER_ACTOR
 )
 _OUTPUT_END = object()
 
@@ -447,7 +448,8 @@ class VisionExaminer:
                         f"Latest age: {age * 1000:0.0f} ms", self.body_font, 342,
                         bright if age is not None else muted)
         self._draw_text("CLASSES", self.section_font, 394, accent)
-        for y, line in enumerate(("0 Empty", "1 Solid", "2 Hazard", "3 Avatar", "4 Goal"), 1):
+        for y, line in enumerate(("0 Empty", "1 Solid", "2 Hazard", "3 Self",
+                                  "4 Goal", "5 Other Actor"), 1):
             self._draw_text(line, self.body_font, 394 + y * 28, bright)
         session = self.stream.manifest.session_id[:12]
         self._draw_text(f"Session: {session}", self.body_font, 590, muted)

@@ -47,16 +47,16 @@ Console
 ├── World
 │   └── immutable tile grid, spawn, goal, decorations, derived collision geometry
 ├── Engine
-│   └── mutable transitional Avatar, Physics, global world_tick, terminal state
+│   └── mutable shared WorldRuntime, Physics, global world_tick, actors (0..N)
 ├── Controller
 └── Display
 ```
 
 `WorldDefinition` is the source of truth for the hand-authored semantic tile
-grid. Engine materializes its local physics objects from World geometry. World
-does not import Engine, and Physics remains an Engine hot-path component rather
-than a separate process. Engine never waits for Player while advancing fixed
-ticks.
+grid. Engine materializes one shared physics/rules object from World geometry
+and creates independent Actor bodies within it. World does not import Engine,
+and Physics remains an Engine hot-path component rather than a separate
+process. Engine never waits for Player while advancing fixed ticks.
 
 The Display domain provides two read-only presentations of the same authoritative
 world:
@@ -76,13 +76,14 @@ raster for future machine-facing sensing. Neither presentation changes World or
 affects Physics. A future Player VisionAdapter remains a separate transport
 contract and is not Display.
 
-The Engine remains the sole mutable world owner in the current transitional
-vertical. It advances one global `world_tick` without waiting for a Player. The
-Controller translates public Joystick decisions into private commands scheduled
-against that global clock. Display consumes Engine STATE only and does not
-control gameplay or expose raw STATE as vision. The future target is an
-authoritative shared-world Console with zero or many Players; current singleton
-Avatar/Episode state is migration debt for Patch 2/3.
+The Engine remains the sole mutable world owner. It advances one global
+`world_tick` without waiting for a Player, steps active Actors in sorted
+`actor_id` order, and leaves terminal Actors frozen without stopping the World.
+The Controller translates public Joystick decisions into private actor-scoped
+commands scheduled against that global clock. Display consumes multi-Actor
+Engine STATE and does not control gameplay or expose raw STATE as vision. The
+temporary compatibility path explicitly binds one Player ID to a distinct
+Actor ID after Engine construction.
 
 Management is outside the gameplay data path. It may later select configs and
 launch independent Console, Player, and Trainer processes, but it must not hold

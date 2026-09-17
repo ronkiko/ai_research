@@ -4,7 +4,7 @@ World is the Console's immutable game-scene domain. It owns the map schema,
 tile-authored semantic grid, spawn, goal, decorations metadata, and collision
 geometry derived from the grid.
 
-World does not own Avatar position or velocity, episodes, ticks, scheduled
+World does not own Actor position or velocity, episodes, ticks, scheduled
 actions, Player/model code, a renderer, or a Physics engine. It does not import
 Engine runtime code. Engine creates the mutable physical instance from a
 `WorldDefinition` and remains authoritative during play. This dependency

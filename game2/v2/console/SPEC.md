@@ -15,7 +15,7 @@ update to this specification in the same patch.
 |---|---|
 | Console | virtual game console and subsystem supervisor |
 | Engine | authoritative game world |
-| Avatar | physical body inside Engine |
+| Actor | player-owned physical body inside Engine |
 | Player | external decision maker |
 | Controller | console input subsystem |
 | Joystick | Player-facing digital input device |
@@ -33,14 +33,15 @@ runtime:
 WorldDefinition (immutable tile grid and derived geometry)
                          |
                          v
-Engine (mutable transitional Avatar, Physics, global world_tick, terminal state)
+Engine (mutable shared WorldRuntime, Physics, global world_tick, actors)
 ```
 
 `World` owns the map schema, semantic tile IDs, spawn, goal, decorations, and
-derived collision geometry. It does not create an Avatar or a Physics object.
-`Engine` converts World geometry to its local `Surface` objects and advances
-Physics on every fixed tick. Physics is an Engine hot-path component and is not
-a separate process. World never imports Engine runtime code.
+derived collision geometry. It does not create Actor bodies or a Physics
+object. `Engine` converts World geometry to one shared `Surface` set, creates
+independent Actor bodies, and advances Physics for every active Actor on every
+fixed tick. Physics is an Engine hot-path component and is not a separate
+process. World never imports Engine runtime code.
 
 ## Planes
 
@@ -94,9 +95,9 @@ Console starts and connects its own subsystems but never handles each gameplay
 message and never launches a Player. Engine owns all mutable physics state and
 fixed-step world timing. Controller is the only gameplay subsystem that knows
 Engine CONTROL. Controller translates Joystick decisions to internal
-`ActionCommand` values containing private global `target_world_tick` scheduling
-details. Engine does not validate an action against the current compatibility
-episode.
+`ActionCommand` values containing private `actor_id` and global
+`target_world_tick` scheduling details. Engine does not validate an action
+against a Training episode.
 
 Player receives only `PeripheralManifest`. It never receives Engine CONTROL,
 STATE, TELEMETRY, EVENTS, `InternalManifest`, an Engine object, mutable world
@@ -105,8 +106,9 @@ messages. Trainer is external and has no direct reset, tick, physics, or world
 access. Reset/reward contracts, if needed for training, will be specified
 separately later.
 
-Display consumes authoritative Engine STATE plus its immutable `world_file` and
-selected `mode`; it is independent of Controller, Player, model, and UI. It
+Display consumes authoritative multi-Actor Engine STATE plus its immutable
+`world_file`, selected `mode`, and private self Actor perspective; it is
+independent of Controller, Player, model, and UI. It
 never consumes TELEMETRY or EVENTS. `screen` initializes Pygame only in its own
 subsystem; `vision` is fully headless and emits an immutable `VisionFrame`.
 A future VisionAdapter may expose that semantic presentation through a
@@ -128,6 +130,8 @@ state
 telemetry
 events
 run_dir
+player_id (compatibility binding, private)
+actor_id (compatibility binding, private)
 ```
 
 `ControllerManifest` contains only Controller capabilities:
@@ -137,6 +141,7 @@ session_id
 engine_control
 engine_telemetry
 joystick
+actor_id
 ```
 
 `DisplayManifest` contains only the STATE capability, the immutable World
@@ -147,6 +152,7 @@ session_id
 engine_state
 world_file
 mode
+self_actor_id
 ```
 
 `mode` is exactly `vision` or `screen`. Display manifests do not contain Engine

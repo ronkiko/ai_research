@@ -44,7 +44,7 @@ class PhysicsConfig:
 
 
 @dataclass
-class AvatarBody:
+class ActorBody:
     x: float
     y: float
     width: float = 64.0
@@ -81,10 +81,17 @@ def _sweep(body, surface, dx, dy):
 
 
 class PhysicsWorld:
-    def __init__(self, body: AvatarBody, surfaces, config: PhysicsConfig | None = None):
-        self.body = body
+    """Shared collision rules and surfaces for every Actor body in one World."""
+
+    def __init__(self, surfaces, config: PhysicsConfig | None = None):
         self.surfaces = tuple(surfaces)
         self.config = config or PhysicsConfig()
+        for surface in self.surfaces:
+            if not isinstance(surface, Surface):
+                raise TypeError("PhysicsWorld surfaces must be Surface values")
+
+    def initialize(self, body: ActorBody) -> None:
+        """Validate and initialize one newly spawned body against this World."""
         values = (body.x, body.y, body.width, body.height, body.vx, body.vy)
         if not all(isfinite(value) for value in values):
             raise ValueError("Body geometry and velocity must be finite")
@@ -94,22 +101,21 @@ class PhysicsWorld:
             if (body.x < surface.x + surface.width and body.x + body.width > surface.x
                     and body.y < surface.y + surface.height and body.y + body.height > surface.y):
                 raise ValueError("Spawn must not overlap a surface")
-        body.grounded = self._supported()
+        body.grounded = self._supported(body)
 
-    def _supported(self):
-        body = self.body
+    def _supported(self, body: ActorBody):
         return body.vy == 0 and any(
             not surface.damage and abs(body.y + body.height - surface.y) <= EPS
             and body.x < surface.x + surface.width and body.x + body.width > surface.x
             for surface in self.surfaces)
 
-    def step(self, move: int = 0, jump: bool = False) -> list[dict]:
+    def step(self, body: ActorBody, move: int = 0, jump: bool = False) -> list[dict]:
         if move not in (-1, 0, 1):
             raise ValueError("move must be -1, 0 or 1")
-        body, config = self.body, self.config
+        config = self.config
         if not body.alive:
             return []
-        body.grounded = self._supported()
+        body.grounded = self._supported(body)
         if body.grounded and jump:
             body.vy = -config.jump_speed
             body.grounded = False
@@ -154,5 +160,13 @@ class PhysicsWorld:
                     body.y = surface.y - body.height if ny < 0 else surface.y + surface.height
                     body.vy = 0.0
             remaining *= 1 - first
-        body.grounded = self._supported()
+        body.grounded = self._supported(body)
         return events
+
+
+# The old type name remains an import alias for local physics parity tests. The
+# Engine runtime uses ActorBody and never exposes a global avatar body.
+AvatarBody = ActorBody
+
+
+__all__ = ["ActorBody", "AvatarBody", "PhysicsConfig", "PhysicsWorld", "Surface"]

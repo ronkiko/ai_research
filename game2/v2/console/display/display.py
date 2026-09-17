@@ -58,9 +58,9 @@ class DisplayService:
     def _create_renderer(self):
         if self.manifest.mode == "vision":
             from .vision.renderer import VisionRenderer
-            return VisionRenderer(self.world)
+            return VisionRenderer(self.world, self.manifest.self_actor_id)
         from .screen.renderer import ScreenRenderer
-        return ScreenRenderer(self.world)
+        return ScreenRenderer(self.world, self_actor_id=self.manifest.self_actor_id)
 
     @property
     def latest_state(self):
@@ -81,7 +81,8 @@ class DisplayService:
     def ingest(self, snapshot: dict) -> bool:
         """Validate a STATE and replace the single latest-state slot."""
         try:
-            view = DisplayState.from_payload(snapshot, self.manifest.session_id, self.world)
+            view = DisplayState.from_payload(snapshot, self.manifest.session_id, self.world,
+                                             self.manifest.self_actor_id)
         except (TypeError, ValueError):
             return False
         return self._accept_view(view)
@@ -89,7 +90,8 @@ class DisplayService:
     def ingest_state(self, state) -> bool:
         """Validate a state-shaped value and replace the latest-state slot."""
         try:
-            view = DisplayState.from_state(state, self.manifest.session_id, self.world)
+            view = DisplayState.from_state(state, self.manifest.session_id, self.world,
+                                           self.manifest.self_actor_id)
         except (TypeError, ValueError):
             return False
         return self._accept_view(view)

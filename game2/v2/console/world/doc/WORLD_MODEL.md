@@ -14,12 +14,13 @@ The grid is the authoring source of truth. Collision rectangles are derived
 data and may merge equal horizontal tile runs to keep the Physics hot path
 small. Decorations never create collision geometry.
 
-World has no live avatar, velocity, grounded flag, episode, tick, action queue,
-model, joystick, or renderer. Engine creates `AvatarBody` and Physics
-`Surface` values from this definition, then owns all mutable gameplay state.
+World has no live Actor body, velocity, grounded flag, episode, tick, action
+queue, model, joystick, or renderer. Engine creates one shared Physics rules
+object and independent `ActorBody` values from this definition, then owns all
+mutable gameplay state.
 
-Goal completion is a pure rule over primitive avatar geometry and state: the
-avatar must be alive, grounded, and fully contained by the goal rectangle.
+Goal completion is a pure rule over primitive Actor geometry and state: the
+Actor must be alive, grounded, and fully contained by the goal rectangle.
 
 Future Display consumers are read-only presentations of `WorldDefinition` and
 `WorldState`. A human `screen` renderer may use artwork, while a model-facing

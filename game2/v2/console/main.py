@@ -15,6 +15,7 @@ if __package__ in (None, ""):
 
 from game2.v2.console.config import (ControllerManifest, DisplayManifest, EngineManifest,
                                InternalManifest, OperatorControlManifest, SessionConfig,
+                               COMPATIBILITY_ACTOR_ID, COMPATIBILITY_PLAYER_ID,
                                allocate_endpoint, new_session_id)
 from game2.v2.contracts.manifests import PeripheralManifest
 from game2.v2.console.world import load_world
@@ -103,21 +104,25 @@ def run_session(config_path: str | Path,
     internal.write(internal_path)
     EngineManifest(session_id, internal.engine_control, internal.engine_state,
                    internal.engine_telemetry, internal.engine_events,
-                   internal.run_dir).write(engine_manifest_path)
+                   internal.run_dir, COMPATIBILITY_PLAYER_ID,
+                   COMPATIBILITY_ACTOR_ID).write(engine_manifest_path)
     ControllerManifest(session_id, internal.engine_control, internal.engine_telemetry,
-                       peripheral.joystick).write(controller_manifest_path)
+                       peripheral.joystick, COMPATIBILITY_ACTOR_ID).write(
+                           controller_manifest_path)
     if config.enable_display:
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,
-                         config.display_mode, peripheral.vision).write(display_manifest_path)
+                        config.display_mode, peripheral.vision,
+                        COMPATIBILITY_ACTOR_ID).write(display_manifest_path)
     if state_capability_path is not None:
         if not config.enable_state or internal.engine_state is None:
             raise ValueError("embedded state capability requires Engine STATE")
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,
-                         "screen").write(state_capability_path)
+                        "screen", None, COMPATIBILITY_ACTOR_ID).write(state_capability_path)
     if control_capability_path is not None:
-        OperatorControlManifest(session_id, internal.engine_control).write(
+        OperatorControlManifest(session_id, internal.engine_control,
+                                COMPATIBILITY_ACTOR_ID).write(
             control_capability_path)
     peripheral.write(peripheral_path)
 

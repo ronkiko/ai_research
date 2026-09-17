@@ -158,24 +158,25 @@ class DemoFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PeripheralManifest.from_dict(capability.to_dict())
 
-    def test_demo_control_client_reuses_reset_command_and_waits_for_ack(self):
+    def test_demo_control_client_sends_actor_local_respawn_and_waits_for_ack(self):
         server = ControlServer("127.0.0.1", 0)
         server.start()
         client = DemoControlClient(OperatorControlManifest(
             "demo-session", Endpoint(server.host, server.port)))
         try:
             client.connect()
-            client.request_reset()
+            client.request_respawn()
             deadline = time.monotonic() + 1
             while not server.commands.qsize() and time.monotonic() < deadline:
                 time.sleep(0.001)
             envelope = server.drain()[0]
-            self.assertEqual(envelope.command, "reset")
+            self.assertEqual(envelope.command.actor_id, "compatibility-actor")
             server.respond(envelope.client_id, {
-                "version": 1, "type": "reset_ack", "episode": 2,
+                "version": 1, "type": "respawn_ack",
+                "actor_id": "compatibility-actor", "status": "accepted",
                 "world_tick": 10,
             })
-            self.assertEqual(client.wait_reset_ack(1)["episode"], 2)
+            self.assertEqual(client.wait_respawn_ack(1)["status"], "accepted")
         finally:
             client.close()
             server.close()
@@ -347,7 +348,7 @@ class DemoShellLifecycleTests(unittest.TestCase):
             def __init__(self):
                 self.requests = 0
 
-            def request_reset(self):
+            def request_respawn(self, _actor_id=None):
                 self.requests += 1
 
             def close(self):
@@ -405,7 +406,7 @@ class DemoShellLifecycleTests(unittest.TestCase):
         finally:
             pygame.quit()
 
-    def test_private_control_endpoint_resets_engine_episode_without_rolling_world_tick(self):
+    def test_private_control_endpoint_respawns_one_actor_without_rolling_world_tick(self):
         class GatedClock:
             def __init__(self):
                 self.value = 0.0
@@ -439,26 +440,28 @@ class DemoShellLifecycleTests(unittest.TestCase):
         clock = GatedClock()
         with tempfile.TemporaryDirectory() as directory:
             control_endpoint = allocate_endpoint()
+            engine = Engine.from_config(SessionConfig(
+                     map=str(PIT), clock_mode="realtime", enable_state=False,
+                     enable_telemetry=False, enable_events=False, world_ticks=100),
+                     PIT, "respawn-session")
+            engine.spawn_actor("compatibility-player", "compatibility-actor")
             service = EngineService(
-                Engine.from_config(SessionConfig(
-                    map=str(PIT), clock_mode="realtime", enable_state=False,
-                    enable_telemetry=False, enable_events=False, world_ticks=100),
-                    PIT, "reset-session"),
-                EngineManifest("reset-session", control_endpoint, None, None, None, directory),
+                engine,
+                EngineManifest("respawn-session", control_endpoint, None, None, None, directory),
                 SessionConfig(map=str(PIT), clock_mode="realtime", enable_state=False,
                                enable_telemetry=False, enable_events=False, world_ticks=100),
                 clock=clock, sleeper=clock.sleeper)
             runner = threading.Thread(target=service.run, daemon=True)
             runner.start()
             action_socket = None
-            reset_client = None
+            respawn_client = None
             try:
                 clock.wait_for_sleep(1)
                 action_socket = socket.create_connection(
                     (service.control.host, service.control.port), timeout=1)
                 action_socket.settimeout(1)
                 action_socket.sendall(encode_frame(action_message(
-                    ActionCommand(1, 2, 1, True, False))))
+                     ActionCommand("compatibility-actor", 1, 2, 1, True, False))))
                 deadline = time.monotonic() + 1
                 while service.control.commands.qsize() == 0 and time.monotonic() < deadline:
                     time.sleep(0.001)
@@ -469,33 +472,35 @@ class DemoShellLifecycleTests(unittest.TestCase):
                 self.assertEqual(action_ack["status"], "accepted")
                 self.assertIn("world_tick", action_ack)
                 self.assertNotIn("session_tick", action_ack)
-                self.assertGreater(service.engine.avatar.x, service.engine.world.spawn.x)
+                self.assertGreater(service.engine.actors["compatibility-actor"].body.x,
+                                   service.engine.world.spawn.x)
                 before_world_tick = service.engine.world_tick
 
-                reset_client = DemoControlClient(OperatorControlManifest(
-                    "reset-session", Endpoint(service.control.host, service.control.port)))
-                reset_client.connect()
-                reset_client.request_reset()
+                respawn_client = DemoControlClient(OperatorControlManifest(
+                    "respawn-session", Endpoint(service.control.host, service.control.port),
+                    "compatibility-actor"))
+                respawn_client.connect()
+                respawn_client.request_respawn()
                 deadline = time.monotonic() + 1
                 while service.control.commands.qsize() == 0 and time.monotonic() < deadline:
                     time.sleep(0.001)
                 self.assertGreater(service.control.commands.qsize(), 0)
                 clock.advance(2 / 120)
                 clock.wait_for_sleep(3)
-                reset_ack = reset_client.wait_reset_ack(1)
-                self.assertEqual(reset_ack["episode"], 2)
-                self.assertGreaterEqual(reset_ack["world_tick"], before_world_tick)
-                self.assertEqual(service.engine.episode, 2)
-                self.assertIsNone(service.engine.terminal)
-                self.assertEqual((service.engine.avatar.x, service.engine.avatar.y),
+                respawn_ack = respawn_client.wait_respawn_ack(1)
+                self.assertEqual(respawn_ack["actor_id"], "compatibility-actor")
+                self.assertGreaterEqual(respawn_ack["world_tick"], before_world_tick)
+                self.assertIsNone(service.engine.actors["compatibility-actor"].result)
+                body = service.engine.actors["compatibility-actor"].body
+                self.assertEqual((body.x, body.y),
                                  (service.engine.world.spawn.x, service.engine.world.spawn.y))
                 self.assertGreater(service.engine.world_tick, before_world_tick)
             finally:
                 service.quit_requested = True
                 clock.release.set()
                 runner.join(2)
-                if reset_client is not None:
-                    reset_client.close()
+                if respawn_client is not None:
+                    respawn_client.close()
                 if action_socket is not None:
                     action_socket.close()
             self.assertFalse(runner.is_alive())

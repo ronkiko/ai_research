@@ -470,7 +470,7 @@ class PublicJoystickIntegrationTests(unittest.TestCase):
                 self.assertTrue(any(item["status"] == "accepted" for item in acknowledgements))
                 summary_path = V2 / "console" / "runs" / manifest.session_id / "summary.json"
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                self.assertGreater(summary["avatar"]["x"], 128)
+                self.assertGreater(summary["actors"][0]["x"], 128)
             finally:
                 if client is not None:
                     client.close()
@@ -538,12 +538,14 @@ class PublicJoystickIntegrationTests(unittest.TestCase):
                 self.assertFalse((run_dir / "display.log").exists())
                 deadline = time.monotonic() + 1
                 while (not renderer.views or
-                       max(view.avatar.x for view in renderer.views) <= 128) and \
+                       max(view.self_actor.x for view in renderer.views
+                           if view.self_actor is not None) <= 128) and \
                         time.monotonic() < deadline:
                     display.present_latest()
                     time.sleep(0.001)
                 self.assertTrue(renderer.views)
-                self.assertGreater(max(view.avatar.x for view in renderer.views), 128)
+                self.assertGreater(max(view.self_actor.x for view in renderer.views
+                                       if view.self_actor is not None), 128)
             finally:
                 if display is not None:
                     display.close()

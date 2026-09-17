@@ -11,6 +11,7 @@ MAX_HOLD_TICKS = 10_000
 
 @dataclass(frozen=True)
 class ActionCommand:
+    actor_id: str
     sequence: int
     target_world_tick: int
     hold_ticks: int
@@ -18,6 +19,8 @@ class ActionCommand:
     jump: bool = False
 
     def __post_init__(self):
+        if type(self.actor_id) is not str or not self.actor_id:
+            raise ProtocolError("actor_id must be a non-empty string")
         for name in ("sequence", "target_world_tick", "hold_ticks"):
             value = getattr(self, name)
             if type(value) is not int or value < 0:
@@ -31,28 +34,52 @@ class ActionCommand:
 
 def action_message(command: ActionCommand) -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "type": "action",
+            "actor_id": command.actor_id,
             "sequence": command.sequence, "target_world_tick": command.target_world_tick,
             "hold_ticks": command.hold_ticks, "right": command.right, "jump": command.jump}
 
 
-def reset_message() -> dict[str, int | str]:
-    """Build the existing private lifecycle reset command."""
-    return {"version": PROTOCOL_VERSION, "type": "reset"}
+@dataclass(frozen=True)
+class RespawnCommand:
+    actor_id: str
+
+    def __post_init__(self):
+        if type(self.actor_id) is not str or not self.actor_id:
+            raise ProtocolError("actor_id must be a non-empty string")
 
 
-def decode_control_message(message: dict[str, Any]) -> ActionCommand | str:
+def respawn_message(actor_id: str) -> dict[str, int | str]:
+    """Build the private actor-local lifecycle respawn command."""
+    RespawnCommand(actor_id)
+    return {"version": PROTOCOL_VERSION, "type": "respawn", "actor_id": actor_id}
+
+
+def reset_message(actor_id: str) -> dict[str, int | str]:
+    """Compatibility API name for the actor-scoped respawn command."""
+    return respawn_message(actor_id)
+
+
+def decode_control_message(message: dict[str, Any]) -> ActionCommand | RespawnCommand | str:
     if not isinstance(message, dict) or message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError("unsupported control protocol version")
     kind = message.get("type")
-    if kind in {"reset", "quit"}:
+    if kind == "quit":
         if set(message) != {"version", "type"}:
-            raise ProtocolError("reset/quit fields are invalid")
+            raise ProtocolError("quit fields are invalid")
         return kind
+    if kind == "respawn":
+        if set(message) != {"version", "type", "actor_id"}:
+            raise ProtocolError("respawn fields are invalid")
+        return RespawnCommand(message["actor_id"])
     if kind != "action":
         raise ProtocolError("unknown control command")
-    expected = {"version", "type", "sequence", "target_world_tick", "hold_ticks",
+    expected = {"version", "type", "actor_id", "sequence", "target_world_tick", "hold_ticks",
                 "right", "jump"}
     if set(message) != expected:
         raise ProtocolError("action fields are invalid")
-    return ActionCommand(message["sequence"], message["target_world_tick"],
-                         message["hold_ticks"], message["right"], message["jump"])
+    return ActionCommand(message["actor_id"], message["sequence"], message["target_world_tick"],
+                          message["hold_ticks"], message["right"], message["jump"])
+
+
+__all__ = ["ActionCommand", "MAX_HOLD_TICKS", "RespawnCommand", "action_message",
+           "decode_control_message", "reset_message", "respawn_message"]

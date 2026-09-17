@@ -8,13 +8,12 @@ from collections import deque
 from typing import Callable
 
 from game2.v2.console.config import OperatorControlManifest
-from game2.v2.console.protocol import PROTOCOL_VERSION, reset_message
+from game2.v2.console.protocol import PROTOCOL_VERSION, respawn_message
 from game2.v2.contracts.framing import ProtocolError, recv_frame, send_frame
 
 
-RESET_ACK_FIELDS = {
-    "version", "type", "episode", "world_tick",
-}
+RESPAWN_ACK_FIELDS = {"version", "type", "actor_id", "status", "world_tick"}
+RESET_ACK_FIELDS = RESPAWN_ACK_FIELDS
 
 
 def _connect(endpoint, timeout: float, socket_factory: Callable[..., socket.socket]):
@@ -28,19 +27,21 @@ def _connect(endpoint, timeout: float, socket_factory: Callable[..., socket.sock
             time.sleep(0.01)
 
 
-def _validate_reset_ack(message: dict) -> dict:
-    if not isinstance(message, dict) or set(message) != RESET_ACK_FIELDS:
-        raise ProtocolError("invalid reset acknowledgement")
+def _validate_respawn_ack(message: dict, expected_actor_id: str) -> dict:
+    if not isinstance(message, dict) or set(message) != RESPAWN_ACK_FIELDS:
+        raise ProtocolError("invalid respawn acknowledgement")
     if message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError("unsupported reset acknowledgement version")
-    if message.get("type") != "reset_ack":
-        raise ProtocolError("invalid reset acknowledgement type")
-    for name in ("episode", "world_tick"):
+    if message.get("type") != "respawn_ack":
+        raise ProtocolError("invalid respawn acknowledgement type")
+    if message.get("actor_id") != expected_actor_id:
+        raise ProtocolError("respawn acknowledgement actor is invalid")
+    if message.get("status") not in {"accepted", "rejected"}:
+        raise ProtocolError("respawn acknowledgement status is invalid")
+    for name in ("world_tick",):
         value = message.get(name)
         if type(value) is not int or value < 0:
-            raise ProtocolError(f"reset acknowledgement {name} is invalid")
-    if message["episode"] < 1:
-        raise ProtocolError("reset acknowledgement episode is invalid")
+            raise ProtocolError(f"respawn acknowledgement {name} is invalid")
     return message
 
 
@@ -99,21 +100,24 @@ class DemoControlClient:
             target=self._read_loop, name="v2-demo-control-acks", daemon=True)
         self._reader_thread.start()
 
-    def request_reset(self) -> None:
-        """Send one existing reset command; acknowledgement is collected in the reader."""
+    def request_respawn(self, actor_id: str | None = None) -> None:
+        """Respawn only the actor named by this private operator capability."""
+        actor_id = self.manifest.actor_id if actor_id is None else actor_id
+        if actor_id != self.manifest.actor_id:
+            raise ValueError("Demo control actor does not match capability")
         with self._send_lock:
             with self._state_condition:
                 control = self._socket
                 if control is None or self._closed.is_set() or self._error is not None:
                     raise ConnectionError("Demo control client is not connected")
             try:
-                send_frame(control, reset_message())
+                send_frame(control, respawn_message(actor_id))
             except (OSError, ValueError) as exc:
                 self._fail(exc)
                 raise ConnectionError("Demo control send failed") from exc
 
-    def wait_reset_ack(self, timeout: float | None = None) -> dict | None:
-        """Wait for the next reset acknowledgement without holding the UI thread."""
+    def wait_respawn_ack(self, timeout: float | None = None) -> dict | None:
+        """Wait for the next actor-local respawn acknowledgement."""
         if timeout is not None and timeout < 0:
             raise ValueError("reset acknowledgement timeout must not be negative")
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -143,9 +147,9 @@ class DemoControlClient:
                     message = recv_frame(control)
                 except socket.timeout:
                     continue
-                if message.get("type") != "reset_ack":
+                if message.get("type") != "respawn_ack":
                     continue
-                acknowledgement = _validate_reset_ack(message)
+                acknowledgement = _validate_respawn_ack(message, self.manifest.actor_id)
                 with self._state_condition:
                     self._reset_acks.append(acknowledgement)
                     self.latest_reset_ack = acknowledgement
@@ -195,5 +199,13 @@ class DemoControlClient:
             except OSError:
                 pass
 
+    # Temporary demo callers may still use the old method names; both aliases
+    # send the actor-scoped respawn command and never perform a global reset.
+    def request_reset(self) -> None:
+        self.request_respawn()
 
-__all__ = ["DemoControlClient", "RESET_ACK_FIELDS"]
+    def wait_reset_ack(self, timeout: float | None = None) -> dict | None:
+        return self.wait_respawn_ack(timeout)
+
+
+__all__ = ["DemoControlClient", "RESET_ACK_FIELDS", "RESPAWN_ACK_FIELDS"]

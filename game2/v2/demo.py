@@ -335,7 +335,8 @@ class DemoShell:
             ("State:", self.section_font, 338, accent),
         )
         state = self.display_service.latest_state
-        status = terminal_label(state.terminal) if state and state.terminal else "Running"
+        result = state.self_actor.result if state and state.self_actor else None
+        status = terminal_label(result) if result else "Running"
         lines += ((status, self.body_font, 372, bright),)
         for text, font, y, color in lines:
             rendered = font.render(text, True, color)
@@ -361,7 +362,7 @@ class DemoShell:
                     if self.control.failed:
                         raise ConnectionError(
                             f"Demo control transport failed: {self.control.error}")
-                    self.control.request_reset()
+                    self.control.request_respawn()
             return
         if event.type == pygame.KEYUP and event.key == pygame.K_r:
             self._restart_held = False

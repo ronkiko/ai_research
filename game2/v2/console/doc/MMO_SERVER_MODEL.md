@@ -1,10 +1,11 @@
 # MMO Server Model
 
-Status: normative target architecture for Game2 V2 Console.
+Status: normative architecture for Game2 V2 Console after Patch 2.
 
-This document defines the agreed long-lived, authoritative Console model. Patch
-1 establishes its single global clock and global action scheduling; it does not
-implement the future multi-Player runtime.
+This document defines the agreed authoritative Console model. Patch 1
+established the single global clock and global action scheduling. Patch 2 now
+implements the internal shared-world Actor runtime while the external startup
+workflow remains a temporary compatibility path.
 
 ## Authoritative Console
 
@@ -18,7 +19,7 @@ Console
 World Runtime
    +-- one world_tick
    +-- entities
-   +-- actors
+    +-- actors (0..N)
    +-- physics
    +-- game rules
    +-- player connections
@@ -53,8 +54,9 @@ These are separate concepts:
 | Connection | One concrete attachment of a Player to Console |
 | Actor | Entity in World controlled by a Player |
 
-The initial implementation may use one Player to one Actor, but these concepts
-must not be merged. The target Console supports zero or many Players. World is
+The Patch 2 binding foundation stores a distinct `player_id -> actor_id`
+association in an in-memory `PlayerRegistry`. Network Connection is not yet
+implemented. The target Console supports zero or many Players. World is
 created before Player attachment and remains alive after a Connection closes.
 
 ## Shared Physical World
@@ -63,6 +65,10 @@ All Actors belong to one shared World. Subject to the selected World/Game rules,
 Actors may see one another, collide, use shared game objects, and affect one
 another. `Player-player collision` is a game rule, not a Console limitation;
 Players are not architectural ghosts.
+
+The current pit game rule does not resolve Actor-to-Actor physical collisions.
+Each Actor still shares the same World surfaces and is present in STATE/Vision;
+future game rules may add interaction without changing the runtime topology.
 
 ## Engine and Training
 
@@ -80,8 +86,8 @@ result
 ```
 
 No episode clock is required: `elapsed = finish_world_tick -
-start_world_tick`. The current singleton `engine.episode`, terminal state, and
-single Avatar are transitional migration debt, not the target MMO model.
+start_world_tick`. Actor result and lifecycle are runtime state; a terminal
+Actor is frozen locally while other Actors and the World continue.
 
 ## Actor-Local Respawn
 
@@ -106,7 +112,8 @@ Console allocates Player identity and Actor capability
 Player receives its Joystick, Vision, and lifecycle/spawn capabilities
 ```
 
-This is the next architectural direction, not a Patch 1 implementation.
+This is the next architectural direction. Patch 2 does not implement network
+Connection or dynamic attach.
 
 ## Future Process Ownership
 
@@ -116,10 +123,23 @@ without requiring a Player.
 `vision.sh` will connect to an existing Console, initialize an examiner/model
 client, and wait for explicit `START`. `START` lets that Player/Actor enter the
 World. Closing `vision.sh` will not stop Console. These behaviors are future
-direction and are not implemented in Patch 1.
+direction and are not implemented in Patch 2.
 
-## Series Roadmap
+## Implementation Status
 
-- Patch 1: MMO target documentation, global `world_tick`, global action scheduling.
-- Patch 2: Player/Actor registry, 0..N Actors, actor-scoped lifecycle/input, shared-world multi-Player state/vision foundation.
-- Patch 3: long-lived `boot.sh` Console server, client attach/discovery, attach-only `vision.sh`, explicit `START`, actor-local respawn, examiner flow.
+Implemented in Patch 2:
+
+- global `world_tick` and one shared World runtime;
+- Player/Actor binding registry with distinct IDs;
+- 0..N core Actors and deterministic Actor processing order;
+- actor-scoped input queues, action statistics, result, respawn, and despawn;
+- multi-Actor STATE and world-level actor telemetry/events;
+- SELF/OTHER Actor Vision foundation.
+
+Still Patch 3:
+
+- persistent `boot.sh` Console server;
+- dynamic Connection attach/discovery;
+- per-Player public capability allocation;
+- explicit `START`;
+- attach-only `vision.sh` and examiner respawn flow.
