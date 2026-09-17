@@ -21,6 +21,7 @@ READY = "READY " + json.dumps({
     "session_id": "demo-session",
     "joystick": {"host": "127.0.0.1", "port": 23456},
 }) + "\n"
+PLAYER_READY = 'READY {"session_id":"demo-session"}\n'
 
 
 class FakeProcess:
@@ -136,6 +137,8 @@ class DemoFileTests(unittest.TestCase):
         self.assertIs(demo.launch_player(manifest_path, popen_factory=player_popen), player)
         self.assertIn("game2.v2.player.human.main", calls[0][0])
         self.assertTrue(calls[0][1]["start_new_session"])
+        self.assertIs(calls[0][1]["stdout"], subprocess.PIPE)
+        self.assertIs(calls[0][1]["stderr"], subprocess.STDOUT)
 
     def test_ready_parser_accepts_only_public_peripheral_manifest(self):
         manifest = demo.parse_console_ready(READY)
@@ -145,12 +148,29 @@ class DemoFileTests(unittest.TestCase):
             demo.parse_console_ready('READY {"session_id":"s","joystick":{},"engine_control":{}}')
         with self.assertRaises(ValueError):
             demo.parse_console_ready('READY {"session_id":"s","joystick":{}}')
+        self.assertEqual(demo.parse_player_ready(PLAYER_READY), "demo-session")
+        with self.assertRaises(ValueError):
+            demo.parse_player_ready('READY {"session_id":"s","extra":true}')
+        with self.assertRaises(ValueError):
+            demo.parse_player_ready(PLAYER_READY, expected_session_id="other")
 
     def test_ready_output_continues_to_be_pumped_after_ready(self):
         output = io.StringIO()
         process = FakeProcess(stdout=io.StringIO("before\n" + READY + "after\n"))
         manifest = demo.wait_console_ready(process, timeout=1, output=output)
         self.assertEqual(manifest.session_id, "demo-session")
+        deadline = time.monotonic() + 1
+        while "after\n" not in output.getvalue() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertIn("before\n", output.getvalue())
+        self.assertIn("after\n", output.getvalue())
+
+    def test_player_ready_output_continues_to_be_pumped_after_ready(self):
+        output = io.StringIO()
+        process = FakeProcess(stdout=io.StringIO("before\n" + PLAYER_READY + "after\n"))
+        session_id = demo.wait_player_ready(process, timeout=1, output=output,
+                                            expected_session_id="demo-session")
+        self.assertEqual(session_id, "demo-session")
         deadline = time.monotonic() + 1
         while "after\n" not in output.getvalue() and time.monotonic() < deadline:
             time.sleep(0.001)
@@ -173,7 +193,7 @@ class DemoShutdownTests(unittest.TestCase):
 
     def test_console_starts_before_player_and_exit_stops_both(self):
         console = FakeProcess(stdout=io.StringIO(READY))
-        player = FakeProcess()
+        player = FakeProcess(stdout=io.StringIO(PLAYER_READY))
         control = FakeControl(should_exit=True)
         calls = []
         player_manifests = []
@@ -183,7 +203,7 @@ class DemoShutdownTests(unittest.TestCase):
             control_factory=lambda: control,
             shutdown_timeout=1,
             poll_interval=0,
-            player_startup_timeout=0,
+            player_startup_timeout=1,
         )
 
         self.assertEqual(status, 0)
@@ -198,7 +218,7 @@ class DemoShutdownTests(unittest.TestCase):
 
     def test_ctrl_c_uses_the_same_player_then_console_shutdown_path(self):
         console = FakeProcess(stdout=io.StringIO(READY))
-        player = FakeProcess()
+        player = FakeProcess(stdout=io.StringIO(PLAYER_READY))
         control = FakeControl()
         calls = []
         timer = threading.Timer(0.02, lambda: os.kill(os.getpid(), signal.SIGINT))
@@ -209,7 +229,7 @@ class DemoShutdownTests(unittest.TestCase):
                 control_factory=lambda: control,
                 shutdown_timeout=1,
                 poll_interval=0.001,
-                player_startup_timeout=0,
+                player_startup_timeout=1,
             )
         finally:
             timer.cancel()
@@ -240,7 +260,7 @@ class DemoShutdownTests(unittest.TestCase):
             control_factory=FakeControl,
             startup_timeout=0.01,
             shutdown_timeout=1,
-            player_startup_timeout=0,
+            player_startup_timeout=1,
         )
 
         self.assertEqual(status, 1)
@@ -257,7 +277,7 @@ class DemoShutdownTests(unittest.TestCase):
             popen_factory=self._factory(console, player, calls),
             control_factory=FakeControl,
             shutdown_timeout=1,
-            player_startup_timeout=0,
+            player_startup_timeout=1,
         )
 
         self.assertEqual(status, 1)
@@ -266,7 +286,24 @@ class DemoShutdownTests(unittest.TestCase):
 
     def test_player_initial_failure_stops_console_and_returns_failure(self):
         console = FakeProcess(stdout=io.StringIO(READY))
-        player = FakeProcess(returncode=7)
+        player = FakeProcess(returncode=1, stdout=io.StringIO())
+        calls = []
+
+        status = demo.run_demo(
+            popen_factory=self._factory(console, player, calls),
+            control_factory=FakeControl,
+            shutdown_timeout=1,
+            player_startup_timeout=1,
+        )
+
+        self.assertEqual(status, 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(console.terminate_calls, 1)
+        self.assertEqual(player.terminate_calls, 0)
+
+    def test_player_hang_before_ready_stops_player_and_console(self):
+        console = FakeProcess(stdout=io.StringIO(READY))
+        player = FakeProcess(stdout=BlockingOutput())
         calls = []
 
         status = demo.run_demo(
@@ -278,11 +315,28 @@ class DemoShutdownTests(unittest.TestCase):
 
         self.assertEqual(status, 1)
         self.assertEqual(len(calls), 2)
+        self.assertEqual(player.terminate_calls, 1)
+        self.assertEqual(console.terminate_calls, 1)
+
+    def test_malformed_player_ready_stops_console_and_returns_failure(self):
+        console = FakeProcess(stdout=io.StringIO(READY))
+        player = FakeProcess(stdout=io.StringIO('READY {"session_id":"wrong"}\n'))
+        calls = []
+
+        status = demo.run_demo(
+            popen_factory=self._factory(console, player, calls),
+            control_factory=FakeControl,
+            shutdown_timeout=1,
+            player_startup_timeout=1,
+        )
+
+        self.assertEqual(status, 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(console.terminate_calls, 1)
 
     def test_console_death_stops_player_and_returns_console_status(self):
         console = FakeProcess(returncode=7, stdout=io.StringIO(READY))
-        player = FakeProcess()
+        player = FakeProcess(stdout=io.StringIO(PLAYER_READY))
         control = FakeControl()
         calls = []
 
@@ -290,7 +344,7 @@ class DemoShutdownTests(unittest.TestCase):
             popen_factory=self._factory(console, player, calls),
             control_factory=lambda: control,
             shutdown_timeout=1,
-            player_startup_timeout=0,
+            player_startup_timeout=1,
         )
 
         self.assertEqual(status, 7)
@@ -300,7 +354,7 @@ class DemoShutdownTests(unittest.TestCase):
 
     def test_player_detach_updates_control_without_stopping_console(self):
         console = FakeProcess(stdout=io.StringIO(READY))
-        player = FakeProcess()
+        player = FakeProcess(stdout=io.StringIO(PLAYER_READY))
         calls = []
 
         class DetachThenExit(FakeControl):
@@ -316,7 +370,7 @@ class DemoShutdownTests(unittest.TestCase):
             control_factory=lambda: control,
             shutdown_timeout=1,
             poll_interval=0,
-            player_startup_timeout=0,
+            player_startup_timeout=1,
         )
 
         self.assertEqual(status, 0)

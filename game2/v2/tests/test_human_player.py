@@ -10,16 +10,18 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from game2.v2.contracts.framing import recv_frame, send_frame
+from game2.v2.contracts.framing import PROTOCOL_VERSION, ProtocolError, recv_frame, send_frame
 from game2.v2.contracts.joystick import (JoystickState, decode_joystick_message,
                                           joystick_ack, joystick_message)
 from game2.v2.contracts.manifests import Endpoint, PeripheralManifest
-from game2.v2.player.human.client import HumanJoystickClient
+from game2.v2.player.human.client import ACK_DIAGNOSTICS_LIMIT, HumanJoystickClient
 from game2.v2.player.human.keyboard import (KeyboardState, KeyboardWindow, button_for_key,
                                              state_from_keys)
+from game2.v2.player.human.main import run_player
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -77,6 +79,41 @@ class AckServer:
         self.thread.join(timeout=2)
 
 
+class PayloadAckServer:
+    def __init__(self, payload):
+        self.payload = payload
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen()
+        self.endpoint = Endpoint("127.0.0.1", self.listener.getsockname()[1])
+        self.connected = threading.Event()
+        self.done = threading.Event()
+        self.error = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def _run(self):
+        connection = None
+        try:
+            connection, _ = self.listener.accept()
+            self.connected.set()
+            send_frame(connection, self.payload)
+            time.sleep(0.05)
+        except BaseException as exc:
+            self.error = exc
+        finally:
+            if connection is not None:
+                connection.close()
+            self.listener.close()
+            self.done.set()
+
+    def close(self):
+        self.listener.close()
+        self.thread.join(timeout=2)
+
+
 def _manifest(endpoint):
     return PeripheralManifest("human-test", endpoint)
 
@@ -128,6 +165,9 @@ class HumanJoystickClientTests(unittest.TestCase):
             self.assertEqual([item["status"] for item in acknowledgements],
                              ["accepted", "rejected", "duplicate"])
             self.assertEqual(client.sequence, 3)
+            self.assertEqual((client.accepted_count, client.rejected_count,
+                              client.duplicate_count), (1, 1, 1))
+            self.assertEqual(client.latest_ack["status"], "duplicate")
             self.assertFalse(client.failed)
         finally:
             client.close()
@@ -185,6 +225,56 @@ class HumanJoystickClientTests(unittest.TestCase):
             client.close()
             listener.close()
 
+    def test_ack_diagnostics_remain_bounded_after_ten_thousand_acks(self):
+        statuses = ["accepted"] * 5000 + ["rejected"] * 3000 + ["duplicate"] * 2000
+        server = AckServer(statuses, hold_open=True)
+        server.start()
+        client = HumanJoystickClient(_manifest(server.endpoint))
+        try:
+            client.connect()
+            for _ in statuses:
+                client.send_state(True, False)
+            self.assertTrue(server.received.wait(5))
+            deadline = time.monotonic() + 5
+            while ((client.accepted_count + client.rejected_count + client.duplicate_count)
+                   < len(statuses) and time.monotonic() < deadline):
+                time.sleep(0.001)
+            self.assertEqual((client.accepted_count, client.rejected_count,
+                              client.duplicate_count), (5000, 3000, 2000))
+            self.assertEqual(client.acknowledgements.maxlen, ACK_DIAGNOSTICS_LIMIT)
+            self.assertEqual(len(client.acknowledgements), ACK_DIAGNOSTICS_LIMIT)
+            self.assertEqual(client.latest_ack["status"], "duplicate")
+        finally:
+            client.close()
+            server.close()
+        self.assertIsNone(server.error)
+
+    def test_ack_requires_current_version_and_exact_fields(self):
+        payloads = (
+            {"version": PROTOCOL_VERSION + 1, "type": "joystick_ack",
+             "sequence": 1, "status": "accepted"},
+            {"type": "joystick_ack", "sequence": 1, "status": "accepted"},
+            {"version": PROTOCOL_VERSION, "type": "joystick_ack",
+             "sequence": 1, "status": "accepted", "unknown": False},
+        )
+        for payload in payloads:
+            server = PayloadAckServer(payload)
+            server.start()
+            client = HumanJoystickClient(_manifest(server.endpoint))
+            try:
+                client.connect()
+                self.assertTrue(server.connected.wait(1))
+                deadline = time.monotonic() + 1
+                while not client.failed and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(client.failed, payload)
+                self.assertIsInstance(client.error, ProtocolError)
+                self.assertEqual(client.accepted_count, 0)
+            finally:
+                client.close()
+                server.close()
+            self.assertIsNone(server.error)
+
     def test_disconnect_marks_failure_and_ack_reader_stops(self):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind(("127.0.0.1", 0))
@@ -213,6 +303,73 @@ class HumanJoystickClientTests(unittest.TestCase):
             client.close()
             listener.close()
 
+
+class HumanPlayerReadyTests(unittest.TestCase):
+    class Client:
+        def __init__(self, manifest):
+            self.connected = True
+            self.failed = False
+            self.error = None
+            self.closed = False
+
+        def connect(self):
+            return None
+
+        def send_state(self, right, jump):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    class Window:
+        def __init__(self):
+            self.closed = False
+            self.state = KeyboardState(False, False)
+
+        def poll_close(self):
+            return True
+
+        def draw(self, connected):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    def setUp(self):
+        self.manifest = _manifest(Endpoint("127.0.0.1", 1))
+
+    def test_connect_failure_does_not_print_ready(self):
+        class FailingClient(self.Client):
+            def connect(self):
+                raise ConnectionError("connect failed")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = run_player(self.manifest, client_factory=FailingClient,
+                                window_factory=self.Window)
+        self.assertEqual(status, 1)
+        self.assertNotIn("READY ", stdout.getvalue())
+
+    def test_window_init_failure_does_not_print_ready(self):
+        def failing_window():
+            raise RuntimeError("window failed")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = run_player(self.manifest, client_factory=self.Client,
+                                window_factory=failing_window)
+        self.assertEqual(status, 1)
+        self.assertNotIn("READY ", stdout.getvalue())
+
+    def test_ready_is_printed_once_after_connect_and_window(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = run_player(self.manifest, client_factory=self.Client,
+                                window_factory=self.Window)
+        self.assertEqual(status, 0)
+        self.assertEqual(stdout.getvalue().splitlines(), [
+            'READY {"session_id":"human-test"}',
+        ])
 
 class KeyboardMappingTests(unittest.TestCase):
     def test_allowed_keys_map_to_the_two_public_buttons(self):

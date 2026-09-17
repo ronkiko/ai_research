@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,11 @@ def run_player(manifest: PeripheralManifest, *, input_hz: int = INPUT_HZ,
     try:
         client.connect()
         window = window_factory()
+        if not client.connected:
+            raise ConnectionError("Joystick disconnected before Human Player READY")
+        print("READY " + json.dumps({"session_id": manifest.session_id},
+                                    separators=(",", ":"), sort_keys=True),
+              flush=True)
         interval = 1 / input_hz
         next_input = clock()
         while True:

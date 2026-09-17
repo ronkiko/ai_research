@@ -26,7 +26,9 @@ CONFIG_PATH = Path(__file__).resolve().parent / "console" / "configs" / "screen-
 CONSOLE_MODULE = "game2.v2.console.main"
 HUMAN_PLAYER_MODULE = "game2.v2.player.human.main"
 CONSOLE_READY_TIMEOUT = 10.0
-PLAYER_STARTUP_TIMEOUT = 0.5
+PLAYER_READY_TIMEOUT = 10.0
+# Keep the existing keyword stable; it now means time to receive Player READY.
+PLAYER_STARTUP_TIMEOUT = PLAYER_READY_TIMEOUT
 _OUTPUT_END = object()
 
 
@@ -63,7 +65,8 @@ def launch_player(manifest_path: str | Path,
     """Start Human Player as a separate external process."""
     popen = popen_factory or subprocess.Popen
     return popen(player_command(manifest_path, python), cwd=str(ROOT),
-                 start_new_session=True)
+                 start_new_session=True, stdout=subprocess.PIPE,
+                 stderr=subprocess.STDOUT, text=True, bufsize=1)
 
 
 def _strict_ready_json(text: str):
@@ -92,6 +95,23 @@ def parse_console_ready(line: str) -> PeripheralManifest:
         raise ValueError("Console READY is not a public PeripheralManifest") from exc
 
 
+def parse_player_ready(line: str, expected_session_id: str | None = None) -> str:
+    """Validate the Human Player READY payload without exposing Console data."""
+    if not isinstance(line, str) or not line.startswith("READY "):
+        raise ValueError("Human Player did not provide a READY line")
+    try:
+        payload = _strict_ready_json(line[6:])
+        if (not isinstance(payload, dict) or set(payload) != {"session_id"}
+                or type(payload["session_id"]) is not str or not payload["session_id"]):
+            raise ValueError("Human Player READY fields are invalid")
+        if (expected_session_id is not None
+                and payload["session_id"] != expected_session_id):
+            raise ValueError("Human Player READY session does not match Console")
+        return payload["session_id"]
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Human Player READY is malformed") from exc
+
+
 def _queue_console_output(source, lines: queue.Queue) -> None:
     try:
         for line in source:
@@ -109,41 +129,60 @@ def _pump_queued_output(lines: queue.Queue, destination) -> None:
         destination.flush()
 
 
-def wait_console_ready(process: subprocess.Popen, timeout: float = CONSOLE_READY_TIMEOUT,
-                       output=None, shutdown_event: threading.Event | None = None) -> PeripheralManifest:
-    """Read and validate public Console READY while continuously draining stdout."""
+def _wait_process_ready(process: subprocess.Popen, timeout: float, parser,
+                        label: str, output=None,
+                        shutdown_event: threading.Event | None = None):
+    """Read one READY line while keeping the child stdout pipe drained."""
     if timeout <= 0:
-        raise ValueError("Console READY timeout must be positive")
+        raise ValueError(f"{label} READY timeout must be positive")
     source = getattr(process, "stdout", None)
     if source is None:
-        raise RuntimeError("Console stdout is unavailable")
+        raise RuntimeError(f"{label} stdout is unavailable")
     destination = sys.stdout if output is None else output
     lines: queue.Queue = queue.Queue()
     threading.Thread(target=_queue_console_output, args=(source, lines),
-                     name="v2-demo-console-output", daemon=True).start()
+                     name=f"v2-demo-{label.lower().replace(' ', '-')}-output",
+                     daemon=True).start()
     deadline = time.monotonic() + timeout
     while True:
         if shutdown_event is not None and shutdown_event.is_set():
             raise KeyboardInterrupt
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("Console did not announce READY")
+            raise TimeoutError(f"{label} did not announce READY")
         try:
             line = lines.get(timeout=min(remaining, 0.1))
         except queue.Empty:
             continue
         if line is _OUTPUT_END:
-            raise RuntimeError("Console exited before READY")
+            raise RuntimeError(f"{label} exited before READY")
         destination.write(line)
         destination.flush()
-        if line.startswith("READY "):
+        if line.startswith("READY"):
             try:
-                manifest = parse_console_ready(line)
+                ready = parser(line)
             except ValueError as exc:
-                raise RuntimeError(str(exc)) from exc
+                raise RuntimeError(f"{label} READY is malformed: {exc}") from exc
             threading.Thread(target=_pump_queued_output, args=(lines, destination),
-                             name="v2-demo-console-output-pump", daemon=True).start()
-            return manifest
+                              name=f"v2-demo-{label.lower().replace(' ', '-')}-output-pump",
+                              daemon=True).start()
+            return ready
+
+
+def wait_console_ready(process: subprocess.Popen, timeout: float = CONSOLE_READY_TIMEOUT,
+                       output=None, shutdown_event: threading.Event | None = None) -> PeripheralManifest:
+    """Read and validate public Console READY while continuously draining stdout."""
+    return _wait_process_ready(process, timeout, parse_console_ready, "Console", output,
+                               shutdown_event)
+
+
+def wait_player_ready(process: subprocess.Popen, timeout: float = PLAYER_READY_TIMEOUT,
+                      output=None, shutdown_event: threading.Event | None = None,
+                      expected_session_id: str | None = None) -> str:
+    """Wait for the external Player READY and keep its output visible afterwards."""
+    parser = lambda line: parse_player_ready(line, expected_session_id)
+    return _wait_process_ready(process, timeout, parser, "Human Player", output,
+                               shutdown_event)
 
 
 def _kill_console_process_group(process: subprocess.Popen) -> None:
@@ -189,19 +228,6 @@ def _set_player_status(control, attached: bool) -> None:
     setter = getattr(control, "set_player_attached", None)
     if setter:
         setter(attached)
-
-
-def _wait_for_player_startup(process: subprocess.Popen, timeout: float) -> bool:
-    """Give an initial Player process a short window to report immediate failure."""
-    if timeout <= 0:
-        return process.poll() is None
-    deadline = time.monotonic() + timeout
-    while process.poll() is None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return True
-        time.sleep(min(0.01, remaining))
-    return False
 
 
 class DemoControl:
@@ -274,8 +300,8 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
         raise ValueError("poll interval must not be negative")
     if startup_timeout <= 0:
         raise ValueError("startup timeout must be positive")
-    if player_startup_timeout < 0:
-        raise ValueError("Player startup timeout must not be negative")
+    if player_startup_timeout <= 0:
+        raise ValueError("Player READY timeout must be positive")
 
     shutdown_requested = threading.Event()
 
@@ -310,11 +336,14 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
         except OSError as exc:
             print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
             return 1
-        player_attached = _wait_for_player_startup(player, player_startup_timeout)
-        if not player_attached and player.poll() not in (None, 0):
-            print(f"ERROR Human Player startup failed with status {player.returncode}",
-                  file=sys.stderr, flush=True)
+        try:
+            wait_player_ready(player, timeout=player_startup_timeout,
+                              shutdown_event=shutdown_requested,
+                              expected_session_id=manifest.session_id)
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            print(f"ERROR Human Player startup failed: {exc}", file=sys.stderr, flush=True)
             return 1
+        player_attached = True
 
         control = (control_factory or DemoControl)()
         _set_player_status(control, player_attached)
@@ -347,9 +376,10 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
             stop_player(player, shutdown_timeout)
         if process is not None and process.poll() is None:
             stop_console(process, shutdown_timeout)
-        output_stream = getattr(process, "stdout", None) if process is not None else None
-        if output_stream is not None:
-            output_stream.close()
+        for child in (process, player):
+            output_stream = getattr(child, "stdout", None) if child is not None else None
+            if output_stream is not None:
+                output_stream.close()
         if control is not None:
             control.close()
         if temporary_directory is not None:
