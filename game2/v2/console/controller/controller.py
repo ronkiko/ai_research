@@ -150,12 +150,12 @@ class ControllerService:
             else:
                 self.last_sequence = state.sequence
                 self.sequences.add(state.sequence)
-                episode = int(self.latest["episode"])
-                current_tick = int(self.latest["episode_tick"])
-                target_tick = max(current_tick + self.lead_ticks, self.next_target + 1)
-                self.next_target = target_tick + self.hold_ticks - 1
-                command = ActionCommand(episode, state.sequence, target_tick, self.hold_ticks,
-                                        state.right, state.jump)
+                current_world_tick = int(self.latest["world_tick"])
+                target_world_tick = max(current_world_tick + self.lead_ticks,
+                                        self.next_target + 1)
+                self.next_target = target_world_tick + self.hold_ticks - 1
+                command = ActionCommand(state.sequence, target_world_tick, self.hold_ticks,
+                                         state.right, state.jump)
                 try:
                     assert self.engine_control is not None
                     self.pending[command.sequence] = (envelope.client_id, state.sequence)

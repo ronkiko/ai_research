@@ -13,7 +13,7 @@ from game2.v2.contracts.framing import ProtocolError, recv_frame, send_frame
 
 
 RESET_ACK_FIELDS = {
-    "version", "type", "episode", "episode_tick", "session_tick",
+    "version", "type", "episode", "world_tick",
 }
 
 
@@ -35,7 +35,7 @@ def _validate_reset_ack(message: dict) -> dict:
         raise ProtocolError("unsupported reset acknowledgement version")
     if message.get("type") != "reset_ack":
         raise ProtocolError("invalid reset acknowledgement type")
-    for name in ("episode", "episode_tick", "session_tick"):
+    for name in ("episode", "world_tick"):
         value = message.get(name)
         if type(value) is not int or value < 0:
             raise ProtocolError(f"reset acknowledgement {name} is invalid")

@@ -33,7 +33,7 @@ runtime:
 WorldDefinition (immutable tile grid and derived geometry)
                          |
                          v
-Engine (mutable Avatar, Physics, episode, clock, terminal state)
+Engine (mutable transitional Avatar, Physics, global world_tick, terminal state)
 ```
 
 `World` owns the map schema, semantic tile IDs, spawn, goal, decorations, and
@@ -94,7 +94,9 @@ Console starts and connects its own subsystems but never handles each gameplay
 message and never launches a Player. Engine owns all mutable physics state and
 fixed-step world timing. Controller is the only gameplay subsystem that knows
 Engine CONTROL. Controller translates Joystick decisions to internal
-`ActionCommand` values containing private episode/tick scheduling details.
+`ActionCommand` values containing private global `target_world_tick` scheduling
+details. Engine does not validate an action against the current compatibility
+episode.
 
 Player receives only `PeripheralManifest`. It never receives Engine CONTROL,
 STATE, TELEMETRY, EVENTS, `InternalManifest`, an Engine object, mutable world
@@ -263,8 +265,8 @@ Display STATE transport is latest-only. Display continuously ingests STATE in a
 separate reader path and atomically replaces one latest validated snapshot;
 presentation is not replay, so intermediate visual states may be dropped.
 Screen and Vision presentation cadence is independent of Engine physics cadence.
-An accepted STATE with `session_tick` less than or equal to the latest accepted
-tick is stale and cannot roll the Display view backward.
+An accepted STATE with `world_tick` less than or equal to the latest accepted
+world tick is stale and cannot roll the Display view backward.
 
 ## External Model and Trainer
 

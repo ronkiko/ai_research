@@ -28,7 +28,7 @@ class ActionStats:
 
 
 class Engine:
-    """The only mutable owner of the world and physical avatar."""
+    """The only mutable owner of the world runtime and physical avatar."""
 
     def __init__(self, world: WorldDefinition, session_id: str = "local",
                  physics_hz: int = 120, episode_limit: int | None = None):
@@ -37,8 +37,8 @@ class Engine:
         self.physics_config = PhysicsConfig(hz=physics_hz)
         self.episode_limit = episode_limit
         self.episode = 1
-        self.episode_tick = 0
-        self.session_tick = 0
+        self.world_tick = 0
+        self.episode_start_world_tick = 0
         self._create_physics_instance()
         self.terminal: str | None = None
         self.stats = ActionStats()
@@ -69,18 +69,19 @@ class Engine:
             self.stats.duplicate += 1
             return "duplicate"
         self._sequences.add(command.sequence)
-        if command.episode != self.episode:
-            self.stats.rejected += 1
-            return "rejected"
-        if command.target_tick <= self.episode_tick:
+        if command.target_world_tick <= self.world_tick:
             self.stats.late += 1
             return "late"
-        end_tick = command.target_tick + command.hold_ticks
-        if any(tick in self._scheduled for tick in range(command.target_tick, end_tick)):
+        end_tick = command.target_world_tick + command.hold_ticks
+        if any(tick in self._scheduled
+               for tick in range(command.target_world_tick, end_tick)):
             self.stats.rejected += 1
             return "rejected"
-        for tick in range(command.target_tick, end_tick):
-            self._scheduled[tick] = (command.right, command.jump if tick == command.target_tick else False)
+        for tick in range(command.target_world_tick, end_tick):
+            self._scheduled[tick] = (
+                command.right,
+                command.jump if tick == command.target_world_tick else False,
+            )
         self.stats.accepted += 1
         return "accepted"
 
@@ -90,43 +91,52 @@ class Engine:
 
     def reset(self) -> list[dict]:
         self.episode += 1
-        self.episode_tick = 0
+        self.episode_start_world_tick = self.world_tick
         self._create_physics_instance()
         self.terminal = None
         self._scheduled.clear()
-        return [{"event": "episode_started", "episode": self.episode, "episode_tick": 0}]
+        return [{"event": "episode_started", "episode": self.episode,
+                 "world_tick": self.world_tick}]
+
+    @property
+    def episode_elapsed(self) -> int:
+        """Derived compatibility duration; world_tick is the only clock."""
+        return self.world_tick - self.episode_start_world_tick
 
     def tick(self) -> list[dict]:
         """Execute exactly one fixed world opportunity; never waits for a client."""
-        self.session_tick += 1
+        self.world_tick += 1
         if self.terminal is not None:
             return []
-        self.episode_tick += 1
-        right, jump = self._scheduled.pop(self.episode_tick, (False, False))
+        right, jump = self._scheduled.pop(self.world_tick, (False, False))
         was_grounded = self.avatar.grounded
-        events = self.physics.step(1 if right else 0, jump)
+        events = [{**event, "world_tick": self.world_tick}
+                  for event in self.physics.step(1 if right else 0, jump)]
         if was_grounded and jump:
-            events.insert(0, {"event": "jump_started", "tick": self.episode_tick})
+            events.insert(0, {"event": "jump_started", "world_tick": self.world_tick})
         if not was_grounded and self.avatar.grounded and self.avatar.alive:
-            events.append({"event": "landed", "tick": self.episode_tick})
+            events.append({"event": "landed", "world_tick": self.world_tick})
         if any(event["event"] == "death" for event in events):
             self._finish_episode("dead")
-            events.append({"event": "episode_finished", "result": "dead", "tick": self.episode_tick})
+            events.append({"event": "episode_finished", "result": "dead",
+                           "world_tick": self.world_tick})
         elif self.world.completed(self.avatar.x, self.avatar.y, self.avatar.width,
                                   self.avatar.height, self.avatar.grounded,
                                   self.avatar.alive):
             self._finish_episode("success")
-            events.append({"event": "goal_reached", "tick": self.episode_tick})
-            events.append({"event": "episode_finished", "result": "success", "tick": self.episode_tick})
-        elif self.episode_limit and self.episode_tick >= self.episode_limit:
+            events.append({"event": "goal_reached", "world_tick": self.world_tick})
+            events.append({"event": "episode_finished", "result": "success",
+                           "world_tick": self.world_tick})
+        elif self.episode_limit and self.episode_elapsed >= self.episode_limit:
             self._finish_episode("timeout")
-            events.append({"event": "episode_finished", "result": "timeout", "tick": self.episode_tick})
+            events.append({"event": "episode_finished", "result": "timeout",
+                           "world_tick": self.world_tick})
         return events
 
     def world_state(self) -> WorldState:
         avatar = self.avatar
         return WorldState(
-            self.session_id, self.episode, self.episode_tick, self.session_tick,
+            self.session_id, self.episode, self.world_tick,
             self.world.map_id,
             AvatarState(avatar.x, avatar.y, avatar.vx, avatar.vy, avatar.grounded, avatar.alive),
             self.terminal,
@@ -134,7 +144,7 @@ class Engine:
 
     def telemetry(self, simulation_speed: float = 0.0) -> TelemetrySnapshot:
         return TelemetrySnapshot(
-            self.session_id, self.episode, self.episode_tick, self.session_tick,
+            self.session_id, self.episode, self.world_tick,
             self.avatar.vx, self.avatar.vy, self.avatar.grounded, self.avatar.alive,
             self.stats.accepted, self.stats.late, self.stats.rejected, self.stats.duplicate,
             simulation_speed,
@@ -176,12 +186,13 @@ class EngineService:
             return
         for event in events:
             self.events.publish({"version": 1, "type": "event", "session_id": self.engine.session_id,
-                                 "episode": self.engine.episode, "session_tick": self.engine.session_tick,
+                                 "episode": self.engine.episode,
+                                 "world_tick": self.engine.world_tick,
                                  **event})
 
     def publish(self) -> None:
         elapsed = max(self._clock() - self._started_at, 1e-9)
-        speed = self.engine.session_tick / elapsed / self.config.physics_hz
+        speed = self.engine.world_tick / elapsed / self.config.physics_hz
         if self.state and self.state.subscriber_count():
             self.state.publish(self.engine.world_state().to_payload())
         if self.telemetry and self.telemetry.subscriber_count():
@@ -199,8 +210,7 @@ class EngineService:
                     "episode": self.engine.episode,
                     "sequence": command.sequence,
                     "status": status,
-                    "episode_tick": self.engine.episode_tick,
-                    "session_tick": self.engine.session_tick,
+                    "world_tick": self.engine.world_tick,
                 })
             elif command == "reset":
                 events.extend(self.engine.reset())
@@ -208,8 +218,7 @@ class EngineService:
                     "version": PROTOCOL_VERSION,
                     "type": "reset_ack",
                     "episode": self.engine.episode,
-                    "episode_tick": self.engine.episode_tick,
-                    "session_tick": self.engine.session_tick,
+                    "world_tick": self.engine.world_tick,
                 })
             elif command == "quit":
                 self.quit_requested = True
@@ -221,12 +230,12 @@ class EngineService:
                                       "control": self.manifest.control.as_dict()}, sort_keys=True),
               flush=True)
         next_tick = self._clock()
-        events = [{"event": "episode_started", "episode": 1, "episode_tick": 0}]
+        events = [{"event": "episode_started", "episode": 1, "world_tick": 0}]
         self.publish_events(events)
         self.publish()
         summary = None
         try:
-            while not self.quit_requested and self.engine.session_tick < self.config.session_ticks:
+            while not self.quit_requested and self.engine.world_tick < self.config.world_ticks:
                 reset_events = self.handle_commands()
                 self.publish_events(reset_events)
                 if self.quit_requested:
@@ -243,7 +252,7 @@ class EngineService:
                         next_tick = self._clock()
             result = self.engine.terminal or "incomplete"
             summary = {"session_id": self.engine.session_id, "clock": self.config.clock_mode,
-                       "episode": self.engine.episode, "session_ticks": self.engine.session_tick,
+                       "episode": self.engine.episode, "world_ticks": self.engine.world_tick,
                        "late": self.engine.stats.late, "rejected": self.engine.stats.rejected,
                        "duplicate": self.engine.stats.duplicate, "result": result,
                        "avatar": {"x": self.engine.avatar.x, "y": self.engine.avatar.y,

@@ -16,7 +16,7 @@ class ScriptedVisionPolicyTests(unittest.TestCase):
         for x in floor:
             pixels[floor_y * width + x] = 1
         pixels[avatar_y * width + avatar_x] = 3
-        return VisionFrame(width, height, bytes(pixels), 1)
+        return VisionFrame(width, height, bytes(pixels), world_tick=1)
 
     def test_solid_floor_ahead_continues_right_without_jump(self):
         action = decide(self._frame())

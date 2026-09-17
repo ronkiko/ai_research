@@ -95,7 +95,6 @@ class PhysicsWorld:
                     and body.y < surface.y + surface.height and body.y + body.height > surface.y):
                 raise ValueError("Spawn must not overlap a surface")
         body.grounded = self._supported()
-        self.tick = 0
 
     def _supported(self):
         body = self.body
@@ -107,7 +106,6 @@ class PhysicsWorld:
     def step(self, move: int = 0, jump: bool = False) -> list[dict]:
         if move not in (-1, 0, 1):
             raise ValueError("move must be -1, 0 or 1")
-        self.tick += 1
         body, config = self.body, self.config
         if not body.alive:
             return []
@@ -141,12 +139,12 @@ class PhysicsWorld:
             contacts = [(hit, surface) for hit, surface in hits if abs(hit[0] - first) <= EPS]
             body.x += dx * first
             body.y += dy * first
-            events.append({"event": "collision", "tick": self.tick})
+            events.append({"event": "collision"})
             if any(surface.damage for _, surface in contacts):
                 body.alive = body.grounded = False
                 body.vx = body.vy = 0.0
-                events.append({"event": "hazard_contact", "tick": self.tick})
-                events.append({"event": "death", "reason": "damage_surface", "tick": self.tick})
+                events.append({"event": "hazard_contact"})
+                events.append({"event": "death", "reason": "damage_surface"})
                 return events
             for (_, nx, ny), surface in contacts:
                 if nx:

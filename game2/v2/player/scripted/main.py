@@ -245,8 +245,8 @@ def main(argv=None) -> int:
                 raise ConnectionError("Joystick acknowledgement stream failed") from ack_error[0]
             if vision is not None:
                 frame = vision.latest
-                if frame is not None and frame.session_tick != latest_tick:
-                    latest_tick = frame.session_tick
+                if frame is not None and frame.world_tick != latest_tick:
+                    latest_tick = frame.world_tick
                     decision = decide(frame)
                     if not decision.jump:
                         jump_armed = True

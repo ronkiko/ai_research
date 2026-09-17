@@ -149,6 +149,7 @@ does not decide whether a management UI exists.
 ## Documentation
 
 - [Architecture overview](ARCHITECTURE.md)
+- [Normative MMO server target](console/doc/MMO_SERVER_MODEL.md)
 - [Normative realtime contract](doc/REALTIME_SYSTEM.md)
 - [Domain model](doc/DOMAIN_MODEL.md)
 - [Dependency rules](doc/DEPENDENCY_RULES.md)
@@ -205,8 +206,8 @@ stops the temporary shell and Console. This is not the final boot or startup
 design.
 
 Engine terminal state is authoritative. After `success`, `dead`, or `timeout`,
-the physical episode is frozen and new gameplay actions are rejected, while the
-session clock may continue. Screen displays the result; R restarts the episode
+the current compatibility actor is frozen and new gameplay actions are rejected,
+while the global `world_tick` continues. Screen displays the result; R restarts the episode
 without restarting Console or the shell.
 
 The future startup flow will provide a boot screen, lifecycle/startup selection,

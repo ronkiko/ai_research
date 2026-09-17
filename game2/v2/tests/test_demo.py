@@ -173,7 +173,7 @@ class DemoFileTests(unittest.TestCase):
             self.assertEqual(envelope.command, "reset")
             server.respond(envelope.client_id, {
                 "version": 1, "type": "reset_ack", "episode": 2,
-                "episode_tick": 0, "session_tick": 10,
+                "world_tick": 10,
             })
             self.assertEqual(client.wait_reset_ack(1)["episode"], 2)
         finally:
@@ -405,7 +405,7 @@ class DemoShellLifecycleTests(unittest.TestCase):
         finally:
             pygame.quit()
 
-    def test_private_control_endpoint_resets_engine_episode_without_rolling_session_tick(self):
+    def test_private_control_endpoint_resets_engine_episode_without_rolling_world_tick(self):
         class GatedClock:
             def __init__(self):
                 self.value = 0.0
@@ -442,11 +442,11 @@ class DemoShellLifecycleTests(unittest.TestCase):
             service = EngineService(
                 Engine.from_config(SessionConfig(
                     map=str(PIT), clock_mode="realtime", enable_state=False,
-                    enable_telemetry=False, enable_events=False, session_ticks=100),
+                    enable_telemetry=False, enable_events=False, world_ticks=100),
                     PIT, "reset-session"),
                 EngineManifest("reset-session", control_endpoint, None, None, None, directory),
                 SessionConfig(map=str(PIT), clock_mode="realtime", enable_state=False,
-                              enable_telemetry=False, enable_events=False, session_ticks=100),
+                               enable_telemetry=False, enable_events=False, world_ticks=100),
                 clock=clock, sleeper=clock.sleeper)
             runner = threading.Thread(target=service.run, daemon=True)
             runner.start()
@@ -458,7 +458,7 @@ class DemoShellLifecycleTests(unittest.TestCase):
                     (service.control.host, service.control.port), timeout=1)
                 action_socket.settimeout(1)
                 action_socket.sendall(encode_frame(action_message(
-                    ActionCommand(1, 1, 2, 1, True, False))))
+                    ActionCommand(1, 2, 1, True, False))))
                 deadline = time.monotonic() + 1
                 while service.control.commands.qsize() == 0 and time.monotonic() < deadline:
                     time.sleep(0.001)
@@ -467,8 +467,10 @@ class DemoShellLifecycleTests(unittest.TestCase):
                 clock.wait_for_sleep(2)
                 action_ack = recv_frame(action_socket)
                 self.assertEqual(action_ack["status"], "accepted")
+                self.assertIn("world_tick", action_ack)
+                self.assertNotIn("session_tick", action_ack)
                 self.assertGreater(service.engine.avatar.x, service.engine.world.spawn.x)
-                before_session_tick = service.engine.session_tick
+                before_world_tick = service.engine.world_tick
 
                 reset_client = DemoControlClient(OperatorControlManifest(
                     "reset-session", Endpoint(service.control.host, service.control.port)))
@@ -481,13 +483,13 @@ class DemoShellLifecycleTests(unittest.TestCase):
                 clock.advance(2 / 120)
                 clock.wait_for_sleep(3)
                 reset_ack = reset_client.wait_reset_ack(1)
-                self.assertEqual((reset_ack["episode"], reset_ack["episode_tick"]), (2, 0))
-                self.assertGreaterEqual(reset_ack["session_tick"], before_session_tick)
+                self.assertEqual(reset_ack["episode"], 2)
+                self.assertGreaterEqual(reset_ack["world_tick"], before_world_tick)
                 self.assertEqual(service.engine.episode, 2)
                 self.assertIsNone(service.engine.terminal)
                 self.assertEqual((service.engine.avatar.x, service.engine.avatar.y),
                                  (service.engine.world.spawn.x, service.engine.world.spawn.y))
-                self.assertGreater(service.engine.session_tick, before_session_tick)
+                self.assertGreater(service.engine.world_tick, before_world_tick)
             finally:
                 service.quit_requested = True
                 clock.release.set()

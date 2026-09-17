@@ -105,7 +105,7 @@ class VisionRenderer:
               display_state.avatar.y, world.spawn.width, world.spawn.height,
               VisionClass.AVATAR)
         return VisionFrame(world.width, world.height, bytes(pixels),
-                           display_state.session_tick)
+                           display_state.world_tick)
 
     def close(self) -> None:
         """Keep the renderer interface parallel with the screen implementation."""

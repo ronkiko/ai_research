@@ -44,15 +44,15 @@ def _tiny_world() -> WorldDefinition:
     )
 
 
-def _view(world, x=2, y=2, tick=0, terminal=None, alive=True):
-    return DisplayState("session", tick, world.map_id, AvatarView(x, y, alive), terminal)
+def _view(world, x=2, y=2, world_tick=0, terminal=None, alive=True):
+    return DisplayState("session", world_tick, world.map_id, AvatarView(x, y, alive), terminal)
 
 
 class DisplayStateTests(unittest.TestCase):
     def test_terminal_roundtrip_accepts_only_authoritative_results(self):
         world = _tiny_world()
         base = {
-            "type": "state", "session_id": "session", "session_tick": 1,
+            "type": "state", "session_id": "session", "world_tick": 1,
             "map": "tiny", "avatar": {"x": 2, "y": 2, "alive": True},
         }
         for terminal in (None, "success", "dead", "timeout"):
@@ -110,15 +110,15 @@ class VisionRendererTests(unittest.TestCase):
         world = _tiny_world()
         state = _view(world)
         frame = VisionRenderer().render(world, state)
-        self.assertEqual((frame.width, frame.height, frame.tick), (8, 6, 0))
+        self.assertEqual((frame.width, frame.height, frame.world_tick), (8, 6, 0))
         self.assertEqual(frame.pixels[0:8], bytes((0, 0, 1, 1, 2, 2, 4, 4)))
         self.assertEqual(frame.pixels[2 * frame.width + 2], VisionClass.AVATAR)
         self.assertEqual(set(frame.pixels), {0, 1, 2, 3, 4})
 
     def test_avatar_motion_changes_bytes_without_mutating_inputs(self):
         world = _tiny_world()
-        first_state = _view(world, x=2, tick=4)
-        second_state = _view(world, x=3, tick=5)
+        first_state = _view(world, x=2, world_tick=4)
+        second_state = _view(world, x=3, world_tick=5)
         original_world, original_state = world, first_state
         renderer = VisionRenderer(world)
         first = renderer.render(first_state)
@@ -132,7 +132,7 @@ class VisionRendererTests(unittest.TestCase):
     def test_frame_is_immutable_and_does_not_leak_physics_metadata(self):
         frame = VisionRenderer().render(_tiny_world(), _view(_tiny_world()))
         self.assertEqual({field.name for field in fields(frame)},
-                         {"width", "height", "pixels", "session_tick"})
+                         {"width", "height", "pixels", "world_tick"})
         self.assertIs(type(frame.pixels), bytes)
         for name in ("vx", "vy", "grounded", "accepted_actions", "late_actions",
                      "collision_rects"):
@@ -154,7 +154,7 @@ class DisplayServiceTests(unittest.TestCase):
         service = DisplayService(self._manifest(), world=world)
         valid = {
             "version": 1, "type": "state", "session_id": "session",
-            "session_tick": 7, "map": "tiny",
+            "world_tick": 7, "map": "tiny",
             "avatar": {"x": 2, "y": 2, "alive": True},
         }
         self.assertTrue(service.consume(valid))
@@ -182,7 +182,7 @@ class DisplayServiceTests(unittest.TestCase):
         service = DisplayService(self._manifest("screen"), world=world,
                                  renderer=RecordingRenderer())
         self.assertTrue(service.consume({
-            "type": "state", "session_id": "session", "tick": 2,
+            "type": "state", "session_id": "session", "world_tick": 2,
             "map": "tiny", "avatar": {"x": 2, "y": 2},
         }))
         self.assertEqual(calls[0].map_id, world.map_id)
@@ -193,14 +193,14 @@ class DisplayServiceTests(unittest.TestCase):
         service = DisplayService(self._manifest(), world=world)
         valid = {
             "version": 1, "type": "state", "session_id": "session",
-            "session_tick": 10, "map": "tiny",
+            "world_tick": 10, "map": "tiny",
             "avatar": {"x": 2, "y": 2, "alive": True},
         }
         self.assertTrue(service.ingest(valid))
-        self.assertFalse(service.ingest({**valid, "session_tick": 9}))
-        self.assertFalse(service.ingest({**valid, "session_tick": 11,
+        self.assertFalse(service.ingest({**valid, "world_tick": 9}))
+        self.assertFalse(service.ingest({**valid, "world_tick": 11,
                                          "avatar": {"x": "bad", "y": 2}}))
-        self.assertEqual(service.latest_state.session_tick, 10)
+        self.assertEqual(service.latest_state.world_tick, 10)
         self.assertEqual(service.frames_received, 1)
         self.assertEqual(service.rendered_frames, 0)
         service.renderer.close()
@@ -217,7 +217,7 @@ class DisplayServiceTests(unittest.TestCase):
                 self.release = threading.Event()
 
             def render(self, view):
-                self.calls.append(view.session_tick)
+                self.calls.append(view.world_tick)
                 if len(self.calls) == 1:
                     self.first_render_started.set()
                 self.release.wait(2)
@@ -243,13 +243,13 @@ class DisplayServiceTests(unittest.TestCase):
             client, _ = listener.accept()
             client.sendall(encode_frame({
                 "version": 1, "type": "state", "session_id": "session",
-                "session_tick": 1, "map": "tiny", "avatar": {"x": 2, "y": 2},
+                "world_tick": 1, "map": "tiny", "avatar": {"x": 2, "y": 2},
             }))
             self.assertTrue(renderer.first_render_started.wait(1))
             for tick in range(2, 6):
                 client.sendall(encode_frame({
                     "version": 1, "type": "state", "session_id": "session",
-                    "session_tick": tick, "map": "tiny",
+                    "world_tick": tick, "map": "tiny",
                     "avatar": {"x": 2 + tick, "y": 2},
                 }))
 
@@ -258,7 +258,7 @@ class DisplayServiceTests(unittest.TestCase):
                 time.sleep(0.001)
             self.assertEqual(service.frames_received, 5)
             self.assertTrue(runner.is_alive())
-            self.assertEqual(service.latest_state.session_tick, 5)
+            self.assertEqual(service.latest_state.world_tick, 5)
             self.assertEqual(renderer.calls, [1])
 
             renderer.release.set()
@@ -267,7 +267,7 @@ class DisplayServiceTests(unittest.TestCase):
             runner.join(2)
             self.assertFalse(runner.is_alive())
             self.assertEqual(renderer.calls, [1, 5])
-            self.assertEqual(service.latest_frame.session_tick, 5)
+            self.assertEqual(service.latest_frame.world_tick, 5)
         finally:
             renderer.release.set()
             if client is not None:
@@ -300,7 +300,7 @@ class DisplayServiceTests(unittest.TestCase):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
         base["map"] = str(PIT)
-        base["session_ticks"] = 120
+        base["world_ticks"] = 120
         results = []
         with tempfile.TemporaryDirectory() as directory:
             for mode in ("disabled", "vision", "screen"):
@@ -319,14 +319,14 @@ class DisplayServiceTests(unittest.TestCase):
         os.environ["SDL_VIDEODRIVER"] = "v2-invalid-driver"
         try:
             base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
-            base.update({"map": str(PIT), "session_ticks": 120,
+            base.update({"map": str(PIT), "world_ticks": 120,
                          "display_mode": "screen", "enable_display": True})
             with tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "screen-failure.json"
                 path.write_text(json.dumps(base), encoding="utf-8")
                 status, summary = run_session(path)
             self.assertEqual(status, 0)
-            self.assertEqual(summary["session_ticks"], 120)
+            self.assertEqual(summary["world_ticks"], 120)
         finally:
             if old_driver is None:
                 os.environ.pop("SDL_VIDEODRIVER", None)

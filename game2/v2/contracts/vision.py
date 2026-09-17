@@ -11,7 +11,7 @@ from .framing import MAX_FRAME_SIZE, PROTOCOL_VERSION, ProtocolError, encode_fra
 VISION_TYPE = "vision_frame"
 VISION_MAX_PIXELS = MAX_FRAME_SIZE
 VISION_FIELDS = frozenset({
-    "version", "type", "session_id", "session_tick", "width", "height",
+    "version", "type", "session_id", "world_tick", "width", "height",
     "pixel_format", "byte_length",
 })
 PIXEL_FORMAT = "u8-semantic"
@@ -28,7 +28,7 @@ class VisionFrame:
     width: int
     height: int
     pixels: bytes
-    session_tick: int
+    world_tick: int
 
     def __post_init__(self) -> None:
         if type(self.width) is not int or self.width <= 0:
@@ -37,8 +37,8 @@ class VisionFrame:
             raise ProtocolError("VisionFrame height must be a positive integer")
         if self.width * self.height > VISION_MAX_PIXELS:
             raise ProtocolError("VisionFrame is too large")
-        if type(self.session_tick) is not int or self.session_tick < 0:
-            raise ProtocolError("VisionFrame session_tick must be non-negative")
+        if type(self.world_tick) is not int or self.world_tick < 0:
+            raise ProtocolError("VisionFrame world_tick must be non-negative")
         if not isinstance(self.pixels, (bytes, bytearray)):
             raise ProtocolError("VisionFrame pixels must be bytes")
         pixels = bytes(self.pixels)
@@ -48,12 +48,6 @@ class VisionFrame:
         if pixels and pixels.translate(None, _ALLOWED_SEMANTIC_CLASSES):
             raise ProtocolError("VisionFrame contains an unknown semantic class")
         object.__setattr__(self, "pixels", pixels)
-
-    @property
-    def tick(self) -> int:
-        """Short alias matching the Engine's tick terminology."""
-        return self.session_tick
-
 
 def _session_id(value: Any) -> str:
     if type(value) is not str or not value:
@@ -72,19 +66,19 @@ def _validate_header(header: dict[str, Any], expected_session_id: str) -> tuple[
         raise ProtocolError("Vision session_id does not match expected session")
     if header.get("pixel_format") != PIXEL_FORMAT:
         raise ProtocolError("unsupported Vision pixel format")
-    session_tick = header.get("session_tick")
+    world_tick = header.get("world_tick")
     width = header.get("width")
     height = header.get("height")
     byte_length = header.get("byte_length")
-    if type(session_tick) is not int or session_tick < 0:
-        raise ProtocolError("Vision session_tick must be non-negative")
+    if type(world_tick) is not int or world_tick < 0:
+        raise ProtocolError("Vision world_tick must be non-negative")
     if type(width) is not int or width <= 0 or type(height) is not int or height <= 0:
         raise ProtocolError("Vision dimensions must be positive integers")
     if type(byte_length) is not int or byte_length != width * height:
         raise ProtocolError("Vision byte_length does not match dimensions")
     if byte_length > VISION_MAX_PIXELS:
         raise ProtocolError("Vision frame is too large")
-    return width, height, session_tick
+    return width, height, world_tick
 
 
 def send_vision_frame(sock: socket.socket, session_id: str, frame: VisionFrame) -> None:
@@ -96,7 +90,7 @@ def send_vision_frame(sock: socket.socket, session_id: str, frame: VisionFrame) 
         "version": PROTOCOL_VERSION,
         "type": VISION_TYPE,
         "session_id": session_id,
-        "session_tick": frame.session_tick,
+        "world_tick": frame.world_tick,
         "width": frame.width,
         "height": frame.height,
         "pixel_format": PIXEL_FORMAT,
@@ -110,9 +104,9 @@ def send_vision_frame(sock: socket.socket, session_id: str, frame: VisionFrame) 
 def recv_vision_frame(sock: socket.socket, expected_session_id: str) -> VisionFrame:
     """Receive and validate one public Vision frame from a stream."""
     header = recv_frame(sock)
-    width, height, session_tick = _validate_header(header, expected_session_id)
+    width, height, world_tick = _validate_header(header, expected_session_id)
     pixels = recv_exact(sock, header["byte_length"])
-    return VisionFrame(width, height, pixels, session_tick)
+    return VisionFrame(width, height, pixels, world_tick)
 
 
 __all__ = [

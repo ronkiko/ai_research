@@ -16,6 +16,6 @@ The local class IDs are:
 
 Composition is deterministic and documented as `AVATAR > GOAL > HAZARD > SOLID
 > EMPTY`. `VisionFrame` contains only `width`, `height`, `pixels`, and
-`session_tick`; velocity, grounded state, collision rectangles, and action
+`world_tick`; velocity, grounded state, collision rectangles, and action
 diagnostics are not frame metadata. In `display_mode: "vision"`, the same frame
 is sent as raw semantic bytes through the public Vision peripheral.

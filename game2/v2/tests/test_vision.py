@@ -46,7 +46,7 @@ class VisionContractTests(unittest.TestCase):
             right.close()
         self.assertEqual(received, frame)
         self.assertEqual({field.name for field in fields(received)},
-                         {"width", "height", "pixels", "session_tick"})
+                         {"width", "height", "pixels", "world_tick"})
         for hidden in ("x", "y", "vx", "vy", "grounded", "reward", "telemetry"):
             self.assertFalse(hasattr(received, hidden), hidden)
 
@@ -62,18 +62,22 @@ class VisionContractTests(unittest.TestCase):
             left.close()
             right.close()
         self.assertIn(b'"type":"vision_frame"', header)
+        self.assertIn(b'"world_tick":1', header)
+        self.assertNotIn(b'"session_tick"', header)
         self.assertNotIn(b'"pixels"', header)
         self.assertEqual(pixels, b"\x00\x04")
 
     def test_receive_rejects_wrong_session_extra_fields_and_unknown_class(self):
         valid = {
             "version": 1, "type": "vision_frame", "session_id": "session",
-            "session_tick": 1, "width": 1, "height": 1,
+            "world_tick": 1, "width": 1, "height": 1,
             "pixel_format": "u8-semantic", "byte_length": 1,
         }
         for header, expected, pixels in (
             (valid, "other", b"\x00"),
             ({**valid, "extra": True}, "session", b"\x00"),
+            ({**valid, "session_tick": 1}, "session", b"\x00"),
+            ({**valid, "episode_tick": 1}, "session", b"\x00"),
             (valid, "session", b"\x05"),
         ):
             left, right = socket.socketpair()
@@ -110,9 +114,9 @@ class VisionPublisherTests(unittest.TestCase):
 
             fast.settimeout(2)
             latest = None
-            while latest is None or latest.session_tick < 7:
+            while latest is None or latest.world_tick < 7:
                 latest = recv_vision_frame(fast, "session")
-            self.assertGreaterEqual(latest.session_tick, 7)
+            self.assertGreaterEqual(latest.world_tick, 7)
         finally:
             fast.close()
             slow.close()
@@ -200,7 +204,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
 
     def test_console_publishes_public_frame_and_scripted_player_receives_it(self):
         config = json.loads((V2 / "console" / "configs" / "vision-demo.json").read_text())
-        config.update({"map": str(PIT), "session_ticks": 180})
+        config.update({"map": str(PIT), "world_ticks": 180})
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             config_path = directory / "vision.json"
@@ -230,7 +234,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
                 self.assertEqual((first.width, first.height), (1280, 768))
                 self.assertEqual(len(first.pixels), first.width * first.height)
                 self.assertTrue(set(first.pixels) <= {0, 1, 2, 3, 4})
-                self.assertGreater(second.session_tick, first.session_tick)
+                self.assertGreater(second.world_tick, first.world_tick)
                 self.assertEqual(player.wait(timeout=10), 0)
                 player_output = player.stdout.read() if player.stdout else ""
                 self.assertIn('"vision": true', player_output)
@@ -252,7 +256,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
 
     def test_scripted_player_crosses_pit_using_public_vision_process_path(self):
         config = json.loads((V2 / "console" / "configs" / "vision-demo.json").read_text())
-        config.update({"map": str(PIT), "session_ticks": 1000})
+        config.update({"map": str(PIT), "world_ticks": 1000})
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             config_path = directory / "vision-pit.json"

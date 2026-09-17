@@ -40,8 +40,8 @@ class DisplayService:
         self.rendered_frames = 0
         self.latest_frame = None
         self._latest_view = None
-        self._accepted_tick = -1
-        self._presented_tick = -1
+        self._accepted_world_tick = -1
+        self._presented_world_tick = -1
         self._state_condition = threading.Condition()
         self._reader_stop = threading.Event()
         self._reader_done = threading.Event()
@@ -70,9 +70,9 @@ class DisplayService:
 
     def _accept_view(self, view: DisplayState) -> bool:
         with self._state_condition:
-            if view.session_tick <= self._accepted_tick:
+            if view.world_tick <= self._accepted_world_tick:
                 return False
-            self._accepted_tick = view.session_tick
+            self._accepted_world_tick = view.world_tick
             self._latest_view = view
             self.frames_received += 1
             self._state_condition.notify_all()
@@ -97,7 +97,7 @@ class DisplayService:
     def _next_view(self):
         with self._state_condition:
             if (self._latest_view is None or
-                    self._latest_view.session_tick <= self._presented_tick):
+                    self._latest_view.world_tick <= self._presented_world_tick):
                 return None
             return self._latest_view
 
@@ -111,7 +111,7 @@ class DisplayService:
                 raise TypeError("Vision Display renderer must return a VisionFrame")
             self.vision_publisher.publish(self.latest_frame)
         with self._state_condition:
-            self._presented_tick = max(self._presented_tick, view.session_tick)
+            self._presented_world_tick = max(self._presented_world_tick, view.world_tick)
         self.rendered_frames += 1
         return True
 
@@ -155,7 +155,7 @@ class DisplayService:
             if self._reader_done.is_set() or self._reader_stop.is_set():
                 return
             if (self._latest_view is not None and
-                    self._latest_view.session_tick > self._presented_tick):
+                    self._latest_view.world_tick > self._presented_world_tick):
                 return
             self._state_condition.wait(timeout)
 

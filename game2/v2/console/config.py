@@ -39,7 +39,7 @@ class SessionConfig:
     enable_events: bool = True
     seed: int | None = None
     episode_limit: int | None = None
-    session_ticks: int = 1000
+    world_ticks: int = 1000
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SessionConfig":
@@ -49,7 +49,7 @@ class SessionConfig:
             "map", "clock_mode", "physics_hz", "controller", "enable_display",
             "display_mode",
             "enable_state", "enable_telemetry", "enable_events", "seed",
-            "episode_limit", "session_ticks",
+            "episode_limit", "world_ticks",
         }
         missing = {"map"} - data.keys()
         extra = data.keys() - allowed
@@ -72,7 +72,7 @@ class SessionConfig:
                 raise ValueError(f"{name} must be boolean")
         if values.get("seed") is not None and type(values["seed"]) is not int:
             raise ValueError("seed must be an integer or null")
-        for name in ("episode_limit", "session_ticks"):
+        for name in ("episode_limit", "world_ticks"):
             value = values.get(name, getattr(cls, name))
             if value is not None and (type(value) is not int or value <= 0):
                 raise ValueError(f"{name} must be a positive integer or null")

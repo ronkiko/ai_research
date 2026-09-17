@@ -35,7 +35,7 @@ class DisplayState:
     """The small state subset renderers need; it is not a public state protocol."""
 
     session_id: str
-    session_tick: int
+    world_tick: int
     map_id: str
     avatar: AvatarView
     terminal: str | None = None
@@ -44,15 +44,15 @@ class DisplayState:
         _terminal(self.terminal)
 
     @classmethod
-    def _create(cls, session_id: Any, session_tick: Any, map_id: Any,
+    def _create(cls, session_id: Any, world_tick: Any, map_id: Any,
                 avatar: Any, expected_session: str, world,
                 terminal: Any = None) -> "DisplayState":
         if session_id != expected_session:
             raise ValueError("STATE session_id does not match Display session")
         if not isinstance(map_id, str) or map_id != world.map_id:
             raise ValueError("STATE map does not match loaded WorldDefinition")
-        if type(session_tick) is not int or session_tick < 0:
-            raise ValueError("STATE session_tick must be a non-negative integer")
+        if type(world_tick) is not int or world_tick < 0:
+            raise ValueError("STATE world_tick must be a non-negative integer")
         terminal = _terminal(terminal)
 
         if isinstance(avatar, Mapping):
@@ -68,16 +68,16 @@ class DisplayState:
                 raise ValueError("STATE avatar is not renderable") from exc
         if type(alive) is not bool:
             raise ValueError("STATE avatar alive must be boolean")
-        return cls(expected_session, session_tick, map_id,
+        return cls(expected_session, world_tick, map_id,
                    AvatarView(_coordinate(x, "x"), _coordinate(y, "y"), alive), terminal)
 
     @classmethod
     def from_payload(cls, payload: Any, expected_session: str, world) -> "DisplayState":
         if not isinstance(payload, Mapping) or payload.get("type") != "state":
             raise ValueError("not a STATE payload")
-        session_tick = payload.get("session_tick", payload.get("tick"))
+        world_tick = payload.get("world_tick")
         map_id = payload.get("map", payload.get("map_id"))
-        return cls._create(payload.get("session_id"), session_tick, map_id,
+        return cls._create(payload.get("session_id"), world_tick, map_id,
                            payload.get("avatar"), expected_session, world,
                            payload.get("terminal"))
 
@@ -89,13 +89,13 @@ class DisplayState:
             return state
         try:
             session_id = state.session_id
-            session_tick = state.session_tick
+            world_tick = state.world_tick
             map_id = state.map_id
             avatar = state.avatar
             terminal = getattr(state, "terminal", None)
         except AttributeError as exc:
             raise ValueError("state is not renderable") from exc
-        return cls._create(session_id, session_tick, map_id, avatar,
+        return cls._create(session_id, world_tick, map_id, avatar,
                            expected_session, world, terminal)
 
 

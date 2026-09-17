@@ -430,7 +430,7 @@ class KeyboardMappingTests(unittest.TestCase):
 class PublicJoystickIntegrationTests(unittest.TestCase):
     def test_human_client_reaches_controller_and_engine(self):
         base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
-        base.update({"map": str(PIT), "enable_display": False, "session_ticks": 120})
+        base.update({"map": str(PIT), "enable_display": False, "world_ticks": 120})
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "human-integration.json"
             config_path.write_text(json.dumps(base), encoding="utf-8")
@@ -482,7 +482,7 @@ class PublicJoystickIntegrationTests(unittest.TestCase):
 
     def test_embedded_state_feed_and_keyboard_joystick_path(self):
         base = json.loads((V2 / "console" / "configs" / "realtime-smoke.json").read_text())
-        base.update({"map": str(PIT), "enable_display": False, "session_ticks": 240})
+        base.update({"map": str(PIT), "enable_display": False, "world_ticks": 240})
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             config_path = directory / "embedded-integration.json"

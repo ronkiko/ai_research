@@ -334,7 +334,7 @@ class VisionExaminer:
         self.sidebar = None
         self.frame_surface = None
         self._surface_frame: VisionFrame | None = None
-        self._presented_tick = -1
+        self._presented_world_tick = -1
         self._rendered_frames = 0
         self._started_at = 0.0
         self._display_initialized = False
@@ -388,7 +388,7 @@ class VisionExaminer:
         self._player_ready = ready
 
     def _update_surface(self, frame: VisionFrame) -> None:
-        if frame.session_tick <= self._presented_tick:
+        if frame.world_tick <= self._presented_world_tick:
             return
         if self.viewport is None or self.sidebar is None:
             raise RuntimeError("Vision examiner is not initialized")
@@ -396,7 +396,7 @@ class VisionExaminer:
             raise ValueError("Vision resolution changed during a session")
         self.frame_surface = colorize_frame(self.pygame, frame)
         self._surface_frame = frame
-        self._presented_tick = frame.session_tick
+        self._presented_world_tick = frame.world_tick
         self._rendered_frames += 1
 
     def _draw_text(self, text: str, font, y: int, color) -> None:
@@ -431,11 +431,11 @@ class VisionExaminer:
             self._draw_text(f"Resolution: {frame.width} x {frame.height}",
                             self.body_font, 190, bright)
             self._draw_text("Pixel format: u8 semantic", self.body_font, 218, bright)
-            self._draw_text(f"Session tick: {frame.session_tick}", self.body_font, 246, bright)
+            self._draw_text(f"World tick: {frame.world_tick}", self.body_font, 246, bright)
         else:
             self._draw_text("Resolution: waiting", self.body_font, 190, muted)
             self._draw_text("Pixel format: u8 semantic", self.body_font, 218, bright)
-            self._draw_text("Session tick: waiting", self.body_font, 246, muted)
+            self._draw_text("World tick: waiting", self.body_font, 246, muted)
         elapsed = max(self.clock() - self._started_at, 1e-9)
         vision_fps = max(0, self.stream.frames_received - self._vision_frames_at_start) / elapsed
         age = (self.clock() - self.stream.latest_received_at

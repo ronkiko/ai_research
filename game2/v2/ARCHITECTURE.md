@@ -7,6 +7,8 @@ Game2 V2 is a real-time research system. The normative realtime contract is
 
 Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
+Normative target MMO server model: [console/doc/MMO_SERVER_MODEL.md](console/doc/MMO_SERVER_MODEL.md)
+
 Game2 V2 consists of five physically separated domains:
 
 ```text
@@ -45,7 +47,7 @@ Console
 ├── World
 │   └── immutable tile grid, spawn, goal, decorations, derived collision geometry
 ├── Engine
-│   └── mutable Avatar, Physics, episodes, fixed ticks, terminal state
+│   └── mutable transitional Avatar, Physics, global world_tick, terminal state
 ├── Controller
 └── Display
 ```
@@ -74,10 +76,13 @@ raster for future machine-facing sensing. Neither presentation changes World or
 affects Physics. A future Player VisionAdapter remains a separate transport
 contract and is not Display.
 
-The Engine remains the sole mutable world owner. It advances fixed ticks without
-waiting for a Player. The Controller translates public Joystick decisions into
-the private scheduled Engine protocol. Display consumes Engine STATE only and
-does not control gameplay or expose raw STATE as vision.
+The Engine remains the sole mutable world owner in the current transitional
+vertical. It advances one global `world_tick` without waiting for a Player. The
+Controller translates public Joystick decisions into private commands scheduled
+against that global clock. Display consumes Engine STATE only and does not
+control gameplay or expose raw STATE as vision. The future target is an
+authoritative shared-world Console with zero or many Players; current singleton
+Avatar/Episode state is migration debt for Patch 2/3.
 
 Management is outside the gameplay data path. It may later select configs and
 launch independent Console, Player, and Trainer processes, but it must not hold
