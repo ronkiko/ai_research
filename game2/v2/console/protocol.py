@@ -35,6 +35,11 @@ def action_message(command: ActionCommand) -> dict[str, Any]:
             "hold_ticks": command.hold_ticks, "right": command.right, "jump": command.jump}
 
 
+def reset_message() -> dict[str, int | str]:
+    """Build the existing private lifecycle reset command."""
+    return {"version": PROTOCOL_VERSION, "type": "reset"}
+
+
 def decode_control_message(message: dict[str, Any]) -> ActionCommand | str:
     if not isinstance(message, dict) or message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError("unsupported control protocol version")

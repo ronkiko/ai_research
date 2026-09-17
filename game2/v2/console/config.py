@@ -271,6 +271,30 @@ class DisplayManifest:
         Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class OperatorControlManifest:
+    """Private lifecycle capability for a temporary operator shell."""
+
+    session_id: str
+    control: Endpoint
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id, "control": self.control.as_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "OperatorControlManifest":
+        session_id = _manifest_session(data, {"session_id", "control"})
+        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["control"])))
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "OperatorControlManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
 def allocate_endpoint() -> Endpoint:
     """Select a currently free loopback port; children bind it after launch."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -283,4 +307,5 @@ def new_session_id() -> str:
 
 
 __all__ = ["ControllerManifest", "DisplayManifest", "EngineManifest",
-           "InternalManifest", "SessionConfig", "allocate_endpoint", "new_session_id"]
+           "InternalManifest", "OperatorControlManifest", "SessionConfig",
+           "allocate_endpoint", "new_session_id"]

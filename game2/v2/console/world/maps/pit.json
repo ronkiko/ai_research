@@ -11,9 +11,9 @@
     "rows": 1
   },
   "goal": {
-    "column": 12,
+    "column": 18,
     "row": 6,
-    "columns": 8,
+    "columns": 2,
     "rows": 1
   },
   "terrain": [
@@ -48,7 +48,7 @@
     },
     {
       "sprite": "ruin",
-      "column": 18,
+      "column": 16,
       "baseline": 7
     }
   ]

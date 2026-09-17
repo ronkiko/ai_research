@@ -14,8 +14,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from game2.v2.console.config import (ControllerManifest, DisplayManifest, EngineManifest,
-                              InternalManifest, SessionConfig,
-                              allocate_endpoint, new_session_id)
+                               InternalManifest, OperatorControlManifest, SessionConfig,
+                               allocate_endpoint, new_session_id)
 from game2.v2.contracts.manifests import PeripheralManifest
 from game2.v2.console.world import load_world
 
@@ -71,7 +71,8 @@ def _launch_ready(command, root: str, log, label: str):
 
 
 def run_session(config_path: str | Path,
-                state_capability_path: str | Path | None = None) -> tuple[int, dict]:
+                state_capability_path: str | Path | None = None,
+                control_capability_path: str | Path | None = None) -> tuple[int, dict]:
     """Run the Console and its own subsystems, without attaching a Player."""
     config_path = Path(config_path).resolve()
     config = SessionConfig.from_file(config_path)
@@ -113,6 +114,9 @@ def run_session(config_path: str | Path,
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,
                          "screen").write(state_capability_path)
+    if control_capability_path is not None:
+        OperatorControlManifest(session_id, internal.engine_control).write(
+            control_capability_path)
     peripheral.write(peripheral_path)
 
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
@@ -203,8 +207,11 @@ def main(argv=None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
+    parser.add_argument("--control-capability",
+                        help="private embedded-demo lifecycle CONTROL capability output path")
     args = parser.parse_args(argv)
-    status, summary = run_session(args.config, args.state_capability)
+    status, summary = run_session(args.config, args.state_capability,
+                                  args.control_capability)
     if summary:
         print("session_id=" + summary.get("session_id", "unknown"))
         print("console=ready")

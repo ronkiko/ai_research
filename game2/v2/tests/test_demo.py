@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import signal
+import socket
 import stat
 import subprocess
 import tempfile
@@ -14,8 +15,14 @@ from pathlib import Path
 from unittest import mock
 
 from game2.v2 import demo
-from game2.v2.console.config import DisplayManifest
+from game2.v2.console.config import (DisplayManifest, EngineManifest, OperatorControlManifest,
+                                     SessionConfig, allocate_endpoint)
+from game2.v2.console.engine.engine import Engine, EngineService
+from game2.v2.console.protocol import ActionCommand, action_message
+from game2.v2.console.transport.control_server import ControlServer
+from game2.v2.contracts.framing import encode_frame, recv_frame
 from game2.v2.contracts.manifests import Endpoint, PeripheralManifest
+from game2.v2.demo_control import DemoControlClient
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -87,6 +94,10 @@ class DemoFileTests(unittest.TestCase):
         self.assertEqual(demo.console_command(
             python="python-test", state_capability_path="/tmp/state.json")[-2:],
                          ["--state-capability", "/tmp/state.json"])
+        command = demo.console_command(
+            python="python-test", state_capability_path="/tmp/state.json",
+            control_capability_path="/tmp/control.json")
+        self.assertEqual(command[-2:], ["--control-capability", "/tmp/control.json"])
         source = (V2 / "demo.py").read_text(encoding="utf-8")
         self.assertNotIn("game2.v2.player.human.main", source)
         self.assertNotIn("launch_player", source)
@@ -132,6 +143,41 @@ class DemoFileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 demo.wait_state_capability(path, timeout=1,
                                            expected_session_id="demo-session")
+
+    def test_private_control_capability_is_separate_from_state_and_public_manifest(self):
+        capability = OperatorControlManifest("demo-session", Endpoint("127.0.0.1", 23458))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "control.json"
+            capability.write(path)
+            loaded = demo.wait_control_capability(path, timeout=1,
+                                                   expected_session_id="demo-session")
+        self.assertEqual(loaded, capability)
+        self.assertNotIn("control", DisplayManifest(
+            "demo-session", Endpoint("127.0.0.1", 23457), str(PIT), "screen").to_dict())
+        with self.assertRaises(ValueError):
+            PeripheralManifest.from_dict(capability.to_dict())
+
+    def test_demo_control_client_reuses_reset_command_and_waits_for_ack(self):
+        server = ControlServer("127.0.0.1", 0)
+        server.start()
+        client = DemoControlClient(OperatorControlManifest(
+            "demo-session", Endpoint(server.host, server.port)))
+        try:
+            client.connect()
+            client.request_reset()
+            deadline = time.monotonic() + 1
+            while not server.commands.qsize() and time.monotonic() < deadline:
+                time.sleep(0.001)
+            envelope = server.drain()[0]
+            self.assertEqual(envelope.command, "reset")
+            server.respond(envelope.client_id, {
+                "version": 1, "type": "reset_ack", "episode": 2,
+                "episode_tick": 0, "session_tick": 10,
+            })
+            self.assertEqual(client.wait_reset_ack(1)["episode"], 2)
+        finally:
+            client.close()
+            server.close()
 
     def test_timeout_kills_process_group_after_graceful_terminate(self):
         process = FakeProcess(exits_on_terminate=False)
@@ -259,8 +305,11 @@ class DemoShellLifecycleTests(unittest.TestCase):
         def popen(command, **kwargs):
             calls.append((command, kwargs))
             capability_path = Path(command[command.index("--state-capability") + 1])
+            control_path = Path(command[command.index("--control-capability") + 1])
             DisplayManifest("demo-session", Endpoint("127.0.0.1", 23457),
                             str(PIT), "screen").write(capability_path)
+            OperatorControlManifest("demo-session", Endpoint("127.0.0.1", 23458)).write(
+                control_path)
             return process
 
         status = demo.run_demo(popen_factory=popen, shell_factory=FakeShell,
@@ -273,7 +322,176 @@ class DemoShellLifecycleTests(unittest.TestCase):
         self.assertNotIn("game2.v2.player.human.main", command)
         self.assertEqual(len(shells), 1)
         self.assertTrue(shells[0][2]["shutdown_event"])
+        self.assertEqual(shells[0][2]["control_capability"].session_id, "demo-session")
         self.assertEqual(process.terminate_calls, 1)
+
+    def test_r_is_operator_only_and_is_not_repeated_while_held(self):
+        import os
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+
+        class FakeClient:
+            connected = True
+            failed = False
+            error = None
+
+            def close(self):
+                return None
+
+        class FakeControl:
+            connected = True
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.requests = 0
+
+            def request_reset(self):
+                self.requests += 1
+
+            def close(self):
+                return None
+
+        class FakeRenderer:
+            def __init__(self, world, target_surface, pygame_module):
+                self.world = world
+
+            def close(self):
+                return None
+
+        class FakeDisplayService:
+            latest_state = None
+
+            def __init__(self, *args, **kwargs):
+                return None
+
+            def start(self):
+                return None
+
+            def close(self):
+                return None
+
+        capability = DisplayManifest(
+            "demo-session", Endpoint("127.0.0.1", 23457), str(PIT), "screen")
+        manifest = PeripheralManifest("demo-session", Endpoint("127.0.0.1", 23456))
+        control = FakeControl()
+        pygame.quit()
+        try:
+            with mock.patch.object(demo, "ScreenRenderer", FakeRenderer), \
+                    mock.patch.object(demo, "DisplayService", FakeDisplayService):
+                shell = demo.DemoShell(capability, manifest, client=FakeClient(),
+                                       control_client=control, pygame_module=pygame)
+                try:
+                    shell._handle_event(pygame.event.Event(
+                        pygame.KEYDOWN, {"key": pygame.K_d}))
+                    shell._handle_event(pygame.event.Event(
+                        pygame.KEYDOWN, {"key": pygame.K_SPACE}))
+                    self.assertEqual((shell.keyboard.state.right, shell.keyboard.state.jump),
+                                     (True, True))
+                    restart = pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_r})
+                    shell._handle_event(restart)
+                    for _ in range(10):
+                        shell._handle_event(restart)
+                    self.assertEqual(control.requests, 1)
+                    self.assertEqual((shell.keyboard.state.right, shell.keyboard.state.jump),
+                                     (False, False))
+                    shell._handle_event(pygame.event.Event(
+                        pygame.KEYUP, {"key": pygame.K_r}))
+                    shell._handle_event(restart)
+                    self.assertEqual(control.requests, 2)
+                finally:
+                    shell.close()
+        finally:
+            pygame.quit()
+
+    def test_private_control_endpoint_resets_engine_episode_without_rolling_session_tick(self):
+        class GatedClock:
+            def __init__(self):
+                self.value = 0.0
+                self.condition = threading.Condition()
+                self.sleep_count = 0
+                self.release = threading.Event()
+
+            def __call__(self):
+                return self.value
+
+            def sleeper(self, _delay):
+                with self.condition:
+                    self.sleep_count += 1
+                    self.condition.notify_all()
+                self.release.wait(1)
+                self.release.clear()
+
+            def wait_for_sleep(self, count):
+                deadline = time.monotonic() + 1
+                with self.condition:
+                    while self.sleep_count < count:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise AssertionError("Engine did not reach gated tick")
+                        self.condition.wait(remaining)
+
+            def advance(self, value):
+                self.value = value
+                self.release.set()
+
+        clock = GatedClock()
+        with tempfile.TemporaryDirectory() as directory:
+            control_endpoint = allocate_endpoint()
+            service = EngineService(
+                Engine.from_config(SessionConfig(
+                    map=str(PIT), clock_mode="realtime", enable_state=False,
+                    enable_telemetry=False, enable_events=False, session_ticks=100),
+                    PIT, "reset-session"),
+                EngineManifest("reset-session", control_endpoint, None, None, None, directory),
+                SessionConfig(map=str(PIT), clock_mode="realtime", enable_state=False,
+                              enable_telemetry=False, enable_events=False, session_ticks=100),
+                clock=clock, sleeper=clock.sleeper)
+            runner = threading.Thread(target=service.run, daemon=True)
+            runner.start()
+            action_socket = None
+            reset_client = None
+            try:
+                clock.wait_for_sleep(1)
+                action_socket = socket.create_connection(
+                    (service.control.host, service.control.port), timeout=1)
+                action_socket.settimeout(1)
+                action_socket.sendall(encode_frame(action_message(
+                    ActionCommand(1, 1, 2, 1, True, False))))
+                deadline = time.monotonic() + 1
+                while service.control.commands.qsize() == 0 and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertGreater(service.control.commands.qsize(), 0)
+                clock.advance(1 / 120)
+                clock.wait_for_sleep(2)
+                action_ack = recv_frame(action_socket)
+                self.assertEqual(action_ack["status"], "accepted")
+                self.assertGreater(service.engine.avatar.x, service.engine.world.spawn.x)
+                before_session_tick = service.engine.session_tick
+
+                reset_client = DemoControlClient(OperatorControlManifest(
+                    "reset-session", Endpoint(service.control.host, service.control.port)))
+                reset_client.connect()
+                reset_client.request_reset()
+                clock.advance(2 / 120)
+                clock.wait_for_sleep(3)
+                reset_ack = reset_client.wait_reset_ack(1)
+                self.assertEqual((reset_ack["episode"], reset_ack["episode_tick"]), (2, 0))
+                self.assertGreaterEqual(reset_ack["session_tick"], before_session_tick)
+                self.assertEqual(service.engine.episode, 2)
+                self.assertIsNone(service.engine.terminal)
+                self.assertEqual((service.engine.avatar.x, service.engine.avatar.y),
+                                 (service.engine.world.spawn.x, service.engine.world.spawn.y))
+                self.assertGreater(service.engine.session_tick, before_session_tick)
+            finally:
+                service.quit_requested = True
+                clock.release.set()
+                runner.join(2)
+                if reset_client is not None:
+                    reset_client.close()
+                if action_socket is not None:
+                    action_socket.close()
+            self.assertFalse(runner.is_alive())
 
     def test_malformed_console_ready_stops_only_console(self):
         process = FakeProcess(stdout=io.StringIO('READY {"not_public":true}\n'))

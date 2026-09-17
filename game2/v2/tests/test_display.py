@@ -14,7 +14,9 @@ from unittest import mock
 from game2.v2.console.config import DisplayManifest, SessionConfig
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
-from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
+from game2.v2.console.display.screen.renderer import (CHECKER_CELL_SIZE, CHECKER_COLUMNS,
+                                                       CHECKER_ROWS, ScreenRenderer,
+                                                       terminal_label)
 from game2.v2.console.display.view_state import AvatarView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionFrame, VisionRenderer
 from game2.v2.console.main import run_session
@@ -333,6 +335,28 @@ class DisplayServiceTests(unittest.TestCase):
 
 
 class ScreenRendererTests(unittest.TestCase):
+    def test_checkered_finish_flag_matches_goal_geometry_without_mutating_world(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        world = load_world(PIT)
+        original = world
+        renderer = ScreenRenderer(world)
+        try:
+            flag = renderer._build_goal()
+            pole_x = world.goal.x + min(16, max(8, world.goal.width // 8))
+            flag_left, flag_top = pole_x + 3, world.goal.y + 4
+            light = flag.get_at((flag_left + 4, flag_top + 4))
+            dark = flag.get_at((flag_left + CHECKER_CELL_SIZE + 4, flag_top + 4))
+            self.assertNotEqual(light, dark)
+            self.assertGreater(light[3], 0)
+            self.assertGreater(flag.get_at((pole_x, world.goal.y + 48))[3], 0)
+            self.assertLessEqual(flag_left + CHECKER_COLUMNS * CHECKER_CELL_SIZE,
+                                 world.goal.x + world.goal.width)
+            self.assertLessEqual(flag_top + CHECKER_ROWS * CHECKER_CELL_SIZE,
+                                 world.goal.y + world.goal.height)
+            self.assertEqual(world, original)
+        finally:
+            renderer.close()
+
     def test_embedded_renderer_uses_target_without_display_or_event_ownership(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         import pygame

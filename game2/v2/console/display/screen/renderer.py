@@ -18,6 +18,11 @@ DECORATION_ATLAS = {
 }
 DECORATION_SCALE = 2
 SPIKE_HEIGHT = 26
+CHECKER_CELL_SIZE = 8
+CHECKER_COLUMNS = 6
+CHECKER_ROWS = 4
+CHECKER_LIGHT = (242, 239, 220, 255)
+CHECKER_DARK = (20, 25, 31, 255)
 TERMINAL_LABELS = {
     "success": "VICTORY",
     "dead": "GAME OVER",
@@ -185,22 +190,32 @@ class ScreenRenderer:
         layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         goal = pygame.Rect(self.world.goal.x, self.world.goal.y,
                            self.world.goal.width, self.world.goal.height)
-        pole_x = goal.left + min(24, max(8, goal.width // 8))
-        pole_top = goal.top + 8
-        pole_bottom = goal.bottom - 7
-        pygame.draw.line(layer, (70, 40, 40, 220),
+        pole_x = goal.left + min(16, max(8, goal.width // 8))
+        pole_top = goal.top + 2
+        pole_bottom = goal.bottom - 2
+        pygame.draw.line(layer, (35, 39, 43, 230),
                          (pole_x + 2, pole_top + 2),
                          (pole_x + 2, pole_bottom + 2), 4)
-        pygame.draw.line(layer, (255, 247, 171, 255),
+        pygame.draw.line(layer, (224, 228, 220, 255),
                          (pole_x, pole_top), (pole_x, pole_bottom), 3)
-        flag_width = min(34, max(16, goal.width // 6))
-        pygame.draw.polygon(layer, (255, 218, 82, 240), [
-            (pole_x + 2, pole_top + 2),
-            (pole_x + flag_width, pole_top + 9),
-            (pole_x + 2, pole_top + 17),
-        ])
-        pygame.draw.circle(layer, (255, 218, 82, 130),
-                           (pole_x, pole_bottom), 8)
+        pygame.draw.rect(layer, CHECKER_DARK,
+                         (pole_x - 3, pole_top - 3, 6, 6))
+
+        flag_left = pole_x + 3
+        flag_top = goal.top + 4
+        flag_width = CHECKER_COLUMNS * CHECKER_CELL_SIZE
+        flag_height = CHECKER_ROWS * CHECKER_CELL_SIZE
+        for row in range(CHECKER_ROWS):
+            for column in range(CHECKER_COLUMNS):
+                color = CHECKER_LIGHT if (row + column) % 2 == 0 else CHECKER_DARK
+                pygame.draw.rect(
+                    layer, color,
+                    (flag_left + column * CHECKER_CELL_SIZE,
+                     flag_top + row * CHECKER_CELL_SIZE,
+                     CHECKER_CELL_SIZE, CHECKER_CELL_SIZE),
+                )
+        pygame.draw.rect(layer, (10, 14, 18, 255),
+                         (flag_left, flag_top, flag_width, flag_height), 1)
         return layer
 
     def _build_static_scene(self):
@@ -300,4 +315,6 @@ class ScreenRenderer:
         self.static_scene = None
 
 
-__all__ = ["ASSET_DIR", "DECORATION_ATLAS", "ScreenRenderer", "terminal_label"]
+__all__ = ["ASSET_DIR", "CHECKER_CELL_SIZE", "CHECKER_COLUMNS", "CHECKER_DARK",
+           "CHECKER_LIGHT", "CHECKER_ROWS", "DECORATION_ATLAS", "ScreenRenderer",
+           "terminal_label"]

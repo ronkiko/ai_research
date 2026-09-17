@@ -91,7 +91,7 @@ class WorldLoaderTests(unittest.TestCase):
             },
             "goal outside": {
                 **original,
-                "goal": {**original["goal"], "column": 13},
+                "goal": {**original["goal"], "column": 19},
             },
             "goal too small": {
                 **original,
@@ -126,21 +126,39 @@ class WorldLoaderTests(unittest.TestCase):
         self.assertFalse(world.completed(*geometry, grounded=False, alive=True))
         self.assertFalse(world.completed(*geometry, grounded=True, alive=False))
 
+    def test_goal_is_last_two_cells_without_changing_terrain_or_spawn(self):
+        source = json.loads(V2_MAP.read_text(encoding="utf-8"))
+        world = load_world(V2_MAP)
+        self.assertEqual((world.goal.x, world.goal.y, world.goal.width, world.goal.height),
+                         (18 * world.tile_size, 6 * world.tile_size,
+                          2 * world.tile_size, world.tile_size))
+        self.assertEqual((world.spawn.x, world.spawn.y, world.spawn.width, world.spawn.height),
+                         (2 * world.tile_size, 6 * world.tile_size,
+                          world.tile_size, world.tile_size))
+        self.assertEqual(tuple("".join(row) for row in world.terrain),
+                         tuple(source["terrain"]))
+        self.assertFalse(world.completed(12 * world.tile_size, 6 * world.tile_size,
+                                         world.tile_size, world.tile_size,
+                                         grounded=True, alive=True))
+
 
 class MapParityTests(unittest.TestCase):
-    def test_v1_and_v2_pit_maps_have_equivalent_semantics(self):
+    def test_v1_and_v2_pit_maps_preserve_physics_and_terrain(self):
         v1 = load_level(V1_MAP)
         v2 = load_world(V2_MAP)
         self.assertEqual((v1.name, v1.width, v1.height, v1.tile_size),
                          (v2.name, v2.width, v2.height, v2.tile_size))
         self.assertEqual((v1.spawn.x, v1.spawn.y, v1.spawn.width, v1.spawn.height),
                          (v2.spawn.x, v2.spawn.y, v2.spawn.width, v2.spawn.height))
-        self.assertEqual((v1.goal.x, v1.goal.y, v1.goal.width, v1.goal.height),
-                         (v2.goal.x, v2.goal.y, v2.goal.width, v2.goal.height))
+        self.assertNotEqual((v1.goal.x, v1.goal.y, v1.goal.width, v1.goal.height),
+                            (v2.goal.x, v2.goal.y, v2.goal.width, v2.goal.height))
+        self.assertEqual((v2.goal.x, v2.goal.y, v2.goal.width, v2.goal.height),
+                         (18 * v2.tile_size, 6 * v2.tile_size, 2 * v2.tile_size,
+                          v2.tile_size))
         self.assertEqual(v1.terrain, v2.terrain)
         self.assertEqual(
-            [(item.sprite, item.column, item.baseline) for item in v1.decorations],
             [(item.sprite, item.column, item.baseline) for item in v2.decorations],
+            [("tree", 0, 7), ("bush", 5, 7), ("tree", 12, 7), ("ruin", 16, 7)],
         )
         self.assertEqual(
             [(item.x, item.y, item.width, item.height, item.damage)

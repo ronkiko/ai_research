@@ -185,25 +185,29 @@ python -m unittest discover -s game2 -p 'test*.py' -v
 
 `demo.sh` is temporary developer tooling. It starts the realtime V2 Console with
 `embedded-demo.json`, waits for its public `PeripheralManifest` and a private
-operator-only STATE capability, then hosts the Human keyboard adapter in-process.
+operator-only STATE and lifecycle CONTROL capabilities, then hosts the Human
+keyboard adapter in-process.
 The demo owns exactly one native Pygame window: a 1280x768 game viewport plus a
 sidebar. The Player controls are:
 
 ```text
 RIGHT / D    move right
 SPACE / Up / W jump
+R             restart the current episode
 Ctrl+C       stop the whole demo
 ```
 
 Keyboard input still sends only the public Joystick contract. Engine STATE is
 consumed separately by the embedded Screen presentation and is never passed to
-the Human Player. Closing the native window stops the temporary shell and
-Console. This is not the final boot or startup design.
+the Human Player. R uses the existing private Engine reset command through the
+operator lifecycle capability, not through Joystick. Closing the native window
+stops the temporary shell and Console. This is not the final boot or startup
+design.
 
 Engine terminal state is authoritative. After `success`, `dead`, or `timeout`,
 the physical episode is frozen and new gameplay actions are rejected, while the
-session clock may continue. Screen displays the result; reset/restart remains a
-future explicit contract.
+session clock may continue. Screen displays the result; R restarts the episode
+without restarting Console or the shell.
 
 The future startup flow will provide a boot screen, lifecycle/startup selection,
 Console startup, and then a Game session with Player/Trainer or an experiment.

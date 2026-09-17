@@ -14,11 +14,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from game2.v2.console.config import DisplayManifest
+from game2.v2.console.config import DisplayManifest, OperatorControlManifest
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
 from game2.v2.console.world import load_world
 from game2.v2.contracts.manifests import PeripheralManifest
+from game2.v2.demo_control import DemoControlClient
 from game2.v2.player.human.client import HumanJoystickClient
 from game2.v2.player.human.keyboard import HumanKeyboardInput
 
@@ -35,12 +36,15 @@ _OUTPUT_END = object()
 
 def console_command(python: str | None = None,
                     config_path: str | Path = CONFIG_PATH,
-                    state_capability_path: str | Path | None = None) -> list[str]:
-    """Build the Console command and request a private demo STATE capability."""
+                    state_capability_path: str | Path | None = None,
+                    control_capability_path: str | Path | None = None) -> list[str]:
+    """Build the Console command and request private demo capabilities."""
     command = [python or sys.executable, "-m", CONSOLE_MODULE, "--config",
                str(Path(config_path).resolve())]
     if state_capability_path is not None:
         command.extend(("--state-capability", str(Path(state_capability_path).resolve())))
+    if control_capability_path is not None:
+        command.extend(("--control-capability", str(Path(control_capability_path).resolve())))
     return command
 
 
@@ -48,6 +52,7 @@ def launch_console(popen_factory: Callable[..., subprocess.Popen] | None = None,
                    python: str | None = None,
                    config_path: str | Path = CONFIG_PATH,
                    state_capability_path: str | Path | None = None,
+                   control_capability_path: str | Path | None = None,
                    capture_output: bool = False) -> subprocess.Popen:
     """Start Console in its own session so a hard stop can reap descendants."""
     popen = popen_factory or subprocess.Popen
@@ -55,7 +60,8 @@ def launch_console(popen_factory: Callable[..., subprocess.Popen] | None = None,
     if capture_output:
         kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                       text=True, bufsize=1)
-    return popen(console_command(python, config_path, state_capability_path), **kwargs)
+    return popen(console_command(python, config_path, state_capability_path,
+                                 control_capability_path), **kwargs)
 
 
 def _strict_ready_json(text: str):
@@ -175,6 +181,34 @@ def wait_state_capability(path: str | Path, timeout: float = CONSOLE_READY_TIMEO
         time.sleep(min(0.01, remaining))
 
 
+def wait_control_capability(path: str | Path, timeout: float = CONSOLE_READY_TIMEOUT,
+                            shutdown_event: threading.Event | None = None,
+                            expected_session_id: str | None = None) -> OperatorControlManifest:
+    """Read the private lifecycle capability emitted for the demo shell."""
+    deadline = time.monotonic() + timeout
+    path = Path(path)
+    while True:
+        if shutdown_event is not None and shutdown_event.is_set():
+            raise KeyboardInterrupt
+        capability = None
+        try:
+            capability = OperatorControlManifest.from_file(path)
+        except FileNotFoundError:
+            capability = None
+        except (OSError, ValueError) as exc:
+            if path.exists():
+                raise RuntimeError(f"embedded control capability is malformed: {exc}") from exc
+        if capability is not None:
+            if (expected_session_id is not None and
+                    capability.session_id != expected_session_id):
+                raise ValueError("embedded control capability session does not match Console")
+            return capability
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Console did not emit embedded control capability")
+        time.sleep(min(0.01, remaining))
+
+
 def _kill_console_process_group(process: subprocess.Popen) -> None:
     """Kill a top-level process group after graceful termination timed out."""
     pid = getattr(process, "pid", None)
@@ -210,17 +244,25 @@ class DemoShell:
     """The sole desktop owner: embedded presentation plus keyboard host."""
 
     def __init__(self, capability: DisplayManifest, manifest: PeripheralManifest,
-                 *, client=None, pygame_module=None,
+                 *, control_capability: OperatorControlManifest | None = None,
+                 client=None, control_client=None, pygame_module=None,
                  shutdown_event: threading.Event | None = None,
                  console_process=None, client_factory=HumanJoystickClient,
+                 control_client_factory=DemoControlClient,
                  clock=time.monotonic, sleeper=time.sleep):
         if capability.mode != "screen":
             raise ValueError("DemoShell requires a screen state capability")
         if capability.session_id != manifest.session_id:
             raise ValueError("DemoShell capability session does not match Player session")
+        if (control_capability is not None and
+                control_capability.session_id != manifest.session_id):
+            raise ValueError("DemoShell control capability session does not match Player session")
         self.capability = capability
         self.manifest = manifest
         self.client = client if client is not None else client_factory(manifest)
+        self.control = (control_client if control_client is not None else
+                        (control_client_factory(control_capability)
+                         if control_capability is not None else None))
         self.shutdown_event = shutdown_event or threading.Event()
         self.console_process = console_process
         self.clock = clock
@@ -238,9 +280,12 @@ class DemoShell:
         self.body_font = None
         self._display_initialized = False
         self._closed = False
+        self._restart_held = False
         try:
             if not self.client.connected:
                 self.client.connect()
+            if self.control is not None and not self.control.connected:
+                self.control.connect()
             if self.pygame is None:
                 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
                 import pygame
@@ -284,6 +329,7 @@ class DemoShell:
             ("CONTROLS", self.section_font, 112, accent),
             ("D / Right Arrow   Move", self.body_font, 151, bright),
             ("Space / Up / W    Jump", self.body_font, 181, bright),
+            ("R                  Restart", self.body_font, 211, bright),
             ("Player: Connected" if self.client.connected else "Player: Disconnected",
              self.body_font, 274, bright if self.client.connected else (245, 118, 118)),
             ("State:", self.section_font, 338, accent),
@@ -294,6 +340,33 @@ class DemoShell:
         for text, font, y, color in lines:
             rendered = font.render(text, True, color)
             self.sidebar_surface.blit(rendered, (24, y))
+
+    def _handle_event(self, event) -> None:
+        pygame = self.pygame
+        assert pygame is not None
+        assert self.keyboard is not None
+        focus_lost = getattr(pygame, "WINDOWFOCUSLOST", None)
+        active = getattr(pygame, "ACTIVEEVENT", None)
+        if ((focus_lost is not None and event.type == focus_lost) or
+                (active is not None and event.type == active and
+                 getattr(event, "gain", 1) == 0)):
+            self._restart_held = False
+            self.keyboard.handle_event(event)
+            return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+            if not self._restart_held:
+                self._restart_held = True
+                self.keyboard.clear()
+                if self.control is not None:
+                    if self.control.failed:
+                        raise ConnectionError(
+                            f"Demo control transport failed: {self.control.error}")
+                    self.control.request_reset()
+            return
+        if event.type == pygame.KEYUP and event.key == pygame.K_r:
+            self._restart_held = False
+            return
+        self.keyboard.handle_event(event)
 
     def run(self) -> int:
         """Run one 120 Hz input / 60 Hz presentation loop."""
@@ -317,7 +390,7 @@ class DemoShell:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return 0
-                self.keyboard.handle_event(event)
+                self._handle_event(event)
 
             now = self.clock()
             while now >= next_input:
@@ -347,6 +420,8 @@ class DemoShell:
         self._closed = True
         if self.display_service is not None:
             self.display_service.close()
+        if self.control is not None:
+            self.control.close()
         if self.client is not None:
             self.client.close()
         if self._display_initialized and self.pygame is not None:
@@ -376,15 +451,21 @@ def run_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
     try:
         temporary_directory = tempfile.TemporaryDirectory(prefix="game2-v2-demo-")
         capability_path = Path(temporary_directory.name) / "embedded-state-capability.json"
+        control_capability_path = Path(temporary_directory.name) / "embedded-control-capability.json"
         process = launch_console(popen_factory=popen_factory, capture_output=True,
-                                 state_capability_path=capability_path)
+                                 state_capability_path=capability_path,
+                                 control_capability_path=control_capability_path)
         manifest = wait_console_ready(process, timeout=startup_timeout,
                                       shutdown_event=shutdown_requested)
         capability = wait_state_capability(capability_path, timeout=startup_timeout,
                                             shutdown_event=shutdown_requested,
-                                            expected_session_id=manifest.session_id)
-        shell = shell_factory(capability, manifest, shutdown_event=shutdown_requested,
-                              console_process=process)
+                                             expected_session_id=manifest.session_id)
+        control_capability = wait_control_capability(
+            control_capability_path, timeout=startup_timeout,
+            shutdown_event=shutdown_requested, expected_session_id=manifest.session_id)
+        shell = shell_factory(capability, manifest,
+                              control_capability=control_capability,
+                              shutdown_event=shutdown_requested, console_process=process)
         status = shell.run()
     except KeyboardInterrupt:
         status = 0
