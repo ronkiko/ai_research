@@ -474,6 +474,10 @@ class DemoShellLifecycleTests(unittest.TestCase):
                     "reset-session", Endpoint(service.control.host, service.control.port)))
                 reset_client.connect()
                 reset_client.request_reset()
+                deadline = time.monotonic() + 1
+                while service.control.commands.qsize() == 0 and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertGreater(service.control.commands.qsize(), 0)
                 clock.advance(2 / 120)
                 clock.wait_for_sleep(3)
                 reset_ack = reset_client.wait_reset_ack(1)

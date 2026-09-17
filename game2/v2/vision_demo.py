@@ -24,6 +24,7 @@ CONFIG_PATH = Path(__file__).resolve().parent / "console" / "configs" / "vision-
 CONSOLE_MODULE = "game2.v2.console.main"
 PLAYER_MODULE = "game2.v2.player.scripted.main"
 CONSOLE_READY_TIMEOUT = 10.0
+PLAYER_READY_TIMEOUT = 10.0
 SIDEBAR_WIDTH = 320
 VIEWER_HZ = 60
 PALETTE = (
@@ -175,6 +176,15 @@ def player_command(manifest_path: str | Path, python: str | None = None) -> list
             str(Path(manifest_path).resolve()), "--forever"]
 
 
+def launch_player(manifest_path: str | Path,
+                  popen_factory: Callable[..., subprocess.Popen] | None = None,
+                  python: str | None = None) -> subprocess.Popen:
+    popen = popen_factory or subprocess.Popen
+    return popen(player_command(manifest_path, python), cwd=str(ROOT),
+                 start_new_session=True, stdout=subprocess.PIPE,
+                 stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+
 def launch_console(popen_factory: Callable[..., subprocess.Popen] | None = None,
                    python: str | None = None,
                    config_path: str | Path = CONFIG_PATH) -> subprocess.Popen:
@@ -232,6 +242,49 @@ def wait_console_ready(process: subprocess.Popen, timeout: float = CONSOLE_READY
                 raise RuntimeError("Console READY is not a public PeripheralManifest") from exc
 
 
+def wait_player_ready(process: subprocess.Popen, expected_session_id: str,
+                      timeout: float = PLAYER_READY_TIMEOUT, output=None,
+                      shutdown_event: threading.Event | None = None) -> None:
+    """Wait for the external Player's public READY after the examiner is visible."""
+    if timeout <= 0:
+        raise ValueError("Player READY timeout must be positive")
+    source = getattr(process, "stdout", None)
+    if source is None:
+        raise RuntimeError("Player stdout is unavailable")
+    destination = sys.stdout if output is None else output
+    lines: queue.Queue = queue.Queue()
+    threading.Thread(target=_queue_output, args=(source, lines), daemon=True).start()
+    deadline = time.monotonic() + timeout
+    while True:
+        if shutdown_event is not None and shutdown_event.is_set():
+            raise KeyboardInterrupt
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Player did not announce READY")
+        try:
+            line = lines.get(timeout=min(remaining, 0.1))
+        except queue.Empty:
+            continue
+        if line is _OUTPUT_END:
+            raise RuntimeError("Player exited before READY")
+        destination.write(line)
+        destination.flush()
+        if not line.startswith("READY "):
+            continue
+        try:
+            data = _strict_json(line[6:])
+            if (not isinstance(data, dict)
+                    or set(data) != {"session_id", "vision"}
+                    or data["session_id"] != expected_session_id
+                    or data["vision"] is not True):
+                raise ValueError("Player READY fields are invalid")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Player READY is malformed") from exc
+        threading.Thread(target=_pump_output, args=(lines, destination),
+                         name="v2-vision-player-output", daemon=True).start()
+        return
+
+
 def _kill_process_group(process: subprocess.Popen) -> None:
     pid = getattr(process, "pid", None)
     if type(pid) is not int or pid <= 0:
@@ -286,6 +339,8 @@ class VisionExaminer:
         self._started_at = 0.0
         self._display_initialized = False
         self._closed = False
+        self._player_ready = player_process is not None
+        self._vision_frames_at_start = 0
         self.title_font = None
         self.section_font = None
         self.body_font = None
@@ -307,6 +362,30 @@ class VisionExaminer:
         self.viewport = pygame.Surface((frame.width, frame.height))
         self.sidebar = pygame.Surface((SIDEBAR_WIDTH, frame.height))
         self._started_at = self.clock()
+        self._vision_frames_at_start = self.stream.frames_received
+
+    def initialize(self, frame: VisionFrame) -> None:
+        """Show the first public frame before an external Player is launched."""
+        if self._display_initialized:
+            raise RuntimeError("Vision examiner is already initialized")
+        self._initialize(frame)
+        self._update_surface(frame)
+        self._draw_sidebar(frame)
+        assert self.window is not None
+        assert self.viewport is not None
+        assert self.sidebar is not None
+        assert self.frame_surface is not None
+        assert self.pygame is not None
+        self.viewport.blit(self.frame_surface, (0, 0))
+        self.window.blit(self.viewport, (0, 0))
+        self.window.blit(self.sidebar, (self.viewport.get_width(), 0))
+        self.pygame.display.flip()
+
+    def set_player_process(self, process, *, ready: bool = False) -> None:
+        if self.player_process is not None:
+            raise RuntimeError("Vision examiner already has a Player process")
+        self.player_process = process
+        self._player_ready = ready
 
     def _update_surface(self, frame: VisionFrame) -> None:
         if frame.session_tick <= self._presented_tick:
@@ -335,11 +414,18 @@ class VisionExaminer:
         self.sidebar.fill((17, 27, 40))
         self._draw_text("Game2 V2 Vision", self.title_font, 26, bright)
         self._draw_text("VISION DEBUG", self.section_font, 82, accent)
-        player_status = "Running" if self.player_process.poll() is None else "Exited"
-        player_color = (119, 224, 151) if player_status == "Running" else (245, 118, 118)
+        if self.player_process is None or not self._player_ready:
+            player_label = "Player: Waiting"
+            player_color = muted
+        elif self.player_process.poll() is None:
+            player_label = "Player: Scripted / Running"
+            player_color = (119, 224, 151)
+        else:
+            player_label = "Player: Scripted / Exited"
+            player_color = (245, 118, 118)
         vision_status = "Connected" if self.stream.connected else "Disconnected"
         vision_color = (119, 224, 151) if self.stream.connected else (245, 118, 118)
-        self._draw_text(f"Player: Scripted / {player_status}", self.body_font, 120, player_color)
+        self._draw_text(player_label, self.body_font, 120, player_color)
         self._draw_text(f"Vision: {vision_status}", self.body_font, 148, vision_color)
         if frame is not None:
             self._draw_text(f"Resolution: {frame.width} x {frame.height}",
@@ -351,12 +437,12 @@ class VisionExaminer:
             self._draw_text("Pixel format: u8 semantic", self.body_font, 218, bright)
             self._draw_text("Session tick: waiting", self.body_font, 246, muted)
         elapsed = max(self.clock() - self._started_at, 1e-9)
-        viewer_fps = self._rendered_frames / elapsed
+        vision_fps = max(0, self.stream.frames_received - self._vision_frames_at_start) / elapsed
         age = (self.clock() - self.stream.latest_received_at
                if self.stream.latest_received_at is not None else None)
         self._draw_text(f"Frames received: {self.stream.frames_received}",
                         self.body_font, 286, bright)
-        self._draw_text(f"Viewer FPS: {viewer_fps:0.1f}", self.body_font, 314, bright)
+        self._draw_text(f"Vision FPS: {vision_fps:0.1f}", self.body_font, 314, bright)
         self._draw_text("Latest age: waiting" if age is None else
                         f"Latest age: {age * 1000:0.0f} ms", self.body_font, 342,
                         bright if age is not None else muted)
@@ -367,13 +453,14 @@ class VisionExaminer:
         self._draw_text(f"Session: {session}", self.body_font, 590, muted)
 
     def run(self, first_frame_timeout: float = CONSOLE_READY_TIMEOUT) -> int:
-        first = self.stream.wait_for_frame(first_frame_timeout)
-        self._initialize(first)
+        if not self._display_initialized:
+            first = self.stream.wait_for_frame(first_frame_timeout)
+            self.initialize(first)
         assert self.pygame is not None
         assert self.window is not None
         assert self.viewport is not None
         assert self.sidebar is not None
-        self._update_surface(first)
+        assert self.frame_surface is not None
         next_frame = self.clock()
         period = 1 / VIEWER_HZ
         while True:
@@ -409,6 +496,7 @@ class VisionExaminer:
 
 
 def run_vision_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = None,
+                    player_factory: Callable[..., subprocess.Popen] | None = None,
                     examiner_factory=VisionExaminer,
                     shutdown_timeout: float = 5.0,
                     startup_timeout: float = CONSOLE_READY_TIMEOUT) -> int:
@@ -433,11 +521,15 @@ def run_vision_demo(*, popen_factory: Callable[..., subprocess.Popen] | None = N
         if manifest.vision is None:
             raise RuntimeError("Console READY has no public Vision capability")
         manifest.write(manifest_path)
-        player = subprocess.Popen(player_command(manifest_path), cwd=str(ROOT),
-                                  start_new_session=True)
         stream = VisionStream(manifest)
         stream.connect()
-        examiner = examiner_factory(stream, player, console, shutdown_event=shutdown_event)
+        first_frame = stream.wait_for_frame(startup_timeout)
+        examiner = examiner_factory(stream, None, console, shutdown_event=shutdown_event)
+        examiner.initialize(first_frame)
+        player = launch_player(manifest_path, popen_factory=player_factory)
+        wait_player_ready(player, manifest.session_id, timeout=startup_timeout,
+                          shutdown_event=shutdown_event)
+        examiner.set_player_process(player, ready=True)
         status = examiner.run(first_frame_timeout=startup_timeout)
     except KeyboardInterrupt:
         status = 0

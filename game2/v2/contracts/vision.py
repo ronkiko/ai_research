@@ -17,6 +17,8 @@ VISION_FIELDS = frozenset({
 PIXEL_FORMAT = "u8-semantic"
 SEMANTIC_CLASS_MIN = 0
 SEMANTIC_CLASS_MAX = 4
+_ALLOWED_SEMANTIC_CLASSES = bytes(range(SEMANTIC_CLASS_MIN,
+                                        SEMANTIC_CLASS_MAX + 1))
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,8 @@ class VisionFrame:
         pixels = bytes(self.pixels)
         if len(pixels) != self.width * self.height:
             raise ProtocolError("VisionFrame pixel count does not match dimensions")
-        if any(value < SEMANTIC_CLASS_MIN or value > SEMANTIC_CLASS_MAX for value in pixels):
+        # Delete valid classes in C; any remaining byte is unknown.
+        if pixels and pixels.translate(None, _ALLOWED_SEMANTIC_CLASSES):
             raise ProtocolError("VisionFrame contains an unknown semantic class")
         object.__setattr__(self, "pixels", pixels)
 

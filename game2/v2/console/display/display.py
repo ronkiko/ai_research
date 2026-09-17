@@ -14,6 +14,9 @@ from ..transport.publisher import VisionPublisher
 from .view_state import DisplayState
 
 
+VISION_HZ = 30
+
+
 def _connect(endpoint, timeout=5.0):
     deadline = time.monotonic() + timeout
     while True:
@@ -179,10 +182,20 @@ class DisplayService:
         self.start()
         print("READY " + json.dumps({"session_id": self.manifest.session_id,
                                      "mode": self.manifest.mode}, sort_keys=True), flush=True)
+        next_vision = time.monotonic()
+        vision_period = 1 / VISION_HZ
         try:
             while True:
                 if self.manifest.mode == "screen" and self._poll_close():
                     return 0
+                if self.manifest.mode == "vision":
+                    now = time.monotonic()
+                    if now < next_vision:
+                        time.sleep(next_vision - now)
+                        continue
+                    next_vision += vision_period
+                    if next_vision < now - vision_period:
+                        next_vision = now + vision_period
                 self.present_latest()
                 if self._reader_done.is_set() and self._next_view() is None:
                     return 0
@@ -190,8 +203,6 @@ class DisplayService:
                     pace = getattr(self.renderer, "pace", None)
                     if pace:
                         pace()
-                else:
-                    self._wait_for_update()
         except (EOFError, OSError, socket.timeout, ValueError):
             return 0
         finally:
