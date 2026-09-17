@@ -11,12 +11,14 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from unittest import mock
 
 from game2.v2.console.config import (ControllerManifest, DisplayManifest,
                                       EngineManifest, InternalManifest, SessionConfig,
                                       allocate_endpoint)
 from game2.v2.console.controller.controller import ControllerService
 from game2.v2.console.display.display import DisplayService
+from game2.v2.console.display.view_state import DisplayState
 from game2.v2.console.engine.engine import Engine, EngineService
 from game2.v2.console.engine.physics import PhysicsConfig
 from game2.v2.console.main import run_session
@@ -295,6 +297,112 @@ class InternalSchedulingTests(unittest.TestCase):
             summary = service.run()
             self.assertEqual(summary["session_ticks"], 8)
 
+
+class TerminalStateTests(unittest.TestCase):
+    def _schedule_future_action(self, engine):
+        self.assertEqual(engine.submit_action(ActionCommand(1, 1, 10, 5, True)),
+                         "accepted")
+        self.assertEqual(len(engine._scheduled), 5)
+
+    @staticmethod
+    def _avatar_state(engine):
+        avatar = engine.avatar
+        return (avatar.x, avatar.y, avatar.vx, avatar.vy,
+                avatar.grounded, avatar.alive)
+
+    def test_dead_terminal_freezes_physics_and_rejects_future_actions(self):
+        world = load_world(PIT)
+        engine = Engine(world)
+        engine.avatar.x, engine.avatar.y = 512, 500
+        engine.avatar.vx, engine.avatar.vy = 0, 30_000
+        engine.avatar.grounded = False
+        self._schedule_future_action(engine)
+
+        events = engine.tick()
+
+        self.assertIn({"event": "death", "reason": "damage_surface", "tick": 1}, events)
+        self.assertEqual(engine.terminal, "dead")
+        self.assertEqual(len(engine._scheduled), 0)
+        world_state = engine.world_state()
+        self.assertEqual(world_state.terminal, "dead")
+        self.assertEqual(world_state.to_payload()["terminal"], "dead")
+        display_state = DisplayState.from_payload(
+            world_state.to_payload(), "local", world)
+        self.assertEqual(display_state.terminal, "dead")
+        episode_tick = engine.episode_tick
+        physics_tick = engine.physics.tick
+        avatar = self._avatar_state(engine)
+        session_tick = engine.session_tick
+        with mock.patch.object(engine.physics, "step", wraps=engine.physics.step) as step:
+            for sequence in range(2, 52):
+                self.assertEqual(
+                    engine.submit_action(ActionCommand(1, sequence, 100, 1)),
+                    "rejected",
+                )
+                engine.tick()
+            step.assert_not_called()
+        self.assertEqual(engine.episode_tick, episode_tick)
+        self.assertEqual(engine.physics.tick, physics_tick)
+        self.assertEqual(self._avatar_state(engine), avatar)
+        self.assertEqual(engine.terminal, "dead")
+        self.assertEqual(engine.session_tick, session_tick + 50)
+        self.assertEqual(len(engine._scheduled), 0)
+        self.assertEqual(engine.stats.rejected, 50)
+
+    def test_success_terminal_freezes_physics_and_reaches_display(self):
+        world = load_world(PIT)
+        engine = Engine(world)
+        engine.avatar.x, engine.avatar.y = world.goal.x, world.goal.y
+        engine.avatar.vx = engine.avatar.vy = 0
+        engine.avatar.grounded = True
+        self._schedule_future_action(engine)
+
+        events = engine.tick()
+
+        self.assertIn({"event": "goal_reached", "tick": 1}, events)
+        self.assertEqual(engine.terminal, "success")
+        self.assertEqual(len(engine._scheduled), 0)
+        world_state = engine.world_state()
+        self.assertEqual(world_state.terminal, "success")
+        self.assertEqual(world_state.to_payload()["terminal"], "success")
+        display_state = DisplayState.from_payload(
+            world_state.to_payload(), "local", world)
+        self.assertEqual(display_state.terminal, "success")
+        episode_tick = engine.episode_tick
+        physics_tick = engine.physics.tick
+        avatar = self._avatar_state(engine)
+        session_tick = engine.session_tick
+        with mock.patch.object(engine.physics, "step", wraps=engine.physics.step) as step:
+            for sequence in range(2, 52):
+                self.assertEqual(
+                    engine.submit_action(ActionCommand(1, sequence, 100, 1)),
+                    "rejected",
+                )
+                engine.tick()
+            step.assert_not_called()
+        self.assertEqual(engine.episode_tick, episode_tick)
+        self.assertEqual(engine.physics.tick, physics_tick)
+        self.assertEqual(self._avatar_state(engine), avatar)
+        self.assertEqual(engine.terminal, "success")
+        self.assertEqual(engine.session_tick, session_tick + 50)
+        self.assertEqual(len(engine._scheduled), 0)
+        self.assertEqual(engine.stats.rejected, 50)
+
+    def test_timeout_terminal_clears_actions_and_rejects_commands(self):
+        engine = Engine(load_world(PIT), episode_limit=1)
+        self._schedule_future_action(engine)
+
+        engine.tick()
+
+        self.assertEqual(engine.terminal, "timeout")
+        self.assertEqual(len(engine._scheduled), 0)
+        for sequence in range(2, 102):
+            self.assertEqual(
+                engine.submit_action(ActionCommand(1, sequence, 100, 1)),
+                "rejected",
+            )
+        self.assertEqual(engine.stats.rejected, 100)
+        self.assertEqual(len(engine._scheduled), 0)
 
 class ChannelTests(unittest.TestCase):
     def test_partial_tcp_reads_and_malformed_packet(self):

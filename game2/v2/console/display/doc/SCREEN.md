@@ -11,3 +11,7 @@ decorations, and goal marker are built once; each frame redraws that cached scen
 and the current avatar. The Screen presentation loop runs at the 60 FPS target,
 independently of Engine physics cadence, and renders only a newer latest STATE;
 it never replays a backlog.
+
+When authoritative STATE contains `success`, `dead`, or `timeout`, Screen draws a
+simple result overlay over the frozen scene (`VICTORY`, `GAME OVER`, or `TIME OUT`)
+with a temporary-demo Ctrl+C hint. The overlay never sends commands.

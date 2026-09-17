@@ -198,6 +198,11 @@ the Player while the Engine and Screen continue running with neutral input.
 The terminal supervisor stops both external processes on `Ctrl+C`. This is not
 the final boot or startup design.
 
+Engine terminal state is authoritative. After `success`, `dead`, or `timeout`,
+the physical episode is frozen and new gameplay actions are rejected, while the
+session clock may continue. Screen displays the result; reset/restart remains a
+future explicit contract.
+
 The future startup flow will provide a boot screen, lifecycle/startup selection,
 Console startup, and then a Game session with Player/Trainer or an experiment.
 The temporary gameplay flow connects a Human Keyboard Player through the

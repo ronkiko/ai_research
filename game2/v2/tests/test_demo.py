@@ -96,6 +96,8 @@ class DemoFileTests(unittest.TestCase):
     def test_demo_has_no_pygame_dependency(self):
         source = (V2 / "demo.py").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"(?m)^\s*(?:from|import)\s+pygame(?:\s|$)")
+        for removed in ("DemoControl", "control_factory", "poll_exit", "Exit button"):
+            self.assertNotIn(removed, source)
 
     def test_console_capture_is_explicit_and_player_uses_public_manifest(self):
         calls = []

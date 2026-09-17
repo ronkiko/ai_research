@@ -43,7 +43,7 @@ def main(argv=None) -> int:
             acknowledgement = recv_frame(joystick)
             if (acknowledgement.get("type") != "joystick_ack"
                     or acknowledgement.get("sequence") != sequence
-                    or acknowledgement.get("status") != "accepted"):
+                    or acknowledgement.get("status") not in {"accepted", "rejected"}):
                 return 1
     except (EOFError, OSError, socket.timeout, ValueError):
         return 1

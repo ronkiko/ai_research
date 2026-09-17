@@ -10,3 +10,7 @@ The renderer composes, once per world load:
 Dynamic presentation draws a compact blue avatar placeholder over that cached
 scene. The viewport is the full world size. It has no HUD, camera, scrolling, zoom,
 animation system, operator controls, or input-to-Engine path.
+
+Terminal STATE results are presentation-only overlays: `VICTORY`, `GAME OVER`, or
+`TIME OUT`, each with a temporary-demo Ctrl+C hint. Screen does not reset, pause,
+quit, or otherwise control Engine.

@@ -62,6 +62,9 @@ class Engine:
 
     def submit_action(self, command: ActionCommand) -> str:
         """Validate and schedule without ever exposing the avatar to a client."""
+        if self.terminal is not None:
+            self.stats.rejected += 1
+            return "rejected"
         if command.sequence in self._sequences:
             self.stats.duplicate += 1
             return "duplicate"
@@ -80,6 +83,10 @@ class Engine:
             self._scheduled[tick] = (command.right, command.jump if tick == command.target_tick else False)
         self.stats.accepted += 1
         return "accepted"
+
+    def _finish_episode(self, result: str) -> None:
+        self.terminal = result
+        self._scheduled.clear()
 
     def reset(self) -> list[dict]:
         self.episode += 1
@@ -103,16 +110,16 @@ class Engine:
         if not was_grounded and self.avatar.grounded and self.avatar.alive:
             events.append({"event": "landed", "tick": self.episode_tick})
         if any(event["event"] == "death" for event in events):
-            self.terminal = "dead"
+            self._finish_episode("dead")
             events.append({"event": "episode_finished", "result": "dead", "tick": self.episode_tick})
         elif self.world.completed(self.avatar.x, self.avatar.y, self.avatar.width,
                                   self.avatar.height, self.avatar.grounded,
                                   self.avatar.alive):
-            self.terminal = "success"
+            self._finish_episode("success")
             events.append({"event": "goal_reached", "tick": self.episode_tick})
             events.append({"event": "episode_finished", "result": "success", "tick": self.episode_tick})
         elif self.episode_limit and self.episode_tick >= self.episode_limit:
-            self.terminal = "timeout"
+            self._finish_episode("timeout")
             events.append({"event": "episode_finished", "result": "timeout", "tick": self.episode_tick})
         return events
 

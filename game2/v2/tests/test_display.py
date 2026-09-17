@@ -13,7 +13,7 @@ from pathlib import Path
 from game2.v2.console.config import DisplayManifest, SessionConfig
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
-from game2.v2.console.display.screen.renderer import ScreenRenderer
+from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
 from game2.v2.console.display.view_state import AvatarView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionFrame, VisionRenderer
 from game2.v2.console.main import run_session
@@ -41,8 +41,33 @@ def _tiny_world() -> WorldDefinition:
     )
 
 
-def _view(world, x=2, y=2, tick=0):
-    return DisplayState("session", tick, world.map_id, AvatarView(x, y, True))
+def _view(world, x=2, y=2, tick=0, terminal=None, alive=True):
+    return DisplayState("session", tick, world.map_id, AvatarView(x, y, alive), terminal)
+
+
+class DisplayStateTests(unittest.TestCase):
+    def test_terminal_roundtrip_accepts_only_authoritative_results(self):
+        world = _tiny_world()
+        base = {
+            "type": "state", "session_id": "session", "session_tick": 1,
+            "map": "tiny", "avatar": {"x": 2, "y": 2, "alive": True},
+        }
+        for terminal in (None, "success", "dead", "timeout"):
+            with self.subTest(terminal=terminal):
+                state = DisplayState.from_payload({**base, "terminal": terminal},
+                                                   "session", world)
+                self.assertEqual(state.terminal, terminal)
+
+        for invalid in ("won", "death", 1, False):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    DisplayState.from_payload({**base, "terminal": invalid},
+                                               "session", world)
+
+    def test_terminal_direct_value_is_validated(self):
+        world = _tiny_world()
+        with self.assertRaises(ValueError):
+            DisplayState("session", 0, world.map_id, AvatarView(2, 2, True), "won")
 
 
 class AutoTilerTests(unittest.TestCase):
@@ -346,6 +371,33 @@ class ScreenRendererTests(unittest.TestCase):
             before = static.get_at((128 + 32, 384 + 32))
             after = renderer.present(_view(world, x=128, y=384)).get_at((128 + 32, 384 + 32))
             self.assertNotEqual(before, after)
+        finally:
+            renderer.close()
+
+    def test_terminal_labels_and_overlay_are_presentation_only(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        world = load_world(PIT)
+        renderer = ScreenRenderer(world)
+        try:
+            self.assertIsNone(terminal_label(None))
+            normal = renderer.pygame.image.tostring(
+                renderer.present(_view(world, x=128, y=384)), "RGBA")
+            self.assertIsNone(renderer._terminal_fonts)
+            for terminal, label in (
+                ("success", "VICTORY"),
+                ("dead", "GAME OVER"),
+                ("timeout", "TIME OUT"),
+            ):
+                with self.subTest(terminal=terminal):
+                    self.assertEqual(terminal_label(terminal), label)
+                    result = renderer.pygame.image.tostring(
+                        renderer.present(_view(world, x=128, y=384,
+                                               terminal=terminal,
+                                               alive=terminal != "dead")), "RGBA")
+                    self.assertNotEqual(result, normal)
+            self.assertIsNotNone(renderer._terminal_fonts)
+            with self.assertRaises(ValueError):
+                terminal_label("won")
         finally:
             renderer.close()
 

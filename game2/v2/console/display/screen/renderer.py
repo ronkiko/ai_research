@@ -18,6 +18,20 @@ DECORATION_ATLAS = {
 }
 DECORATION_SCALE = 2
 SPIKE_HEIGHT = 26
+TERMINAL_LABELS = {
+    "success": "VICTORY",
+    "dead": "GAME OVER",
+    "timeout": "TIME OUT",
+}
+
+
+def terminal_label(terminal: str | None) -> str | None:
+    """Return the human-facing result label for a validated terminal state."""
+    if terminal is None:
+        return None
+    if type(terminal) is not str or terminal not in TERMINAL_LABELS:
+        raise ValueError("unknown terminal result")
+    return TERMINAL_LABELS[terminal]
 
 
 class ScreenRenderer:
@@ -36,6 +50,7 @@ class ScreenRenderer:
         self.static_scene = None
         self.clock = None
         self._closed = False
+        self._terminal_fonts = None
         try:
             import os
             os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -218,8 +233,33 @@ class ScreenRenderer:
                            max(8, inner.width - 20), max(5, inner.height // 5))
         pygame.draw.rect(self.screen, (205, 241, 247), visor)
         pygame.draw.rect(self.screen, (17, 36, 57), rect, 3)
+        self._draw_terminal_overlay(view.terminal)
         pygame.display.flip()
         return self.screen
+
+    def _draw_terminal_overlay(self, terminal: str | None) -> None:
+        label = terminal_label(terminal)
+        if label is None:
+            return
+        pygame = self._pygame()
+        assert self.screen is not None
+        if not pygame.font.get_init():
+            pygame.font.init()
+        if self._terminal_fonts is None:
+            self._terminal_fonts = (pygame.font.Font(None, 74),
+                                    pygame.font.Font(None, 24))
+        title_font, subtitle_font = self._terminal_fonts
+        panel_width = min(self.width - 80, 640)
+        panel_height = min(self.height - 80, 190)
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((8, 18, 30, 214))
+        pygame.draw.rect(panel, (224, 235, 238, 225), panel.get_rect(), 2)
+        title = title_font.render(label, True, (255, 247, 205))
+        subtitle = subtitle_font.render("Press Ctrl+C to exit demo", True,
+                                       (218, 230, 235))
+        panel.blit(title, title.get_rect(center=(panel_width // 2, panel_height // 2 - 24)))
+        panel.blit(subtitle, subtitle.get_rect(center=(panel_width // 2, panel_height // 2 + 42)))
+        self.screen.blit(panel, panel.get_rect(center=(self.width // 2, self.height // 2)))
 
     render = present
 
@@ -245,4 +285,4 @@ class ScreenRenderer:
         self.static_scene = None
 
 
-__all__ = ["ASSET_DIR", "DECORATION_ATLAS", "ScreenRenderer"]
+__all__ = ["ASSET_DIR", "DECORATION_ATLAS", "ScreenRenderer", "terminal_label"]
