@@ -92,6 +92,8 @@ def run_session(config_path: str | Path,
     peripheral = PeripheralManifest(
         session_id=session_id,
         joystick=allocate_endpoint(),
+        vision=(allocate_endpoint()
+                if config.enable_display and config.display_mode == "vision" else None),
     )
     internal_path = run_dir / "internal-manifest.json"
     engine_manifest_path = run_dir / "engine-manifest.json"
@@ -107,7 +109,7 @@ def run_session(config_path: str | Path,
     if config.enable_display:
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,
-                         config.display_mode).write(display_manifest_path)
+                         config.display_mode, peripheral.vision).write(display_manifest_path)
     if state_capability_path is not None:
         if not config.enable_state or internal.engine_state is None:
             raise ValueError("embedded state capability requires Engine STATE")

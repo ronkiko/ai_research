@@ -14,8 +14,10 @@ WorldDefinition + latest WorldState
 ```
 
 `screen/` is the optional Pygame human view. `vision/` is a deterministic,
-headless semantic raster. Neither presentation controls Engine, receives
-Joystick input, reads TELEMETRY/EVENTS, or changes World/Physics.
+headless semantic raster and the source for the public Vision peripheral. Neither
+presentation controls Engine, receives Joystick input, reads TELEMETRY/EVENTS, or
+changes World/Physics. Each public Vision subscriber has a single newest-frame
+slot, so a slow examiner cannot block the Engine or another subscriber.
 
 `DisplayService` exposes the same latest-state reader as `start()`,
 `present_latest()`, and `close()` for the temporary embedded shell; `run()`

@@ -53,20 +53,22 @@ class PeripheralManifest:
 
     session_id: str
     joystick: Endpoint
+    vision: Endpoint | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"session_id": self.session_id, "joystick": self.joystick.as_dict()}
+        return {"session_id": self.session_id, "joystick": self.joystick.as_dict(),
+                "vision": self.vision.as_dict() if self.vision else None}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PeripheralManifest":
-        if not isinstance(data, dict) or set(data) != {"session_id", "joystick"}:
+        if not isinstance(data, dict) or set(data) != {"session_id", "joystick", "vision"}:
             raise ValueError("Peripheral manifest fields are invalid")
         if not isinstance(data["session_id"], str) or not data["session_id"]:
             raise ValueError("session_id must be non-empty")
         joystick = _manifest_endpoint(data["joystick"])
         if joystick is None:
             raise ValueError("joystick endpoint is required")
-        return cls(data["session_id"], joystick)
+        return cls(data["session_id"], joystick, _manifest_endpoint(data["vision"], False))
 
     @classmethod
     def from_file(cls, path: str | Path) -> "PeripheralManifest":

@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
+from ....contracts.vision import VisionFrame
 from ...world import TileID, WorldDefinition
 from ..view_state import DisplayState
 
@@ -24,35 +24,6 @@ SOLID = VisionClass.SOLID
 HAZARD = VisionClass.HAZARD
 AVATAR = VisionClass.AVATAR
 GOAL = VisionClass.GOAL
-
-
-@dataclass(frozen=True)
-class VisionFrame:
-    """An immutable semantic image, with no physics metadata."""
-
-    width: int
-    height: int
-    pixels: bytes
-    session_tick: int
-
-    def __post_init__(self) -> None:
-        if type(self.width) is not int or self.width <= 0:
-            raise ValueError("VisionFrame width must be a positive integer")
-        if type(self.height) is not int or self.height <= 0:
-            raise ValueError("VisionFrame height must be a positive integer")
-        if type(self.session_tick) is not int or self.session_tick < 0:
-            raise ValueError("VisionFrame session_tick must be non-negative")
-        if not isinstance(self.pixels, (bytes, bytearray)):
-            raise TypeError("VisionFrame pixels must be bytes")
-        pixels = bytes(self.pixels)
-        if len(pixels) != self.width * self.height:
-            raise ValueError("VisionFrame pixel count does not match dimensions")
-        object.__setattr__(self, "pixels", pixels)
-
-    @property
-    def tick(self) -> int:
-        """Short alias for callers that use the Engine STATE field name."""
-        return self.session_tick
 
 
 def _fill(pixels: bytearray, width: int, height: int, x: float, y: float,

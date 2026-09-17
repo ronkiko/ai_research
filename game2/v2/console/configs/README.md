@@ -7,4 +7,5 @@ smoke explicitly uses `display_mode: "vision"` so CI remains headless.
 `screen-demo.json` is an explicit standalone human-facing Pygame opt-in.
 `embedded-demo.json` keeps Engine STATE, TELEMETRY, and realtime pacing enabled
 but disables the Console Display process; `demo.sh` supplies its private STATE
-capability to an embedded ScreenRenderer.
+capability to an embedded ScreenRenderer. `vision-demo.json` is the long-running
+public Vision configuration used by `vision.sh`.

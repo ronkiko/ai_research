@@ -8,7 +8,9 @@ import time
 
 from ..config import DisplayManifest
 from ...contracts.framing import recv_frame
+from ...contracts.vision import VisionFrame
 from ..world import load_world
+from ..transport.publisher import VisionPublisher
 from .view_state import DisplayState
 
 
@@ -44,6 +46,11 @@ class DisplayService:
         self._state_socket: socket.socket | None = None
         self._closed = False
         self.renderer = renderer if renderer is not None else self._create_renderer()
+        self.vision_publisher = (
+            VisionPublisher(self.manifest.vision.host, self.manifest.vision.port,
+                            self.manifest.session_id)
+            if self.manifest.vision is not None else None
+        )
 
     def _create_renderer(self):
         if self.manifest.mode == "vision":
@@ -96,6 +103,10 @@ class DisplayService:
         if view is None:
             return False
         self.latest_frame = self.renderer.render(view)
+        if self.vision_publisher is not None:
+            if not isinstance(self.latest_frame, VisionFrame):
+                raise TypeError("Vision Display renderer must return a VisionFrame")
+            self.vision_publisher.publish(self.latest_frame)
         with self._state_condition:
             self._presented_tick = max(self._presented_tick, view.session_tick)
         self.rendered_frames += 1
@@ -153,6 +164,8 @@ class DisplayService:
             raise RuntimeError("DisplayService is already started")
         try:
             self._state_socket = _connect(self.manifest.engine_state)
+            if self.vision_publisher is not None:
+                self.vision_publisher.start()
             state_socket = self._state_socket
             self._reader_thread = threading.Thread(
                 target=self._read_states, args=(state_socket,),
@@ -200,6 +213,8 @@ class DisplayService:
                 pass
         if self._reader_thread and self._reader_thread is not threading.current_thread():
             self._reader_thread.join(timeout=1)
+        if self.vision_publisher is not None:
+            self.vision_publisher.close()
         close = getattr(self.renderer, "close", None)
         if close:
             close()

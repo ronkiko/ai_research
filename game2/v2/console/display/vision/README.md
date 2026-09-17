@@ -5,4 +5,5 @@ The Vision subsystem is the headless semantic branch of Display. It converts one
 `VisionFrame` containing one semantic class byte per pixel.
 
 It has no Pygame, artwork, telemetry, Controller, Player, or Engine control
-dependency. It is a renderer, not the future Player-facing VisionAdapter.
+dependency. `DisplayService` publishes the resulting frame through the public
+Vision transport; the transport does not expose the private STATE snapshot.

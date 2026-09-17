@@ -148,7 +148,7 @@ class ManifestAndWorldTests(unittest.TestCase):
         peripheral = PeripheralManifest("session", Endpoint("127.0.0.1", 12347))
         self.assertEqual(InternalManifest.from_dict(internal.to_dict()), internal)
         self.assertEqual(PeripheralManifest.from_dict(peripheral.to_dict()), peripheral)
-        self.assertEqual(set(peripheral.to_dict()), {"session_id", "joystick"})
+        self.assertEqual(set(peripheral.to_dict()), {"session_id", "joystick", "vision"})
         self.assertNotIn("engine_control", peripheral.to_dict())
         self.assertNotIn("engine_state", peripheral.to_dict())
         self.assertNotIn("engine_telemetry", peripheral.to_dict())
@@ -158,7 +158,12 @@ class ManifestAndWorldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PeripheralManifest.from_dict({
                 "session_id": "s", "joystick": {"host": "127.0.0.1", "port": 1},
+                 "vision": None,
                  "engine_control": {"host": "127.0.0.1", "port": 2},
+            })
+        with self.assertRaises(ValueError):
+            PeripheralManifest.from_dict({
+                "session_id": "s", "joystick": {"host": "127.0.0.1", "port": 1},
             })
 
     def test_subsystem_manifests_have_only_required_capabilities(self):
@@ -172,7 +177,7 @@ class ManifestAndWorldTests(unittest.TestCase):
         self.assertEqual(set(controller.to_dict()),
                          {"session_id", "engine_control", "engine_telemetry", "joystick"})
         self.assertEqual(set(display.to_dict()),
-                         {"session_id", "engine_state", "world_file", "mode"})
+                         {"session_id", "engine_state", "world_file", "mode", "vision"})
         self.assertEqual(set(engine.to_dict()),
                          {"session_id", "control", "state", "telemetry", "events", "run_dir"})
         self.assertNotIn("engine_state", controller.to_dict())
@@ -490,7 +495,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(set(controller.to_dict()),
                          {"session_id", "engine_control", "engine_telemetry", "joystick"})
         self.assertEqual(set(display.to_dict()),
-                         {"session_id", "engine_state", "world_file", "mode"})
+                         {"session_id", "engine_state", "world_file", "mode", "vision"})
         self.assertNotIn("engine_state", controller.to_dict())
         self.assertNotIn("engine_control", display.to_dict())
         self.assertNotIn("engine_telemetry", display.to_dict())

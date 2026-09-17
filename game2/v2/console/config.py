@@ -243,24 +243,29 @@ class DisplayManifest:
     engine_state: Endpoint
     world_file: str
     mode: str
+    vision: Endpoint | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.world_file, str) or not self.world_file:
             raise ValueError("world_file must be a non-empty string")
         if not isinstance(self.mode, str) or self.mode not in {"vision", "screen"}:
             raise ValueError("mode must be vision or screen")
+        if self.mode == "screen" and self.vision is not None:
+            raise ValueError("screen Display cannot bind a Vision endpoint")
 
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id,
                 "engine_state": self.engine_state.as_dict(),
-                "world_file": self.world_file, "mode": self.mode}
+                "world_file": self.world_file, "mode": self.mode,
+                "vision": self.vision.as_dict() if self.vision else None}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DisplayManifest":
         session_id = _manifest_session(data, {"session_id", "engine_state",
-                                               "world_file", "mode"})
+                                               "world_file", "mode", "vision"})
         return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_state"])),
-                   data["world_file"], data["mode"])
+                   data["world_file"], data["mode"],
+                   _manifest_endpoint(data["vision"], False))
 
     @classmethod
     def from_file(cls, path: str | Path) -> "DisplayManifest":

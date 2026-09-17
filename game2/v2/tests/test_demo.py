@@ -31,6 +31,7 @@ PIT = V2 / "console" / "world" / "maps" / "pit.json"
 READY = "READY " + json.dumps({
     "session_id": "demo-session",
     "joystick": {"host": "127.0.0.1", "port": 23456},
+    "vision": None,
 }) + "\n"
 
 

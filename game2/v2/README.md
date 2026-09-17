@@ -42,7 +42,7 @@ interaction problem, not merely an implementation metric.
 - Model inference, training, UI, rendering, and sensory work must not block
   world progression or become gameplay hot-path gates.
 - Player/model interaction reaches gameplay only through formal Player-facing
-  peripherals, currently the Joystick contract.
+  peripherals, currently the Joystick and Vision contracts.
 - Console, Player, Training, and Management have independent responsibilities
   and timing domains.
 - The UI is outside the gameplay Console and is not a Console feature toggle.
@@ -219,7 +219,8 @@ HumanKeyboardInput -> HumanJoystickClient -> Joystick -> Controller -> Engine
 ```
 
 The current V2 foundation intentionally does not implement an MLP, Trainer,
-hierarchical AI, Player VisionAdapter, or management UI. Console Display provides
-a headless semantic `vision` renderer by default and an explicit human-facing
-`screen` renderer. `enable_display: false` disables the Display process entirely;
-`display_mode` is `vision` or `screen`.
+hierarchical AI, or management UI. Console Display provides a headless semantic
+`vision` renderer and publishes it as the Player-facing Vision peripheral. The
+temporary `vision.sh` host launches an external Scripted Player and a second
+human examiner subscriber in one window. `enable_display: false` disables the
+Display process entirely; `display_mode` is `vision` or `screen`.

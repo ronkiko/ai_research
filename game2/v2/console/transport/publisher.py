@@ -7,6 +7,7 @@ import threading
 from typing import Any
 
 from ...contracts.framing import encode_frame
+from ...contracts.vision import VisionFrame, send_vision_frame
 
 
 class _LatestClient:
@@ -190,6 +191,79 @@ class LatestPublisher(_Publisher):
             return False
         for client in clients:
             client.offer(payload)
+        return True
+
+
+class _LatestVisionClient:
+    def __init__(self, sock: socket.socket, session_id: str):
+        self.sock = sock
+        self.session_id = session_id
+        self.condition = threading.Condition()
+        self.latest: VisionFrame | None = None
+        self.closed = False
+        self.thread = threading.Thread(target=self._send_loop, name="v2-vision-sender", daemon=True)
+        self.thread.start()
+
+    def offer(self, frame: VisionFrame) -> None:
+        with self.condition:
+            if not self.closed:
+                self.latest = frame
+                self.condition.notify()
+
+    def _send_loop(self):
+        try:
+            while True:
+                with self.condition:
+                    while self.latest is None and not self.closed:
+                        self.condition.wait()
+                    if self.closed:
+                        return
+                    frame = self.latest
+                    self.latest = None
+                if frame is not None:
+                    send_vision_frame(self.sock, self.session_id, frame)
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.close()
+
+    def close(self):
+        with self.condition:
+            if self.closed:
+                return
+            self.closed = True
+            self.latest = None
+            self.condition.notify_all()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def wait_closed(self):
+        if self.thread is not threading.current_thread():
+            self.thread.join(timeout=1)
+
+
+class VisionPublisher(_Publisher):
+    """Public Vision stream with one newest frame slot per subscriber."""
+
+    def __init__(self, host: str, port: int, session_id: str):
+        super().__init__(host, port)
+        self.session_id = session_id
+
+    def _make_client(self, sock):
+        return _LatestVisionClient(sock, self.session_id)
+
+    def publish(self, frame: VisionFrame) -> bool:
+        if not isinstance(frame, VisionFrame):
+            raise TypeError("VisionPublisher.publish requires a VisionFrame")
+        with self.lock:
+            clients = [client for client in self.clients if not client.closed]
+            self.clients[:] = clients
+        if not clients:
+            return False
+        for client in clients:
+            client.offer(frame)
         return True
 
 

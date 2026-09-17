@@ -10,13 +10,12 @@ WorldDefinition + WorldState
 ```
 
 `vision` is a representation of what exists in the world, not raw
-`x/y/vx/vy` telemetry. A future `VisionAdapter` remains a separate Player-facing
-sensory contract and transport layer:
+`x/y/vx/vy` telemetry. The public Player-facing sensory transport is:
 
 ```text
-Engine STATE -> Display.vision -> VisionFrame -> future Vision peripheral -> Player
+Engine STATE -> Display.vision -> VisionFrame -> public Vision peripheral -> Player
 ```
 
-That future adapter must not expose raw Engine STATE. Management/God Mode may
-later display both implementations side by side, but Management is not changed
-by this patch.
+The public adapter does not expose raw Engine STATE. The temporary `vision.sh`
+examiner is only a second subscriber and colorizes the same semantic bytes for
+human viewing; it does not render from STATE or send actions.
