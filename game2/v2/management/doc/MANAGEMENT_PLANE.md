@@ -15,14 +15,18 @@ Player/model, and Trainer, as well as which experiment/configuration to use.
 Console does not receive Management configuration and does not decide whether a
 management UI exists.
 
-Management may eventually expose explicit tool/capability boundaries for:
+Management may eventually expose explicit, mode-scoped capability boundaries:
 
-- Training Set Levels, Training Maps, and Exam Runs;
-- observations and experiment metrics;
-- training and evaluation requests;
-- candidate comparison, selection, and safe activation;
-- publication of optional StrategyGuidance;
-- communication with the Operator.
+- **Training:** inspect Training Set Levels and Training Maps; request training,
+  replay, evaluation, candidate comparison, and safe activation; optionally
+  publish StrategyGuidance.
+- **Exam:** request an Exam Run and receive PASS/FAIL plus aggregate
+  certification metrics only. There is no direct Exam Map or raw trajectory
+  inspection capability.
+- **Free Play:** observe aggregate behavior; optionally collect permitted
+  experience; and optionally request continued training.
+- **All modes:** receive allowed observations and experiment metrics and
+  communicate with the Operator.
 
 These tools are conceptual only in this patch. Strategist receives public or
 derived evidence and declared experiment inputs, not private Engine state,

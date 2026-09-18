@@ -20,8 +20,15 @@ and Start or Stop. It will consume Training metrics and results, but will not
 compute learning semantics, serialize model state, or become a Trainer/UI
 implementation in this architecture patch.
 
-Future Strategist capabilities may cover Training Set Levels, Training Maps,
-Exam Runs, observations and metrics, training, evaluation, candidate
-comparison and activation, optional StrategyGuidance, and communication with
-the Operator. These capabilities are not implemented here. Strategist is not a
-gameplay hot-path dependency.
+Future Strategist capabilities are mode-scoped:
+
+- **Training:** inspect Training Set structure and Training Maps, train, replay,
+  evaluate, compare candidates, and optionally publish StrategyGuidance.
+- **Exam:** request an Exam Run and receive PASS/FAIL plus aggregate
+  certification metrics. It does not inspect an Exam Map or receive raw exam
+  experience.
+- **Free Play:** observe aggregate behavior, optionally collect permitted
+  learning experience, and optionally request continued training.
+
+These capabilities are not implemented here. Strategist is not a gameplay
+hot-path dependency and does not assist gameplay during Exam.

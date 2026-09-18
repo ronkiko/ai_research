@@ -79,10 +79,10 @@ The conceptual identity of a record keeps `world_id`,
 `training` or `exam`. The term "training world" must not be used for an
 ordinary Training Map.
 
-## Training Maps
+## Training Mode And Training Maps
 
-A Training Map is a map permitted as a learning and development source. It may
-be used for:
+Training Mode is the learning and experimentation mode. A Training Map is a map
+permitted as a learning and development source. It may be used for:
 
 - repeated episodes;
 - online training;
@@ -90,7 +90,16 @@ be used for:
 - experience and trajectory collection;
 - offline replay;
 - model updates;
-- development evaluation.
+- checkpoint updates;
+- candidate comparison;
+- development evaluation;
+- targeted new Training Maps;
+- continued experimentation.
+
+Research Strategist analysis and optional `StrategyGuidance` are allowed in
+Training Mode. Training data is created only from Training Maps, except that
+Free Play may become an additional source when its separate learning policy is
+explicitly enabled.
 
 Training Maps may isolate a competency so that the curriculum can teach a
 useful subproblem. For example, Level 1 may use `flat_run`, `short_gap`,
@@ -106,7 +115,9 @@ gravity. Level 2's Exam Map may combine those competencies with wind, slippery
 surfaces, moving platforms, or other Level 2 mechanics.
 
 An Exam Map is not a Training Map and is not a training source. It is reserved
-for certification of a frozen candidate stack.
+for certification of a frozen candidate stack. It is never used for offline
+replay, supervised learning, targeted fitting, dataset generation, or any other
+form of model training.
 
 ## Training Run And Exam Run
 
@@ -117,7 +128,8 @@ orchestration and mutation policy:
 | Run | Map | Execution | Model and data policy |
 |---|---|---|---|
 | Training Run | Training Map | `realtime` or `unpaced` | Updates, trajectory collection, replay, and checkpoint mutation are allowed. |
-| Exam Run | The one Exam Map of the selected level | `realtime` only | The candidate stack is frozen. No gradient, update, checkpoint mutation, online learning, or replay is allowed. |
+| Exam Run | The one Exam Map of the selected level | `realtime` only | Planner, Motor Controller, and checkpoints are frozen. No gradient, update, checkpoint mutation, online learning, replay, candidate replacement, or StrategyGuidance is allowed. |
+| Free Play Run | Persistent/open Free Play environment | `realtime` canonical | Learning, experience collection, and continued training are optional and policy-controlled; asynchronous learning must not block the world clock. |
 
 Evaluation on a Training Map during development is allowed and may be
 observational. It does not turn that map into an Exam Map. An Exam Run is the
@@ -139,22 +151,50 @@ different physics environment and does not permit a Trainer to call
 
 Exam Maps use `realtime` only. Certification must observe the model stack under
 the real latency relationship between Player decisions and the autonomous
-world.
+world. Free Play uses `realtime` as its canonical mode. If learning is enabled
+there, collection and Trainer work remain external to the world clock.
+
+During an Exam Run, the Strategist is not in the gameplay loop and does not
+publish new `StrategyGuidance`. The Planner and Motor Controller are tested as a
+frozen autonomous Player stack.
 
 ## Exam Data Isolation
 
-Exam Maps are never learning sources. An Exam Map must not be used for:
+Exam Maps are strictly sterile certification sources. An Exam Map must not be
+used for:
 
 - Trainer updates;
 - offline replay;
 - supervised augmentation;
 - experience replay;
-- checkpoint fitting.
+- checkpoint fitting;
+- targeted fitting;
+- dataset generation.
 
-An Exam trajectory may be saved for audit, result inspection, and reporting,
-but it remains excluded from every training dataset. A failed exam is not
-automatically converted into training data. If more learning is desired, the
-Strategist or Operator must request new Training Map experience explicitly.
+An Exam Run does not create a training trajectory dataset. Do not record or
+retain for learning a raw Vision frame sequence, `MotorGoal` sequence,
+`ActionDecision` sequence, frame-by-frame replay, reusable trajectory, or
+experience record. A failed exam is not converted into training data, and its
+failure location is not exposed as a targeted retraining signal.
+
+The permitted Exam result is a certification result plus limited aggregate
+metrics:
+
+- `PASS` or `FAIL`;
+- selected Training Set Level;
+- candidate stack identity;
+- start/finish time or duration;
+- aggregate progress/result metrics;
+- `certified_level` update when the result is `PASS`.
+
+The Strategist receives this result and aggregate certification metrics, not raw
+Exam Map geometry, raw frames, raw trajectory, reusable replay, or a precise
+failure location. `FAIL` means only that the model is not sufficiently prepared.
+
+If an Operator later needs to manually debug an Exam Map, that is a separate
+diagnostic operation, not a certification attempt. It does not update
+`certified_level` and does not automatically become a training source. No
+diagnostic mode is defined by this patch.
 
 ## First Full Hierarchical Stack
 
@@ -289,14 +329,17 @@ from an Exam Map.
 
 ## Trajectory Dataset
 
-The reusable training unit is a trajectory or experience record, not merely a
-catalog of image files. A conceptual minimum record contains:
+For an allowed learning source, the reusable training unit is a trajectory or
+experience record, not merely a catalog of image files. Allowed sources are
+Training Maps and Free Play only when the Research Strategist explicitly
+enables Free Play learning. An Exam Run is never represented as a reusable
+learning record. A conceptual minimum record contains:
 
 ```text
 world_id
-training_set_level
-map_id
-map_kind              # training | exam
+training_set_level     # required for Training Maps; absent for Free Play
+map_id                 # when applicable
+source_kind            # training_map | free_play
 
 episode_id
 world_tick
@@ -314,9 +357,14 @@ Saved Vision frames alone are useful for visual representation learning, but
 behavioral learning generally requires context: observation, goal, chosen
 action, acceptance/result, and temporal or episode relation. PNG or other image
 export may be a supplementary representation dataset, not a replacement for
-trajectory experience.
+trajectory experience. This applies only to an explicitly allowed learning
+source, never to an Exam Run.
 
 ## Data Fairness
+
+The same fairness boundary applies in Training, Exam, and Free Play. Free Play
+does not grant privileged observation, and optional Free Play learning must use
+only permitted public evidence.
 
 Trajectory data may contain only information available to a fair Player or
 explicitly declared experiment metadata. Allowed data includes public Vision,
@@ -374,12 +422,51 @@ not merely an exposure or training record.
 These values are intentionally independent. For example:
 
 ```text
-trained_through_set = 2
-certified_level     = 1
+trained_through_set = 3
+certified_level     = 2
 ```
 
-This is valid when the stack has trained on Level 2 Training Maps but has not
-yet passed the Level 2 Exam Map.
+This is valid when the stack has trained on Level 3 Training Maps but has not
+yet passed the Level 3 Exam Map.
+
+## Graduation And Free Play
+
+`GRADUATED` / fully certified is a conceptual state reached only when:
+
+```text
+certified_level == highest_required_training_set_level
+```
+
+The agent must have successfully passed every required Training Set Level before
+it is released from the training and certification curriculum. The number of
+required levels is intentionally not fixed here.
+
+Free Play is the post-graduation mode for observing an autonomous certified
+Humanoid/Player in a persistent or open gameplay environment. It may later
+include a larger map, other autonomous AI agents, richer interactions, long
+existence, and situations not authored as short Training Maps. This is a future
+research direction; Free Play is not an Exam, not a Training Set Level, and not
+a new World while Platformer World laws and mechanics remain unchanged.
+
+Free Play is locked until graduation:
+
+```text
+if certified_level < highest_required_training_set_level:
+    Free Play locked
+if fully certified:
+    Free Play allowed
+```
+
+After graduation, the Research Strategist is active again as an autonomous
+researcher. It may observe aggregate behavior, analyze new situations, decide
+not to intervene, collect permitted experience, temporarily disable learning,
+start additional Training work, or select new candidates. Free Play learning is
+optional and policy-controlled; if enabled, it is continual learning and must
+not block the realtime world clock.
+
+Free Play learning does not automatically reduce or reset `certified_level`. A
+future decision about re-certification after a substantial model update is
+separate and is not defined here.
 
 ## Exam Capability
 
@@ -388,33 +475,41 @@ The future conceptual action
 
 - select exactly the Exam Map of the requested set;
 - use `realtime`;
-- freeze Planner and Motor Controller weights;
-- forbid Trainer updates;
-- produce PASS/FAIL and metrics;
-- never add the Exam trajectory to the training dataset automatically.
+- freeze Planner, Motor Controller, and checkpoint identity;
+- forbid gradient updates, online learning, replay, candidate replacement, and
+  `StrategyGuidance`;
+- keep the Strategist out of the gameplay loop;
+- produce only PASS/FAIL and limited aggregate certification metrics;
+- never create or expose a training dataset, raw trajectory, or reusable exam
+  experience.
 
-Exam trajectory retention is for audit and reporting only. No executable exam
-tool is implemented here.
+`FAIL` means only that the model is insufficiently prepared. The result must not
+identify a precise Exam Map failure location for targeted retraining. No
+executable exam tool is implemented here.
 
 ## Research Strategist Capabilities
 
-The future Research Strategist may receive explicit capabilities to:
+The future Research Strategist may receive explicit, mode-scoped capabilities:
 
-- list Training Set Levels;
-- inspect Training Maps and the selected Exam Map;
-- request online training;
-- request offline replay;
-- request development evaluation;
-- inspect metrics and compare candidates;
-- select Planner and Motor Controller candidates;
-- run an Exam;
-- inspect certification results;
-- communicate with the Operator.
+- **Training:** list Training Set Levels; inspect Training Set structure and
+  Training Maps; request online training, offline replay, and development
+  evaluation; inspect metrics; compare and select candidates; and publish
+  optional `StrategyGuidance`.
+- **Exam:** request an Exam Run; receive PASS/FAIL, the selected level,
+  candidate identity, and limited aggregate certification metrics; and learn the
+  resulting `certified_level`. It must not inspect the Exam Map, Exam geometry,
+  raw frames, raw trajectory, reusable replay, or precise failure location.
+- **Free Play:** observe aggregate behavior; choose observe-only or optional
+  experience collection; disable or enable learning; request continued Trainer
+  work; and compare or select later candidates.
+- **All modes:** communicate with the Operator through explicit control-plane
+  contracts.
 
 The Strategist chooses the research direction and requests operations. It does
 not receive direct Engine runtime access, private world state, or direct
-Joystick control. Future capabilities cross process/tool contracts; this patch
-does not implement MCP, tools, or a registry.
+Joystick control. It is never a gameplay assistant during Exam. Future
+capabilities cross process/tool contracts; this patch does not implement MCP,
+tools, or a registry.
 
 ## Deferred Implementation
 

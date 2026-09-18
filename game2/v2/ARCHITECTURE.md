@@ -50,6 +50,17 @@ Player's public Joystick adapter. The Research Strategist is an optional,
 external Management/research-plane agent and is not part of the Player or
 Console gameplay hot path. Human and scripted Players remain valid alternatives.
 
+The Platformer World has three distinct lifecycle modes:
+
+```text
+Training -> Exam -> Certified / Graduated -> Free Play
+```
+
+Training and Exam use Training Set Levels; Free Play is the persistent/open
+environment after graduation. All three remain in the same Platformer World when
+their laws and mechanics family are unchanged. The normative mode, isolation,
+and graduation rules live in [training/doc/TRAINING_SYSTEM.md](training/doc/TRAINING_SYSTEM.md).
+
 ## Console Internal Decomposition
 
 The Console separates static world definition from live Engine state:

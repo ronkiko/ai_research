@@ -72,6 +72,13 @@ human researcher would otherwise perform. It may:
 - publish optional strategic guidance;
 - communicate with the Operator through a future chat or tool interface.
 
+These capabilities are mode-scoped. In Training, the Strategist may inspect
+Training Maps, request learning or evaluation, and publish optional guidance. In
+Exam, it may request a run and receive only PASS/FAIL plus limited aggregate
+certification metrics; it does not inspect the Exam Map or receive raw exam
+experience. After graduation, it returns as an autonomous researcher in Free
+Play, where it may observe and optionally choose adaptation or further training.
+
 The Strategist does not:
 
 - perform gradient descent itself;
@@ -177,6 +184,10 @@ episode. Planner observes the new revision asynchronously and decides when it
 is safe to apply it to the current gameplay context; a route change must not
 automatically interrupt an already executing jump. No more complex emergency
 protocol is defined here.
+
+`StrategyGuidance` is absent during an Exam Run. The Strategist does not publish
+new guidance or participate in the gameplay loop while certification is being
+measured; Planner and Motor Controller must act autonomously.
 
 ## MotorGoal
 
@@ -312,10 +323,15 @@ mid-episode under the Planner's local safety decision.
 ## Operator And Management Ownership
 
 Operator remains the external human supervisor. The eventual goal is that the
-Operator sets a broad research task, such as "achieve stable completion of
-World B", and the Research Strategist autonomously evaluates the stack, trains
-and compares candidates, activates a better candidate at a safe boundary, and
-continues experiments while reporting findings.
+Operator sets a broad research task, such as "achieve Certified Level 2 in
+Platformer World", and the Research Strategist autonomously evaluates the stack,
+trains and compares candidates, activates a better candidate at a safe boundary,
+and continues experiments while reporting findings.
+
+Successful certification of every required Training Set Level is graduation.
+Only then does Free Play begin. Free Play is a research environment, not another
+gameplay intelligence layer: the Strategist may observe and choose whether to
+adapt, but it does not become a physics or Player hot-path component.
 
 Research Strategist belongs to the Management/control-plane side, not to
 Console and not to the Player hot path. Management may eventually expose

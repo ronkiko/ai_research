@@ -65,9 +65,15 @@ opportunities, or turn the Engine into a step RPC. Realtime remains the
 canonical behavioral semantics.
 
 Training Maps may use either `realtime` or `unpaced` according to the
-experiment. The Exam Map of a Training Set Level uses `realtime` only. Neither
-mode makes Trainer the Engine clock owner or permits Trainer to call
-`Engine.step()`.
+experiment. The Exam Map of a Training Set Level uses `realtime` only. Free Play
+uses `realtime` as its canonical mode. If Free Play learning is enabled, data
+collection and Trainer work remain asynchronous and must not block the world
+clock. Neither mode makes Trainer the Engine clock owner or permits Trainer to
+call `Engine.step()`.
+
+An Exam Run also excludes StrategyGuidance and Strategist gameplay assistance.
+Planner and Motor Controller continue autonomously while the realtime world
+advances.
 
 ## Independent Timing Domains
 
