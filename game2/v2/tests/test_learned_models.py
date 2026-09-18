@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+import math
+import tempfile
+import unittest
+from pathlib import Path
+
+import torch
+
+from game2.v2.contracts.vision import VisionFrame
+from game2.v2.player.learned.checkpoint import (load_motor_controller,
+                                                 load_planner,
+                                                 save_motor_controller,
+                                                 save_planner)
+from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.motor import MotorController382, motor_input
+from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.vision import vision_to_tensor
+
+
+def _frame(width: int, height: int) -> VisionFrame:
+    pixels = bytes(index % 6 for index in range(width * height))
+    return VisionFrame(width, height, pixels, world_tick=1)
+
+
+def _parameters(model: torch.nn.Module) -> list[torch.Tensor]:
+    return [parameter.detach().clone() for parameter in model.parameters()]
+
+
+class LearnedContractTests(unittest.TestCase):
+    def test_motor_goal_and_action_decision_are_strict(self):
+        goal = MotorGoal(1, -0.25)
+        self.assertEqual((goal.target_dx, goal.target_dy), (1.0, -0.25))
+        with self.assertRaises(TypeError):
+            MotorGoal(True, 0.0)
+        with self.assertRaises(ValueError):
+            MotorGoal(1.01, 0.0)
+        with self.assertRaises(ValueError):
+            MotorGoal(math.inf, 0.0)
+        with self.assertRaises(TypeError):
+            ActionDecision(1, False)
+        self.assertEqual(ActionDecision(True, False), ActionDecision(True, False))
+
+    def test_vision_frame_becomes_exact_six_channel_one_hot(self):
+        frame = VisionFrame(3, 2, bytes((0, 1, 2, 3, 4, 5)), world_tick=7)
+        encoded = vision_to_tensor(frame)
+        self.assertEqual(tuple(encoded.shape), (6, 2, 3))
+        self.assertEqual(encoded.dtype, torch.float32)
+        for index, semantic_class in enumerate(frame.pixels):
+            y, x = divmod(index, frame.width)
+            self.assertEqual(float(encoded[:, y, x].sum()), 1.0)
+            self.assertEqual(float(encoded[semantic_class, y, x]), 1.0)
+            self.assertTrue(torch.count_nonzero(encoded[:, y, x]) == 1)
+
+    def test_motion_input_is_player_side_and_strictly_normalized(self):
+        values = motor_input(MotorGoal(0.5, -0.5), 1)
+        self.assertEqual(tuple(values.shape), (3,))
+        self.assertEqual(values.dtype, torch.float32)
+        self.assertTrue(torch.equal(values, torch.tensor([0.5, -0.5, 1.0])))
+        for invalid in (True, math.nan, math.inf, -1.01, 1.01):
+            with self.assertRaises((TypeError, ValueError)):
+                motor_input(MotorGoal(0.0, 0.0), invalid)
+
+
+class LearnedModelTests(unittest.TestCase):
+    def test_cnn_planner_supports_variable_resolution_and_returns_goals(self):
+        planner = CNNPlanner.fresh(11)
+        for frame in (_frame(5, 4), _frame(8, 3)):
+            encoded = vision_to_tensor(frame)
+            output = planner(encoded.unsqueeze(0))
+            self.assertEqual(tuple(output.shape), (1, 2))
+            self.assertTrue(torch.isfinite(output).all())
+            self.assertTrue(torch.all(output >= -1.0))
+            self.assertTrue(torch.all(output <= 1.0))
+            goal = planner.decide(frame)
+            self.assertIsInstance(goal, MotorGoal)
+            self.assertTrue(-1.0 <= goal.target_dx <= 1.0)
+            self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
+
+    def test_motor_controller_has_executable_3_8_2_shape_and_decides(self):
+        controller = MotorController382.fresh(12)
+        self.assertEqual((controller.hidden.in_features, controller.hidden.out_features), (3, 8))
+        self.assertEqual((controller.output.in_features, controller.output.out_features), (8, 2))
+        logits = controller(torch.tensor([[0.1, -0.2, 0.3], [1.0, 0.0, -1.0]]))
+        self.assertEqual(tuple(logits.shape), (2, 2))
+        self.assertTrue(torch.isfinite(logits).all())
+        decision = controller.decide(MotorGoal(0.1, -0.2), 0.3)
+        self.assertIsInstance(decision, ActionDecision)
+
+    def test_fresh_models_are_reproducible_nonzero_and_rng_isolated(self):
+        before = torch.random.get_rng_state()
+        planner_a = CNNPlanner.fresh(21)
+        after = torch.random.get_rng_state()
+        self.assertTrue(torch.equal(before, after))
+        planner_b = CNNPlanner.fresh(21)
+        planner_c = CNNPlanner.fresh(22)
+        self.assertTrue(all(torch.equal(left, right)
+                            for left, right in zip(_parameters(planner_a),
+                                                   _parameters(planner_b))))
+        self.assertTrue(any(not torch.equal(left, right)
+                            for left, right in zip(_parameters(planner_a),
+                                                   _parameters(planner_c))))
+        self.assertTrue(any(torch.count_nonzero(parameter) > 0
+                            for parameter in planner_a.parameters()))
+
+        motor_a = MotorController382.fresh(31)
+        motor_b = MotorController382.fresh(31)
+        motor_c = MotorController382.fresh(32)
+        self.assertTrue(all(torch.equal(left, right)
+                            for left, right in zip(_parameters(motor_a),
+                                                   _parameters(motor_b))))
+        self.assertTrue(any(not torch.equal(left, right)
+                            for left, right in zip(_parameters(motor_a),
+                                                   _parameters(motor_c))))
+        self.assertTrue(any(torch.count_nonzero(parameter) > 0
+                            for parameter in motor_a.parameters()))
+
+
+class LearnedCheckpointTests(unittest.TestCase):
+    def test_planner_checkpoint_roundtrip_and_role_validation(self):
+        planner = CNNPlanner.fresh(41)
+        frame = _frame(6, 5)
+        expected = planner.decide(frame)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "planner.pt"
+            save_planner(planner, path)
+            restored = load_planner(path)
+            for key, value in planner.state_dict().items():
+                self.assertTrue(torch.equal(value, restored.state_dict()[key]))
+            self.assertEqual(restored.decide(frame), expected)
+            with self.assertRaises(ValueError):
+                load_motor_controller(path)
+
+    def test_motor_checkpoint_roundtrip_and_configuration_validation(self):
+        controller = MotorController382.fresh(42)
+        goal = MotorGoal(-0.4, 0.8)
+        expected_logits = controller(motor_input(goal, -0.1))
+        expected_decision = controller.decide(goal, -0.1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "motor.pt"
+            save_motor_controller(controller, path)
+            restored = load_motor_controller(path)
+            for key, value in controller.state_dict().items():
+                self.assertTrue(torch.equal(value, restored.state_dict()[key]))
+            self.assertTrue(torch.equal(restored(motor_input(goal, -0.1)),
+                                        expected_logits))
+            self.assertEqual(restored.decide(goal, -0.1), expected_decision)
+
+            payload = torch.load(path, map_location="cpu", weights_only=True)
+            payload["configuration"] = "wrong"
+            wrong_path = Path(directory) / "wrong-config.pt"
+            torch.save(payload, wrong_path)
+            with self.assertRaises(ValueError):
+                load_motor_controller(wrong_path)
+
+
+if __name__ == "__main__":
+    unittest.main()
