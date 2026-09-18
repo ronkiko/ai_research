@@ -69,14 +69,22 @@ canonical behavioral semantics.
 The system intentionally separates:
 
 ```text
-world clock != model clock != training clock != UI clock
+world clock
+!= strategist clock
+!= planner clock
+!= motor-controller clock
+!= training clock
+!= UI clock
 ```
 
-Independent processes and clocks prevent Player/model latency, training work,
-UI work, and rendering from becoming hidden Engine synchronization points. UI,
-Display, rendering, telemetry, and Training must not become hot-path blockers.
-Future sensory systems must also publish or consume observations without
-pausing world progression.
+The relative timing semantics are conceptual, not fixed frequencies: Strategist
+may take seconds or tens of seconds; Planner is medium-rate gameplay reasoning;
+Motor Controller performs high-rate correction; Console keeps its autonomous
+fixed-step clock. Independent processes and clocks prevent reasoning latency,
+Player/model latency, training work, UI work, and rendering from becoming
+hidden Engine synchronization points. UI, Display, rendering, telemetry, and
+Training must not become hot-path blockers. Future sensory systems must also
+publish or consume observations without pausing world progression.
 
 ## Player and Future AI
 
@@ -85,10 +93,21 @@ contracts; currently the physical gameplay effect reaches the Console through
 the Joystick contract. The Console does not know whether the Player is a
 script, MLP, LLM, or a hierarchy of components.
 
-A future hierarchical or multi-component AI may combine slow strategic, medium
-tactical, and fast low-level components. They may operate at different time
-scales, but none may pause the Engine. The final low-level action still reaches
-the Console through the formal Player peripheral boundary.
+A target hierarchical AI combines an optional slow Research Strategist in the
+Management/control plane with a Player-owned Planner / Policy and Motor
+Controller. Strategist may reason for tens of seconds while the Planner and
+Motor Controller continue using the latest complete available values. A
+published StrategyGuidance snapshot remains usable while the next revision is
+computed; Planner must not synchronously wait for Strategist. Planner publishes
+the latest complete MotorGoal, and Motor Controller continues with it while the
+next goal is computed; Motor Controller must not synchronously wait for Planner.
+The final low-level ActionDecision still reaches Console through the formal
+Player peripheral boundary as public Joystick input.
+
+Reasoning or model latency must remain experimentally visible. No hierarchy
+layer may pause the Engine, and no upper layer may become a barrier for a lower
+layer. StrategyGuidance may be updated during an active episode, but model or
+checkpoint replacement is deferred to a safe boundary between episodes.
 
 ## Management and UI
 

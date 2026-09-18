@@ -13,24 +13,33 @@ management UI.
 
 ## Player
 
-The external Player chooses actions and uses public peripheral contracts. A
-scripted Player is one implementation; a future model runtime is another. A
-Player does not import Console implementation modules.
+The external Player is the autonomous gameplay agent and uses public peripheral
+contracts. A learned Player may contain a Planner / Policy and a Motor
+Controller; together they choose actions and emit the public Joystick contract.
+The Player remains functional without the optional Research Strategist. Human
+and scripted Players are valid alternatives. A Player does not import Console
+implementation modules.
 
 ## Training
 
-Training is an external learning process. Future trainers and model-training
-contracts belong here. Training does not access Console internals or world
-objects.
+Training is an external learning system. Future trainers and model-training
+contracts belong here. Trainer targets a trainable component or candidate, not
+necessarily an entire Player. Training does not access Console internals or
+world objects and is not a fourth gameplay-intelligence layer.
 
 ## Management
 
-Management is the operator plane. It may choose configurations and launch or
-stop independent processes. It is not a gameplay proxy and does not own
-runtime objects from other domains.
+Management is the operator and control plane. A future Research Strategist is
+an autonomous research/meta-agent in this domain; it may use explicit tools to
+observe results, request Train/Evaluate, compare and activate candidates, and
+publish optional guidance. Management may choose configurations and launch or
+stop independent processes. It is not a gameplay proxy and does not own runtime
+objects from other domains.
 
 ## Contracts
 
 Contracts are the leaf domain: public Joystick, public capabilities, and generic
-wire framing. Contracts describe allowed messages and do not import a domain
-that consumes them.
+wire framing. Logical future boundaries such as StrategyGuidance, MotorGoal,
+and ActionDecision must remain explicit contracts rather than hidden runtime
+coupling. Contracts describe allowed messages and do not import a domain that
+consumes them.

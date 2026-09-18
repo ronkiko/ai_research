@@ -22,5 +22,15 @@ Human Player has no Engine access. Local documentation: `doc/`.
 
 The future trainable Player will consume only public Vision, emit only public
 Joystick decisions, own its Console lifecycle/Vision/Joystick connections, and
-expose its training-side boundary externally. Training does not access Console
-through Player internals.
+expose its training-side boundary externally. Its target learned hierarchy is:
+
+```text
+Planner / Policy -> MotorGoal -> Motor Controller
+                 -> ActionDecision -> Joystick adapter
+```
+
+Planner and Motor Controller together are autonomous without a Research
+Strategist. StrategyGuidance is optional and advisory. The complete target
+contract is defined in
+[../doc/INTELLIGENCE_ARCHITECTURE.md](../doc/INTELLIGENCE_ARCHITECTURE.md).
+Training does not access Console through Player internals.

@@ -24,13 +24,28 @@ connection and uses only public Console-facing capabilities.
 
 ## Baseline Player
 
-The first laboratory baseline is a small feed-forward MLP with three inputs, a
-small hidden layer, and two outputs. The V1 `3-8-2` shape is allowed as the
-first V2 laboratory baseline.
+The first laboratory baseline is a **collapsed first baseline** (also called a
+single-layer/direct-action baseline), not the final V2 AI hierarchy. It is a
+small feed-forward MLP with three inputs, a small hidden layer, and two outputs.
+The V1 `3-8-2` shape is allowed as the first V2 laboratory baseline.
+
+In this first vertical:
+
+- Research Strategist is absent;
+- Planner is absent as a separate layer;
+- the small MLP receives Player-side Vision features directly;
+- the MLP directly produces independent `RIGHT` / `JUMP` decisions.
+
+This collapse is useful for validating Vision sensing, the learning boundary,
+TrainingEpisode, checkpoint/update flow, and realtime interaction. It is not a
+final Motor Controller interface. In the target hierarchy, Motor Controller
+receives a `MotorGoal` plus fast sensory/motion representation while Planner
+owns higher-level gameplay reasoning. The logical boundaries are defined in
+[../../doc/INTELLIGENCE_ARCHITECTURE.md](../../doc/INTELLIGENCE_ARCHITECTURE.md).
 
 `3-8-2 is not a permanent V2 architecture.` It may later be replaced by
-another MLP, PPO, a hierarchy, an LLM executor, or another Player/model design
-without changing the Console boundary.
+another MLP, PPO, a Planner/Motor Controller hierarchy, an LLM executor, or
+another Player/model design without changing the Console boundary.
 
 The two outputs are independent `Right` and `Jump` decisions. There is no
 action masking. A model may choose Jump while airborne; Physics decides whether

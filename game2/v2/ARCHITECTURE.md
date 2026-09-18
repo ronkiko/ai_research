@@ -5,6 +5,9 @@ Status: Patch 3 implementation complete
 Game2 V2 is a real-time research system. The normative realtime contract is
 [doc/REALTIME_SYSTEM.md](doc/REALTIME_SYSTEM.md).
 
+The normative target AI architecture is
+[doc/INTELLIGENCE_ARCHITECTURE.md](doc/INTELLIGENCE_ARCHITECTURE.md).
+
 Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
 Normative target MMO server model: [console/doc/MMO_SERVER_MODEL.md](console/doc/MMO_SERVER_MODEL.md)
@@ -37,6 +40,12 @@ Player -> Joystick contract -> Console Controller -> Console Engine
 Console Engine -> Console Display
 WorldDefinition + WorldState -> Display.screen / Display.vision
 ```
+
+Player may contain hierarchical intelligence: a Planner / Policy produces
+MotorGoals for a Motor Controller, which produces ActionDecisions for the
+Player's public Joystick adapter. The Research Strategist is an optional,
+external Management/research-plane agent and is not part of the Player or
+Console gameplay hot path. Human and scripted Players remain valid alternatives.
 
 ## Console Internal Decomposition
 
