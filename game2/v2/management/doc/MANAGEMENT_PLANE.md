@@ -22,7 +22,9 @@ Management may eventually expose explicit, mode-scoped capability boundaries:
   publish StrategyGuidance.
 - **Exam:** request an Exam Run and receive PASS/FAIL plus aggregate
   certification metrics only. There is no direct Exam Map or raw trajectory
-  inspection capability.
+  inspection capability. This restriction also applies to generic filesystem,
+  repository, GitHub, file-search, MCP, and dataset capabilities: they must not
+  reach protected Exam Map content.
 - **Free Play:** observe aggregate behavior; optionally collect permitted
   experience; and optionally request continued training.
 - **All modes:** receive allowed observations and experiment metrics and
@@ -33,4 +35,5 @@ derived evidence and declared experiment inputs, not private Engine state,
 physics coordinates, hidden collision geometry, `ActionCommand`,
 `target_world_tick`, or debug-only ground truth. Management must preserve the
 domain dependency direction and must not import Player or Training runtime
-internals.
+internals. The Operator may author, replace, inspect, and administer Exam Maps;
+that human authority does not grant the autonomous Strategist raw access.

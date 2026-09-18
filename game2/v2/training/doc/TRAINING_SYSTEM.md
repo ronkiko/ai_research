@@ -196,6 +196,38 @@ diagnostic operation, not a certification attempt. It does not update
 `certified_level` and does not automatically become a training source. No
 diagnostic mode is defined by this patch.
 
+## Exam Resource Isolation
+
+Exam isolation is a resource boundary, not only a restriction on the named
+`inspect_exam_map` capability. Exam Map bytes and content must not be reachable
+through any generic capability available to the Research Strategist or Trainer,
+including future filesystem tools, repository or GitHub tools, generic file
+search/read, MCP resources, or dataset tools. The absence of a special map
+inspection API is not sufficient isolation.
+
+Conceptual ownership is:
+
+| Resource | Operator | Exam Runner / authority | Console | Strategist | Trainer | Player |
+|---|---|---|---|---|---|---|
+| Training Maps | read/write/admin | selected for runs | receives selected map | inspect through allowed tools | consume as training source | public gameplay Vision only |
+| Exam Map | author/manage/inspect | resolves protected map | receives selected map for the run | no raw access | no raw access | discovers it progressively through public Vision during Exam |
+
+The future conceptual action
+`run_exam(training_set_level, frozen_candidate_stack)` resolves the protected
+Exam Map internally. The Strategist supplies only the Training Set Level and
+frozen candidate stack identity; it does not supply an Exam Map path, file, or
+raw geometry. The Exam Runner returns only the already-defined PASS/FAIL,
+limited aggregate certification metrics, and `certified_level` when applicable.
+
+When actual Exam Maps are introduced, they must not simply be placed in a
+repository or workspace location readable by the Strategist's generic tools.
+The boundary may later use a protected directory, separate storage,
+process-local resource, restricted capability service, or another access-
+controlled mechanism. This patch mandates the boundary but implements no
+storage layout, ACL, permission, or security mechanism. Existing ordinary
+development maps, including demo or pit maps, are not retroactively Exam Maps;
+no files are moved by this documentation patch.
+
 ## First Full Hierarchical Stack
 
 The collapsed `3-8-2` direct-action MLP remains the historical first minimal
