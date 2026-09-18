@@ -19,3 +19,8 @@ Scripted Player -> public Joystick -> Console Controller -> Engine
 ```
 
 Human Player has no Engine access. Local documentation: `doc/`.
+
+The future trainable Player will consume only public Vision, emit only public
+Joystick decisions, own its Console lifecycle/Vision/Joystick connections, and
+expose its training-side boundary externally. Training does not access Console
+through Player internals.

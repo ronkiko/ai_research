@@ -13,7 +13,8 @@ player/*
 
 training/*
     MAY import training-side public contracts
-    MUST NOT import console/* or management/* runtime internals
+    MUST NOT import console/*, player/* runtime implementation modules, or
+        management/* runtime internals
 
 management/*
     MAY import contracts/* and launch domains as processes
@@ -29,6 +30,11 @@ contracts/*
 `contracts/joystick.py` and `contracts/manifests.py`; generic framing is in
 `contracts/framing.py`. Console `ActionCommand` and scheduling details remain
 private under `console/protocol.py`.
+
+Player and Training communicate only through a formal shared training
+contract. Neither domain imports the other domain's runtime implementation.
+The first vertical documents this contract logically; an executable contract
+is intentionally deferred until implementation.
 
 Tests may import all domains because their purpose is to verify these rules.
 

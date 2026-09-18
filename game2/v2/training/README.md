@@ -1,8 +1,11 @@
 # Training
 
-The external learning domain. Future Trainer implementations such as
-REINFORCE and PPO belong here and communicate with model/player runtimes only
-through future formal training contracts.
+Training is external to Console and communicates with Player/model through a
+formal training boundary. The first architecture is defined in
+[doc/FIRST_TRAINING_VERTICAL.md](doc/FIRST_TRAINING_VERTICAL.md).
 
-Training does not own or import Console runtime internals. No runnable Trainer
-is implemented in this patch. Local documentation: `doc/`.
+There is no Trainer runtime yet. A Training Episode is a Training-domain
+record and does not own or reset the persistent Console `world_tick`.
+
+Training does not import Console runtime internals or Player runtime
+implementation modules. Local documentation: `doc/`.
