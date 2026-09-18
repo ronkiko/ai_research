@@ -21,3 +21,5 @@ separate normative change explicitly updates the Console specification.
 Every architectural directory has a short `README.md` and terminal local
 documentation in `doc/`. Keep navigation documents short and put detailed
 semantics in the owning domain.
+
+All Game2 tests must follow the testing policy in `game2/AGENTS.md`.
