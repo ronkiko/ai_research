@@ -15,7 +15,7 @@ from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.player.learned.checkpoint import save_motor_controller, save_planner
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
-from game2.v2.player.learned.main import build_player, run_player
+from game2.v2.player.learned.main import build_player, run_attached_player, run_player
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer, action_to_joystick
@@ -110,6 +110,160 @@ class LearnedRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "inference failed"):
             player.process_frame(_frame(self_x=3, tick=1))
         self.assertIsNone(player.latest_sample)
+
+
+class _Lifecycle:
+    def __init__(self, manifest, order, *, start_result=True):
+        self.manifest = manifest
+        self.order = order
+        self.start_result = start_result
+        self.connected = True
+        self.failed = False
+        self.error = None
+        self.latest_event: dict | None = None
+
+    def request_start(self):
+        self.order.append("start")
+        return self.start_result
+
+    def detach(self):
+        self.order.append("detach")
+
+    def close(self):
+        self.order.append("close")
+        self.connected = False
+
+
+class _LifecycleVision:
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.frames_received = 0
+        self.failed = False
+        self.error = None
+
+    @property
+    def connected(self):
+        return True
+
+    @property
+    def latest(self):
+        if len(self.frames) > 1:
+            self.frames_received += 1
+            return self.frames.pop(0)
+        return self.frames[0] if self.frames else None
+
+    def connect(self):
+        return None
+
+    def close(self):
+        return None
+
+
+class _LifecycleJoystick:
+    def __init__(self, on_send=None):
+        self.sequence = 0
+        self.sent = []
+        self.accepted_count = 0
+        self.rejected_count = 0
+        self.duplicate_count = 0
+        self.failed = False
+        self.error = None
+        self.on_send = on_send
+
+    @property
+    def connected(self):
+        return True
+
+    def connect(self):
+        return None
+
+    def send_state(self, right, jump):
+        self.sequence += 1
+        self.sent.append((right, jump))
+        if self.on_send is not None:
+            self.on_send()
+
+    def close(self):
+        return None
+
+
+class LearnedLifecycleTests(unittest.TestCase):
+    def _manifest(self):
+        return PlayerManifest("session", "player", "actor", Endpoint("127.0.0.1", 1),
+                              Endpoint("127.0.0.1", 2))
+
+    @staticmethod
+    def _player():
+        class Planner:
+            def decide(self, _frame):
+                return MotorGoal(0.5, -0.5)
+
+        class Motor:
+            def decide(self, _goal, _motion_x):
+                return ActionDecision(True, True)
+
+        return LearnedPlayer(Planner(), Motor())
+
+    def _run(self, lifecycle, frames, *, decisions=1, on_send=None):
+        vision = _LifecycleVision(frames)
+        joystick = _LifecycleJoystick(on_send=on_send)
+        with redirect_stdout(StringIO()):
+            result = run_attached_player(
+                lifecycle, self._player(), decisions=decisions,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                clock=lambda: 0.0,
+                sleeper=lambda _duration: None,
+            )
+        return result, vision, joystick
+
+    def test_attached_player_starts_before_self_and_emits_only_after_self(self):
+        order = []
+        lifecycle = _Lifecycle(self._manifest(), order)
+        result, _vision, joystick = self._run(
+            lifecycle, [_frame(tick=1), _frame(self_x=3, tick=2)])
+        self.assertEqual(result, 0)
+        self.assertEqual(joystick.sent, [(True, True)])
+        self.assertEqual(order, ["start", "detach", "close"])
+
+    def test_terminal_event_stops_stale_gameplay_emission(self):
+        order = []
+        lifecycle = _Lifecycle(self._manifest(), order)
+
+        def terminal_after_first_action():
+            lifecycle.latest_event = {"event": "terminal", "result": "dead",
+                                      "world_tick": 3}
+
+        result, _vision, joystick = self._run(
+            lifecycle, [_frame(self_x=3, tick=1), _frame(self_x=4, tick=2)],
+            decisions=10, on_send=terminal_after_first_action)
+        self.assertEqual(result, 0)
+        self.assertEqual(len(joystick.sent), 1)
+
+    def test_self_disappearance_stops_latest_action(self):
+        order = []
+        lifecycle = _Lifecycle(self._manifest(), order)
+        result, _vision, joystick = self._run(
+            lifecycle, [_frame(self_x=3, tick=1), _frame(tick=2)], decisions=10)
+        self.assertEqual(result, 0)
+        self.assertEqual(len(joystick.sent), 1)
+
+    def test_start_failure_is_fail_closed_and_still_detaches(self):
+        order = []
+        lifecycle = _Lifecycle(self._manifest(), order, start_result=False)
+        vision = _LifecycleVision([_frame(self_x=3, tick=1)])
+        joystick = _LifecycleJoystick()
+        with self.assertRaises(ConnectionError):
+            with redirect_stdout(StringIO()):
+                run_attached_player(
+                    lifecycle, self._player(), decisions=1,
+                    vision_factory=lambda _manifest: vision,
+                    joystick_factory=lambda _manifest: joystick,
+                    clock=lambda: 0.0,
+                    sleeper=lambda _duration: None,
+                )
+        self.assertEqual(joystick.sent, [])
+        self.assertEqual(order, ["start", "detach", "close"])
 
 
 class _AckServer:

@@ -22,10 +22,12 @@ from game2.v2.contracts.connection import (
     probe_message,
     respawn_message,
     start_message,
+    player_event,
 )
 from game2.v2.contracts.discovery import ConsoleDiscovery, publish_current_console
 from game2.v2.contracts.framing import ProtocolError, recv_frame, send_frame
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
+from game2.v2.player import connection as player_connection
 
 
 class PublicConnectionContractTests(unittest.TestCase):
@@ -64,6 +66,9 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class PlayerConnectionDeadlineTests(unittest.TestCase):
+    def test_vision_demo_reuses_shared_player_connection(self):
+        self.assertIs(vision_demo.PlayerConnection, player_connection.PlayerConnection)
+
     def test_attach_wait_retries_socket_timeouts_inside_one_deadline(self):
         client, server = socket.socketpair()
         manifest = PlayerManifest("session", "player", "actor",
@@ -84,7 +89,7 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
         worker.start()
         connection = vision_demo.PlayerConnection(discovery, connect_timeout=2.5)
         try:
-            with mock.patch.object(vision_demo, "_connect", return_value=client):
+            with mock.patch.object(player_connection, "_connect", return_value=client):
                 self.assertEqual(connection.connect(), manifest)
         finally:
             connection.close()
@@ -108,7 +113,7 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
         connection = vision_demo.PlayerConnection(discovery, connect_timeout=0.45)
         started = time.monotonic()
         try:
-            with mock.patch.object(vision_demo, "_connect", return_value=client):
+            with mock.patch.object(player_connection, "_connect", return_value=client):
                 with self.assertRaises(TimeoutError):
                     connection.connect()
         finally:
@@ -118,6 +123,37 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.5)
         self.assertIsNone(connection._thread)
         self.assertIsNone(connection._socket)
+
+    def test_shared_connection_reads_terminal_event_and_sends_detach(self):
+        client, server = socket.socketpair()
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        discovery = ConsoleDiscovery(1, "session", "pit", Endpoint("127.0.0.1", 3))
+        errors = []
+
+        def lifecycle_server():
+            try:
+                self.assertEqual(recv_frame(server)["type"], ATTACH)
+                send_frame(server, {"version": 1, "type": "player_manifest",
+                                    **manifest.to_dict()})
+                send_frame(server, player_event("dead", 7))
+                self.assertEqual(recv_frame(server)["type"], DETACH)
+            except BaseException as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=lifecycle_server)
+        worker.start()
+        connection = vision_demo.PlayerConnection(discovery)
+        try:
+            with mock.patch.object(player_connection, "_connect", return_value=client):
+                self.assertEqual(connection.connect(), manifest)
+            self.assertEqual(connection.wait_for_terminal(1), player_event("dead", 7))
+            connection.detach()
+        finally:
+            connection.close()
+            server.close()
+            worker.join(timeout=2)
+        self.assertFalse(errors)
 
 
 if __name__ == "__main__":
