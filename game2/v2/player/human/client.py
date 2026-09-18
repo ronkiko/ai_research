@@ -9,7 +9,7 @@ from typing import Callable
 
 from ...contracts.framing import PROTOCOL_VERSION, ProtocolError, recv_frame, send_frame
 from ...contracts.joystick import JoystickState, joystick_message
-from ...contracts.manifests import PeripheralManifest
+from ...contracts.manifests import PeripheralManifest, PlayerManifest
 
 
 ACK_FIELDS = {"version", "type", "sequence", "status"}
@@ -47,10 +47,11 @@ def _validate_ack(message: dict) -> dict:
 class HumanJoystickClient:
     """Send current button state without making ACKs part of the input clock."""
 
-    def __init__(self, manifest: PeripheralManifest, *, connect_timeout: float = 5.0,
+    def __init__(self, manifest: PeripheralManifest | PlayerManifest, *,
+                 connect_timeout: float = 5.0,
                  socket_factory: Callable[..., socket.socket] = socket.create_connection):
-        if not isinstance(manifest, PeripheralManifest):
-            raise TypeError("HumanJoystickClient requires a PeripheralManifest")
+        if not isinstance(manifest, (PeripheralManifest, PlayerManifest)):
+            raise TypeError("HumanJoystickClient requires a public Player manifest")
         if connect_timeout <= 0:
             raise ValueError("connect timeout must be positive")
         self.manifest = manifest

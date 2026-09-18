@@ -16,7 +16,8 @@ if __package__ in (None, ""):
 from game2.v2.contracts.framing import encode_frame, recv_frame
 from game2.v2.contracts.joystick import JoystickState, joystick_message
 from game2.v2.contracts.manifests import PeripheralManifest, PlayerManifest
-from game2.v2.contracts.vision import VisionFrame, recv_vision_frame
+from game2.v2.contracts.vision import VisionFrame
+from game2.v2.player.peripherals import VisionReceiver
 
 
 SOLID = 1
@@ -89,101 +90,6 @@ def _connect(endpoint, timeout=5.0):
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.01)
-
-
-class VisionReceiver:
-    """Read the public Vision stream without entering the action loop."""
-
-    def __init__(self, manifest: PlayerManifest):
-        if manifest.vision is None:
-            raise ValueError("Vision capability is missing")
-        self.manifest = manifest
-        self._socket: socket.socket | None = None
-        self._thread: threading.Thread | None = None
-        self._closed = threading.Event()
-        self._condition = threading.Condition()
-        self._error: BaseException | None = None
-        self._latest: VisionFrame | None = None
-        self.frames_received = 0
-
-    @property
-    def latest(self) -> VisionFrame | None:
-        with self._condition:
-            return self._latest
-
-    @property
-    def connected(self) -> bool:
-        with self._condition:
-            return self._socket is not None and not self._closed.is_set()
-
-    @property
-    def failed(self) -> bool:
-        with self._condition:
-            return self._error is not None
-
-    def connect(self) -> None:
-        if self._socket is not None:
-            raise RuntimeError("Vision receiver is already connected")
-        vision = _connect(self.manifest.vision)
-        vision.settimeout(None)
-        self._socket = vision
-        self._thread = threading.Thread(target=self._read_loop, name="v2-scripted-vision",
-                                        daemon=True)
-        self._thread.start()
-
-    def _read_loop(self) -> None:
-        vision = self._socket
-        if vision is None:
-            return
-        try:
-            while not self._closed.is_set():
-                frame = recv_vision_frame(vision, self.manifest.session_id)
-                with self._condition:
-                    self._latest = frame
-                    self.frames_received += 1
-                    self._condition.notify_all()
-        except (EOFError, OSError, ValueError) as exc:
-            if not self._closed.is_set():
-                with self._condition:
-                    self._error = exc
-                    self._condition.notify_all()
-        finally:
-            with self._condition:
-                if self._socket is vision:
-                    self._socket = None
-                self._condition.notify_all()
-
-    def wait_for_frame(self, timeout: float) -> VisionFrame:
-        if timeout <= 0:
-            raise ValueError("Vision frame timeout must be positive")
-        deadline = time.monotonic() + timeout
-        with self._condition:
-            while self._latest is None:
-                if self._error is not None:
-                    raise ConnectionError("Vision receiver failed") from self._error
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Vision receiver did not provide a frame")
-                self._condition.wait(remaining)
-            return self._latest
-
-    def close(self) -> None:
-        self._closed.set()
-        with self._condition:
-            vision = self._socket
-            self._socket = None
-            self._condition.notify_all()
-        if vision is not None:
-            try:
-                vision.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                vision.close()
-            except OSError:
-                pass
-        if self._thread and self._thread is not threading.current_thread():
-            self._thread.join(timeout=1)
 
 
 def _validate_acknowledgement(message: dict) -> None:
