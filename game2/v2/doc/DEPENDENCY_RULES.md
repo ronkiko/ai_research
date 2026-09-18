@@ -27,9 +27,15 @@ contracts/*
 ```
 
 `contracts` is an architectural leaf. The public Player surface is
-`contracts/joystick.py` and `contracts/manifests.py`; generic framing is in
-`contracts/framing.py`. Console `ActionCommand` and scheduling details remain
-private under `console/protocol.py`.
+`contracts/joystick.py`, `contracts/vision.py`, `contracts/manifests.py`,
+`contracts/connection.py`, and `contracts/discovery.py`. Generic framing and
+protocol versioning are provided by `contracts/framing.py`. Console
+`ActionCommand` and scheduling details remain private under
+`console/protocol.py`.
+
+Engine CONTROL, Engine STATE, Engine TELEMETRY, private Engine EVENTS,
+`ActionCommand`, `target_world_tick`, and `hold_ticks` are not public Player
+contracts.
 
 Player and Training communicate only through a formal shared training
 contract. Neither domain imports the other domain's runtime implementation.

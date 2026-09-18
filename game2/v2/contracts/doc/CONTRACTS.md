@@ -1,12 +1,25 @@
 # Public Contracts
 
-`joystick.py` defines the version 1 two-button digital decision and its ACK
-shape. `vision.py` defines the public semantic Vision frame: a small versioned
-JSON header followed by raw `u8-semantic` bytes. `manifests.py` defines `Endpoint`
-and the Player-facing `PeripheralManifest`, whose capabilities are `session_id`,
-`joystick`, and optional `vision`.
-`framing.py` defines generic length-prefixed JSON framing and protocol version
-validation. Vision pixels deliberately do not pass through JSON or Base64.
+The `contracts` package is the architectural leaf for public cross-domain
+capabilities. Its current Player-facing surface is:
 
-Engine CONTROL commands, target ticks, hold ticks, and other scheduling details
-are Console-private and do not belong here.
+- `joystick.py` - Player action decisions and public action ACKs.
+- `vision.py` - public semantic Vision frames.
+- `manifests.py` - `Endpoint`, the compatibility `PeripheralManifest`, and the
+  current dynamic `PlayerManifest`.
+- `connection.py` - public Player lifecycle: `PROBE`, `ATTACH`, `START`,
+  `RESPAWN`, and `DETACH`, plus lifecycle ACKs and the terminal Player event.
+- `discovery.py` - public discovery of the running Console.
+- `framing.py` - generic length-prefixed framing and protocol versioning
+  utility.
+
+Vision pixels deliberately do not pass through JSON or Base64. The following
+remain Console-private and are not public Player contracts:
+
+- Engine CONTROL;
+- Engine STATE;
+- Engine TELEMETRY;
+- private Engine EVENTS;
+- `ActionCommand`;
+- `target_world_tick`;
+- `hold_ticks`.
