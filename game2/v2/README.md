@@ -1,5 +1,9 @@
 # Game2 V2
 
+V2 is the sole active Game2 implementation. V1 is retired from the working
+tree; its historical implementation remains in Git history. Design lessons
+preserved from V1 are documented in [doc/V1_LESSONS.md](doc/V1_LESSONS.md).
+
 Game2 V2 is a laboratory for researching how small neural/MLP agents learn to
 control a physical 2D platform world under real-time constraints. The agent
 must perceive, decide, and act while the game has real physics, its own clock,

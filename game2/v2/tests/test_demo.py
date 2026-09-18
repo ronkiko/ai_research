@@ -85,7 +85,6 @@ class DemoFileTests(unittest.TestCase):
         self.assertIn("set -Eeuo pipefail", source)
         self.assertIn('${PYTHON:-python3}', source)
         self.assertIn("-m game2.v2.demo", source)
-        self.assertNotIn("game2/game.sh", source)
 
     def test_demo_uses_embedded_config_and_one_console_process(self):
         self.assertEqual(demo.console_command(python="python-test"), [

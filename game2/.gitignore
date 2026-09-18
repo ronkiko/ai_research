@@ -1,3 +1,0 @@
-# Local operator preference, never runtime state or model weights.
-operator_settings.json
-runs/cockpit/
