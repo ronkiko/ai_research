@@ -4,6 +4,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from collections import deque
 
 from game2.v2.contracts.connection import (
     DETACH,
@@ -56,6 +57,7 @@ class PlayerConnection:
         self._condition = threading.Condition()
         self._error: BaseException | None = None
         self._acks: list[dict] = []
+        self._terminal_events: deque[dict] = deque(maxlen=32)
         self._latest_event: dict | None = None
         self._send_lock = threading.Lock()
 
@@ -79,6 +81,25 @@ class PlayerConnection:
     def latest_event(self) -> dict | None:
         with self._condition:
             return self._latest_event
+
+    def clear_terminal_events(self) -> None:
+        """Discard terminal events from an attempt that has already ended."""
+        with self._condition:
+            self._terminal_events.clear()
+            self._latest_event = None
+            self._condition.notify_all()
+
+    def pop_terminal(self) -> dict | None:
+        """Consume the next terminal event without waiting."""
+        with self._condition:
+            if not self._terminal_events:
+                return None
+            return self._terminal_events.popleft()
+
+    def clear_acknowledgements(self) -> None:
+        """Discard lifecycle ACK diagnostics before a new Player attempt."""
+        with self._condition:
+            self._acks.clear()
 
     def connect(self) -> PlayerManifest:
         if self.connect_timeout <= 0:
@@ -161,6 +182,7 @@ class PlayerConnection:
                             or message["world_tick"] < 0):
                         raise ValueError("invalid Player event")
                     with self._condition:
+                        self._terminal_events.append(message)
                         self._latest_event = message
                         self._condition.notify_all()
         except (EOFError, OSError, ValueError) as exc:
@@ -207,14 +229,14 @@ class PlayerConnection:
             raise ValueError("terminal event timeout must be positive")
         deadline = time.monotonic() + timeout
         with self._condition:
-            while self._latest_event is None:
+            while not self._terminal_events:
                 if self._error is not None or self._closed.is_set():
                     return None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return None
                 self._condition.wait(remaining)
-            return self._latest_event
+            return self._terminal_events.popleft()
 
     def request_start(self) -> bool:
         self._send(start_message())

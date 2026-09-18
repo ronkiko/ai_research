@@ -13,8 +13,7 @@ player/*
 
 training/*
     MAY import training-side public contracts
-    MUST NOT import console/*, player/* runtime implementation modules, or
-        management/* runtime internals
+    MUST NOT import console/*, player/*, or management/* runtime modules
 
 management/*
     MAY import contracts/* and launch domains as processes
@@ -37,10 +36,9 @@ Engine CONTROL, Engine STATE, Engine TELEMETRY, private Engine EVENTS,
 `ActionCommand`, `target_world_tick`, and `hold_ticks` are not public Player
 contracts.
 
-Player and Training communicate only through a formal shared training
-contract. Neither domain imports the other domain's runtime implementation.
-The first vertical documents this contract logically; an executable contract
-is intentionally deferred until implementation.
+Player and Training communicate only through the executable formal shared
+training contract in `contracts/training.py`. Neither domain imports the other
+domain's runtime implementation.
 
 Tests may import all domains because their purpose is to verify these rules.
 

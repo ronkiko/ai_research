@@ -35,6 +35,15 @@ def motor_input(goal: MotorGoal, motion_x: float) -> torch.Tensor:
     ], dtype=torch.float32)
 
 
+def motor_input_tensor(goal: torch.Tensor, motion_x: float) -> torch.Tensor:
+    """Build Motor Controller inputs while preserving a Planner autograd graph."""
+    if not isinstance(goal, torch.Tensor) or goal.ndim != 1 or goal.shape[0] != 2:
+        raise ValueError("differentiable Motor Controller goal must have shape [2]")
+    motion = _normalized_motion(motion_x)
+    motion_tensor = torch.tensor([motion], dtype=goal.dtype, device=goal.device)
+    return torch.cat((goal, motion_tensor))
+
+
 class MotorController382(nn.Module):
     """Produce raw RIGHT and JUMP logits from a 3-8-2 MLP."""
 
@@ -68,6 +77,10 @@ class MotorController382(nn.Module):
             raise ValueError("MotorController382 input must have shape [3] or [B,3]")
         return self.output(self.activation(self.hidden(inputs)))
 
+    def forward_goal(self, goal: torch.Tensor, motion_x: float) -> torch.Tensor:
+        """Produce logits from the original differentiable Planner output."""
+        return self(motor_input_tensor(goal, motion_x))
+
     def decide(self, goal: MotorGoal, motion_x: float) -> ActionDecision:
         """Convert raw logits into a deterministic logical action decision."""
         was_training = self.training
@@ -81,4 +94,5 @@ class MotorController382(nn.Module):
                               jump=bool(logits[1].item() >= 0.0))
 
 
-__all__ = ["MOTOR_CONTROLLER_CONFIGURATION", "MotorController382", "motor_input"]
+__all__ = ["MOTOR_CONTROLLER_CONFIGURATION", "MotorController382", "motor_input",
+           "motor_input_tensor"]

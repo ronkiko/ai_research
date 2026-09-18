@@ -20,6 +20,7 @@ from .motor import MotorController382
 from .motion import self_center_x
 from .planner import CNNPlanner
 from .runtime import LearnedPlayer
+from .training import run_attached_training_player
 
 
 PLAYER_ACTION_HZ = 120
@@ -160,17 +161,29 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--decisions", type=int, default=None,
                         help="send a finite number of decisions instead of running forever")
     parser.add_argument("--action-hz", type=int, default=PLAYER_ACTION_HZ)
+    parser.add_argument("--trainer-host")
+    parser.add_argument("--trainer-port", type=int)
+    parser.add_argument("--checkpoint-dir")
     return parser
 
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     connection = None
+    lifecycle_owner = False
     try:
+        if (args.trainer_host is None) != (args.trainer_port is None):
+            raise ValueError("--trainer-host and --trainer-port must be provided together")
         discovery = ConsoleDiscovery.from_file(args.discovery)
         connection = PlayerConnection(discovery)
         manifest = connection.connect()
         has_checkpoints = args.planner_checkpoint is not None or args.motor_checkpoint is not None
+        if args.trainer_host is not None and not args.fresh and not has_checkpoints:
+            if args.checkpoint_dir is None:
+                raise ValueError("training mode requires --fresh or --checkpoint-dir")
+            args.planner_checkpoint = str(Path(args.checkpoint_dir) / "planner.pt")
+            args.motor_checkpoint = str(Path(args.checkpoint_dir) / "motor.pt")
+            has_checkpoints = True
         if not args.fresh and not has_checkpoints:
             raise ValueError("choose --fresh or both model checkpoints")
         player = build_player(fresh=args.fresh, planner_seed=args.planner_seed,
@@ -179,15 +192,22 @@ def main(argv=None) -> int:
                               motor_checkpoint=args.motor_checkpoint)
         if connection.manifest != manifest:
             raise RuntimeError("Player connection manifest changed unexpectedly")
+        if args.trainer_host is not None:
+            lifecycle_owner = True
+            return run_attached_training_player(
+                connection, player, args.trainer_host, args.trainer_port,
+                action_hz=args.action_hz,
+                checkpoint_dir=args.checkpoint_dir or "runtime/checkpoints")
+        lifecycle_owner = True
         return run_attached_player(connection, player, decisions=args.decisions,
                                    action_hz=args.action_hz)
     except KeyboardInterrupt:
         return 0
-    except (OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:
+    except (EOFError, OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:
         print(f"ERROR learned Player failed: {exc}", file=sys.stderr, flush=True)
         return 1
     finally:
-        if connection is not None:
+        if connection is not None and not lifecycle_owner:
             connection.detach()
             connection.close()
 

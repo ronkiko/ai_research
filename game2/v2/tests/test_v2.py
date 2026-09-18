@@ -35,7 +35,7 @@ class StructureTests(unittest.TestCase):
         forbidden = {
             "console": ("game2.v2.player", "game2.v2.training", "game2.v2.management"),
             "player": ("game2.v2.console", "game2.v2.training", "game2.v2.management"),
-            "training": ("game2.v2.console", "game2.v2.management"),
+            "training": ("game2.v2.console", "game2.v2.player", "game2.v2.management"),
             "management": ("game2.v2.console", "game2.v2.player", "game2.v2.training"),
             "contracts": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
                           "game2.v2.management"),

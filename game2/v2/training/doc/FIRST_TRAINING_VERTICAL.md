@@ -1,9 +1,11 @@
 # First Training Vertical
 
-Status: normative architecture for the first V2 Train/Evaluate vertical.
+Status: normative architecture and executable contract for the first V2
+Train/Evaluate vertical.
 
-This document defines semantics and ownership only. It does not implement a
-model, Trainer, transport, checkpoint format, or Console integration.
+This document defines semantics and ownership. The executable shared contract,
+Trainer process, and Player training adapter implement this boundary without
+adding a Console training endpoint.
 
 ## Vertical Boundary
 
@@ -132,10 +134,10 @@ authoritative Actor result semantics. The event's tick is
 `finish_world_tick`. The Player reports it to Training; the Trainer does not
 read private Engine EVENTS.
 
-## Logical Trainer/Player Contract
+## Executable Trainer/Player Contract
 
-This is a logical contract, not a transport or wire implementation. No TCP
-server and no executable `contracts/training.py` are added by this patch.
+The contract is a versioned framed TCP boundary. `contracts/training.py`
+validates every message before it crosses the process boundary.
 
 Trainer to Player/model:
 
@@ -270,14 +272,10 @@ This patch does not add a UI, cockpit, or process orchestrator.
 
 ## Next Implementation Boundary
 
-The collapsed `3-8-2` direct-action MLP remains the first minimal vertical. The
-next implementation target is the first full hierarchy: a small CNN Planner
-producing `MotorGoal` for an MLP `3-8-2` Motor Controller, which produces
-`ActionDecision` for the public Joystick. The full training-set, trajectory,
-and exam semantics are defined in
+The first full hierarchy is a small CNN Planner producing `MotorGoal` for an
+MLP `3-8-2` Motor Controller, which produces `ActionDecision` for the public
+Joystick. The full training-set, trajectory, and exam semantics are defined in
 [TRAINING_SYSTEM.md](TRAINING_SYSTEM.md).
 
 It must not add privileged Engine inputs, a Trainer-to-Console path, Engine
 training hooks, a world-clock reset, action masking, or a new Console endpoint.
-This architecture patch adds no PyTorch, MLP runtime, REINFORCE runtime,
-Trainer process, checkpoint files, management UI, or new public peripheral.

@@ -3,8 +3,9 @@
 Status: normative target architecture
 
 This document defines the target curriculum, map, run, Trainer, experience,
-and exam semantics for Game2 V2. It does not implement a Trainer, model,
-dataset, registry, map selector, or exam runner.
+and exam semantics for Game2 V2. The first online Trainer/Player vertical is
+implemented separately; dataset, registry, map selector, and exam runners
+remain outside this patch.
 
 The internal Player intelligence roles are defined in
 [../../doc/INTELLIGENCE_ARCHITECTURE.md](../../doc/INTELLIGENCE_ARCHITECTURE.md).
