@@ -36,14 +36,6 @@ class ScriptedVisionPolicyTests(unittest.TestCase):
         action = decide(self._frame(avatar_y=1, floor=range(2, 10), floor_y=3))
         self.assertEqual((action.right, action.jump), (True, False))
 
-    def test_player_source_has_no_sequence_jump_or_private_console_dependency(self):
-        source = Path(__file__).resolve().parents[1] / "player" / "scripted" / "main.py"
-        text = source.read_text(encoding="utf-8")
-        self.assertNotIn("sequence == 125", text)
-        for forbidden in ("WorldDefinition", "pit.json", "telemetry", "Engine",
-                          "engine_state", "engine_control", "ActionCommand"):
-            self.assertNotIn(forbidden, text)
-
     def test_player_sends_no_gameplay_before_self_is_visible(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))

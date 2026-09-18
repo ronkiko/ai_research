@@ -193,23 +193,24 @@ Training Episode remains outside Console and is not an Engine lifecycle.
 
 ## Run and Test
 
-Run the separate-process realtime smoke:
-
-```bash
-python -m game2.v2.tests.harness \
-  --config game2/v2/console/configs/realtime-smoke.json
-```
-
-Run V2 tests:
+Run the fast local contract and core-semantics suite:
 
 ```bash
 python -m unittest discover -s game2/v2/tests -v
 ```
 
-Run all Game2 tests:
+For persistent Console, attach, or Player lifecycle changes, run the one
+explicit server smoke:
 
 ```bash
-python -m unittest discover -s game2 -p 'test*.py' -v
+python -m game2.v2.tests.server_smoke
+```
+
+Manual UI checks, when relevant:
+
+```bash
+./game2/v2/vision.sh
+./game2/v2/demo.sh
 ```
 
 ## Temporary gameplay demo

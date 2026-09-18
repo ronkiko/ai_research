@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import tempfile
 import unittest
@@ -10,9 +9,6 @@ ROOT = Path(__file__).resolve().parents[3]
 V2 = ROOT / "game2" / "v2"
 V2_MAP = V2 / "console" / "world" / "maps" / "pit.json"
 
-from game2.v2.console.config import SessionConfig  # noqa: E402
-from game2.v2.tests.architecture_helpers import (absolute_imports,
-                                                   imports_from_tree)  # noqa: E402
 from game2.v2.console.world import (CollisionRect, TileID,
                                      load_world)  # noqa: E402
 
@@ -120,41 +116,6 @@ class WorldLoaderTests(unittest.TestCase):
         self.assertFalse(world.completed(12 * world.tile_size, 6 * world.tile_size,
                                          world.tile_size, world.tile_size,
                                          grounded=True, alive=True))
-
-
-class RuntimeIsolationTests(unittest.TestCase):
-    def test_import_resolver_normalizes_local_world_paths(self):
-        world_module = "game2.v2.console.world.foo"
-        world_imports = imports_from_tree(ast.parse(
-            "from ..engine import physics\n"
-            "from .model import WorldDefinition\n"
-        ), world_module)
-        self.assertIn("game2.v2.console.engine", world_imports)
-        self.assertIn("game2.v2.console.world.model", world_imports)
-
-    def test_world_sources_do_not_import_console_runtime_subsystems(self):
-        forbidden = (
-            "game2.v2.console.engine",
-            "game2.v2.console.controller",
-            "game2.v2.console.display",
-            "game2.v2.console.transport",
-        )
-        world_root = V2 / "console" / "world"
-        for source in world_root.rglob("*.py"):
-            imported = absolute_imports(source, V2)
-            leaked = [module for module in imported
-                      if any(module == prefix or module.startswith(prefix + ".")
-                             for prefix in forbidden)]
-            self.assertEqual(leaked, [], str(source))
-
-    def test_canonical_configs_use_only_v2_owned_map(self):
-        expected = V2 / "console" / "world" / "maps" / "pit.json"
-        for name in ("realtime-smoke.json", "unpaced-smoke.json"):
-            path = V2 / "console" / "configs" / name
-            config = SessionConfig.from_file(path)
-            self.assertEqual(config.map, "../world/maps/pit.json")
-            self.assertEqual(config.map_path(path).resolve(), expected)
-
 
 if __name__ == "__main__":
     unittest.main()

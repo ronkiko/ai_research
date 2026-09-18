@@ -1,8 +1,17 @@
 # Tests
 
-Cross-domain verification for Game2 V2. Tests may inspect every domain and run
-Console and Player as separate processes, but production domains must obey the
-dependency rules.
+## FAST DEFAULT
 
-Entrypoints: `harness.py` for realtime smoke and `test_v2.py` for unit and
-architectural tests. Local documentation: `doc/`.
+```bash
+python -m unittest discover -s game2/v2/tests -v
+```
+
+Checks contracts and core in-process semantics.
+
+## SERVER SMOKE
+
+```bash
+python -m game2.v2.tests.server_smoke
+```
+
+Run only for persistent Console, attach, or Player lifecycle changes.
