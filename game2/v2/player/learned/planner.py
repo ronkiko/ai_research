@@ -10,7 +10,7 @@ from .contracts import MotorGoal
 from .vision import SEMANTIC_CHANNELS, vision_to_tensor
 
 
-PLANNER_CONFIGURATION = "adaptive-average-pool-v1"
+PLANNER_CONFIGURATION = "adaptive-spatial-4x4-v1"
 
 
 class CNNPlanner(nn.Module):
@@ -23,11 +23,11 @@ class CNNPlanner(nn.Module):
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.AdaptiveAvgPool2d((4, 4)),
         )
         self.head = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(32, 16),
+            nn.Linear(32 * 4 * 4, 16),
             nn.ReLU(),
             nn.Linear(16, 2),
             nn.Tanh(),

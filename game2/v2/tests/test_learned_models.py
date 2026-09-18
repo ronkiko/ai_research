@@ -67,6 +67,8 @@ class LearnedModelTests(unittest.TestCase):
         planner = CNNPlanner.fresh(11)
         for frame in (_frame(5, 4), _frame(8, 3)):
             encoded = vision_to_tensor(frame)
+            features = planner.features(encoded.unsqueeze(0))
+            self.assertEqual(tuple(features.shape[-2:]), (4, 4))
             output = planner(encoded.unsqueeze(0))
             self.assertEqual(tuple(output.shape), (1, 2))
             self.assertTrue(torch.isfinite(output).all())
