@@ -1,5 +1,21 @@
 # World Model
 
+## Conceptual World And Runtime Map
+
+Conceptually, a **World** is an environment and mechanics family, while a
+**Map** is one concrete scene inside that World. Game2 V2 currently has one
+World, Platformer World, with gravity, horizontal movement, jumping, hazards,
+and platforms. Future wind, slippery surfaces, or moving platforms remain
+Platformer World mechanics; they do not create a new World.
+
+The current runtime `WorldDefinition` name must not be read as that conceptual
+World. It is the frozen, read-only runtime representation of one concrete Map
+inside Platformer World. This documentation patch does not rename or change
+the production type. A future top-down or humanoid joint/torque environment
+would be a different World.
+
+## Current Runtime Definition
+
 `WorldDefinition` is a frozen, read-only description of one Console scene. It
 contains:
 

@@ -17,6 +17,7 @@ management UI exists.
 
 Management may eventually expose explicit tool/capability boundaries for:
 
+- Training Set Levels, Training Maps, and Exam Runs;
 - observations and experiment metrics;
 - training and evaluation requests;
 - candidate comparison, selection, and safe activation;

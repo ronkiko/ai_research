@@ -207,9 +207,12 @@ Independent Bernoulli Right/Jump outputs, a reward baseline, an entropy bonus,
 and gradient clipping are candidate model-side mechanics. REINFORCE is a first
 baseline, not a permanent V2 algorithm requirement.
 
-Train and Evaluate worlds may differ. The first implementation may use one
-pit, but the same model contract must support training on World A and
-evaluating the same checkpoint on World B. This patch does not add `short_pit`.
+The first implementation operates in one conceptual World: Platformer World.
+Training, development evaluation, and later certification differ by Map and
+orchestration, not by secretly changing the World mechanics. Training Maps may
+be specialized, while each Training Set Level has exactly one isolated Exam
+Map. Future entirely different environments may introduce other Worlds. This
+patch does not add `short_pit`.
 
 ## Training Integrity
 
@@ -267,10 +270,12 @@ This patch does not add a UI, cockpit, or process orchestrator.
 
 ## Next Implementation Boundary
 
-The next implementation patch may add a Player/model runtime that extracts the
-three Vision features, owns Console lifecycle/Vision/Joystick connections,
-executes the two independent outputs, and implements the formal training-side
-operations. It may add the model-specific learning and checkpoint mechanics.
+The collapsed `3-8-2` direct-action MLP remains the first minimal vertical. The
+next implementation target is the first full hierarchy: a small CNN Planner
+producing `MotorGoal` for an MLP `3-8-2` Motor Controller, which produces
+`ActionDecision` for the public Joystick. The full training-set, trajectory,
+and exam semantics are defined in
+[TRAINING_SYSTEM.md](TRAINING_SYSTEM.md).
 
 It must not add privileged Engine inputs, a Trainer-to-Console path, Engine
 training hooks, a world-clock reset, action masking, or a new Console endpoint.

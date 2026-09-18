@@ -64,6 +64,11 @@ measured quantity. It does not wait for model inference, skip physics
 opportunities, or turn the Engine into a step RPC. Realtime remains the
 canonical behavioral semantics.
 
+Training Maps may use either `realtime` or `unpaced` according to the
+experiment. The Exam Map of a Training Set Level uses `realtime` only. Neither
+mode makes Trainer the Engine clock owner or permits Trainer to call
+`Engine.step()`.
+
 ## Independent Timing Domains
 
 The system intentionally separates:

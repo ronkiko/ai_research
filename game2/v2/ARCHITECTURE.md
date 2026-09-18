@@ -8,6 +8,9 @@ Game2 V2 is a real-time research system. The normative realtime contract is
 The normative target AI architecture is
 [doc/INTELLIGENCE_ARCHITECTURE.md](doc/INTELLIGENCE_ARCHITECTURE.md).
 
+The normative target learning and exam architecture is
+[training/doc/TRAINING_SYSTEM.md](training/doc/TRAINING_SYSTEM.md).
+
 Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
 Normative target MMO server model: [console/doc/MMO_SERVER_MODEL.md](console/doc/MMO_SERVER_MODEL.md)

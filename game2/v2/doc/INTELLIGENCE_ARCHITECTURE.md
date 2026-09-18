@@ -228,6 +228,24 @@ patch. The Player adapter translates it into the current public `RIGHT` /
 `JUMP` Joystick contract. A future humanoid experiment may define another
 actuator contract without changing this Game2 contract.
 
+## Learning Architecture
+
+The curriculum, Training Set Levels, Training and Exam Maps, Trainer process,
+trajectory data, and certification semantics are defined in the normative
+[training system document](../training/doc/TRAINING_SYSTEM.md). The first full
+learned Player target is:
+
+```text
+CNN Planner -> MotorGoal -> MLP 3-8-2 Motor Controller
+             -> ActionDecision -> Joystick
+```
+
+The collapsed direct-action `3-8-2` MLP remains the first minimal experiment,
+but it is not this hierarchy. Research Strategist chooses what should be
+trained and why; Trainer performs the learning mechanics for a selected
+Planner or Motor Controller candidate. Neither changes the Player hot path or
+the Console contract.
+
 ## Independent Clocks
 
 The target system has independent conceptual timing domains:

@@ -20,7 +20,8 @@ and Start or Stop. It will consume Training metrics and results, but will not
 compute learning semantics, serialize model state, or become a Trainer/UI
 implementation in this architecture patch.
 
-Future Strategist capabilities may cover observations and metrics, training,
-evaluation, candidate comparison and activation, optional StrategyGuidance,
-and communication with the Operator. These capabilities are not implemented
-here. Strategist is not a gameplay hot-path dependency.
+Future Strategist capabilities may cover Training Set Levels, Training Maps,
+Exam Runs, observations and metrics, training, evaluation, candidate
+comparison and activation, optional StrategyGuidance, and communication with
+the Operator. These capabilities are not implemented here. Strategist is not a
+gameplay hot-path dependency.

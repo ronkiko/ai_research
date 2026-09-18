@@ -1,5 +1,10 @@
 # Map Format
 
+Each current JSON document describes one concrete Map inside the current
+Platformer World. It is not a World or a Training Set Level. The runtime
+`WorldDefinition` is the existing representation of that Map; this naming is
+unchanged by the documentation architecture.
+
 The current V2 map schema is deliberately a hand-editable square tile grid.
 The JSON object has exactly these fields:
 
