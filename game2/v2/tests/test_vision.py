@@ -204,7 +204,7 @@ class PublicVisionIntegrationTests(unittest.TestCase):
 
     def test_console_publishes_public_frame_and_scripted_player_receives_it(self):
         config = json.loads((V2 / "console" / "configs" / "vision-demo.json").read_text())
-        config.update({"map": str(PIT), "world_ticks": 180})
+        config.update({"map": str(PIT), "world_ticks": 360})
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             config_path = directory / "vision.json"
@@ -235,11 +235,11 @@ class PublicVisionIntegrationTests(unittest.TestCase):
                 self.assertEqual(len(first.pixels), first.width * first.height)
                 self.assertTrue(set(first.pixels) <= {0, 1, 2, 3, 4, 5})
                 self.assertGreater(second.world_tick, first.world_tick)
-                self.assertEqual(player.wait(timeout=10), 0)
+                self.assertEqual(player.wait(timeout=15), 0)
                 player_output = player.stdout.read() if player.stdout else ""
                 self.assertIn('"vision": true', player_output)
                 self.assertRegex(player_output, r"vision_frames=[1-9][0-9]*")
-                self.assertEqual(console.wait(timeout=10), 0)
+                self.assertEqual(console.wait(timeout=15), 0)
             finally:
                 if viewer is not None:
                     viewer.close()

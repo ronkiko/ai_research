@@ -171,16 +171,26 @@ class VisionStream:
 
 
 def _connect(endpoint, timeout=5.0):
+    if timeout <= 0:
+        raise TimeoutError("Console attach endpoint connection timed out")
     deadline = time.monotonic() + timeout
+    last_error = None
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if last_error is not None:
+                raise TimeoutError("Console attach endpoint connection timed out") from last_error
+            raise TimeoutError("Console attach endpoint connection timed out")
         try:
-            sock = socket.create_connection((endpoint.host, endpoint.port), timeout=1)
-            sock.settimeout(1)
+            sock = socket.create_connection((endpoint.host, endpoint.port),
+                                            timeout=min(1.0, remaining))
             return sock
-        except OSError:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(0.01)
+        except OSError as exc:
+            last_error = exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Console attach endpoint connection timed out") from exc
+            time.sleep(min(0.01, remaining))
 
 
 class PlayerConnection:
@@ -223,24 +233,43 @@ class PlayerConnection:
     def connect(self) -> PlayerManifest:
         if self.connect_timeout <= 0:
             raise ValueError("Player connection timeout must be positive")
-        sock = _connect(self.discovery.attach, self.connect_timeout)
+        deadline = time.monotonic() + self.connect_timeout
+        sock = None
         try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Console ATTACH timed out before connecting")
+            sock = _connect(self.discovery.attach, remaining)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Console ATTACH timed out before sending")
+            sock.settimeout(min(0.25, remaining))
             sock.sendall(encode_frame(attach_message()))
-            response = recv_frame(sock)
             expected = {"version", "type", "session_id", "player_id", "actor_id",
                         "joystick", "vision"}
-            if (set(response) != expected or type(response.get("version")) is not int
-                    or response.get("version") != 1
-                    or response.get("type") != "player_manifest"
-                    or response.get("session_id") != self.discovery.session_id):
-                raise ValueError("Console ATTACH response is not a PlayerManifest")
-            manifest = PlayerManifest.from_dict({
-                key: response[key] for key in expected
-                if key != "type" and key != "version"
-            })
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Console ATTACH timed out waiting for PlayerManifest")
+                sock.settimeout(min(0.25, remaining))
+                try:
+                    response = recv_frame(sock)
+                except socket.timeout:
+                    continue
+                if (set(response) != expected or type(response.get("version")) is not int
+                        or response.get("version") != 1
+                        or response.get("type") != "player_manifest"
+                        or response.get("session_id") != self.discovery.session_id):
+                    raise ValueError("Console ATTACH response is not a PlayerManifest")
+                manifest = PlayerManifest.from_dict({
+                    key: response[key] for key in expected
+                    if key != "type" and key != "version"
+                })
+                break
             sock.settimeout(0.25)
         except BaseException:
-            sock.close()
+            if sock is not None:
+                sock.close()
             raise
         with self._condition:
             self._socket = sock
@@ -691,7 +720,7 @@ class VisionExaminer:
                         self.body_font, 330, bright)
         self._draw_text(f"Vision FPS: {vision_fps:0.1f}", self.body_font, 358, bright)
         self._draw_text("Latest age: waiting" if age is None else
-                        f"Latest age: {age * 1000:0.0f} ms", self.body_font, 342,
+                        f"Latest age: {age * 1000:0.0f} ms", self.body_font, 386,
                         bright if age is not None else muted)
         self._draw_text("CLASSES", self.section_font, 414, accent)
         for y, line in enumerate(("0 Empty", "1 Solid", "2 Hazard", "3 Self",

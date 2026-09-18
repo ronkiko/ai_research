@@ -56,9 +56,9 @@ These are separate concepts:
 
 Console allocates a distinct `player_id -> actor_id` association for every
 attached Connection. The association is held by the Console supervisor and is
-never selected by a client lifecycle request. Console supports zero or many
-Players. World is created before Player attachment and remains alive after a
-Connection closes.
+never selected by a client lifecycle request. Console supports zero or many Players.
+World is created before Player attachment and remains alive after a Connection
+closes.
 
 ## Shared Physical World
 

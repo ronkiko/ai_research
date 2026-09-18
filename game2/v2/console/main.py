@@ -215,13 +215,18 @@ def main(argv=None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--server", action="store_true",
                         help="run the persistent zero-player Console server")
+    parser.add_argument("--discovery",
+                        help="server-only path for the public Console discovery file")
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
     parser.add_argument("--control-capability",
                         help="private embedded-demo lifecycle CONTROL capability output path")
     args = parser.parse_args(argv)
     if args.server:
-        return run_server(args.config)
+        return (run_server(args.config, args.discovery)
+                if args.discovery is not None else run_server(args.config))
+    if args.discovery is not None:
+        parser.error("--discovery is only valid with --server")
     status, summary = run_session(args.config, args.state_capability,
                                   args.control_capability)
     if summary:

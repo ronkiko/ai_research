@@ -43,7 +43,7 @@ class SessionConfig:
     enable_events: bool = True
     seed: int | None = None
     episode_limit: int | None = None
-    world_ticks: int = 1000
+    world_ticks: int | None = 1000
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SessionConfig":

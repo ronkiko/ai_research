@@ -307,13 +307,22 @@ class ConsoleServer:
             if disconnected:
                 self._cleanup_runtime(runtime)
                 return
-            self.attach.respond(connection_id, {
+            responded = self.attach.respond(connection_id, {
                 "version": 1, "type": "player_manifest", **manifest.to_dict()})
+            if not responded:
+                with self.lock:
+                    still_attached = self.connections.get(connection_id) is runtime
+                    if still_attached:
+                        self.connections.pop(connection_id, None)
+                if still_attached:
+                    self._cleanup_runtime(runtime)
+                return
             threading.Thread(target=self._watch_player, args=(runtime,),
                              name="v2-player-watch", daemon=True).start()
         except BaseException:
             with self.lock:
                 self.pending.discard(connection_id)
+                self.closed_connections.discard(connection_id)
             _terminate(display)
             _terminate(controller)
             for log in logs:
