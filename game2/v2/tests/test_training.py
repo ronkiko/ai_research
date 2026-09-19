@@ -53,7 +53,12 @@ from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_metadata,
                                              self_center)
-from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer, TrainingRecord
+from game2.v2.player.learned.runtime import (
+    CONTROL_CHANGE_PENALTY,
+    DecisionSample,
+    LearnedPlayer,
+    TrainingRecord,
+)
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.contracts.vision import (
@@ -276,6 +281,49 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             ControlChange(True, False),
         )
 
+    def test_each_real_control_change_pays_small_cost_but_hold_is_free(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        grid = _grid(1)
+        change = ControlChange(True, False)
+        records = tuple(
+            TrainingRecord.from_sample(DecisionSample(
+                tick,
+                grid,
+                MotorGoal(0.0, 0.0),
+                0.0,
+                change,
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(True, False),
+            ))
+            for tick in (1, 2, 3)
+        )
+
+        rewards = player._rewards_for_records(records, 1.0)
+        self.assertEqual(CONTROL_CHANGE_PENALTY, 0.005)
+        self.assertAlmostEqual(rewards[0], -CONTROL_CHANGE_PENALTY, delta=1e-12)
+        self.assertAlmostEqual(rewards[1], -CONTROL_CHANGE_PENALTY, delta=1e-12)
+        self.assertAlmostEqual(
+            rewards[2], 1.0 - CONTROL_CHANGE_PENALTY, delta=1e-12
+        )
+
+        keep_record = TrainingRecord.from_sample(DecisionSample(
+            4,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(False, False),
+            -0.5,
+            True,
+            False,
+            0.0,
+            ActionDecision(True, False),
+        ))
+        self.assertEqual(player._rewards_for_records((keep_record,), 0.0), [0.0])
+
     def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
         player = self._player()
         player.prepare_episode("train", 42)
@@ -356,29 +404,32 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                             for before, after in zip(evaluate_before, evaluate_after)))
 
 
-    def test_zero_reward_discards_trajectory_without_updating_weights(self):
+    def test_zero_terminal_reward_still_learns_real_control_change_cost(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        sample = player.process_grid(_grid(1))
-        player.record_sent_sample(sample)
-        before = [
-            parameter.detach().clone()
-            for parameter in (
-                list(player.planner.parameters())
-                + list(player.motor_controller.parameters())
-                + list(player.critic.parameters())
-            )
-        ]
+        grid = _grid(1)
+        player.record_sent_sample(DecisionSample(
+            grid.world_tick,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(True, False),
+            -0.5,
+            False,
+            False,
+            0.0,
+            ActionDecision(True, False),
+        ))
         updated, loss = player.apply_result(0.0)
-        after = (
-            list(player.planner.parameters())
-            + list(player.motor_controller.parameters())
-            + list(player.critic.parameters())
+        self.assertTrue(updated)
+        self.assertTrue(math.isfinite(loss))
+        self.assertEqual(len(player.last_update_diagnostics), 1)
+        self.assertAlmostEqual(
+            player.last_update_diagnostics[0]["rw"],
+            -CONTROL_CHANGE_PENALTY,
+            delta=1e-12,
         )
-        self.assertFalse(updated)
-        self.assertEqual(loss, 0.0)
         self.assertEqual(player.log_probabilities, ())
-        self.assertTrue(all(torch.equal(old, new) for old, new in zip(before, after)))
 
     def test_repeated_sent_decision_has_one_detached_training_record(self):
         player = self._player()
@@ -454,7 +505,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertTrue(all(isinstance(record.old_log_prob, float) for record in records))
         self.assertTrue(all(isinstance(record.old_value, float) for record in records))
         rewards = player._rewards_for_records(records, -1.0)
-        self.assertAlmostEqual(rewards[0], 0.0, delta=1e-8)
+        self.assertAlmostEqual(
+            rewards[0], -CONTROL_CHANGE_PENALTY, delta=1e-8
+        )
         self.assertGreater(rewards[1], 0.0)
         self.assertLess(rewards[2], 0.0)
 
@@ -474,7 +527,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             rewards,
         )
         for item in diagnostics:
-            self.assertIn(item["a"], {"-", "R", "J", "RJ"})
+            self.assertIn(item["a"], {"KEEP", "R", "J", "RJ"})
             self.assertIn("x", item)
             self.assertIn("y", item)
             for key in ("v", "nv", "gae", "adv", "ret", "lp", "nlp", "ratio"):
@@ -500,10 +553,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(critic_forward.call_count, 4)
         self.assertEqual(len(player.last_update_diagnostics), 3)
 
-    def test_zero_reward_does_not_backward_or_step(self):
+    def test_no_actuated_change_does_not_backward_or_step(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        player.record_sent_sample(player.process_grid(_grid(1)))
         with mock.patch.object(player.optimizer, "zero_grad",
                                side_effect=AssertionError("zero_grad called")), \
                 mock.patch.object(player.optimizer, "step",

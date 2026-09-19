@@ -103,6 +103,7 @@ def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState
 
 
 PPO_CHUNK_TICKS = 100
+CONTROL_CHANGE_PENALTY = 0.005
 PPO_GAMMA = 0.99
 PPO_GAE_LAMBDA = 0.95
 PPO_CLIP_EPS = 0.2
@@ -391,7 +392,12 @@ class LearnedPlayer:
     def _rewards_for_records(
         self, records: tuple[TrainingRecord, ...], terminal_reward: float
     ) -> list[float]:
-        rewards = [0.0 for _ in records]
+        rewards = [
+            -CONTROL_CHANGE_PENALTY
+            if record.action_decision.right or record.action_decision.jump
+            else 0.0
+            for record in records
+        ]
         if not records:
             return rewards
         record_index = 0
@@ -618,7 +624,8 @@ class LearnedPlayer:
 
 
 __all__ = [
-    "DecisionSample", "LearnedPlayer", "PPO_BATCH_SIZE", "PPO_CHUNK_TICKS",
+    "CONTROL_CHANGE_PENALTY", "DecisionSample", "LearnedPlayer",
+    "PPO_BATCH_SIZE", "PPO_CHUNK_TICKS",
     "PPO_CLIP_EPS", "PPO_ENTROPY_COEF", "PPO_EPOCHS", "PPO_GAE_LAMBDA",
     "PPO_GAMMA", "PPO_LEARNING_RATE", "PPO_MAX_GRAD_NORM", "PPO_VALUE_COEF",
     "TrainingRecord", "action_to_joystick",
