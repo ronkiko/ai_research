@@ -16,7 +16,7 @@ from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
     MAJOR_GRID_COLOR, MINOR_GRID_COLOR, SELF_CENTER_COLOR,
-    TERMINAL_LABELS, VisionPreviewRenderer,
+    TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
@@ -271,6 +271,30 @@ class ScreenSourceViewTests(unittest.TestCase):
                     if service.renderer is not None:
                         service.renderer.close()
 
+    def test_vision_trail_epoch_advances_on_respawn(self):
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            str(PIT),
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+            "vision",
+        )
+        service = ScreenSourceService(manifest)
+        active = _view(service.world, x=128, y=384, world_tick=1)
+        dead = _view(
+            service.world, x=160, y=384, world_tick=2,
+            terminal="dead", alive=False,
+        )
+        respawned = _view(service.world, x=128, y=384, world_tick=3)
+        service._track_vision_trail(active)
+        first_epoch = service.vision_trail_epoch
+        service._track_vision_trail(dead)
+        self.assertEqual(service.vision_trail_epoch, first_epoch)
+        service._track_vision_trail(respawned)
+        self.assertEqual(service.vision_trail_epoch, first_epoch + 1)
+
 
 class VisionPreviewRendererTests(unittest.TestCase):
     def test_preview_exposes_public_grid_geometry_and_hud(self):
@@ -333,6 +357,50 @@ class VisionPreviewRendererTests(unittest.TestCase):
 
             with self.assertRaises(TypeError):
                 preview.render(_view(world))
+        finally:
+            preview.close()
+
+    def test_preview_draws_yellow_trail_and_resets_it_between_episodes(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        preview = VisionPreviewRenderer(
+            world, target_surface=surface, pygame_module=pygame
+        )
+
+        def center(grid):
+            index = next(
+                index
+                for index, flags in enumerate(grid.metadata)
+                if flags & META_SELF_CENTER
+            )
+            row, column = divmod(index, grid.metadata_columns)
+            cell = int(grid.sensor_cell_size)
+            return column * cell + cell // 2, row * cell + cell // 2
+
+        first = VisionGridRenderer(world).render(
+            _view(world, x=128, y=384, world_tick=1)
+        )
+        second = VisionGridRenderer(world).render(
+            _view(world, x=192, y=384, world_tick=2)
+        )
+        third = VisionGridRenderer(world).render(
+            _view(world, x=256, y=384, world_tick=3)
+        )
+        try:
+            preview.render(first, trail_epoch=1)
+            preview.render(second, trail_epoch=1)
+            first_center = center(first)
+            second_center = center(second)
+            midpoint = (
+                (first_center[0] + second_center[0]) // 2,
+                (first_center[1] + second_center[1]) // 2,
+            )
+            self.assertEqual(tuple(surface.get_at(midpoint))[:3], TRAIL_COLOR)
+
+            preview.render(third, trail_epoch=2)
+            self.assertNotEqual(tuple(surface.get_at(midpoint))[:3], TRAIL_COLOR)
         finally:
             preview.close()
 

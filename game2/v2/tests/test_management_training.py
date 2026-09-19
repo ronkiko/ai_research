@@ -192,6 +192,9 @@ class ManagementTrainingTests(unittest.TestCase):
             motor = checkpoint_dir / "motor.pt"
             planner.write_bytes(b"old-planner")
             motor.write_bytes(b"old-motor")
+            old_log = checkpoint_dir / "logs" / "run-0007" / "old.jsonl"
+            old_log.parent.mkdir(parents=True)
+            old_log.write_text("old\n", encoding="utf-8")
             output = io.StringIO()
             factory = _Factory()
             run = TrainingRun(
@@ -209,7 +212,21 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertFalse(planner.exists())
             self.assertFalse(motor.exists())
+            self.assertFalse(old_log.exists())
+            self.assertIn("FRESH reset logs", output.getvalue())
             self.assertIn("FRESH reset checkpoints: planner.pt, motor.pt", output.getvalue())
+            log_runs = list((checkpoint_dir / "logs").glob("run-*"))
+            self.assertEqual([path.name for path in log_runs], ["run-0001"])
+            player_commands = [
+                command for command in factory.commands
+                if command[command.index("-m") + 1] == "game2.v2.player.learned.main"
+            ]
+            self.assertEqual(len(player_commands), 2)
+            self.assertTrue(all("--trajectory-log" in command for command in player_commands))
+            self.assertTrue(all(
+                Path(command[command.index("--trajectory-log") + 1]).parent == log_runs[0]
+                for command in player_commands
+            ))
             model_commands = [
                 command for command in factory.commands
                 if command[command.index("-m") + 1] == "game2.v2.training.model_runtime"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import socket
+import tempfile
 import threading
 import time
 import unittest
@@ -33,7 +35,7 @@ from game2.v2.player.model_client import (
 )
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.realtime import run_player
-from game2.v2.player.learned.process import _run_episode
+from game2.v2.player.learned.process import VisionTrajectoryLog, _run_episode
 
 
 def _grid(tick: int) -> VisionGrid:
@@ -45,6 +47,28 @@ def _grid(tick: int) -> VisionGrid:
     return VisionGrid(
         12, 5, 64, coarse_physics, physics, bytes(metadata), tick
     )
+
+
+class VisionTrajectoryLogTests(unittest.TestCase):
+    def test_log_is_compact_and_records_only_position_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.jsonl"
+            log = VisionTrajectoryLog(path)
+            log.start(1, "train")
+            log.record(1, _grid(1))
+            log.record(1, _grid(2))
+            log.finish(1, "dead", 3)
+            log.close()
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows, [
+                {"e": 1, "m": "train"},
+                {"e": 1, "t": 1, "x": 228, "y": 164},
+                {"e": 1, "r": "dead", "t": 3},
+            ])
 
 
 class _StubModel:

@@ -24,6 +24,7 @@ META_SELF_COLOR = (40, 190, 240, 132)
 META_OTHER_COLOR = (196, 84, 220, 118)
 SELF_CENTER_COLOR = (255, 226, 72)
 OTHER_CENTER_COLOR = (255, 255, 255)
+TRAIL_COLOR = (255, 226, 72)
 MAJOR_GRID_COLOR = (228, 234, 238)
 MINOR_GRID_COLOR = (124, 136, 148)
 RULER_BACKGROUND = (5, 9, 14, 190)
@@ -50,6 +51,9 @@ class VisionPreviewRenderer:
         self._static_surface = None
         self._font = None
         self._terminal_font = None
+        self._trail: list[tuple[int, int]] = []
+        self._trail_epoch: int | None = None
+        self._trail_tick = -1
 
     @staticmethod
     def _cell_size(grid: VisionGrid) -> int:
@@ -203,6 +207,34 @@ class VisionPreviewRenderer:
         for x, y, color in centers:
             pygame.draw.circle(surface, color, (x, y), radius)
 
+    def _self_center_pixel(
+        self, grid: VisionGrid, cell: int
+    ) -> tuple[int, int] | None:
+        for index, flags in enumerate(grid.metadata):
+            if flags & META_SELF_CENTER:
+                row, column = divmod(index, grid.metadata_columns)
+                return (
+                    column * cell + cell // 2,
+                    row * cell + cell // 2,
+                )
+        return None
+
+    def _draw_trail(
+        self, surface, grid: VisionGrid, cell: int, trail_epoch: int
+    ) -> None:
+        pygame = self.pygame
+        if trail_epoch != self._trail_epoch or grid.world_tick <= self._trail_tick:
+            self._trail.clear()
+            self._trail_epoch = trail_epoch
+        center = self._self_center_pixel(grid, cell)
+        if center is not None and (not self._trail or self._trail[-1] != center):
+            self._trail.append(center)
+        self._trail_tick = grid.world_tick
+        if len(self._trail) >= 2:
+            pygame.draw.lines(surface, TRAIL_COLOR, False, self._trail, 2)
+        if self._trail:
+            pygame.draw.circle(surface, TRAIL_COLOR, self._trail[-1], 2)
+
     def _draw_legend(self, surface, grid: VisionGrid, cell: int) -> None:
         pygame = self.pygame
         font = self._font_for_hud()
@@ -253,11 +285,14 @@ class VisionPreviewRenderer:
             panel.get_rect(center=(self.world.width // 2, self.world.height // 2)),
         )
 
-    def render(self, grid: VisionGrid, terminal: str | None = None):
+    def render(
+        self, grid: VisionGrid, terminal: str | None = None, trail_epoch: int = 0
+    ):
         cell = self._validate_grid(grid)
         self.target_surface.blit(self._static(grid, cell), (0, 0))
         self._draw_metadata(self.target_surface, grid, cell)
         self._draw_grid(self.target_surface, grid, cell)
+        self._draw_trail(self.target_surface, grid, cell, trail_epoch)
         self._draw_rulers(self.target_surface, grid, cell)
         self._draw_legend(self.target_surface, grid, cell)
         self._draw_terminal_overlay(self.target_surface, terminal)
@@ -267,9 +302,12 @@ class VisionPreviewRenderer:
         self._static_surface = None
         self._font = None
         self._terminal_font = None
+        self._trail.clear()
+        self._trail_epoch = None
+        self._trail_tick = -1
 
 
 __all__ = [
     "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
-    "TERMINAL_LABELS", "VisionPreviewRenderer",
+    "TERMINAL_LABELS", "TRAIL_COLOR", "VisionPreviewRenderer",
 ]

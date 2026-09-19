@@ -53,6 +53,9 @@ class ScreenSourceService:
         self.first_motion_tick: int | None = None
         self.terminal_tick: int | None = None
         self.previous_result: str | None = None
+        self.vision_actor_id: str | None = None
+        self.vision_previous_result: str | None = None
+        self.vision_trail_epoch = 0
         self.state_socket: socket.socket | None = None
         self.reader: threading.Thread | None = None
         self.renderer = None
@@ -80,6 +83,8 @@ class ScreenSourceService:
                     if view.world_tick > self.accepted_tick:
                         if self.manifest.view == "screen":
                             self._track_episode(view)
+                        else:
+                            self._track_vision_trail(view)
                         self.accepted_tick = view.world_tick
                         self.latest = view
                         self.condition.notify_all()
@@ -89,6 +94,25 @@ class ScreenSourceService:
             self.reader_done.set()
             with self.condition:
                 self.condition.notify_all()
+
+    def _track_vision_trail(self, view: DisplayState) -> None:
+        actor = view.self_actor
+        if actor is None:
+            if self.vision_actor_id is not None:
+                self.vision_trail_epoch += 1
+            self.vision_actor_id = None
+            self.vision_previous_result = None
+            return
+        new_actor = actor.actor_id != self.vision_actor_id
+        respawned = (
+            not new_actor
+            and self.vision_previous_result is not None
+            and actor.result is None
+        )
+        if new_actor or respawned:
+            self.vision_trail_epoch += 1
+        self.vision_actor_id = actor.actor_id
+        self.vision_previous_result = actor.result
 
     def _track_episode(self, view: DisplayState) -> None:
         actor = view.self_actor
@@ -248,7 +272,11 @@ class ScreenSourceService:
                         if view.self_actor is not None
                         else None
                     )
-                    surface = self.renderer.render(grid, terminal=terminal)
+                    surface = self.renderer.render(
+                        grid,
+                        terminal=terminal,
+                        trail_epoch=self.vision_trail_epoch,
+                    )
                 else:
                     surface = self.renderer.render(view)
                     self._draw_hud(surface, view)

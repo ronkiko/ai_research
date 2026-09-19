@@ -5,6 +5,7 @@ import argparse
 import json
 import queue
 from collections import deque
+import shutil
 import signal
 import socket
 import subprocess
@@ -148,6 +149,19 @@ def _endpoint_ready(data: dict[str, Any], label: str) -> tuple[str, int]:
 def _resolve_map(manifest_path: Path, spec: TrainingMapSpec) -> Path:
     path = Path(spec.path)
     return (path if path.is_absolute() else manifest_path.parent / path).resolve()
+
+
+def _next_log_run(log_root: Path) -> Path:
+    log_root.mkdir(parents=True, exist_ok=True)
+    indexes = []
+    for entry in log_root.iterdir():
+        if entry.is_dir() and entry.name.startswith("run-"):
+            suffix = entry.name[4:]
+            if suffix.isdigit():
+                indexes.append(int(suffix))
+    run = log_root / f"run-{max(indexes, default=0) + 1:04d}"
+    run.mkdir()
+    return run
 
 
 class ScreenControl:
@@ -340,6 +354,7 @@ class TrainingRun:
         directory: Path,
         screen_control: ScreenControl | None,
         view: str,
+        trajectory_log: Path,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
@@ -389,6 +404,7 @@ class TrainingRun:
                 "--discovery", str(discovery_path),
                 "--model-host", model_host, "--model-port", str(model_port),
                 "--trainer-host", trainer_host, "--trainer-port", str(trainer_port),
+                "--trajectory-log", str(trajectory_log),
             ])
             processes.append(player)
             try:
@@ -482,7 +498,11 @@ class TrainingRun:
 
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
+        log_root = checkpoint_path / "logs"
         if fresh:
+            if log_root.exists():
+                shutil.rmtree(log_root)
+            self._write("FRESH reset logs")
             removed = []
             for checkpoint in (planner, motor):
                 if checkpoint.exists():
@@ -496,6 +516,9 @@ class TrainingRun:
             raise ValueError("max_episodes must be positive")
         if type(episode_limit) is not int or episode_limit <= 0:
             raise ValueError("episode_limit must be positive")
+
+        log_run = _next_log_run(log_root)
+        self._write(f"LOG run: {log_run}")
 
         self._write(
             f"TRAINING SET {manifest.training_set_level}: "
@@ -520,6 +543,7 @@ class TrainingRun:
                     directory=directory,
                     screen_control=screen_control,
                     view=view,
+                    trajectory_log=log_run / f"{index + 1:02d}-{spec.map_id}.jsonl",
                 )
                 if not passed:
                     self._write(f"TRAINING SET {manifest.training_set_level}: FAIL")
