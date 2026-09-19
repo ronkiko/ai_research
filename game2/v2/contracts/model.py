@@ -7,7 +7,7 @@ from numbers import Real
 from typing import Any
 
 from .framing import PROTOCOL_VERSION, ProtocolError, decode_frame, encode_frame
-from .vision import VISION_MAX_CELLS, VisionGrid
+from .vision import VISION_MAX_CELLS, VISION_MAX_COLUMNS, VISION_MAX_ROWS, VisionGrid
 
 
 PREPARE = "prepare"
@@ -193,7 +193,10 @@ def _validate_observation_header(message: dict[str, Any]) -> None:
     rows = message.get("rows")
     tile_size = message.get("tile_size")
     world_tick = message.get("observation_world_tick")
-    if type(columns) is not int or columns <= 0 or type(rows) is not int or rows <= 0:
+    if (
+        type(columns) is not int or not 1 <= columns <= VISION_MAX_COLUMNS
+        or type(rows) is not int or not 1 <= rows <= VISION_MAX_ROWS
+    ):
         raise ProtocolError("observation grid dimensions are invalid")
     cells = columns * rows
     if cells > VISION_MAX_CELLS:

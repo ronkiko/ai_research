@@ -149,6 +149,20 @@ class ModelRuntimeTests(unittest.TestCase):
         self.assertNotIn("joystick", decoded)
         self.assertNotIn("pixel_format", decoded)
 
+    def test_model_observation_rejects_out_of_world_grid_shape(self):
+        valid = observe_message(_grid(7))
+        for columns, rows in ((65, 1), (1, 65)):
+            message = {
+                **valid,
+                "columns": columns,
+                "rows": rows,
+                "physics_length": columns * rows,
+                "metadata_length": columns * rows,
+            }
+            with self.subTest(columns=columns, rows=rows):
+                with self.assertRaises(Exception):
+                    decode_model_message(message)
+
     def test_max_grid_observation_round_trip_uses_two_exact_raw_matrices(self):
         model = _StubModel()
         _runtime, worker, client, errors = self._start(model)
