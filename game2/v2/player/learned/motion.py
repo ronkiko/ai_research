@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
 from game2.v2.contracts.vision import (
     META_GOAL,
@@ -13,6 +14,7 @@ from game2.v2.contracts.vision import (
 
 
 MOTION_TILES_PER_TICK_SCALE = 0.05
+MOTION_WINDOW_TICKS = 8
 SELF = META_SELF
 GOAL = META_GOAL
 OTHER_ACTOR = META_OTHER_ACTOR
@@ -121,7 +123,9 @@ class MotionEstimator:
     """Estimate horizontal motion from observed fine-grid SELF centers only."""
 
     def __init__(
-        self, tiles_per_tick_scale: float = MOTION_TILES_PER_TICK_SCALE
+        self,
+        tiles_per_tick_scale: float = MOTION_TILES_PER_TICK_SCALE,
+        window_ticks: int = MOTION_WINDOW_TICKS,
     ):
         if (
             type(tiles_per_tick_scale) not in (int, float)
@@ -129,10 +133,14 @@ class MotionEstimator:
             or tiles_per_tick_scale <= 0
         ):
             raise ValueError("tiles_per_tick_scale must be positive")
+        if type(window_ticks) is not int or window_ticks <= 0:
+            raise ValueError("window_ticks must be a positive integer")
         self.tiles_per_tick_scale = float(tiles_per_tick_scale)
+        self.window_ticks = window_ticks
         self._previous_center_x: float | None = None
         self._previous_world_tick: int | None = None
         self._previous_shape: tuple[int, int, int, int] | None = None
+        self._samples: deque[tuple[int, float]] = deque()
         self._last_observation_usable = False
 
     @property
@@ -147,6 +155,7 @@ class MotionEstimator:
         self._previous_center_x = None
         self._previous_world_tick = None
         self._previous_shape = None
+        self._samples.clear()
         self._last_observation_usable = False
 
     def update(self, grid: VisionGrid) -> float:
@@ -163,6 +172,7 @@ class MotionEstimator:
             self._previous_center_x = center_x
             self._previous_world_tick = grid.world_tick
             self._previous_shape = shape
+            self._samples.append((grid.world_tick, center_x))
             self._last_observation_usable = True
             return 0.0
 
@@ -174,8 +184,17 @@ class MotionEstimator:
             self.reset()
             return 0.0
 
-        dt_ticks = grid.world_tick - self._previous_world_tick
-        pixels_per_tick = (center_x - self._previous_center_x) / dt_ticks
+        self._samples.append((grid.world_tick, center_x))
+        while (
+            len(self._samples) > 1
+            and grid.world_tick - self._samples[0][0] > self.window_ticks
+        ):
+            self._samples.popleft()
+        first_tick, first_x = self._samples[0]
+        dt_ticks = grid.world_tick - first_tick
+        pixels_per_tick = (
+            0.0 if dt_ticks <= 0 else (center_x - first_x) / dt_ticks
+        )
         scale = grid.tile_size * self.tiles_per_tick_scale
         motion_x = max(-1.0, min(1.0, pixels_per_tick / scale))
 
@@ -187,7 +206,8 @@ class MotionEstimator:
 
 
 __all__ = [
-    "GOAL", "MOTION_TILES_PER_TICK_SCALE", "OTHER_ACTOR", "SELF",
+    "GOAL", "MOTION_TILES_PER_TICK_SCALE", "MOTION_WINDOW_TICKS",
+    "OTHER_ACTOR", "SELF",
     "MotionEstimator", "VisionProgress", "goal_center", "has_metadata",
     "self_center", "self_center_x",
 ]

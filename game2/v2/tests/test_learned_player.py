@@ -42,11 +42,12 @@ class MotionEstimatorTests(unittest.TestCase):
         estimator.update(_grid(self_x=5, tick=7))
         self.assertEqual(estimator.update(_grid(self_x=11, tick=8)), 1.0)
 
-    def test_motion_uses_observed_center_without_artificial_memory(self):
-        estimator = MotionEstimator()
+    def test_motion_uses_short_observation_window_to_smooth_grid_quantization(self):
+        estimator = MotionEstimator(window_ticks=2)
         self.assertEqual(estimator.update(_grid(self_x=2, tick=10)), 0.0)
         self.assertGreater(estimator.update(_grid(self_x=3, tick=11)), 0.0)
-        self.assertEqual(estimator.update(_grid(self_x=3, tick=12)), 0.0)
+        self.assertGreater(estimator.update(_grid(self_x=3, tick=12)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=3, tick=14)), 0.0)
 
     def test_missing_self_and_discontinuity_reset_the_temporal_state(self):
         estimator = MotionEstimator()
