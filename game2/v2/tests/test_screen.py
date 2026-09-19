@@ -24,7 +24,7 @@ class ScreenContractTests(unittest.TestCase):
 
     def test_source_discovery_round_trip(self):
         discovery = ScreenSourceDiscovery(
-            1, "session", "pit", Endpoint("127.0.0.1", 12345)
+            1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "screen.json"

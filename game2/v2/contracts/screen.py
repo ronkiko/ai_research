@@ -56,6 +56,8 @@ class ScreenSourceDiscovery:
     session_id: str
     map_id: str
     endpoint: Endpoint
+    width: int
+    height: int
 
     def __post_init__(self) -> None:
         if type(self.version) is not int or self.version != PROTOCOL_VERSION:
@@ -64,6 +66,12 @@ class ScreenSourceDiscovery:
             raise ValueError("Screen source session_id must be non-empty")
         if type(self.map_id) is not str or not self.map_id:
             raise ValueError("Screen source map_id must be non-empty")
+        if type(self.width) is not int or self.width <= 0:
+            raise ValueError("Screen source width must be a positive integer")
+        if type(self.height) is not int or self.height <= 0:
+            raise ValueError("Screen source height must be a positive integer")
+        if self.width * self.height > SCREEN_MAX_PIXELS:
+            raise ValueError("Screen source dimensions are too large")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,12 +80,14 @@ class ScreenSourceDiscovery:
             "session_id": self.session_id,
             "map": self.map_id,
             "endpoint": self.endpoint.as_dict(),
+            "width": self.width,
+            "height": self.height,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScreenSourceDiscovery":
         if not isinstance(data, dict) or set(data) != {
-            "version", "type", "session_id", "map", "endpoint",
+            "version", "type", "session_id", "map", "endpoint", "width", "height",
         }:
             raise ValueError("Screen source discovery fields are invalid")
         if data["type"] != SCREEN_SOURCE_TYPE:
@@ -90,6 +100,8 @@ class ScreenSourceDiscovery:
             data["session_id"],
             data["map"],
             Endpoint(endpoint["host"], endpoint["port"]),
+            data["width"],
+            data["height"],
         )
 
     @classmethod

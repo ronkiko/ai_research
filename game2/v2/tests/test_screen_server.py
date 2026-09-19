@@ -29,7 +29,7 @@ class FakeViewer:
 class ScreenServerContractTests(unittest.TestCase):
     def test_probe_bind_unbind_and_status_are_strict(self):
         source = ScreenSourceDiscovery(
-            1, "session", "pit", Endpoint("127.0.0.1", 12345)
+            1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
         )
         self.assertEqual(decode_screen_server_request(probe_message()), "screen_server_probe")
         self.assertEqual(decode_screen_server_request(bind_message(2, source)), "screen_server_bind")
@@ -58,7 +58,7 @@ class ScreenServerRuntimeTests(unittest.TestCase):
             self.assertTrue(server.ready.wait(2))
             discovery=ScreenServerDiscovery.from_file(discovery_path)
             source=ScreenSourceDiscovery(
-                1,"session","pit",Endpoint("127.0.0.1",12345)
+                1,"session","pit",Endpoint("127.0.0.1",12345),1280,768
             )
             client=socket.create_connection(
                 (discovery.endpoint.host,discovery.endpoint.port),timeout=1

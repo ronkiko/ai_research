@@ -66,14 +66,25 @@ class ScreenReceiver:
             self.thread.join(timeout=1)
 
 
-def run_window(screen: int, endpoint: Endpoint, session_id: str) -> int:
+def run_window(screen: int, endpoint: Endpoint, session_id: str,
+               width: int, height: int) -> int:
     receiver = ScreenReceiver(endpoint, session_id)
     receiver.connect()
     import os
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import pygame
     pygame.display.init()
-    window = None
+    if type(width) is not int or width <= 0 or type(height) is not int or height <= 0:
+        raise ValueError("Screen dimensions must be positive integers")
+    window = pygame.display.set_mode((width, height))
+    pygame.display.set_caption(f"Game2 Screen #{screen}")
+    window.fill((18, 22, 28))
+    if not pygame.font.get_init():
+        pygame.font.init()
+    font = pygame.font.Font(None, 36)
+    label = font.render("Waiting for source...", True, (230, 230, 230))
+    window.blit(label, label.get_rect(center=(width // 2, height // 2)))
+    pygame.display.flip()
     last_tick = -1
     clock = pygame.time.Clock()
     try:
@@ -87,7 +98,7 @@ def run_window(screen: int, endpoint: Endpoint, session_id: str) -> int:
             with receiver.condition:
                 frame = receiver.latest
             if frame is not None and frame.world_tick > last_tick:
-                if window is None or window.get_size() != (frame.width, frame.height):
+                if window.get_size() != (frame.width, frame.height):
                     window = pygame.display.set_mode((frame.width, frame.height))
                     pygame.display.set_caption(f"Game2 Screen #{screen}")
                 surface = pygame.image.fromstring(
@@ -111,12 +122,15 @@ def main(argv=None) -> int:
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--width", type=int, required=True)
+    parser.add_argument("--height", type=int, required=True)
     args = parser.parse_args(argv)
     if args.screen <= 0:
         parser.error("--screen must be positive")
     try:
         return run_window(
-            args.screen, Endpoint(args.host, args.port), args.session_id
+            args.screen, Endpoint(args.host, args.port), args.session_id,
+            args.width, args.height,
         )
     except KeyboardInterrupt:
         return 0

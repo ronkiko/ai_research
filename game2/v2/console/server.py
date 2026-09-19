@@ -557,7 +557,8 @@ def run_server(config_path: str | Path,
                  "--manifest", str(screen_manifest_path)],
                 root, screen_log, "ScreenSource")
             own_screen_source = ScreenSourceDiscovery(
-                1, session_id, world.map_id, screen_endpoint)
+                1, session_id, world.map_id, screen_endpoint,
+                world.width, world.height)
             publish_screen_source(own_screen_source, screen_discovery_path)
         except (OSError, RuntimeError) as exc:
             screen_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")

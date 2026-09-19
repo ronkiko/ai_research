@@ -49,7 +49,8 @@ class _Factory:
                 screen_path = Path(command[command.index("--screen-discovery") + 1])
                 publish_screen_source(
                     ScreenSourceDiscovery(
-                        1, "session", "map", Endpoint("127.0.0.1", 12002)
+                        1, "session", "map", Endpoint("127.0.0.1", 12002),
+                        1280, 768,
                     ),
                     screen_path,
                 )

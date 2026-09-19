@@ -37,6 +37,7 @@ def _launch_viewer(screen: int, source: ScreenSourceDiscovery):
         sys.executable, "-m", "game2.v2.management.screen_client",
         "--screen", str(screen), "--session-id", source.session_id,
         "--host", source.endpoint.host, "--port", str(source.endpoint.port),
+        "--width", str(source.width), "--height", str(source.height),
     ]
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
