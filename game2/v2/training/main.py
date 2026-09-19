@@ -160,7 +160,7 @@ class Trainer:
                 "successes": summary.successes,
             }, separators=(",", ":"), sort_keys=True), flush=True)
             if (self.mode == TRAIN and self.stop_on_success and
-                    finished["result"] == "success" and finished["trainable"]):
+                    finished["result"] == "success" and finished["trainable"] and updated):
                 summary.stopped_on_success = True
                 break
 

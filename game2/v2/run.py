@@ -27,6 +27,7 @@ DEFAULT_EXAM_ROOT = Path.home() / ".local" / "share" / "game2-v2" / "exams"
 DEFAULT_EPISODE_LIMIT = 1200
 DEFAULT_DELAY = 2.5
 PROCESS_TIMEOUT = 30.0
+FINALIZATION_TIMEOUT = 5.0
 _OUTPUT_END = object()
 
 
@@ -39,6 +40,7 @@ class ManagedProcess:
     process: subprocess.Popen
     lines: queue.Queue
     reader: threading.Thread
+    output_done: threading.Event
 
     @classmethod
     def start(cls, command: list[str], *, cwd: Path,
@@ -56,23 +58,40 @@ class ManagedProcess:
             start_new_session=False,
         )
         lines: queue.Queue = queue.Queue()
+        output_done = threading.Event()
 
         def read_output() -> None:
-            source = getattr(process, "stdout", None)
-            if source is not None:
-                try:
-                    for line in source:
-                        lines.put(line)
-                finally:
+            try:
+                source = getattr(process, "stdout", None)
+                if source is not None:
                     try:
-                        source.close()
-                    except (OSError, ValueError):
-                        pass
-            lines.put(_OUTPUT_END)
+                        for line in source:
+                            lines.put(line)
+                    finally:
+                        try:
+                            source.close()
+                        except (OSError, ValueError):
+                            pass
+            finally:
+                lines.put(_OUTPUT_END)
+                output_done.set()
 
         reader = threading.Thread(target=read_output, name="game2-v2-run-output", daemon=True)
         reader.start()
-        return cls(process, lines, reader)
+        return cls(process, lines, reader, output_done)
+
+    def drain_lines(self) -> list[Any]:
+        result = []
+        while True:
+            try:
+                line = self.lines.get_nowait()
+            except queue.Empty:
+                return result
+            if line is not _OUTPUT_END:
+                result.append(line)
+
+    def wait_output_done(self, timeout: float) -> bool:
+        return self.output_done.wait(timeout)
 
     def stop(self, timeout: float = 5.0) -> None:
         if self.process.poll() is not None:
@@ -177,7 +196,9 @@ class UnifiedRunner:
                 line = process.lines.get(timeout=min(remaining, 0.1))
             except queue.Empty:
                 if process.process.poll() is not None:
-                    raise RunError(f"process exited before {prefix}")
+                    if not process.wait_output_done(remaining):
+                        raise RunError(f"process output did not finish before {prefix}")
+                    continue
                 continue
             if line is _OUTPUT_END:
                 raise RunError(f"process exited before {prefix}")
@@ -189,15 +210,7 @@ class UnifiedRunner:
                 raise RunError(f"malformed {prefix} announcement") from exc
 
     def _drain(self, process: ManagedProcess) -> list[str]:
-        result = []
-        while True:
-            try:
-                line = process.lines.get_nowait()
-            except queue.Empty:
-                break
-            if line is not _OUTPUT_END:
-                result.append(line)
-        return result
+        return process.drain_lines()
 
     def _console_config(self, map_path: Path, clock_mode: str, episode_limit: int) -> dict:
         return {
@@ -320,6 +333,7 @@ class UnifiedRunner:
 
             passed = False
             summary = None
+            finalization_deadline = None
             while summary is None:
                 self._check_stop()
                 for line in self._drain(trainer):
@@ -328,7 +342,7 @@ class UnifiedRunner:
                         self.emit("map_progress", level=manifest.training_set_level,
                                   map_id=spec.map_id, **progress)
                         passed = passed or (progress["result"] == "success" and
-                                            progress["trainable"])
+                                            progress["trainable"] and progress["updated"])
                     elif line.startswith("SUMMARY "):
                         summary = _strict_json(line[8:].strip())
                 for line in self._drain(player):
@@ -338,10 +352,20 @@ class UnifiedRunner:
                         raise RunError("Player emitted duplicate ATTACHED")
                 if summary is not None:
                     break
-                if trainer.process.poll() is not None:
-                    raise RunError("Trainer exited without SUMMARY")
-                if player.process.poll() is not None and trainer.process.poll() is None:
-                    raise RunError("learned Player exited before Training completed")
+                player_exited = player.process.poll() is not None
+                trainer_exited = trainer.process.poll() is not None
+                if player_exited or trainer_exited:
+                    if finalization_deadline is None:
+                        finalization_deadline = time.monotonic() + FINALIZATION_TIMEOUT
+                    remaining = finalization_deadline - time.monotonic()
+                    if trainer_exited:
+                        if not trainer.output_done.is_set() and remaining > 0:
+                            trainer.wait_output_done(remaining)
+                            continue
+                        if trainer.output_done.is_set():
+                            raise RunError("Trainer exited without SUMMARY")
+                    if remaining <= 0:
+                        raise RunError("Trainer did not emit SUMMARY after Player exit")
                 self.sleeper(0.005)
             if not isinstance(summary, dict):
                 raise RunError("Trainer SUMMARY is malformed")
@@ -446,7 +470,14 @@ class UnifiedRunner:
                     if result is not None:
                         break
                     if player.process.poll() is not None:
-                        raise RunError("Exam Player exited without RESULT")
+                        if not player.wait_output_done(FINALIZATION_TIMEOUT):
+                            raise RunError("Exam Player output did not finish")
+                        for line in self._drain(player):
+                            if line.startswith("RESULT "):
+                                result = self._result(_strict_json(line[7:].strip()))
+                        if result is None:
+                            raise RunError("Exam Player exited without RESULT")
+                        break
                     self.sleeper(0.005)
                 outcome = "PASS" if result["result"] == "success" else "FAIL"
                 self.emit("exam_finished", level=manifest.training_set_level,

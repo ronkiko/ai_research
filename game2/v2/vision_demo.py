@@ -363,6 +363,8 @@ class VisionViewer:
         manifest = PlayerManifest.from_dict(event["player_manifest"])
         if self.stream is not None:
             self.stream.close()
+        self.latest_frame = None
+        self.frame_surface = None
         self.stream = VisionReceiver(manifest)
         self.stream.connect()
         self.frames_at_start = self.stream.frames_received
@@ -433,13 +435,13 @@ class VisionViewer:
                 continue
             for map_id, status in item.map_status.items():
                 if status == "passed":
-                    mark, color = "OK", passed
+                    mark, color = "✓", passed
                 elif status == "failed":
-                    mark, color = "X", failed
+                    mark, color = "✕", failed
                 elif status == "current":
-                    mark, color = ">", current
+                    mark, color = "▶", current
                 else:
-                    mark, color = "o", muted
+                    mark, color = "○", muted
                 self._draw_text(f"  {mark} {map_id}", self.body_font, y, color)
                 y += 23
             train_rect = self.pygame.Rect(18, y + 2, SIDEBAR_WIDTH - 36, 30)
