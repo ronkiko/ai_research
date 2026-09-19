@@ -190,14 +190,7 @@ class ScreenSourceService:
                 return None
             return self.latest
 
-    def start(self) -> None:
-        self.state_socket = _connect(self.manifest.engine_state)
-        self.publisher.start()
-        import os
-        os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-        import pygame
-        self.pygame = pygame
-        surface = pygame.Surface((self.world.width, self.world.height))
+    def _configure_renderer(self, surface, pygame) -> None:
         if self.manifest.view == "vision":
             self.grid_renderer = VisionGridRenderer(self.world)
             self.renderer = VisionPreviewRenderer(
@@ -208,6 +201,16 @@ class ScreenSourceService:
                 self.world, target_surface=surface, pygame_module=pygame,
                 self_actor_id=None,
             )
+
+    def start(self) -> None:
+        self.state_socket = _connect(self.manifest.engine_state)
+        self.publisher.start()
+        import os
+        os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+        import pygame
+        self.pygame = pygame
+        surface = pygame.Surface((self.world.width, self.world.height))
+        self._configure_renderer(surface, pygame)
         self.reader = threading.Thread(
             target=self._read_loop, name="v2-screen-source-state", daemon=True
         )

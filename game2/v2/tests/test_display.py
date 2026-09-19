@@ -8,7 +8,7 @@ import unittest
 from dataclasses import FrozenInstanceError, fields
 from typing import Any
 
-from game2.v2.console.config import DisplayManifest
+from game2.v2.console.config import DisplayManifest, ScreenSourceManifest
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
 from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
@@ -211,6 +211,55 @@ class VisionGridRendererTests(unittest.TestCase):
             grid.metadata = b""
 
 
+class ScreenSourceViewTests(unittest.TestCase):
+    def test_private_manifest_round_trips_vision_view(self):
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            str(PIT),
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+            "vision",
+        )
+        self.assertEqual(
+            ScreenSourceManifest.from_dict(manifest.to_dict()),
+            manifest,
+        )
+        with self.assertRaises(ValueError):
+            ScreenSourceManifest(
+                "session",
+                Endpoint("127.0.0.1", 1),
+                str(PIT),
+                Endpoint("127.0.0.1", 2),
+                120,
+                1200,
+                "pixels",
+            )
+
+    def test_vision_source_selects_grid_preview_renderer(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            str(PIT),
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+            "vision",
+        )
+        service = ScreenSourceService(manifest)
+        surface = pygame.Surface((service.world.width, service.world.height))
+        try:
+            service._configure_renderer(surface, pygame)
+            self.assertIsInstance(service.renderer, VisionPreviewRenderer)
+            self.assertIsInstance(service.grid_renderer, VisionGridRenderer)
+        finally:
+            if service.renderer is not None:
+                service.renderer.close()
+
+
 class VisionPreviewRendererTests(unittest.TestCase):
     def test_preview_renders_exact_grid_and_dynamic_metadata(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
@@ -245,6 +294,14 @@ class VisionPreviewRendererTests(unittest.TestCase):
         try:
             preview.render(grid)
             self.assertEqual(tuple(surface.get_at((64, 300)))[:3], MAJOR_GRID_COLOR)
+            self.assertEqual(
+                tuple(surface.get_at((world.width - 1, 300)))[:3],
+                MAJOR_GRID_COLOR,
+            )
+            self.assertEqual(
+                tuple(surface.get_at((300, world.height - 1)))[:3],
+                MAJOR_GRID_COLOR,
+            )
             self.assertEqual(tuple(surface.get_at((8, 298)))[:3], MINOR_GRID_COLOR)
             self.assertNotEqual(
                 tuple(surface.get_at((8, 300)))[:3], MINOR_GRID_COLOR

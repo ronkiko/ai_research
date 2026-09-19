@@ -129,6 +129,18 @@ class VisionPreviewRenderer:
                 surface, MAJOR_GRID_COLOR,
                 (0, y), (self.world.width - 1, y), 2,
             )
+        pygame.draw.line(
+            surface, MAJOR_GRID_COLOR,
+            (self.world.width - 1, 0),
+            (self.world.width - 1, self.world.height - 1),
+            2,
+        )
+        pygame.draw.line(
+            surface, MAJOR_GRID_COLOR,
+            (0, self.world.height - 1),
+            (self.world.width - 1, self.world.height - 1),
+            2,
+        )
 
     def _font_for_hud(self):
         pygame = self.pygame
