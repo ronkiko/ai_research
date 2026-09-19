@@ -6,6 +6,7 @@ import json
 import socket
 import threading
 import time
+from pathlib import Path
 
 from ...config import ScreenSourceManifest
 from ....contracts.framing import recv_frame
@@ -36,8 +37,13 @@ def _connect(endpoint, timeout: float = 5.0) -> socket.socket:
 
 
 class ScreenSourceService:
-    def __init__(self, manifest: ScreenSourceManifest):
+    def __init__(
+        self, manifest: ScreenSourceManifest, *, trajectory_log: str | Path | None = None
+    ):
         self.manifest = manifest
+        self.trajectory_log = (
+            Path(trajectory_log) if trajectory_log is not None else None
+        )
         self.world = load_world(manifest.world_file)
         self.publisher = ScreenPublisher(
             manifest.screen.host, manifest.screen.port, manifest.session_id
@@ -209,9 +215,11 @@ class ScreenSourceService:
             y += item.get_height()
         surface.blit(panel, (10, 10))
 
-    def _next_view(self) -> DisplayState | None:
+    def _next_view(self, *, force: bool = False) -> DisplayState | None:
         with self.condition:
-            if self.latest is None or self.latest.world_tick <= self.presented_tick:
+            if self.latest is None:
+                return None
+            if not force and self.latest.world_tick <= self.presented_tick:
                 return None
             return self.latest
 
@@ -219,7 +227,10 @@ class ScreenSourceService:
         if self.manifest.view == "vision":
             self.grid_renderer = VisionGridRenderer(self.world)
             self.renderer = VisionPreviewRenderer(
-                self.world, target_surface=surface, pygame_module=pygame
+                self.world,
+                target_surface=surface,
+                pygame_module=pygame,
+                trajectory_log=self.trajectory_log,
             )
         else:
             self.renderer = ScreenRenderer(
@@ -260,7 +271,12 @@ class ScreenSourceService:
                     if self.reader_done.is_set():
                         return 0
                     continue
-                view = self._next_view()
+                trajectory_changed = (
+                    self.manifest.view == "vision"
+                    and self.renderer is not None
+                    and self.renderer.refresh_trajectory()
+                )
+                view = self._next_view(force=trajectory_changed)
                 if view is None:
                     if self.reader_done.is_set():
                         return 0
@@ -311,9 +327,13 @@ class ScreenSourceService:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Game2 V2 headless Screen source")
     parser.add_argument("--manifest", required=True)
+    parser.add_argument("--trajectory-log")
     args = parser.parse_args(argv)
     try:
-        return ScreenSourceService(ScreenSourceManifest.from_file(args.manifest)).run()
+        return ScreenSourceService(
+            ScreenSourceManifest.from_file(args.manifest),
+            trajectory_log=args.trajectory_log,
+        ).run()
     except KeyboardInterrupt:
         return 0
     except (OSError, RuntimeError, TypeError, ValueError) as exc:

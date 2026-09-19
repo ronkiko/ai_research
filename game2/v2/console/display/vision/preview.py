@@ -1,6 +1,10 @@
 """Human spectator renderer for public Grid Vision plus presentation overlays."""
 from __future__ import annotations
 
+import json
+import math
+from pathlib import Path
+
 from ....contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
@@ -25,6 +29,11 @@ META_OTHER_COLOR = (196, 84, 220, 118)
 SELF_CENTER_COLOR = (255, 226, 72)
 OTHER_CENTER_COLOR = (255, 255, 255)
 TRAIL_COLOR = (255, 226, 72)
+LOGGED_TICK_COLOR = TRAIL_COLOR
+REWARD_POSITIVE_COLOR = (72, 220, 92)
+REWARD_NEGATIVE_COLOR = (240, 72, 72)
+REWARD_ZERO_COLOR = (246, 236, 178)
+REWARD_OUTLINE_COLOR = (5, 9, 14)
 MAJOR_GRID_COLOR = (228, 234, 238)
 MINOR_GRID_COLOR = (124, 136, 148)
 RULER_BACKGROUND = (5, 9, 14, 190)
@@ -41,19 +50,30 @@ TERMINAL_LABELS = {
 class VisionPreviewRenderer:
     """Render VisionGrid with optional human-only terminal status."""
 
-    def __init__(self, world, *, target_surface, pygame_module):
+    def __init__(
+        self, world, *, target_surface, pygame_module, trajectory_log=None
+    ):
         self.world = world
         self.target_surface = target_surface
         self.pygame = pygame_module
+        self.trajectory_log = (
+            Path(trajectory_log) if trajectory_log is not None else None
+        )
         if target_surface.get_size() != (world.width, world.height):
             raise ValueError("Vision preview target must match World dimensions")
         self._static_signature = None
         self._static_surface = None
         self._font = None
         self._terminal_font = None
+        self._reward_font = None
         self._trail: list[tuple[int, int]] = []
         self._trail_epoch: int | None = None
         self._trail_tick = -1
+        self._trajectory_offset = 0
+        self._trajectory_file_id: tuple[int, int] | None = None
+        self._trajectory_episode: int | None = None
+        self._logged_ticks: dict[int, tuple[int, int]] = {}
+        self._rated_ticks: dict[int, tuple[tuple[int, int], float]] = {}
 
     @staticmethod
     def _cell_size(grid: VisionGrid) -> int:
@@ -150,6 +170,146 @@ class VisionPreviewRenderer:
             self._font = pygame.font.Font(None, 18)
         return self._font
 
+    def _font_for_reward(self):
+        pygame = self.pygame
+        if not pygame.font.get_init():
+            pygame.font.init()
+        if self._reward_font is None:
+            self._reward_font = pygame.font.Font(None, 20)
+            self._reward_font.set_bold(True)
+        return self._reward_font
+
+    @staticmethod
+    def _trajectory_point(payload: dict) -> tuple[int, tuple[int, int]] | None:
+        tick = payload.get("t")
+        x = payload.get("x")
+        y = payload.get("y")
+        if type(tick) is not int:
+            return None
+        if type(x) not in (int, float) or type(y) not in (int, float):
+            return None
+        if not math.isfinite(float(x)) or not math.isfinite(float(y)):
+            return None
+        return tick, (round(float(x)), round(float(y)))
+
+    def _reset_trajectory_annotations(self) -> None:
+        self._trajectory_episode = None
+        self._logged_ticks.clear()
+        self._rated_ticks.clear()
+
+    def _consume_trajectory_row(self, payload: dict) -> bool:
+        episode_id = payload.get("e")
+        if type(episode_id) is not int:
+            return False
+        if "m" in payload:
+            changed = (
+                episode_id != self._trajectory_episode
+                or bool(self._logged_ticks)
+                or bool(self._rated_ticks)
+            )
+            if episode_id != self._trajectory_episode:
+                self._logged_ticks.clear()
+                self._rated_ticks.clear()
+            self._trajectory_episode = episode_id
+            return changed
+        if self._trajectory_episode is None:
+            self._trajectory_episode = episode_id
+        if episode_id != self._trajectory_episode:
+            return False
+        point = self._trajectory_point(payload)
+        if point is None:
+            return False
+        tick, position = point
+        if payload.get("k") == "a":
+            reward = payload.get("rw")
+            if type(reward) not in (int, float) or not math.isfinite(float(reward)):
+                return False
+            item = (position, float(reward))
+            changed = self._rated_ticks.get(tick) != item
+            self._rated_ticks[tick] = item
+            return changed
+        changed = self._logged_ticks.get(tick) != position
+        self._logged_ticks[tick] = position
+        return changed
+
+    def refresh_trajectory(self) -> bool:
+        if self.trajectory_log is None:
+            return False
+        try:
+            stat = self.trajectory_log.stat()
+        except FileNotFoundError:
+            return False
+        file_id = (stat.st_dev, stat.st_ino)
+        changed = False
+        if (
+            self._trajectory_file_id is not None
+            and (
+                file_id != self._trajectory_file_id
+                or stat.st_size < self._trajectory_offset
+            )
+        ):
+            self._trajectory_offset = 0
+            self._reset_trajectory_annotations()
+            changed = True
+        self._trajectory_file_id = file_id
+        with self.trajectory_log.open("rb") as handle:
+            handle.seek(self._trajectory_offset)
+            data = handle.read()
+        if not data:
+            return changed
+        newline = data.rfind(b"\n")
+        if newline < 0:
+            return changed
+        complete = data[:newline + 1]
+        self._trajectory_offset += len(complete)
+        for raw_line in complete.splitlines():
+            try:
+                payload = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                changed = self._consume_trajectory_row(payload) or changed
+        return changed
+
+    @staticmethod
+    def _reward_visual(reward: float) -> tuple[str, tuple[int, int, int]]:
+        if reward > 0:
+            return f"+{reward:.3f}", REWARD_POSITIVE_COLOR
+        if reward < 0:
+            return f"{reward:.3f}", REWARD_NEGATIVE_COLOR
+        return "0.000", REWARD_ZERO_COLOR
+
+    def _draw_trajectory_annotations(self, surface) -> None:
+        pygame = self.pygame
+        for tick, position in sorted(self._logged_ticks.items()):
+            if tick not in self._rated_ticks:
+                pygame.draw.circle(surface, LOGGED_TICK_COLOR, position, 2)
+        font = self._font_for_reward()
+        occupied = []
+        for _tick, (position, reward) in sorted(self._rated_ticks.items()):
+            label, color = self._reward_visual(reward)
+            pygame.draw.circle(surface, color, position, 3)
+            glyph = font.render(label, True, color)
+            outline = font.render(label, True, REWARD_OUTLINE_COLOR)
+            rect = glyph.get_rect(
+                topleft=(position[0] + 6, position[1] - 8 - glyph.get_height())
+            )
+            rect.x = max(2, min(rect.x, self.world.width - rect.width - 2))
+            rect.y = max(2, min(rect.y, self.world.height - rect.height - 2))
+            attempts = 0
+            while any(rect.inflate(2, 2).colliderect(other) for other in occupied):
+                if attempts >= 4:
+                    break
+                rect.y = max(2, rect.y - rect.height - 2)
+                attempts += 1
+            for dx, dy in (
+                (-1, -1), (0, -1), (1, -1), (-1, 0),
+                (1, 0), (-1, 1), (0, 1), (1, 1),
+            ):
+                surface.blit(outline, rect.move(dx, dy))
+            surface.blit(glyph, rect)
+            occupied.append(rect.copy())
+
     def _draw_rulers(self, surface, grid: VisionGrid, cell: int) -> None:
         pygame = self.pygame
         font = self._font_for_hud()
@@ -231,9 +391,7 @@ class VisionPreviewRenderer:
             self._trail.append(center)
         self._trail_tick = grid.world_tick
         if len(self._trail) >= 2:
-            pygame.draw.lines(surface, TRAIL_COLOR, False, self._trail, 2)
-        if self._trail:
-            pygame.draw.circle(surface, TRAIL_COLOR, self._trail[-1], 2)
+            pygame.draw.lines(surface, TRAIL_COLOR, False, self._trail, 1)
 
     def _draw_legend(self, surface, grid: VisionGrid, cell: int) -> None:
         pygame = self.pygame
@@ -289,6 +447,7 @@ class VisionPreviewRenderer:
         self, grid: VisionGrid, terminal: str | None = None, trail_epoch: int = 0
     ):
         cell = self._validate_grid(grid)
+        self.refresh_trajectory()
         self.target_surface.blit(self._static(grid, cell), (0, 0))
         self._draw_metadata(self.target_surface, grid, cell)
         self._draw_grid(self.target_surface, grid, cell)
@@ -296,18 +455,24 @@ class VisionPreviewRenderer:
         self._draw_rulers(self.target_surface, grid, cell)
         self._draw_legend(self.target_surface, grid, cell)
         self._draw_terminal_overlay(self.target_surface, terminal)
+        self._draw_trajectory_annotations(self.target_surface)
         return self.target_surface
 
     def close(self) -> None:
         self._static_surface = None
         self._font = None
         self._terminal_font = None
+        self._reward_font = None
         self._trail.clear()
         self._trail_epoch = None
         self._trail_tick = -1
+        self._trajectory_offset = 0
+        self._trajectory_file_id = None
+        self._reset_trajectory_annotations()
 
 
 __all__ = [
-    "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
+    "LOGGED_TICK_COLOR", "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
+    "REWARD_NEGATIVE_COLOR", "REWARD_POSITIVE_COLOR", "REWARD_ZERO_COLOR",
     "TERMINAL_LABELS", "TRAIL_COLOR", "VisionPreviewRenderer",
 ]

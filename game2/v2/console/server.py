@@ -493,12 +493,15 @@ def _check_discovery_directory(path: Path) -> None:
 def run_server(config_path: str | Path,
                discovery_path: str | Path = CURRENT_CONSOLE_PATH,
                screen_discovery_path: str | Path | None = None,
-               screen_view: str = "screen") -> int:
+               screen_view: str = "screen",
+               screen_trajectory_log: str | Path | None = None) -> int:
     """Run one persistent Console until explicit shutdown or process failure."""
     config_path = Path(config_path).resolve()
     discovery_path = Path(discovery_path)
     if screen_view not in {"screen", "vision"}:
         raise ValueError("screen_view must be screen or vision")
+    if screen_trajectory_log is not None and screen_view != "vision":
+        raise ValueError("screen_trajectory_log requires screen_view=vision")
     if screen_discovery_path is None:
         screen_discovery_path = (
             CURRENT_SCREEN_SOURCE_PATH
@@ -561,10 +564,16 @@ def run_server(config_path: str | Path,
         engine_control = EngineLifecycleClient(internal.engine_control)
         engine_control.connect()
         try:
+            screen_command = [
+                sys.executable, "-m", SCREEN_SOURCE_MODULE,
+                "--manifest", str(screen_manifest_path),
+            ]
+            if screen_trajectory_log is not None:
+                screen_command.extend([
+                    "--trajectory-log", str(screen_trajectory_log),
+                ])
             screen_source = _launch_ready(
-                [sys.executable, "-m", SCREEN_SOURCE_MODULE,
-                 "--manifest", str(screen_manifest_path)],
-                root, screen_log, "ScreenSource")
+                screen_command, root, screen_log, "ScreenSource")
             own_screen_source = ScreenSourceDiscovery(
                 1, session_id, world.map_id, screen_endpoint,
                 world.width, world.height)

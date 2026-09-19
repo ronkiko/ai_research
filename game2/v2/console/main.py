@@ -223,6 +223,8 @@ def main(argv=None) -> int:
                         help="server-only path for Screen source discovery")
     parser.add_argument("--screen-view", choices=("screen", "vision"), default="screen",
                         help="server-only spectator source view")
+    parser.add_argument("--screen-trajectory-log",
+                        help="server-only trajectory JSONL for the Vision spectator")
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
     parser.add_argument("--control-capability",
@@ -234,11 +236,13 @@ def main(argv=None) -> int:
             args.discovery if args.discovery is not None else CURRENT_CONSOLE_PATH,
             args.screen_discovery,
             args.screen_view,
+            args.screen_trajectory_log,
         )
     if (args.discovery is not None or args.screen_discovery is not None
-            or args.screen_view != "screen"):
+            or args.screen_view != "screen" or args.screen_trajectory_log is not None):
         parser.error(
-            "--discovery, --screen-discovery and --screen-view are only valid with --server"
+            "--discovery, --screen-discovery, --screen-view and "
+            "--screen-trajectory-log are only valid with --server"
         )
     status, summary = run_session(args.config, args.state_capability,
                                   args.control_capability)

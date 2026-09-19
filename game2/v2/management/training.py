@@ -306,7 +306,8 @@ class TrainingRun:
         }
 
     def _start_console(
-        self, directory: Path, map_path: Path, episode_limit: int, view: str
+        self, directory: Path, map_path: Path, episode_limit: int, view: str,
+        trajectory_log: Path,
     ) -> tuple[ManagedProcess, Path, Path]:
         config_path = directory / "console.json"
         discovery_path = directory / "console-discovery.json"
@@ -315,13 +316,18 @@ class TrainingRun:
             json.dumps(self._console_config(map_path, episode_limit), sort_keys=True),
             encoding="utf-8",
         )
-        console = self._spawn([
+        console_command = [
             sys.executable, "-m", "game2.v2.console.main", "--server",
             "--config", str(config_path),
             "--discovery", str(discovery_path),
             "--screen-discovery", str(screen_source_path),
             "--screen-view", view,
-        ])
+        ]
+        if view == "vision":
+            console_command.extend([
+                "--screen-trajectory-log", str(trajectory_log),
+            ])
+        console = self._spawn(console_command)
         try:
             ConsoleDiscovery.from_dict(
                 self._announcement(console, "READY", PROCESS_TIMEOUT)
@@ -361,7 +367,11 @@ class TrainingRun:
         screen_bound = False
         try:
             console, discovery_path, screen_source_path = self._start_console(
-                directory, _resolve_map(manifest_path, spec), episode_limit, view
+                directory,
+                _resolve_map(manifest_path, spec),
+                episode_limit,
+                view,
+                trajectory_log,
             )
             processes.append(console)
 

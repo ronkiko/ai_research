@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
+import tempfile
 import threading
 import time
 import unittest
@@ -15,8 +17,9 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
-    MAJOR_GRID_COLOR, MINOR_GRID_COLOR, SELF_CENTER_COLOR,
-    TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
+    LOGGED_TICK_COLOR, MAJOR_GRID_COLOR, MINOR_GRID_COLOR,
+    REWARD_NEGATIVE_COLOR, REWARD_POSITIVE_COLOR, REWARD_ZERO_COLOR,
+    SELF_CENTER_COLOR, TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
@@ -271,6 +274,23 @@ class ScreenSourceViewTests(unittest.TestCase):
                     if service.renderer is not None:
                         service.renderer.close()
 
+    def test_vision_source_can_force_same_tick_redraw_for_late_log_data(self):
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            str(PIT),
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+            "vision",
+        )
+        service = ScreenSourceService(manifest)
+        view = _view(service.world, x=128, y=384, world_tick=7)
+        service.latest = view
+        service.presented_tick = 7
+        self.assertIsNone(service._next_view())
+        self.assertIs(service._next_view(force=True), view)
+
     def test_vision_trail_epoch_advances_on_respawn(self):
         manifest = ScreenSourceManifest(
             "session",
@@ -403,6 +423,65 @@ class VisionPreviewRendererTests(unittest.TestCase):
             self.assertNotEqual(tuple(surface.get_at(midpoint))[:3], TRAIL_COLOR)
         finally:
             preview.close()
+
+    def test_preview_draws_logged_and_rated_trajectory_ticks(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        with tempfile.TemporaryDirectory() as directory:
+            trajectory = Path(directory) / "trajectory.jsonl"
+            rows = [
+                {"e": 1, "m": "train"},
+                {"e": 1, "t": 10, "x": 128, "y": 384},
+                {"e": 1, "t": 20, "x": 192, "y": 384},
+            ]
+            trajectory.write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            preview = VisionPreviewRenderer(
+                world,
+                target_surface=surface,
+                pygame_module=pygame,
+                trajectory_log=trajectory,
+            )
+            grid = VisionGridRenderer(world).render(
+                _view(world, x=320, y=384, world_tick=20)
+            )
+            try:
+                preview.render(grid)
+                self.assertEqual(
+                    tuple(surface.get_at((128, 384)))[:3], LOGGED_TICK_COLOR
+                )
+                self.assertEqual(
+                    tuple(surface.get_at((192, 384)))[:3], LOGGED_TICK_COLOR
+                )
+
+                action_rows = [
+                    {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "rw": -0.25},
+                    {"e": 1, "k": "a", "t": 30, "x": 256, "y": 384, "rw": 0.031},
+                    {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "rw": 0.0},
+                ]
+                with trajectory.open("a", encoding="utf-8") as handle:
+                    for row in action_rows:
+                        handle.write(json.dumps(row) + "\n")
+                self.assertTrue(preview.refresh_trajectory())
+                preview.render(grid)
+                self.assertEqual(
+                    tuple(surface.get_at((192, 384)))[:3], REWARD_NEGATIVE_COLOR
+                )
+                self.assertEqual(
+                    tuple(surface.get_at((256, 384)))[:3], REWARD_POSITIVE_COLOR
+                )
+                self.assertEqual(
+                    tuple(surface.get_at((320, 448)))[:3], REWARD_ZERO_COLOR
+                )
+                self.assertEqual(preview._reward_visual(0.031)[0], "+0.031")
+                self.assertEqual(preview._reward_visual(-1.0)[0], "-1.000")
+                self.assertEqual(preview._reward_visual(0.0)[0], "0.000")
+            finally:
+                preview.close()
 
     def test_preview_draws_terminal_outcomes_as_presentation_only_overlay(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"

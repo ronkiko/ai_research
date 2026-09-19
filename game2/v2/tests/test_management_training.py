@@ -188,6 +188,10 @@ class ManagementTrainingTests(unittest.TestCase):
                 command[command.index("--screen-view") + 1] == "screen"
                 for command in console_commands
             ))
+            self.assertTrue(all(
+                "--screen-trajectory-log" not in command
+                for command in console_commands
+            ))
 
 
     def test_fresh_resets_known_checkpoints_instead_of_refusing_to_start(self):
@@ -292,9 +296,21 @@ class ManagementTrainingTests(unittest.TestCase):
                 command[command.index("--screen-view") + 1] == "vision"
                 for command in console_commands
             ))
+            self.assertTrue(all(
+                "--screen-trajectory-log" in command
+                for command in console_commands
+            ))
+            self.assertEqual(
+                [
+                    Path(command[command.index("--screen-trajectory-log") + 1]).name
+                    for command in console_commands
+                ],
+                ["01-flat.jsonl", "02-gap.jsonl"],
+            )
             for command in factory.commands:
                 if command[command.index("-m") + 1] != "game2.v2.console.main":
                     self.assertNotIn("--screen-view", command)
+                    self.assertNotIn("--screen-trajectory-log", command)
             self.assertIn("SCREEN 1: flat (vision)", output.getvalue())
             self.assertIn("SCREEN 1: gap (vision)", output.getvalue())
 
