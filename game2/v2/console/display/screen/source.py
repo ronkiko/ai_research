@@ -243,7 +243,12 @@ class ScreenSourceService:
                     continue
                 if self.manifest.view == "vision":
                     grid = self.grid_renderer.render(view)
-                    surface = self.renderer.render(grid)
+                    terminal = (
+                        view.self_actor.result
+                        if view.self_actor is not None
+                        else None
+                    )
+                    surface = self.renderer.render(grid, terminal=terminal)
                 else:
                     surface = self.renderer.render(view)
                     self._draw_hud(surface, view)

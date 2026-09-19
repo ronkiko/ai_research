@@ -1,4 +1,4 @@
-"""Human spectator renderer for the exact public Grid Vision observation."""
+"""Human spectator renderer for public Grid Vision plus presentation overlays."""
 from __future__ import annotations
 
 from ....contracts.vision import (
@@ -30,10 +30,15 @@ RULER_BACKGROUND = (5, 9, 14, 190)
 RULER_TEXT = (242, 246, 248)
 HUD_BACKGROUND = (5, 9, 14, 210)
 HUD_TEXT = (242, 246, 248)
+TERMINAL_LABELS = {
+    "success": "VICTORY",
+    "dead": "DEAD",
+    "timeout": "TIMEOUT",
+}
 
 
 class VisionPreviewRenderer:
-    """Render only data already present in VisionGrid for human inspection."""
+    """Render VisionGrid with optional human-only terminal status."""
 
     def __init__(self, world, *, target_surface, pygame_module):
         self.world = world
@@ -44,6 +49,7 @@ class VisionPreviewRenderer:
         self._static_signature = None
         self._static_surface = None
         self._font = None
+        self._terminal_font = None
 
     @staticmethod
     def _cell_size(grid: VisionGrid) -> int:
@@ -95,51 +101,41 @@ class VisionPreviewRenderer:
             self._static_signature = signature
         return self._static_surface
 
-    @staticmethod
-    def _dashed_vertical(pygame, surface, x: int, height: int) -> None:
-        for y in range(0, height, 8):
-            pygame.draw.line(
-                surface, MINOR_GRID_COLOR,
-                (x, y), (x, min(y + 3, height - 1)),
-            )
-
-    @staticmethod
-    def _dashed_horizontal(pygame, surface, y: int, width: int) -> None:
-        for x in range(0, width, 8):
-            pygame.draw.line(
-                surface, MINOR_GRID_COLOR,
-                (x, y), (min(x + 3, width - 1), y),
-            )
-
     def _draw_grid(self, surface, grid: VisionGrid, cell: int) -> None:
         pygame = self.pygame
         for x in range(cell, self.world.width, cell):
             if x % grid.tile_size:
-                self._dashed_vertical(pygame, surface, x, self.world.height)
+                pygame.draw.line(
+                    surface, MINOR_GRID_COLOR,
+                    (x, 0), (x, self.world.height - 1), 1,
+                )
         for y in range(cell, self.world.height, cell):
             if y % grid.tile_size:
-                self._dashed_horizontal(pygame, surface, y, self.world.width)
+                pygame.draw.line(
+                    surface, MINOR_GRID_COLOR,
+                    (0, y), (self.world.width - 1, y), 1,
+                )
         for x in range(0, self.world.width, grid.tile_size):
             pygame.draw.line(
                 surface, MAJOR_GRID_COLOR,
-                (x, 0), (x, self.world.height - 1), 2,
+                (x, 0), (x, self.world.height - 1), 1,
             )
         for y in range(0, self.world.height, grid.tile_size):
             pygame.draw.line(
                 surface, MAJOR_GRID_COLOR,
-                (0, y), (self.world.width - 1, y), 2,
+                (0, y), (self.world.width - 1, y), 1,
             )
         pygame.draw.line(
             surface, MAJOR_GRID_COLOR,
             (self.world.width - 1, 0),
             (self.world.width - 1, self.world.height - 1),
-            2,
+            1,
         )
         pygame.draw.line(
             surface, MAJOR_GRID_COLOR,
             (0, self.world.height - 1),
             (self.world.width - 1, self.world.height - 1),
-            2,
+            1,
         )
 
     def _font_for_hud(self):
@@ -230,21 +226,50 @@ class VisionPreviewRenderer:
             y += item.get_height()
         surface.blit(panel, (self.world.width - width - 8, self.world.height - height - 8))
 
-    def render(self, grid: VisionGrid):
+    def _draw_terminal_overlay(self, surface, terminal: str | None) -> None:
+        if terminal is None:
+            return
+        if type(terminal) is not str or terminal not in TERMINAL_LABELS:
+            raise ValueError("unknown terminal result")
+        pygame = self.pygame
+        if not pygame.font.get_init():
+            pygame.font.init()
+        if self._terminal_font is None:
+            self._terminal_font = pygame.font.Font(None, 74)
+        panel_width = max(1, min(self.world.width - 16, 640))
+        panel_height = max(1, min(self.world.height - 16, 190))
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((8, 18, 30, 214))
+        pygame.draw.rect(panel, (224, 235, 238, 225), panel.get_rect(), 1)
+        title = self._terminal_font.render(
+            TERMINAL_LABELS[terminal], True, (255, 247, 205)
+        )
+        panel.blit(
+            title,
+            title.get_rect(center=(panel_width // 2, panel_height // 2)),
+        )
+        surface.blit(
+            panel,
+            panel.get_rect(center=(self.world.width // 2, self.world.height // 2)),
+        )
+
+    def render(self, grid: VisionGrid, terminal: str | None = None):
         cell = self._validate_grid(grid)
         self.target_surface.blit(self._static(grid, cell), (0, 0))
         self._draw_metadata(self.target_surface, grid, cell)
         self._draw_grid(self.target_surface, grid, cell)
         self._draw_rulers(self.target_surface, grid, cell)
         self._draw_legend(self.target_surface, grid, cell)
+        self._draw_terminal_overlay(self.target_surface, terminal)
         return self.target_surface
 
     def close(self) -> None:
         self._static_surface = None
         self._font = None
+        self._terminal_font = None
 
 
 __all__ = [
     "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
-    "VisionPreviewRenderer",
+    "TERMINAL_LABELS", "VisionPreviewRenderer",
 ]

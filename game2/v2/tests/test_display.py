@@ -16,7 +16,7 @@ from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
     MAJOR_GRID_COLOR, MINOR_GRID_COLOR, SELF_CENTER_COLOR,
-    VisionPreviewRenderer,
+    TERMINAL_LABELS, VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
@@ -303,8 +303,14 @@ class VisionPreviewRendererTests(unittest.TestCase):
             self.assertEqual(
                 tuple(surface.get_at((48, 298)))[:3], MINOR_GRID_COLOR
             )
-            self.assertNotEqual(
+            self.assertEqual(
                 tuple(surface.get_at((48, 300)))[:3], MINOR_GRID_COLOR
+            )
+            self.assertNotEqual(
+                tuple(surface.get_at((49, 300)))[:3], MINOR_GRID_COLOR
+            )
+            self.assertNotEqual(
+                tuple(surface.get_at((65, 300)))[:3], MAJOR_GRID_COLOR
             )
 
             center_index = next(
@@ -327,6 +333,34 @@ class VisionPreviewRendererTests(unittest.TestCase):
 
             with self.assertRaises(TypeError):
                 preview.render(_view(world))
+        finally:
+            preview.close()
+
+    def test_preview_draws_terminal_outcomes_as_presentation_only_overlay(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        preview = VisionPreviewRenderer(
+            world, target_surface=surface, pygame_module=pygame
+        )
+        grid = VisionGridRenderer(world).render(
+            _view(world, x=128, y=384, world_tick=1)
+        )
+        try:
+            baseline = pygame.image.tostring(preview.render(grid), "RGB")
+            self.assertEqual(
+                TERMINAL_LABELS,
+                {"success": "VICTORY", "dead": "DEAD", "timeout": "TIMEOUT"},
+            )
+            for terminal in ("success", "dead", "timeout"):
+                with self.subTest(terminal=terminal):
+                    rendered = pygame.image.tostring(
+                        preview.render(grid, terminal=terminal), "RGB"
+                    )
+                    self.assertNotEqual(rendered, baseline)
+            with self.assertRaises(ValueError):
+                preview.render(grid, terminal="won")
         finally:
             preview.close()
 
