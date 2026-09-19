@@ -33,7 +33,7 @@ from game2.v2.player.model_client import (
     MODEL_UPDATE_TIMEOUT,
     ModelClient,
 )
-from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
 from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import (
     PPO_RATING_DISPLAY_SECONDS,
@@ -214,7 +214,8 @@ class _StubModel:
             self.release.wait(2.0)
         return SimpleNamespace(
             world_tick=frame.world_tick,
-            action_decision=ActionDecision(frame.world_tick % 2 == 0, False),
+            action_decision=ControlChange(True, False),
+            desired_state=ActionDecision(True, False),
             motor_goal=MotorGoal(0.0, 0.0),
             motion_x=0.0,
         )
@@ -240,6 +241,43 @@ class _StubModel:
 
 
 class ModelRuntimeTests(unittest.TestCase):
+    def test_keep_answer_emits_no_decision_but_change_emits_resolved_state(self):
+        class Policy:
+            episode_mode = "evaluate"
+
+            def __init__(self):
+                self.keep = True
+
+            def process_grid(self, frame):
+                if self.keep:
+                    self.keep = False
+                    return SimpleNamespace(
+                        world_tick=frame.world_tick,
+                        action_decision=ControlChange(False, False),
+                        desired_state=ActionDecision(False, False),
+                    )
+                return SimpleNamespace(
+                    world_tick=frame.world_tick,
+                    action_decision=ControlChange(True, False),
+                    desired_state=ActionDecision(True, False),
+                )
+
+        runtime = ModelRuntime(Policy())
+        runtime._active = True
+        left, right = socket.socketpair()
+        try:
+            right.setblocking(False)
+            self.assertIsNone(runtime._process_pending(left, _grid(1)))
+            self.assertEqual(runtime._decision_id, 0)
+            self.assertEqual(runtime._samples, {})
+
+            self.assertIsNone(runtime._process_pending(left, _grid(2)))
+            self.assertEqual(runtime._decision_id, 1)
+            self.assertEqual(set(runtime._samples), {1})
+        finally:
+            left.close()
+            right.close()
+
     def _start(self, model):
         runtime = ModelRuntime(model, listen_port=0)
         errors = []

@@ -33,7 +33,7 @@ class MotorGoal:
 
 @dataclass(frozen=True)
 class ActionDecision:
-    """Logical Player decision before the public Joystick adapter."""
+    """Complete persistent virtual-pad state accepted by the Engine."""
 
     right: bool
     jump: bool
@@ -43,4 +43,34 @@ class ActionDecision:
             raise TypeError("ActionDecision fields must be bool")
 
 
-__all__ = ["ActionDecision", "MotorGoal"]
+@dataclass(frozen=True)
+class ControlChange:
+    """Policy answer to whether RIGHT or JUMP should change now."""
+
+    right: bool
+    jump: bool
+
+    def __post_init__(self) -> None:
+        if type(self.right) is not bool or type(self.jump) is not bool:
+            raise TypeError("ControlChange fields must be bool")
+
+    @property
+    def any(self) -> bool:
+        return self.right or self.jump
+
+
+def apply_control_change(
+    state: ActionDecision, change: ControlChange
+) -> ActionDecision:
+    """Toggle only the buttons requested by a policy ControlChange."""
+    if not isinstance(state, ActionDecision):
+        raise TypeError("state must be an ActionDecision")
+    if not isinstance(change, ControlChange):
+        raise TypeError("change must be a ControlChange")
+    return ActionDecision(
+        state.right ^ change.right,
+        state.jump ^ change.jump,
+    )
+
+
+__all__ = ["ActionDecision", "ControlChange", "MotorGoal", "apply_control_change"]

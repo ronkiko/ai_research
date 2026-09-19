@@ -7,7 +7,7 @@ from numbers import Real
 import torch
 from torch import nn
 
-from .contracts import ActionDecision, MotorGoal
+from .contracts import ControlChange, MotorGoal
 
 
 MOTOR_CONTROLLER_CONFIGURATION = "5-8-2-dendy-latch-v1"
@@ -66,7 +66,7 @@ def motor_input_tensor(
 
 
 class MotorController582(nn.Module):
-    """Produce desired RIGHT and JUMP button states from a 5-8-2 MLP."""
+    """Decide whether RIGHT and JUMP should change from their current state."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -115,8 +115,8 @@ class MotorController582(nn.Module):
         motion_x: float,
         current_right: bool = False,
         current_jump: bool = False,
-    ) -> ActionDecision:
-        """Return the desired complete virtual-pad state."""
+    ) -> ControlChange:
+        """Return a per-button change mask; False means keep current state."""
         was_training = self.training
         self.eval()
         try:
@@ -126,7 +126,7 @@ class MotorController582(nn.Module):
                 ))
         finally:
             self.train(was_training)
-        return ActionDecision(
+        return ControlChange(
             right=bool(logits[0].item() >= 0.0),
             jump=bool(logits[1].item() >= 0.0),
         )

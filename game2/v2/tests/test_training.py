@@ -42,7 +42,12 @@ from game2.v2.contracts.training import (
 )
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.checkpoint import load_optimizer, save_optimizer
-from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.contracts import (
+    ActionDecision,
+    ControlChange,
+    MotorGoal,
+    apply_control_change,
+)
 from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
@@ -227,6 +232,49 @@ class TerminalQueueTests(unittest.TestCase):
 class LearnedPolicyTrainingTests(unittest.TestCase):
     def _player(self):
         return LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
+
+    def test_control_change_answers_whether_persistent_pad_should_toggle(self):
+        self.assertEqual(
+            apply_control_change(
+                ActionDecision(False, False), ControlChange(True, False)
+            ),
+            ActionDecision(True, False),
+        )
+        self.assertEqual(
+            apply_control_change(
+                ActionDecision(True, False), ControlChange(False, False)
+            ),
+            ActionDecision(True, False),
+        )
+        self.assertEqual(
+            apply_control_change(
+                ActionDecision(True, False), ControlChange(True, True)
+            ),
+            ActionDecision(False, True),
+        )
+
+    def test_actuated_control_change_updates_persistent_state_once(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        frame = _grid(1)
+        sample = DecisionSample(
+            frame.world_tick,
+            frame,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(True, False),
+            -0.5,
+            False,
+            False,
+            0.25,
+            ActionDecision(True, False),
+        )
+        player.record_actuated(sample)
+        self.assertEqual(player.actuated_state, ActionDecision(True, False))
+        self.assertEqual(
+            player.training_records[0].action_decision,
+            ControlChange(True, False),
+        )
 
     def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
         player = self._player()

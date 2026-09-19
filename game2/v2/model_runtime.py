@@ -28,6 +28,7 @@ from game2.v2.contracts.model import (
     send_model_message,
     update_result_message,
 )
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange
 from game2.v2.player.learned.checkpoint import (
     load_critic,
     load_motor_controller,
@@ -172,11 +173,11 @@ class ModelRuntime:
 
     @staticmethod
     def _action_label(sample) -> str:
-        action = sample.action_decision
+        change = sample.action_decision
         return (
-            ("R" if action.right else "")
-            + ("J" if action.jump else "")
-        ) or "-"
+            ("R" if change.right else "")
+            + ("J" if change.jump else "")
+        ) or "KEEP"
 
     def _append_actuated_action(self, episode_id: int, sample) -> None:
         if self.trajectory_log is None:
@@ -288,12 +289,20 @@ class ModelRuntime:
             time.sleep(self.inference_delay)
         sample = self.player.process_grid(frame)
         if sample is not None:
+            change = sample.action_decision
+            if not isinstance(change, ControlChange):
+                raise TypeError("Model policy must return a ControlChange")
+            if not change.any:
+                return None
+            desired_state = sample.desired_state
+            if not isinstance(desired_state, ActionDecision):
+                raise TypeError("Model action must resolve to an ActionDecision")
             self._decision_id += 1
             self._samples[self._decision_id] = sample
             self._send(peer, decision_message(
                 self._decision_id, sample.world_tick,
-                sample.action_decision.right,
-                sample.action_decision.jump,
+                desired_state.right,
+                desired_state.jump,
             ))
         return None
 

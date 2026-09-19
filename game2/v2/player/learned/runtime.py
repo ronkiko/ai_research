@@ -9,7 +9,12 @@ import torch
 from game2.v2.contracts.joystick import JoystickState
 from game2.v2.contracts.vision import VisionGrid
 
-from .contracts import ActionDecision, MotorGoal
+from .contracts import (
+    ActionDecision,
+    ControlChange,
+    MotorGoal,
+    apply_control_change,
+)
 from .critic import CNNCritic
 from .motor import motor_input_tensor
 from .motion import MotionEstimator, goal_center, self_center
@@ -24,11 +29,12 @@ class DecisionSample:
     vision_grid: VisionGrid
     motor_goal: MotorGoal
     motion_x: float
-    action_decision: ActionDecision
+    action_decision: ControlChange
     log_prob: float | None = None
     pad_right: bool = False
     pad_jump: bool = False
     value: float | None = None
+    desired_state: ActionDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,7 @@ class TrainingRecord:
     physics: bytes
     metadata: bytes
     motion_x: float
-    action_decision: ActionDecision
+    action_decision: ControlChange
     pad_right: bool = False
     pad_jump: bool = False
     old_log_prob: float = 0.0
@@ -285,17 +291,22 @@ class LearnedPlayer:
 
         goal = MotorGoal(float(planner_output[0].detach()),
                          float(planner_output[1].detach()))
-        decision = ActionDecision(bool(action_tensor[0].item()), bool(action_tensor[1].item()))
+        change = ControlChange(
+            bool(action_tensor[0].item()),
+            bool(action_tensor[1].item()),
+        )
+        desired_state = apply_control_change(pad_state, change)
         return DecisionSample(
             frame.world_tick,
             frame,
             goal,
             motion_x,
-            decision,
+            change,
             log_prob,
             pad_state.right,
             pad_state.jump,
             value,
+            desired_state,
         )
 
     def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
@@ -319,36 +330,48 @@ class LearnedPlayer:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
                 raise TypeError("Planner returned an invalid MotorGoal")
-            decision = self.motor_controller.decide(
+            change = self.motor_controller.decide(
                 goal,
                 motion_x,
                 self.actuated_state.right,
                 self.actuated_state.jump,
             )
-            if not isinstance(decision, ActionDecision):
-                raise TypeError("Motor Controller returned an invalid ActionDecision")
+            if not isinstance(change, ControlChange):
+                raise TypeError("Motor Controller returned an invalid ControlChange")
+            desired_state = apply_control_change(self.actuated_state, change)
             sample = DecisionSample(
                 frame.world_tick,
                 frame,
                 goal,
                 motion_x,
-                decision,
+                change,
                 None,
                 self.actuated_state.right,
                 self.actuated_state.jump,
+                None,
+                desired_state,
             )
         goal = sample.motor_goal
-        decision = sample.action_decision
+        desired_state = sample.desired_state
+        if desired_state is None:
+            desired_state = apply_control_change(
+                self.actuated_state, sample.action_decision
+            )
         self.latest_goal = goal
-        self.latest_decision = decision
+        self.latest_decision = desired_state
         self.latest_sample = sample
         return sample
 
     def record_actuated(self, sample: DecisionSample) -> None:
-        """Apply the Engine-accepted desired pad state to Model memory."""
+        """Apply one Engine-accepted control change to persistent pad memory."""
         if not isinstance(sample, DecisionSample):
             raise TypeError("record_actuated requires a DecisionSample")
-        self.actuated_state = sample.action_decision
+        desired_state = sample.desired_state
+        if desired_state is None:
+            desired_state = apply_control_change(
+                self.actuated_state, sample.action_decision
+            )
+        self.actuated_state = desired_state
         if self._episode_mode != "train":
             return
         sample_id = id(sample)
@@ -525,7 +548,7 @@ class LearnedPlayer:
             action = (
                 ("R" if record.action_decision.right else "")
                 + ("J" if record.action_decision.jump else "")
-            ) or "-"
+            ) or "KEEP"
             old_log_prob = float(record.old_log_prob)
             final_log_prob = float(new_log_prob[index])
             raw_gae = float(returns[index]) - float(record.old_value)

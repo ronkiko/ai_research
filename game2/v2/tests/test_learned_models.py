@@ -19,7 +19,7 @@ from game2.v2.player.learned.checkpoint import (load_motor_controller,
                                                  load_planner,
                                                  save_motor_controller,
                                                  save_planner)
-from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
 from game2.v2.player.learned.motor import MotorController582, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
@@ -84,6 +84,10 @@ class LearnedContractTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ActionDecision(1, False)
         self.assertEqual(ActionDecision(True, False), ActionDecision(True, False))
+        with self.assertRaises(TypeError):
+            ControlChange(1, False)
+        self.assertFalse(ControlChange(False, False).any)
+        self.assertTrue(ControlChange(True, False).any)
 
     def test_multiscale_grid_becomes_fine_logical_cnn_channels(self):
         metadata = bytearray(24 * 16)
@@ -193,7 +197,7 @@ class LearnedModelTests(unittest.TestCase):
         decision = controller.decide(
             MotorGoal(0.1, -0.2), 0.3, True, False
         )
-        self.assertIsInstance(decision, ActionDecision)
+        self.assertIsInstance(decision, ControlChange)
 
     def test_fresh_models_are_reproducible_nonzero_and_rng_isolated(self):
         before = torch.random.get_rng_state()
