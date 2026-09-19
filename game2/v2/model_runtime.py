@@ -36,6 +36,7 @@ from game2.v2.player.learned.checkpoint import (
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
+from game2.v2.player.learned.motion import self_center
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer
 
@@ -169,6 +170,35 @@ class ModelRuntime:
         integer = round(rounded)
         return integer if abs(rounded - integer) < 1e-9 else rounded
 
+    @staticmethod
+    def _action_label(sample) -> str:
+        action = sample.action_decision
+        return (
+            ("R" if action.right else "")
+            + ("J" if action.jump else "")
+        ) or "-"
+
+    def _append_actuated_action(self, episode_id: int, sample) -> None:
+        if self.trajectory_log is None:
+            return
+        center = self_center(sample.vision_grid)
+        if center is None:
+            return
+        payload = {
+            "e": episode_id,
+            "k": "a",
+            "t": sample.world_tick,
+            "x": self._compact_number(center[0]),
+            "y": self._compact_number(center[1]),
+            "a": self._action_label(sample),
+        }
+        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.trajectory_log.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                + "\n"
+            )
+
     def _append_ppo_diagnostics(
         self, episode_id: int, diagnostics: tuple[dict, ...]
     ) -> None:
@@ -177,6 +207,12 @@ class ModelRuntime:
         self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
         with self.trajectory_log.open("a", encoding="utf-8") as handle:
             for diagnostic in diagnostics:
+                reward = diagnostic.get("rw")
+                if (
+                    type(reward) not in (int, float)
+                    or abs(float(reward)) <= 1e-12
+                ):
+                    continue
                 payload = {"e": episode_id, "k": "a"}
                 for key, value in diagnostic.items():
                     payload[key] = (
@@ -239,6 +275,8 @@ class ModelRuntime:
             sample = self._samples.pop(message["decision_id"], None)
             if sample is not None:
                 self.player.record_actuated(sample)
+                if self._episode_id is not None:
+                    self._append_actuated_action(self._episode_id, sample)
             return pending_observation
         if message_type == EPISODE_END:
             self._handle_episode_end(peer, message)

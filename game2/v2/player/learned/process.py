@@ -33,7 +33,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.model_client import ModelClient
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
-from .motion import SELF, VisionProgress, has_metadata, self_center
+from .motion import SELF, VisionProgress, has_metadata
 
 
 PPO_RATING_DISPLAY_SECONDS = 2.0
@@ -45,18 +45,12 @@ def _pause_after_ppo_ratings(update: dict, sleeper: Callable[[float], None]) -> 
 
 
 class VisionTrajectoryLog:
-    """Compact JSONL trajectory metadata derived only from public Vision."""
+    """JSONL episode boundaries; ModelRuntime owns all action rows."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding="utf-8")
-        self._last_position: dict[int, tuple[int | float, int | float]] = {}
-
-    @staticmethod
-    def _coordinate(value: float) -> int | float:
-        rounded = round(value)
-        return rounded if abs(value - rounded) < 1e-9 else round(value, 3)
 
     def _write(self, payload: dict) -> None:
         self._handle.write(
@@ -65,30 +59,10 @@ class VisionTrajectoryLog:
         self._handle.flush()
 
     def start(self, episode_id: int, mode: str) -> None:
-        self._last_position.pop(episode_id, None)
         self._write({"e": episode_id, "m": mode})
-
-    def record(self, episode_id: int, grid) -> None:
-        center = self_center(grid)
-        if center is None:
-            return
-        position = (
-            self._coordinate(center[0]),
-            self._coordinate(center[1]),
-        )
-        if self._last_position.get(episode_id) == position:
-            return
-        self._last_position[episode_id] = position
-        self._write({
-            "e": episode_id,
-            "t": grid.world_tick,
-            "x": position[0],
-            "y": position[1],
-        })
 
     def finish(self, episode_id: int, result: str, world_tick: int) -> None:
         self._write({"e": episode_id, "r": result, "t": world_tick})
-        self._last_position.pop(episode_id, None)
 
     def close(self) -> None:
         self._handle.close()
@@ -279,8 +253,6 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
                 and frame.world_tick > vision_floor_tick:
             latest_frame_tick = frame.world_tick
             progress_tracker.update(frame)
-            if trajectory is not None:
-                trajectory.record(episode_id, frame)
             has_self = has_metadata(frame, SELF)
             if has_self:
                 saw_self_frame = True

@@ -29,7 +29,7 @@ META_OTHER_COLOR = (196, 84, 220, 118)
 SELF_CENTER_COLOR = (255, 226, 72)
 OTHER_CENTER_COLOR = (255, 255, 255)
 TRAIL_COLOR = (255, 226, 72)
-LOGGED_TICK_COLOR = TRAIL_COLOR
+ACTION_TICK_COLOR = TRAIL_COLOR
 REWARD_POSITIVE_COLOR = (72, 220, 92)
 REWARD_NEGATIVE_COLOR = (240, 72, 72)
 REWARD_ZERO_COLOR = (246, 236, 178)
@@ -73,7 +73,7 @@ class VisionPreviewRenderer:
         self._trajectory_file_id: tuple[int, int] | None = None
         self._trajectory_episode: int | None = None
         self._rated_episode: int | None = None
-        self._logged_ticks: dict[int, tuple[int, int]] = {}
+        self._action_ticks: dict[int, tuple[int, int]] = {}
         self._rated_ticks: dict[int, tuple[tuple[int, int], float]] = {}
 
     @staticmethod
@@ -196,7 +196,7 @@ class VisionPreviewRenderer:
     def _reset_trajectory_annotations(self) -> None:
         self._trajectory_episode = None
         self._rated_episode = None
-        self._logged_ticks.clear()
+        self._action_ticks.clear()
         self._rated_ticks.clear()
 
     def _consume_trajectory_row(self, payload: dict) -> bool:
@@ -206,40 +206,36 @@ class VisionPreviewRenderer:
         if "m" in payload:
             changed = (
                 episode_id != self._trajectory_episode
-                or bool(self._logged_ticks)
+                or bool(self._action_ticks)
                 or bool(self._rated_ticks)
             )
             if episode_id != self._trajectory_episode:
-                self._logged_ticks.clear()
+                self._action_ticks.clear()
                 self._rated_ticks.clear()
                 self._rated_episode = None
             self._trajectory_episode = episode_id
             return changed
+        if payload.get("k") != "a" or episode_id != self._trajectory_episode:
+            return False
         point = self._trajectory_point(payload)
         if point is None:
             return False
         tick, position = point
-        if payload.get("k") == "a":
-            reward = payload.get("rw")
-            if type(reward) not in (int, float) or not math.isfinite(float(reward)):
-                return False
-            if abs(float(reward)) <= 1e-12:
-                return False
-            if episode_id != self._trajectory_episode:
-                return False
-            if episode_id != self._rated_episode:
-                self._rated_episode = episode_id
-                self._rated_ticks.clear()
-            item = (position, float(reward))
-            changed = self._rated_ticks.get(tick) != item
-            self._rated_ticks[tick] = item
+        if "rw" not in payload:
+            changed = self._action_ticks.get(tick) != position
+            self._action_ticks[tick] = position
             return changed
-        if self._trajectory_episode is None:
-            self._trajectory_episode = episode_id
-        if episode_id != self._trajectory_episode:
+        reward = payload.get("rw")
+        if type(reward) not in (int, float) or not math.isfinite(float(reward)):
             return False
-        changed = self._logged_ticks.get(tick) != position
-        self._logged_ticks[tick] = position
+        if abs(float(reward)) <= 1e-12:
+            return False
+        if episode_id != self._rated_episode:
+            self._rated_episode = episode_id
+            self._rated_ticks.clear()
+        item = (position, float(reward))
+        changed = self._rated_ticks.get(tick) != item
+        self._rated_ticks[tick] = item
         return changed
 
     def refresh_trajectory(self) -> bool:
@@ -291,13 +287,13 @@ class VisionPreviewRenderer:
 
     def _draw_trajectory_annotations(self, surface) -> None:
         pygame = self.pygame
-        for tick, position in sorted(self._logged_ticks.items()):
+        for tick, position in sorted(self._action_ticks.items()):
             rated_here = (
                 self._rated_episode == self._trajectory_episode
                 and tick in self._rated_ticks
             )
             if not rated_here:
-                pygame.draw.circle(surface, LOGGED_TICK_COLOR, position, 2)
+                pygame.draw.circle(surface, ACTION_TICK_COLOR, position, 2)
         font = self._font_for_reward()
         occupied = []
         for _tick, (position, reward) in sorted(self._rated_ticks.items()):
@@ -486,7 +482,7 @@ class VisionPreviewRenderer:
 
 
 __all__ = [
-    "LOGGED_TICK_COLOR", "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
+    "ACTION_TICK_COLOR", "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
     "REWARD_NEGATIVE_COLOR", "REWARD_POSITIVE_COLOR", "REWARD_ZERO_COLOR",
     "TERMINAL_LABELS", "TRAIL_COLOR", "VisionPreviewRenderer",
 ]

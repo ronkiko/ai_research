@@ -17,7 +17,7 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
-    LOGGED_TICK_COLOR, MAJOR_GRID_COLOR, MINOR_GRID_COLOR,
+    ACTION_TICK_COLOR, MAJOR_GRID_COLOR, MINOR_GRID_COLOR,
     REWARD_NEGATIVE_COLOR, REWARD_POSITIVE_COLOR, REWARD_ZERO_COLOR,
     SELF_CENTER_COLOR, TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
 )
@@ -433,9 +433,10 @@ class VisionPreviewRendererTests(unittest.TestCase):
             trajectory = Path(directory) / "trajectory.jsonl"
             rows = [
                 {"e": 1, "m": "train"},
-                {"e": 1, "t": 10, "x": 128, "y": 384},
-                {"e": 1, "t": 20, "x": 192, "y": 384},
-                {"e": 1, "t": 40, "x": 320, "y": 448},
+                {"e": 1, "t": 9, "x": 96, "y": 384},
+                {"e": 1, "k": "a", "t": 10, "x": 128, "y": 384, "a": "R"},
+                {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "a": "RJ"},
+                {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "a": "-"},
             ]
             trajectory.write_text(
                 "".join(json.dumps(row) + "\n" for row in rows),
@@ -453,11 +454,12 @@ class VisionPreviewRendererTests(unittest.TestCase):
             try:
                 preview.render(grid)
                 self.assertEqual(
-                    tuple(surface.get_at((128, 384)))[:3], LOGGED_TICK_COLOR
+                    tuple(surface.get_at((128, 384)))[:3], ACTION_TICK_COLOR
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((192, 384)))[:3], LOGGED_TICK_COLOR
+                    tuple(surface.get_at((192, 384)))[:3], ACTION_TICK_COLOR
                 )
+                self.assertNotIn(9, preview._action_ticks)
 
                 action_rows = [
                     {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "rw": -0.25},
@@ -476,7 +478,7 @@ class VisionPreviewRendererTests(unittest.TestCase):
                     tuple(surface.get_at((256, 384)))[:3], REWARD_POSITIVE_COLOR
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((320, 448)))[:3], LOGGED_TICK_COLOR
+                    tuple(surface.get_at((320, 448)))[:3], ACTION_TICK_COLOR
                 )
                 self.assertNotIn(40, preview._rated_ticks)
                 self.assertEqual(preview._reward_visual(0.031)[0], "+0.031")
@@ -485,7 +487,7 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 with trajectory.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"e": 2, "m": "train"}) + "\n")
                     handle.write(json.dumps(
-                        {"e": 2, "t": 50, "x": 128, "y": 448}
+                        {"e": 2, "k": "a", "t": 50, "x": 128, "y": 448, "a": "R"}
                     ) + "\n")
                 self.assertTrue(preview.refresh_trajectory())
                 preview.render(grid)
@@ -493,7 +495,7 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 self.assertIsNone(preview._rated_episode)
                 self.assertEqual(preview._rated_ticks, {})
                 self.assertEqual(
-                    tuple(surface.get_at((128, 448)))[:3], LOGGED_TICK_COLOR
+                    tuple(surface.get_at((128, 448)))[:3], ACTION_TICK_COLOR
                 )
                 self.assertNotEqual(
                     tuple(surface.get_at((192, 384)))[:3], REWARD_NEGATIVE_COLOR

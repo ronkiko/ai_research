@@ -60,8 +60,6 @@ class VisionTrajectoryLogTests(unittest.TestCase):
             path = Path(directory) / "trajectory.jsonl"
             log = VisionTrajectoryLog(path)
             log.start(1, "train")
-            log.record(1, _grid(1))
-            log.record(1, _grid(2))
             log.finish(1, "dead", 3)
             log.close()
 
@@ -71,12 +69,47 @@ class VisionTrajectoryLogTests(unittest.TestCase):
             ]
             self.assertEqual(rows, [
                 {"e": 1, "m": "train"},
-                {"e": 1, "t": 1, "x": 228, "y": 164},
                 {"e": 1, "r": "dead", "t": 3},
             ])
 
 
 class PPOFlightRecorderTests(unittest.TestCase):
+    def test_runtime_logs_only_an_actuated_model_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.jsonl"
+            recorded = []
+            player = SimpleNamespace(record_actuated=recorded.append)
+            runtime = ModelRuntime(player, trajectory_log=path)
+            runtime._episode_id = 7
+            runtime._active = True
+            sample = SimpleNamespace(
+                world_tick=431,
+                vision_grid=_grid(431),
+                action_decision=ActionDecision(True, True),
+            )
+            runtime._samples[3] = sample
+            self.assertFalse(path.exists())
+
+            runtime._handle(
+                None,
+                {"type": ACTUATED, "decision_id": 3},
+                None,
+            )
+
+            self.assertEqual(recorded, [sample])
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows, [{
+                "a": "RJ",
+                "e": 7,
+                "k": "a",
+                "t": 431,
+                "x": 228,
+                "y": 164,
+            }])
+
     def test_rating_display_pause_only_follows_a_real_ppo_update(self):
         sleeps = []
         _pause_after_ppo_ratings({"updated": True}, sleeps.append)
@@ -89,6 +122,20 @@ class PPOFlightRecorderTests(unittest.TestCase):
             path = Path(directory) / "trajectory.jsonl"
             runtime = ModelRuntime(SimpleNamespace(), trajectory_log=path)
             runtime._append_ppo_diagnostics(7, ({
+                "t": 400,
+                "x": 350.0,
+                "y": 420.0,
+                "a": "R",
+                "rw": 0.0,
+                "v": -0.10,
+                "nv": -0.08,
+                "gae": 0.0,
+                "adv": 0.0,
+                "ret": -0.08,
+                "lp": -1.0,
+                "nlp": -0.9,
+                "ratio": 1.1,
+            }, {
                 "t": 431,
                 "x": 388.0,
                 "y": 420.0,
