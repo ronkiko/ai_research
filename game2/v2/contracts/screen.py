@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .framing import PROTOCOL_VERSION, ProtocolError, encode_frame, recv_exact, recv_frame
+from .framing import PROTOCOL_VERSION, ProtocolError, encode_frame, recv_frame
 from .manifests import Endpoint
 
 
 SCREEN_TYPE = "screen_frame"
 SCREEN_PIXEL_FORMAT = "rgb24"
 SCREEN_MAX_PIXELS = 4_194_304
+SCREEN_MAX_BYTES = SCREEN_MAX_PIXELS * 3
 SCREEN_FIELDS = frozenset({
     "version", "type", "session_id", "world_tick", "width", "height",
     "pixel_format", "byte_length",
@@ -196,6 +197,20 @@ def send_screen_frame(sock: socket.socket, session_id: str, frame: ScreenFrame) 
     sock.sendall(frame.pixels)
 
 
+def _recv_screen_bytes(sock: socket.socket, size: int) -> bytes:
+    if type(size) is not int or size < 0 or size > SCREEN_MAX_BYTES:
+        raise ProtocolError("Screen payload size is invalid")
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = sock.recv(min(remaining, 1_048_576))
+        if not chunk:
+            raise EOFError("peer closed before a complete Screen payload")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def recv_screen_frame(sock: socket.socket, expected_session_id: str) -> ScreenFrame:
     header = recv_frame(sock)
     if not isinstance(header, dict) or set(header) != SCREEN_FIELDS:
@@ -216,12 +231,13 @@ def recv_screen_frame(sock: socket.socket, expected_session_id: str) -> ScreenFr
         raise ProtocolError("Screen world_tick must be non-negative")
     if type(byte_length) is not int or byte_length != width * height * 3:
         raise ProtocolError("Screen byte_length does not match dimensions")
-    pixels = recv_exact(sock, byte_length)
+    pixels = _recv_screen_bytes(sock, byte_length)
     return ScreenFrame(width, height, pixels, world_tick)
 
 
 __all__ = [
-    "CURRENT_SCREEN_SOURCE_PATH", "SCREEN_FIELDS", "SCREEN_MAX_PIXELS",
+    "CURRENT_SCREEN_SOURCE_PATH", "SCREEN_FIELDS", "SCREEN_MAX_BYTES",
+    "SCREEN_MAX_PIXELS",
     "SCREEN_PIXEL_FORMAT", "SCREEN_SOURCE_TYPE", "SCREEN_TYPE", "ScreenFrame",
     "ScreenSourceDiscovery", "publish_screen_source", "recv_screen_frame",
     "remove_screen_source", "send_screen_frame",
