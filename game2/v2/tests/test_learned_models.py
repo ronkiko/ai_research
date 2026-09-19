@@ -18,6 +18,7 @@ from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
     DecisionSample,
     LearnedPlayer,
+    REPLAY_BATCH_SIZE,
     TrainingRecord,
 )
 from game2.v2.player.learned.vision import (
@@ -189,6 +190,23 @@ class LearnedModelTests(unittest.TestCase):
         after = self._action_probabilities(player, frame)
 
         self.assertTrue(updated)
+        self.assertGreater(float(after[0]), float(before[0]))
+        self.assertLess(float(after[1]), float(before[1]))
+
+
+    def test_replay_update_uses_bounded_batches_and_preserves_policy_direction(self):
+        frame = _frame(40, 24)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        before = self._action_probabilities(player, frame)
+        player._training_records.extend(
+            _record(frame, ActionDecision(True, False))
+            for _ in range(REPLAY_BATCH_SIZE + 5)
+        )
+        updated, loss = player.apply_result(1.0)
+        after = self._action_probabilities(player, frame)
+        self.assertTrue(updated)
+        self.assertTrue(math.isfinite(loss))
         self.assertGreater(float(after[0]), float(before[0]))
         self.assertLess(float(after[1]), float(before[1]))
 

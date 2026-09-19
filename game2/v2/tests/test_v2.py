@@ -101,6 +101,24 @@ class InternalSchedulingTests(unittest.TestCase):
         engine.tick()
         self.assertGreater(actor.body.vx, 0)
 
+
+    def test_right_and_jump_apply_together_on_takeoff_tick(self):
+        engine = self._engine()
+        actor = engine.actors["actor-a"]
+        self.assertTrue(actor.body.grounded)
+        start_x = actor.body.x
+        self.assertEqual(
+            engine.submit_action(
+                ActionCommand("actor-a", 1, 1, 1, True, True)
+            ),
+            "accepted",
+        )
+        engine.tick()
+        self.assertGreater(actor.body.vx, 0.0)
+        self.assertLess(actor.body.vy, 0.0)
+        self.assertGreater(actor.body.x, start_x)
+        self.assertFalse(actor.body.grounded)
+
     def test_duplicate_and_late_actions_are_rejected_per_actor(self):
         engine = self._engine()
         command = ActionCommand("actor-a", 1, 3, 1)

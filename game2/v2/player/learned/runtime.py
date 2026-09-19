@@ -64,6 +64,9 @@ def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState
     return JoystickState(sequence, decision.right, decision.jump)
 
 
+REPLAY_BATCH_SIZE = 32
+
+
 class LearnedPlayer:
     """Own the Planner, Motor Controller, temporal representation, and latest values."""
 
@@ -225,20 +228,45 @@ class LearnedPlayer:
         if sample.log_prob is not None:
             self._log_probabilities.append(float(sample.log_prob))
 
-    def _backward_record(self, record: TrainingRecord, reward: float,
-                         record_count: int) -> float:
-        """Backpropagate one replay record, releasing its graph on return."""
-        vision = vision_to_tensor(record.vision_frame).unsqueeze(0)
-        planner_output, logits = self._model_logits(vision, record.motion_x)
-        action_tensor = torch.tensor(
-            [record.action_decision.right, record.action_decision.jump],
-            dtype=logits.dtype, device=logits.device,
-        )
-        log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
-            logits, action_tensor, reduction="none").mean()
-        sample_loss = -float(reward) * log_prob / record_count
-        loss_value = float(sample_loss.detach())
-        sample_loss.backward()
+    def _backward_records(self, records: tuple[TrainingRecord, ...],
+                          reward: float, record_count: int) -> float:
+        """Backpropagate replay in bounded mini-batches.
+
+        The loss is mathematically the same episode mean as the old per-record
+        loop, but CNN forward/backward work is vectorized instead of repeated
+        hundreds of times in Python.
+        """
+        loss_value = 0.0
+        groups: dict[tuple[int, int], list[TrainingRecord]] = {}
+        for record in records:
+            groups.setdefault((record.width, record.height), []).append(record)
+
+        for group in groups.values():
+            for start in range(0, len(group), REPLAY_BATCH_SIZE):
+                batch = group[start:start + REPLAY_BATCH_SIZE]
+                vision = torch.stack([
+                    vision_to_tensor(record.vision_frame) for record in batch
+                ])
+                planner_output = self.planner(vision)
+                motion = torch.tensor(
+                    [record.motion_x for record in batch],
+                    dtype=planner_output.dtype,
+                    device=planner_output.device,
+                ).unsqueeze(1)
+                motor_input = torch.cat((planner_output, motion), dim=1)
+                logits = self.motor_controller(motor_input)
+                actions = torch.tensor(
+                    [[record.action_decision.right, record.action_decision.jump]
+                     for record in batch],
+                    dtype=logits.dtype,
+                    device=logits.device,
+                )
+                log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, actions, reduction="none"
+                ).mean(dim=1)
+                batch_loss = -float(reward) * log_prob.sum() / record_count
+                loss_value += float(batch_loss.detach())
+                batch_loss.backward()
         return loss_value
 
     def apply_result(self, reward: float) -> tuple[bool, float]:
@@ -260,10 +288,9 @@ class LearnedPlayer:
             self.last_update_loss = 0.0
             return False, 0.0
         self.optimizer.zero_grad(set_to_none=True)
-        loss_value = 0.0
-        record_count = len(self._training_records)
-        for record in tuple(self._training_records):
-            loss_value += self._backward_record(record, float(reward), record_count)
+        records = tuple(self._training_records)
+        record_count = len(records)
+        loss_value = self._backward_records(records, float(reward), record_count)
         parameters = list(self.planner.parameters()) + list(self.motor_controller.parameters())
         torch.nn.utils.clip_grad_norm_(parameters, max_norm=1.0)
         self.optimizer.step()
@@ -280,4 +307,7 @@ class LearnedPlayer:
         return action_to_joystick(sequence, self.latest_decision)
 
 
-__all__ = ["DecisionSample", "LearnedPlayer", "TrainingRecord", "action_to_joystick"]
+__all__ = [
+    "DecisionSample", "LearnedPlayer", "REPLAY_BATCH_SIZE", "TrainingRecord",
+    "action_to_joystick",
+]

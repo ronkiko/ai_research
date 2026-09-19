@@ -116,15 +116,24 @@ class PhysicsWorld:
         if not body.alive:
             return []
         body.grounded = self._supported(body)
-        if body.grounded and jump:
-            body.vy = -config.jump_speed
-            body.grounded = False
-        elif body.grounded:
+        if body.grounded:
+            # Horizontal and jump buttons are independent digital controls.
+            # RIGHT+JUMP must accelerate horizontally on the take-off tick;
+            # otherwise repeated jumps can starve all horizontal movement.
             if move:
-                body.vx = max(-config.max_speed, min(config.max_speed,
-                           body.vx + move * config.acceleration * config.dt))
+                body.vx = max(
+                    -config.max_speed,
+                    min(config.max_speed,
+                        body.vx + move * config.acceleration * config.dt),
+                )
             else:
-                body.vx = copysign(max(0.0, abs(body.vx) - config.braking * config.dt), body.vx)
+                body.vx = copysign(
+                    max(0.0, abs(body.vx) - config.braking * config.dt),
+                    body.vx,
+                )
+            if jump:
+                body.vy = -config.jump_speed
+                body.grounded = False
         body.vy += config.gravity * config.dt
         events = []
         remaining = config.dt
