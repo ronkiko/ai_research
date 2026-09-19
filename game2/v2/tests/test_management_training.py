@@ -9,7 +9,7 @@ from pathlib import Path
 from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.screen import ScreenSourceDiscovery, publish_screen_source
-from game2.v2.management.training import TrainingRun
+from game2.v2.management.training import SCREEN_REQUEST_TIMEOUT, TrainingRun
 
 
 class _FakeProcess:
@@ -92,6 +92,10 @@ class _ScreenControl:
 
 
 class ManagementTrainingTests(unittest.TestCase):
+    def test_screen_request_timeout_covers_viewer_startup(self):
+        self.assertGreaterEqual(SCREEN_REQUEST_TIMEOUT, 10.0)
+
+
     def _manifest(self, directory):
         root = Path(directory)
         maps = []

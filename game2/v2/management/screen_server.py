@@ -9,6 +9,8 @@ import socket
 import subprocess
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 
 from game2.v2.contracts.framing import recv_frame, send_frame
@@ -32,6 +34,9 @@ def _terminate(process) -> None:
         process.wait()
 
 
+VIEWER_READY_TIMEOUT = 10.0
+
+
 def _launch_viewer(screen: int, source: ScreenSourceDiscovery):
     command = [
         sys.executable, "-m", "game2.v2.management.screen_client",
@@ -43,19 +48,32 @@ def _launch_viewer(screen: int, source: ScreenSourceDiscovery):
         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
-    deadline = __import__("time").monotonic() + 5
-    ready = ""
+    deadline = time.monotonic() + VIEWER_READY_TIMEOUT
+    diagnostics = deque(maxlen=20)
+    ready = False
     if process.stdout is not None:
-        while __import__("time").monotonic() < deadline:
-            readable, _, _ = select.select(
-                [process.stdout], [], [], deadline - __import__("time").monotonic()
-            )
-            if readable:
-                ready = process.stdout.readline()
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
                 break
-    if not ready.startswith("READY "):
+            remaining = max(0.0, deadline - time.monotonic())
+            readable, _, _ = select.select(
+                [process.stdout], [], [], min(remaining, 0.25)
+            )
+            if not readable:
+                continue
+            line = process.stdout.readline()
+            if not line:
+                continue
+            diagnostics.append(line.rstrip())
+            if line.startswith("READY "):
+                ready = True
+                break
+    if not ready:
+        detail = " | ".join(diagnostics) if diagnostics else (
+            f"exit={process.poll()}" if process.poll() is not None else "READY timeout"
+        )
         _terminate(process)
-        raise RuntimeError("Screen window failed before READY")
+        raise RuntimeError(f"Screen window failed before READY: {detail}")
     if process.stdout is not None:
         def drain():
             for line in process.stdout:
@@ -127,7 +145,8 @@ class ScreenServer:
                 elif kind != PROBE:
                     raise ValueError("unsupported Screen Server request")
                 send_frame(client, self._status())
-        except (EOFError, OSError, RuntimeError, ValueError):
+        except (EOFError, OSError, RuntimeError, ValueError) as exc:
+            print(f"SCREEN ERROR {type(exc).__name__}: {exc}", flush=True)
             return
         finally:
             try: client.close()

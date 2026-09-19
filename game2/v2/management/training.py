@@ -36,6 +36,7 @@ DEFAULT_CHECKPOINT_DIR = ROOT / "game2" / "v2" / "runtime" / "checkpoints" / "le
 DEFAULT_SCREEN_SERVER = ROOT / "game2" / "v2" / "runtime" / "screen-server.json"
 DEFAULT_EPISODE_LIMIT = 1200
 PROCESS_TIMEOUT = 30.0
+SCREEN_REQUEST_TIMEOUT = 12.0
 _OUTPUT_END = object()
 
 
@@ -161,10 +162,11 @@ class ScreenControl:
     def _request(self, message: dict) -> tuple[dict[str, Any], ...]:
         discovery = ScreenServerDiscovery.from_file(self.discovery_path)
         sock = socket.create_connection(
-            (discovery.endpoint.host, discovery.endpoint.port), timeout=2
+            (discovery.endpoint.host, discovery.endpoint.port),
+            timeout=SCREEN_REQUEST_TIMEOUT,
         )
         try:
-            sock.settimeout(2)
+            sock.settimeout(SCREEN_REQUEST_TIMEOUT)
             send_frame(sock, message)
             return decode_screen_server_status(recv_frame(sock))
         finally:

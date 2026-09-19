@@ -14,7 +14,7 @@ from game2.v2.contracts.screen_server import (
     ScreenServerDiscovery, bind_message, decode_screen_server_request,
     decode_screen_server_status, probe_message, status_message, unbind_message,
 )
-from game2.v2.management.screen_server import ScreenServer
+from game2.v2.management.screen_server import ScreenServer, VIEWER_READY_TIMEOUT
 
 
 class FakeViewer:
@@ -27,6 +27,10 @@ class FakeViewer:
 
 
 class ScreenServerContractTests(unittest.TestCase):
+    def test_viewer_ready_timeout_exceeds_short_client_startup_jitter(self):
+        self.assertGreaterEqual(VIEWER_READY_TIMEOUT, 5.0)
+
+
     def test_probe_bind_unbind_and_status_are_strict(self):
         source = ScreenSourceDiscovery(
             1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
