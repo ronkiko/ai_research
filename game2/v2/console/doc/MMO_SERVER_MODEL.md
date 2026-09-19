@@ -130,9 +130,10 @@ Actor. Joystick and Vision endpoints are likewise per-Player capabilities.
 `boot.sh` starts the Console server, loads World, and starts the world clock
 without requiring a Player.
 
-`vision.sh` connects to an existing Console, initializes an examiner/model
-client, and waits for explicit `START`. `START` lets that Player/Actor enter the
-World. Closing `vision.sh` does not stop Console.
+External Player clients connect to the existing Console through discovery/ATTACH,
+receive their per-Player Joystick and Vision capabilities, and wait for explicit
+`START`. `START` lets that Player/Actor enter the World. Closing one Player
+connection does not stop Console.
 
 ## Implementation Status
 

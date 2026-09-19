@@ -29,8 +29,8 @@ Patch 3 status:
 - implemented: global `world_tick`, Actor registry, 0..N core Actors,
   actor-scoped input/result/respawn, multi-Actor STATE, SELF/OTHER Vision;
 - implemented: persistent `boot.sh`, dynamic Connection attach/discovery,
-  per-Player public capability allocation, explicit `START`, attach-only
-  `vision.sh`, public terminal events, actor-local respawn, and detach cleanup.
+  per-Player public capability allocation, explicit `START`, public
+  `VisionGrid` observations, public terminal events, actor-local respawn, and detach cleanup.
 
 Training Episodes remain outside Console. They are experiment/training records,
 not Engine or Player lifecycle state.
