@@ -97,8 +97,10 @@ class VisionContractTests(unittest.TestCase):
                 right.close()
 
     def test_dimensions_are_bounded_to_authored_world_limit(self):
-        with self.assertRaises(ProtocolError):
-            VisionGrid(65, 64, 64, b"", b"", 0)
+        for columns, rows in ((65, 1), (1, 65), (65, 64)):
+            with self.subTest(columns=columns, rows=rows):
+                with self.assertRaises(ProtocolError):
+                    VisionGrid(columns, rows, 64, b"", b"", 0)
 
 
 class VisionPublisherTests(unittest.TestCase):

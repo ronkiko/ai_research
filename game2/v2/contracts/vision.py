@@ -9,7 +9,9 @@ from .framing import PROTOCOL_VERSION, ProtocolError, encode_frame, recv_exact, 
 
 
 VISION_TYPE = "vision_grid"
-VISION_MAX_CELLS = 64 * 64
+VISION_MAX_COLUMNS = 64
+VISION_MAX_ROWS = 64
+VISION_MAX_CELLS = VISION_MAX_COLUMNS * VISION_MAX_ROWS
 VISION_FIELDS = frozenset({
     "version", "type", "session_id", "world_tick", "columns", "rows",
     "tile_size", "physics_length", "metadata_length",
@@ -38,10 +40,10 @@ class VisionGrid:
     world_tick: int
 
     def __post_init__(self) -> None:
-        if type(self.columns) is not int or self.columns <= 0:
-            raise ProtocolError("VisionGrid columns must be a positive integer")
-        if type(self.rows) is not int or self.rows <= 0:
-            raise ProtocolError("VisionGrid rows must be a positive integer")
+        if type(self.columns) is not int or not 1 <= self.columns <= VISION_MAX_COLUMNS:
+            raise ProtocolError("VisionGrid columns are outside the authored world limit")
+        if type(self.rows) is not int or not 1 <= self.rows <= VISION_MAX_ROWS:
+            raise ProtocolError("VisionGrid rows are outside the authored world limit")
         if self.columns * self.rows > VISION_MAX_CELLS:
             raise ProtocolError("VisionGrid is too large")
         if type(self.tile_size) is not int or self.tile_size <= 0:
@@ -88,8 +90,11 @@ def _validate_header(
     tile_size = header.get("tile_size")
     if type(world_tick) is not int or world_tick < 0:
         raise ProtocolError("Vision world_tick must be non-negative")
-    if type(columns) is not int or columns <= 0 or type(rows) is not int or rows <= 0:
-        raise ProtocolError("Vision grid dimensions must be positive integers")
+    if (
+        type(columns) is not int or not 1 <= columns <= VISION_MAX_COLUMNS
+        or type(rows) is not int or not 1 <= rows <= VISION_MAX_ROWS
+    ):
+        raise ProtocolError("Vision grid dimensions are outside the authored world limit")
     cells = columns * rows
     if cells > VISION_MAX_CELLS:
         raise ProtocolError("Vision grid is too large")
@@ -135,6 +140,6 @@ def recv_vision_grid(sock: socket.socket, expected_session_id: str) -> VisionGri
 __all__ = [
     "META_GOAL", "META_MASK", "META_OTHER_ACTOR", "META_SELF",
     "PHYSICS_EMPTY", "PHYSICS_HAZARD", "PHYSICS_SOLID",
-    "VISION_FIELDS", "VISION_MAX_CELLS", "VISION_TYPE", "VisionGrid",
+    "VISION_FIELDS", "VISION_MAX_CELLS", "VISION_MAX_COLUMNS", "VISION_MAX_ROWS", "VISION_TYPE", "VisionGrid",
     "recv_vision_grid", "send_vision_grid",
 ]
