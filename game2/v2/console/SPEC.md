@@ -71,8 +71,9 @@ Neither presentation changes World or affects Physics. Vision is a representatio
 of what exists in the game world, not raw Engine debug telemetry such as x/y or
 velocity metadata.
 
-Future sensory peripherals, such as VisionAdapter and event/audio-like
-adapters, will be separate Player-facing contracts. The management plane is:
+The current machine sensory peripheral is the public per-Player `VisionGrid`
+stream. Additional event/audio-like sensors, if added, remain separate
+Player-facing contracts. The management plane is:
 
 ```text
 UI <-> Console management
@@ -101,10 +102,11 @@ input, choose hold durations, or depend on Engine TELEMETRY. Engine latches the
 latest accepted input state and samples it on every physics tick. Engine does
 not validate input against a Training episode.
 
-Player receives only `PeripheralManifest`. It never receives Engine CONTROL,
-STATE, TELEMETRY, EVENTS, `InternalManifest`, an Engine object, mutable world
-state, or a private `InputStateCommand`. A Player/model can only submit approved peripheral
-messages. Trainer is external and has no direct reset, tick, physics, or world
+A dynamically attached Player receives only its public `PlayerManifest`. It
+never receives Engine CONTROL, STATE, TELEMETRY, EVENTS, `InternalManifest`,
+an Engine object, mutable world state, or a private `InputStateCommand`. A
+Player/model can only use its approved Joystick, Vision, and lifecycle
+capabilities. Trainer is external and has no direct reset, tick, physics, or world
 access. Reset/reward contracts, if needed for training, will be specified
 separately later.
 
@@ -113,9 +115,8 @@ Display consumes authoritative multi-Actor Engine STATE plus its immutable
 independent of Controller, Player, model, and UI. It
 never consumes TELEMETRY or EVENTS. `screen` initializes Pygame only in its own
 subsystem; `vision` is fully headless and emits an immutable `VisionGrid`.
-A future VisionAdapter may expose that semantic presentation through a
-Player-facing contract; Display and VisionAdapter remain distinct consumers, and
-raw Engine STATE is never their public protocol.
+Console publishes that grid through the per-Player public Vision capability;
+raw Engine STATE is never the public protocol.
 
 ## Manifests
 
@@ -159,20 +160,24 @@ self_actor_id
 `mode` is exactly `vision` or `screen`. Display manifests do not contain Engine
 CONTROL, TELEMETRY, EVENTS, Joystick, Player, or Trainer capabilities.
 
-`PeripheralManifest` is public to an external Player. Its fields are only:
+`PlayerManifest` is public to a dynamically attached Player. Its fields are
+only:
 
 ```text
 session_id
+player_id
+actor_id
 joystick
+vision
 ```
 
-Engine endpoint fields are forbidden in the peripheral structure and its
+Engine endpoint fields are forbidden in the Player manifest and its
 serialization. The internal manifest is issued only to Console composition.
 
-There is no public Display/video socket in this patch. Raw Engine STATE must
-never be used as a substitute for presentation. Display consumes private STATE,
-validates it, and exposes no raw STATE externally; its internal output is either
-the human screen or `VisionGrid`.
+There is no public raw Display/STATE socket. Display consumes private STATE,
+validates it, and exposes no raw STATE externally. Human presentation remains
+Screen-only; machine observation is published only as the public `VisionGrid`
+capability.
 
 ## Joystick Specification v1
 
@@ -279,10 +284,9 @@ WorldDefinition + WorldState -> Display.screen -> Pygame human presentation
 WorldDefinition + WorldState -> Display.vision -> VisionGrid
 ```
 
-`Display.vision` is a semantic representation of what exists in the world, not
-raw x/y/vx/vy telemetry. `VisionAdapter` remains a future separate sensory
-subsystem with its own Player-facing contract; it must not provide privileged
-Engine STATE through Display.
+`Display.vision` is a logical representation of what exists in the world, not
+raw x/y/vx/vy telemetry. Its public Vision transport exposes only the validated
+`VisionGrid`; it does not provide privileged Engine STATE through Display.
 
 Display STATE transport is latest-only. Display continuously ingests STATE in a
 separate reader path and atomically replaces one latest validated snapshot;
@@ -304,7 +308,7 @@ UI management plane
 
 Model runtime
    |
-   └─ gameplay only through Joystick + future sensory peripherals
+   └─ gameplay only through Joystick + public VisionGrid observations
 
 Trainer
    |
@@ -325,8 +329,7 @@ UI -> gameplay hot path
 
 This patch does not add MLP, REINFORCE, PPO, Torch, a reward system, a cockpit
 UI, authentication, plugin infrastructure, shared memory,
-gRPC, ZeroMQ, a database, VisionAdapter implementation, audio, or a training
-API.
+gRPC, ZeroMQ, a database, audio, or additional sensory APIs.
 
 ## Planned order
 
