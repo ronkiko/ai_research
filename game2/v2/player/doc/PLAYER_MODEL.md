@@ -1,10 +1,10 @@
 # Player And Model
 
-Player is the external autonomous gameplay agent/container, not a model-shaped
-black box and not a Console subsystem. A Player may contain multiple
-intelligence components.
+Player is the external realtime gameplay container, not a Console subsystem.
+The learned Model runtime is a separate process: it owns intelligence
+components, while Player owns public peripherals and actuator timing.
 
-The target learned Player is:
+The target learned boundary is:
 
 ```text
 Planner / Policy
@@ -15,11 +15,11 @@ Motor Controller
        |
 ActionDecision
        v
-Joystick adapter -> public RIGHT / JUMP Joystick
+Model decision -> Realtime Player -> public RIGHT / JUMP Joystick
 ```
 
-Planner and Motor Controller together form a complete autonomous gameplay
-Player and do not require a Research Strategist. The Strategist is an optional
+Planner and Motor Controller together form the complete learned Model runtime
+and do not require a Research Strategist. The Strategist is an optional
 Management/control-plane research agent, not a Player dependency.
 
 Human and scripted Players remain valid alternative Player types. A model is a

@@ -1,8 +1,8 @@
 # Player
 
-The external decision-maker domain. Player implementations receive public
-Vision observations, choose Joystick decisions, and may later host model
-runtimes.
+The external decision-maker domain. Realtime Player implementations receive
+public Vision observations, forward them to a separate Model runtime, and send
+completed Joystick decisions.
 
 Player owns no world, physics, Engine command, Console manifest, or management
 runtime. It may import only `contracts/*` and its own modules.
@@ -22,9 +22,10 @@ Scripted Player -> public Joystick -> Console Controller -> Engine
 
 Human Player has no Engine access. Local documentation: `doc/`.
 
-The future trainable Player will consume only public Vision, emit only public
-Joystick decisions, own its Console lifecycle/Vision/Joystick connections, and
-expose its training-side boundary externally. Its target learned hierarchy is:
+The trainable Realtime Player consumes only public Vision, emits only public
+Joystick decisions, owns its Console lifecycle/Vision/Joystick connections,
+and exposes its training-side boundary externally. The separate Model runtime
+owns the learned hierarchy:
 
 ```text
 Planner / Policy -> MotorGoal -> Motor Controller

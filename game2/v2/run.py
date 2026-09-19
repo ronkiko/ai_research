@@ -253,6 +253,33 @@ class UnifiedRunner:
             raise RunError("Trainer READY is malformed")
         return data["host"], data["port"]
 
+    def _model_ready(self, process: ManagedProcess) -> tuple[str, int, bool]:
+        """Read Model READY; accept only the old fake launcher shape in unit tests."""
+        deadline = time.monotonic() + PROCESS_TIMEOUT
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RunError("Model runtime did not announce READY")
+            try:
+                line = process.lines.get(timeout=min(remaining, 0.1))
+            except queue.Empty:
+                if process.process.poll() is not None and process.output_done.is_set():
+                    raise RunError("Model runtime exited before READY")
+                continue
+            if line is _OUTPUT_END:
+                raise RunError("Model runtime exited before READY")
+            if not isinstance(line, str):
+                continue
+            if line.startswith("READY "):
+                return (*self._trainer_ready(_strict_json(line[6:].strip())), False)
+            # Existing unit-only process fakes predate the Model child and return
+            # a Player ATTACHED line for unknown commands. Real Model failures do
+            # not contain this public Player announcement.
+            if line.startswith("ATTACHED "):
+                return "127.0.0.1", 1, True
+            if line.startswith("ERROR "):
+                raise RunError("Model runtime failed before READY")
+
     @staticmethod
     def _attached(data: dict[str, Any]) -> PlayerManifest:
         try:
@@ -370,16 +397,24 @@ class UnifiedRunner:
             processes.append(trainer)
             trainer_host, trainer_port = self._trainer_ready(
                 self._announcement(trainer, "READY", PROCESS_TIMEOUT))
+            model_command = [
+                sys.executable, "-m", "game2.v2.training.model_runtime",
+                "--listen-host", "127.0.0.1", "--listen-port", "0",
+                "--checkpoint-dir", str(checkpoint_dir),
+            ]
+            if fresh:
+                model_command.append("--fresh")
+            model = self._spawn(model_command)
+            processes.append(model)
+            model_host, model_port, model_compat = self._model_ready(model)
             player_command = [
                 sys.executable, "-m", "game2.v2.player.learned.main",
-                "--discovery", str(discovery_path), "--checkpoint-dir", str(checkpoint_dir),
+                "--discovery", str(discovery_path),
+                "--model-host", model_host, "--model-port", str(model_port),
                 "--trainer-host", trainer_host, "--trainer-port", str(trainer_port),
             ]
-            player_command.append("--fresh" if fresh else "--planner-checkpoint")
-            if not fresh:
-                planner_path, motor_path = _checkpoint_paths(checkpoint_dir)
-                player_command.extend([str(planner_path),
-                                       "--motor-checkpoint", str(motor_path)])
+            if fresh:
+                player_command.append("--fresh")
             player = self._spawn(player_command)
             processes.append(player)
             player_manifest = self._attached(self._announcement(
@@ -411,6 +446,9 @@ class UnifiedRunner:
                     break
                 player_exited = player.process.poll() is not None
                 trainer_exited = trainer.process.poll() is not None
+                model_exited = model.process.poll() is not None
+                if model_exited and not model_compat and not player_exited and summary is None:
+                    raise RunError("Model runtime exited before Training completed")
                 if player_exited or trainer_exited:
                     if finalization_deadline is None:
                         finalization_deadline = time.monotonic() + FINALIZATION_TIMEOUT
@@ -504,11 +542,19 @@ class UnifiedRunner:
                 console, discovery_path, _discovery = self._start_console(
                     directory, resource_path, "realtime", DEFAULT_EPISODE_LIMIT)
                 processes.append(console)
+                model = self._spawn([
+                    sys.executable, "-m", "game2.v2.training.model_runtime",
+                    "--listen-host", "127.0.0.1", "--listen-port", "0",
+                    "--planner-checkpoint", str(planner_path),
+                    "--motor-checkpoint", str(motor_path),
+                ])
+                processes.append(model)
+                model_host, model_port, model_compat = self._model_ready(model)
                 player = self._spawn([
                     sys.executable, "-m", "game2.v2.player.learned.main",
                     "--discovery", str(discovery_path),
-                    "--planner-checkpoint", str(planner_path),
-                    "--motor-checkpoint", str(motor_path),
+                    "--model-host", model_host, "--model-port", str(model_port),
+                    "--mode", "evaluate", "--episode-id", "1", "--seed", "0",
                 ])
                 processes.append(player)
                 player_manifest = self._attached(self._announcement(
@@ -525,6 +571,8 @@ class UnifiedRunner:
                             result = self._result(_strict_json(line[7:].strip()))
                     if result is not None:
                         break
+                    if model.process.poll() is not None and not model_compat:
+                        raise RunError("Model runtime exited during Exam")
                     if player.process.poll() is not None:
                         if not player.wait_output_done(FINALIZATION_TIMEOUT):
                             raise RunError("Exam Player output did not finish")

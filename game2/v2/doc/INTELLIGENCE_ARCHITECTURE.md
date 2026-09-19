@@ -11,9 +11,10 @@ Game2 V2 keeps four architectural concerns distinct:
 
 - **Console** is the external real-time world. It owns the authoritative
   fixed-step simulation and knows only the public Joystick actuator contract.
-- **Player** is the autonomous gameplay agent. A learned Player contains a
-  Planner / Policy and a Motor Controller, plus the adapter that emits public
-  Joystick decisions.
+- **Player** is the realtime gameplay shell. It owns lifecycle, public Vision,
+  public Joystick, and action timing. A separate Model runtime contains the
+  Planner / Policy and Motor Controller and returns completed decisions over a
+  local process boundary.
 - **Training** is an external learning system. It trains and evaluates
   trainable components; it is not another level of gameplay intelligence.
 - **Management** is the operator and control plane. The future Research
@@ -28,16 +29,16 @@ The target relationship is:
                    Training   Evaluation   optional Guidance
                                                    |
                                                    v
-Public Vision ------------------------------> Planner / Policy
-                                                   |
-                                                MotorGoal
+Public Vision --> Realtime Player --> Model runtime: Planner / Policy
+                                                    |
+                                                 MotorGoal
                                                    |
                                                    v
                                              Motor Controller
                                                    |
-                                             ActionDecision
-                                                   |
-                                             Player Adapter
+                                              ActionDecision
+                                                    |
+                                               Player Adapter
                                                    |
                                                 Joystick
                                                    |

@@ -13,12 +13,12 @@ management UI.
 
 ## Player
 
-The external Player is the autonomous gameplay agent and uses public peripheral
-contracts. A learned Player may contain a Planner / Policy and a Motor
-Controller; together they choose actions and emit the public Joystick contract.
-The Player remains functional without the optional Research Strategist. Human
-and scripted Players are valid alternatives. A Player does not import Console
-implementation modules.
+The external Player is the realtime gameplay shell and uses public peripheral
+contracts. Its learned Model runtime contains the Planner / Policy and Motor
+Controller; Player forwards public Vision and emits completed decisions through
+the public Joystick contract. The Player remains functional without the
+optional Research Strategist. Human and scripted Players are valid
+alternatives. A Player does not import Console implementation modules.
 
 ## Training
 
