@@ -83,7 +83,7 @@ class WorldLoaderTests(unittest.TestCase):
             with self.subTest(name=name):
                 self._assert_invalid(data)
 
-    def test_collision_geometry_is_deterministic_and_merges_horizontal_runs(self):
+    def test_collision_geometry_merges_runs_and_aligns_partial_hazards(self):
         data = json.loads(V2_MAP.read_text(encoding="utf-8"))
         data["terrain"] = ["##..^^....##########", *data["terrain"][1:]]
         first = self._load_temp(data=data)
@@ -94,14 +94,7 @@ class WorldLoaderTests(unittest.TestCase):
             CollisionRect(256, 40, 128, 24, True),
             CollisionRect(640, 0, 640, 64),
         ))
-
-    def test_hazard_collision_occupies_only_lower_fine_aligned_band(self):
-        data = json.loads(V2_MAP.read_text(encoding="utf-8"))
-        data["terrain"] = ["..^.................", *data["terrain"][1:]]
-        world = self._load_temp(data=data)
-        hazard = next(rect for rect in world.collision_rects if rect.damage)
-        self.assertEqual((hazard.x, hazard.y, hazard.width, hazard.height),
-                         (2 * 64, 40, 64, 24))
+        hazard = first.collision_rects[1]
         self.assertEqual(hazard.y % 8, 0)
         self.assertEqual(hazard.height % 8, 0)
 

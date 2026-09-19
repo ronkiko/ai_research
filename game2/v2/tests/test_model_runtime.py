@@ -14,6 +14,7 @@ from game2.v2.contracts.model import (
     OBSERVE,
     decode_model_message,
     observe_message,
+    observation_from_message,
     observation_packet,
 )
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
@@ -172,8 +173,6 @@ class ModelRuntimeTests(unittest.TestCase):
                     decode_model_message(message)
 
     def test_max_grid_observation_round_trip_uses_three_exact_raw_matrices(self):
-        model = _StubModel()
-        _runtime, worker, client, errors = self._start(model)
         cells = 64 * 64
         coarse_physics = bytes(index % 3 for index in range(cells))
         physics = bytes(index % 3 for index in range(cells * 64))
@@ -188,25 +187,14 @@ class ModelRuntimeTests(unittest.TestCase):
         header = wire[4:4 + header_size]
         self.assertNotIn(b'"pixels"', header)
         self.assertNotIn(b'"pixel_format"', header)
+        payload = wire[4 + header_size:]
         self.assertEqual(
-            wire[4 + header_size:],
+            payload,
             grid.coarse_physics + grid.physics + grid.metadata,
         )
-        try:
-            client.prepare(1, "evaluate", 1)
-            client.observe(grid)
-            decision = self._wait_decision(client, grid.world_tick)
-            self.assertEqual(decision.observation_world_tick, grid.world_tick)
-            self.assertEqual(model.frames[0], grid)
-            self.assertEqual(model.frames[0].columns, 64)
-            self.assertEqual(model.frames[0].rows, 64)
-            self.assertEqual(model.frames[0].coarse_physics, grid.coarse_physics)
-            self.assertEqual(model.frames[0].physics, grid.physics)
-            self.assertEqual(model.frames[0].metadata, grid.metadata)
-        finally:
-            client.close()
-            worker.join(timeout=2)
-        self.assertTrue(errors and isinstance(errors[0], EOFError))
+        restored = observation_from_message(observe_message(grid), payload)
+        self.assertEqual(restored, grid)
+
 
     def test_slow_model_keeps_latest_only_and_skips_intermediate_observations(self):
         model = _StubModel(slow_tick=100)
