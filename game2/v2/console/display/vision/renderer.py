@@ -11,6 +11,8 @@ from ....contracts.vision import (
     META_OTHER_CENTER,
     META_SELF,
     META_SELF_CENTER,
+    PHYSICS_HAZARD,
+    PHYSICS_SOLID,
     VISION_SUBDIVISIONS,
     VisionGrid,
 )
@@ -25,7 +27,23 @@ def _sensor_geometry(world: WorldDefinition) -> tuple[int, int, float]:
     return columns, rows, cell_size
 
 
-def _mark_rect(
+def _rect_cells(
+    world: WorldDefinition,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> tuple[int, int, int, int]:
+    columns, rows, cell_size = _sensor_geometry(world)
+    return (
+        max(0, floor(x / cell_size)),
+        max(0, floor(y / cell_size)),
+        min(columns, ceil((x + width) / cell_size)),
+        min(rows, ceil((y + height) / cell_size)),
+    )
+
+
+def _mark_metadata_rect(
     metadata: bytearray,
     world: WorldDefinition,
     x: float,
@@ -34,18 +52,35 @@ def _mark_rect(
     height: float,
     flag: int,
 ) -> None:
-    """OR one metadata flag into every fine sensor cell intersecting a rectangle."""
-    columns, rows, cell_size = _sensor_geometry(world)
-    left = max(0, floor(x / cell_size))
-    top = max(0, floor(y / cell_size))
-    right = min(columns, ceil((x + width) / cell_size))
-    bottom = min(rows, ceil((y + height) / cell_size))
+    """OR one metadata flag into every fine cell intersecting a rectangle."""
+    columns, _rows, _cell_size = _sensor_geometry(world)
+    left, top, right, bottom = _rect_cells(world, x, y, width, height)
     if right <= left or bottom <= top:
         return
     for row in range(top, bottom):
         offset = row * columns
         for column in range(left, right):
             metadata[offset + column] |= flag
+
+
+def _mark_physics_rect(
+    physics: bytearray,
+    world: WorldDefinition,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    value: int,
+) -> None:
+    """Rasterize authoritative collision geometry into the fine physics plane."""
+    columns, _rows, _cell_size = _sensor_geometry(world)
+    left, top, right, bottom = _rect_cells(world, x, y, width, height)
+    if right <= left or bottom <= top:
+        return
+    for row in range(top, bottom):
+        offset = row * columns
+        for column in range(left, right):
+            physics[offset + column] = value
 
 
 def _mark_center(
@@ -66,7 +101,7 @@ def _mark_center(
 
 
 class VisionGridRenderer:
-    """Build coarse terrain plus fine dynamic metadata from public-safe state."""
+    """Build a coarse map plus aligned fine physics and dynamic metadata."""
 
     def __init__(
         self,
@@ -76,20 +111,48 @@ class VisionGridRenderer:
         self.world = world
         self.self_actor_id = self_actor_id
         self._static_world: WorldDefinition | None = None
-        self._physics: bytes | None = None
+        self._coarse_physics: bytes | None = None
+        self._fine_physics: bytes | None = None
         if world is not None:
-            self._physics = self._build_physics(world)
-            self._static_world = world
+            self._cache_static_physics(world)
 
     @staticmethod
-    def _build_physics(world: WorldDefinition) -> bytes:
+    def _build_coarse_physics(world: WorldDefinition) -> bytes:
+        """Semantic authored tiles for drafting/minimap use."""
         return bytes(int(tile) for row in world.tiles for tile in row)
 
-    def _physics_for(self, world: WorldDefinition) -> bytes:
-        if self._static_world is not world or self._physics is None:
-            self._static_world = world
-            self._physics = self._build_physics(world)
-        return self._physics
+    @staticmethod
+    def _build_fine_physics(world: WorldDefinition) -> bytes:
+        """Exact sensor raster of the Engine collision geometry."""
+        columns, rows, _cell_size = _sensor_geometry(world)
+        physics = bytearray(columns * rows)
+        for rect in world.collision_rects:
+            _mark_physics_rect(
+                physics,
+                world,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                PHYSICS_HAZARD if rect.damage else PHYSICS_SOLID,
+            )
+        return bytes(physics)
+
+    def _cache_static_physics(self, world: WorldDefinition) -> None:
+        self._static_world = world
+        self._coarse_physics = self._build_coarse_physics(world)
+        self._fine_physics = self._build_fine_physics(world)
+
+    def _physics_for(self, world: WorldDefinition) -> tuple[bytes, bytes]:
+        if (
+            self._static_world is not world
+            or self._coarse_physics is None
+            or self._fine_physics is None
+        ):
+            self._cache_static_physics(world)
+        assert self._coarse_physics is not None
+        assert self._fine_physics is not None
+        return self._coarse_physics, self._fine_physics
 
     @staticmethod
     def _state(
@@ -135,7 +198,7 @@ class VisionGridRenderer:
         metadata_columns, metadata_rows, _cell_size = _sensor_geometry(world)
         metadata = bytearray(metadata_columns * metadata_rows)
 
-        _mark_rect(
+        _mark_metadata_rect(
             metadata,
             world,
             world.goal.x,
@@ -145,7 +208,7 @@ class VisionGridRenderer:
             META_GOAL,
         )
         for actor in display_state.other_actors:
-            _mark_rect(
+            _mark_metadata_rect(
                 metadata, world, actor.x, actor.y,
                 world.spawn.width, world.spawn.height, META_OTHER_ACTOR,
             )
@@ -155,7 +218,7 @@ class VisionGridRenderer:
             )
         if display_state.self_actor is not None:
             actor = display_state.self_actor
-            _mark_rect(
+            _mark_metadata_rect(
                 metadata, world, actor.x, actor.y,
                 world.spawn.width, world.spawn.height, META_SELF,
             )
@@ -164,11 +227,13 @@ class VisionGridRenderer:
                 world.spawn.width, world.spawn.height, META_SELF_CENTER,
             )
 
+        coarse_physics, physics = self._physics_for(world)
         return VisionGrid(
             world.columns,
             world.rows,
             world.tile_size,
-            self._physics_for(world),
+            coarse_physics,
+            physics,
             bytes(metadata),
             display_state.world_tick,
         )

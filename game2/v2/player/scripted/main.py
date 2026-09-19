@@ -47,11 +47,9 @@ def _self_bounds(grid: VisionGrid) -> tuple[int, int, int, int] | None:
 
 
 def _solid_at_sensor(grid: VisionGrid, x: int, y: int) -> bool:
-    if not (0 <= x < grid.metadata_columns and 0 <= y < grid.metadata_rows):
+    if not (0 <= x < grid.physics_columns and 0 <= y < grid.physics_rows):
         return False
-    tile_x = x // grid.subdivisions
-    tile_y = y // grid.subdivisions
-    return grid.physics[tile_y * grid.columns + tile_x] == PHYSICS_SOLID
+    return grid.physics[y * grid.physics_columns + x] == PHYSICS_SOLID
 
 
 def decide(grid: VisionGrid) -> VisualDecision:
