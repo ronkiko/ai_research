@@ -164,14 +164,25 @@ class LearnedModelTests(unittest.TestCase):
             self.assertTrue(-1.0 <= goal.target_dx <= 1.0)
             self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
 
-    def test_motor_controller_has_executable_3_8_2_shape_and_decides(self):
+    def test_motor_controller_has_executable_5_8_2_shape_and_decides(self):
         controller = MotorController582.fresh(12)
-        self.assertEqual((controller.hidden.in_features, controller.hidden.out_features), (3, 8))
-        self.assertEqual((controller.output.in_features, controller.output.out_features), (8, 2))
-        logits = controller(torch.tensor([[0.1, -0.2, 0.3], [1.0, 0.0, -1.0]]))
+        self.assertEqual(
+            (controller.hidden.in_features, controller.hidden.out_features),
+            (5, 8),
+        )
+        self.assertEqual(
+            (controller.output.in_features, controller.output.out_features),
+            (8, 2),
+        )
+        logits = controller(torch.tensor([
+            [0.1, -0.2, 0.3, 1.0, 0.0],
+            [1.0, 0.0, -1.0, 0.0, 1.0],
+        ]))
         self.assertEqual(tuple(logits.shape), (2, 2))
         self.assertTrue(torch.isfinite(logits).all())
-        decision = controller.decide(MotorGoal(0.1, -0.2), 0.3)
+        decision = controller.decide(
+            MotorGoal(0.1, -0.2), 0.3, True, False
+        )
         self.assertIsInstance(decision, ActionDecision)
 
     def test_fresh_models_are_reproducible_nonzero_and_rng_isolated(self):

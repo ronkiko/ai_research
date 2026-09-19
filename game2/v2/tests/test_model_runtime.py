@@ -64,11 +64,14 @@ class _StubModel:
             motion_x=0.0,
         )
 
-    def record_sent_sample(self, sample):
+    def record_actuated(self, sample):
         sample_id = id(sample)
         if sample_id not in self._actuated_samples:
             self._actuated_samples.add(sample_id)
             self.actuated.append(sample.world_tick)
+
+    def record_sent_sample(self, sample):
+        self.record_actuated(sample)
 
     def apply_result(self, _reward):
         self.update_started.set()
