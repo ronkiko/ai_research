@@ -253,7 +253,8 @@ class ManagementTrainingTests(unittest.TestCase):
             for command in factory.commands:
                 if command[command.index("-m") + 1] != "game2.v2.console.main":
                     self.assertNotIn("--screen-view", command)
-            self.assertIn("view=vision", "view=vision")
+            self.assertIn("SCREEN 1: flat (vision)", output.getvalue())
+            self.assertIn("SCREEN 1: gap (vision)", output.getvalue())
 
     def test_vision_view_requires_screen(self):
         with tempfile.TemporaryDirectory() as directory:
