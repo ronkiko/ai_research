@@ -132,7 +132,7 @@ class VisionGridRendererTests(unittest.TestCase):
         world = _tiny_world()
         grid = VisionGridRenderer().render(
             world,
-            _view(world, x=3, y=2),
+            _view(world, x=3.5, y=2),
         )
         left = 1 * grid.columns + 1
         right = 1 * grid.columns + 2
