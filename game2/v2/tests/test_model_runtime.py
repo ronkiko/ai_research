@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from game2.v2.contracts.framing import ProtocolError
 from game2.v2.contracts.model import (
     ACTUATED,
     DECISION,
@@ -160,7 +161,7 @@ class ModelRuntimeTests(unittest.TestCase):
                 "metadata_length": columns * rows,
             }
             with self.subTest(columns=columns, rows=rows):
-                with self.assertRaises(Exception):
+                with self.assertRaises(ProtocolError):
                     decode_model_message(message)
 
     def test_max_grid_observation_round_trip_uses_two_exact_raw_matrices(self):
