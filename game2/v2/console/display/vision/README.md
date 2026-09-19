@@ -414,7 +414,48 @@ Player-to-Model OBSERVE IPC carries the same three raw planes. This prevents
 training replay from silently reconstructing a different world representation
 than the one used for inference.
 
-## 10. Human Screen versus Grid Vision
+## 10. Spectator preview
+
+Training can expose the exact logical Grid Vision on an already-open operator
+Screen without changing the model input path:
+
+```bash
+./game2/v2/op/train.sh --fresh --screen 1 --view vision
+```
+
+The default remains the human render:
+
+```bash
+./game2/v2/op/train.sh --fresh --screen 1
+```
+
+The spectator preview is produced from `VisionGrid` itself:
+
+```text
+WorldDefinition + WorldState
+        |
+VisionGridRenderer
+        |
+    VisionGrid
+       /  \
+      /    \
+   Model   VisionPreviewRenderer
+             |
+          RGB Screen
+```
+
+The preview overlays:
+
+- fine physics and fine metadata;
+- solid major boundaries every 64 px for the authored 20 x 12 grid;
+- thin dashed subdivision boundaries every 8 px;
+- X/Y pixel rulers with `0` at the world origin in the top-left;
+- `world_tick` and grid geometry.
+
+It intentionally does not show private Engine `x`, `y`, `vx`, `vy`,
+grounded state, or input telemetry. Those values are not CNN Vision inputs.
+
+## 11. Human Screen versus Grid Vision
 
 Human Screen and machine Vision are separate Display outputs:
 
@@ -435,7 +476,7 @@ Grid Vision renders logical geometry.
 Neither output is authoritative for Physics. Engine owns the world and
 collisions; both presentations observe it.
 
-## 11. Future scrolling worlds
+## 12. Future scrolling worlds
 
 The current contract sends fine physics and metadata for the complete authored
 world. This is acceptable while maps fit within the current bounds.
@@ -458,7 +499,7 @@ That future viewport cut must be an explicit contract change. It must preserve
 the physical scale and an unambiguous relationship between local fine
 coordinates and global coarse/world coordinates.
 
-## 12. Core invariants
+## 13. Core invariants
 
 1. Engine Physics is authoritative; Vision never determines collisions.
 2. `coarse_physics` represents authored tile semantics.

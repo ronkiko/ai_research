@@ -60,11 +60,22 @@ Continue existing checkpoints:
 ./game2/v2/op/train.sh --resume
 ```
 
-Observe Training on an already-open Screen:
+Observe Training on an already-open Screen with the normal human render:
 
 ```bash
 ./game2/v2/op/train.sh --fresh --screen 1
 ```
+
+Show the actual logical Grid Vision used for CNN input instead:
+
+```bash
+./game2/v2/op/train.sh --fresh --screen 1 --view vision
+```
+
+The Vision spectator renders fine physics and metadata from the public
+`VisionGrid`, with solid 20x12 tile boundaries, dashed 8x8 subdivisions,
+pixel rulers starting at world origin `0,0`, and a compact Grid Vision legend.
+It does not display private Engine `x/y/vx/vy` telemetry.
 
 If `--screen N` is supplied but Screen N is not already open, Training fails
 preflight with a clear operator instruction. Once Training has started, losing

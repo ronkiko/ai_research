@@ -311,7 +311,7 @@ class DisplayManifest:
 
 @dataclass(frozen=True)
 class ScreenSourceManifest:
-    """Private Console wiring for one headless human-facing Screen source."""
+    """Private Console wiring for one headless spectator Screen source."""
 
     session_id: str
     engine_state: Endpoint

@@ -237,6 +237,29 @@ class ScreenSourceViewTests(unittest.TestCase):
                 "pixels",
             )
 
+    def test_default_source_view_remains_human_screen(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            str(PIT),
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+        )
+        self.assertEqual(manifest.view, "screen")
+        service = ScreenSourceService(manifest)
+        surface = pygame.Surface((service.world.width, service.world.height))
+        try:
+            service._configure_renderer(surface, pygame)
+            self.assertIsInstance(service.renderer, ScreenRenderer)
+            self.assertIsNone(service.grid_renderer)
+        finally:
+            if service.renderer is not None:
+                service.renderer.close()
+
+
     def test_vision_source_selects_grid_preview_renderer(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         import pygame

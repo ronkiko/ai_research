@@ -1,4 +1,4 @@
-"""Headless Console-owned source of human-facing Screen frames."""
+"""Headless Console-owned source of human or Grid-Vision spectator frames."""
 from __future__ import annotations
 
 import argparse
