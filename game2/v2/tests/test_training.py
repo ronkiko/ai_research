@@ -52,6 +52,7 @@ from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.contracts.vision import (
     META_GOAL,
     META_SELF,
+    META_SELF_CENTER,
     VisionGrid,
 )
 from game2.v2.training.main import Trainer, reward_for_result
@@ -63,11 +64,14 @@ FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.j
 
 def _grid(tick: int = 1, self_x: int | None = 3, goal_x: int | None = 10) -> VisionGrid:
     physics = bytes(12 * 5)
-    metadata = bytearray(12 * 5)
+    fine_columns = 12 * 8
+    metadata = bytearray(fine_columns * 5 * 8)
     if self_x is not None:
-        metadata[2 * 12 + self_x] |= META_SELF
+        index = (2 * 8 + 4) * fine_columns + (self_x * 8 + 4)
+        metadata[index] |= META_SELF | META_SELF_CENTER
     if goal_x is not None:
-        metadata[2 * 12 + goal_x] |= META_GOAL
+        index = (2 * 8 + 4) * fine_columns + (goal_x * 8 + 4)
+        metadata[index] |= META_GOAL
     return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
 
@@ -104,10 +108,13 @@ class VisionProgressTests(unittest.TestCase):
     def _grid(self_x: int, self_y: int, goal_x: int = 10, goal_y: int = 2,
               tick: int = 1, include_goal: bool = True) -> VisionGrid:
         physics = bytes(16 * 8)
-        metadata = bytearray(16 * 8)
-        metadata[self_y * 16 + self_x] |= META_SELF
+        fine_columns = 16 * 8
+        metadata = bytearray(fine_columns * 8 * 8)
+        self_index = (self_y * 8 + 4) * fine_columns + (self_x * 8 + 4)
+        metadata[self_index] |= META_SELF | META_SELF_CENTER
         if include_goal:
-            metadata[goal_y * 16 + goal_x] |= META_GOAL
+            goal_index = (goal_y * 8 + 4) * fine_columns + (goal_x * 8 + 4)
+            metadata[goal_index] |= META_GOAL
         return VisionGrid(16, 8, 64, physics, bytes(metadata), tick)
 
     def test_starting_public_self_and_goal_have_zero_progress(self):
@@ -153,11 +160,14 @@ class VisionProgressTests(unittest.TestCase):
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
 
     def test_metadata_helpers_preserve_independent_self_and_goal_bits(self):
-        metadata = bytearray(16 * 8)
-        metadata[4 * 16 + 3] |= META_SELF
-        metadata[7 * 16 + 19 % 16] |= META_SELF
-        metadata[2 * 16 + 10] |= META_GOAL
-        metadata[2 * 16 + 10] |= META_SELF
+        fine_columns = 16 * 8
+        metadata = bytearray(fine_columns * 8 * 8)
+        first_self = (4 * 8 + 4) * fine_columns + (3 * 8 + 4)
+        second_self = (7 * 8 + 4) * fine_columns + ((19 % 16) * 8 + 4)
+        goal = (2 * 8 + 4) * fine_columns + (10 * 8 + 4)
+        metadata[first_self] |= META_SELF | META_SELF_CENTER
+        metadata[second_self] |= META_SELF
+        metadata[goal] |= META_GOAL | META_SELF
         grid = VisionGrid(16, 8, 64, bytes(16 * 8), bytes(metadata), 77)
         self.assertTrue(has_metadata(grid, META_SELF))
         self.assertTrue(has_metadata(grid, META_GOAL))

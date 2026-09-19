@@ -21,6 +21,7 @@ from game2.v2.contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
     META_SELF,
+    META_SELF_CENTER,
     VisionGrid,
 )
 from game2.v2.model_runtime import ModelRuntime
@@ -36,8 +37,9 @@ from game2.v2.player.learned.process import _run_episode
 
 def _grid(tick: int) -> VisionGrid:
     physics = bytes(12 * 5)
-    metadata = bytearray(12 * 5)
-    metadata[2 * 12 + 3] = META_SELF
+    metadata = bytearray(12 * 8 * 5 * 8)
+    center = (2 * 8 + 4) * (12 * 8) + (3 * 8 + 4)
+    metadata[center] = META_SELF | META_SELF_CENTER
     return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
 
@@ -142,7 +144,7 @@ class ModelRuntimeTests(unittest.TestCase):
         message = observe_message(_grid(7))
         self.assertEqual(set(message), {
             "version", "type", "observation_world_tick", "columns", "rows",
-            "tile_size", "physics_length", "metadata_length",
+            "tile_size", "subdivisions", "physics_length", "metadata_length",
         })
         decoded = decode_model_message(message)
         self.assertEqual(decoded["type"], OBSERVE)
@@ -158,7 +160,7 @@ class ModelRuntimeTests(unittest.TestCase):
                 "columns": columns,
                 "rows": rows,
                 "physics_length": columns * rows,
-                "metadata_length": columns * rows,
+                "metadata_length": columns * rows * 64,
             }
             with self.subTest(columns=columns, rows=rows):
                 with self.assertRaises(ProtocolError):
@@ -169,8 +171,8 @@ class ModelRuntimeTests(unittest.TestCase):
         _runtime, worker, client, errors = self._start(model)
         cells = 64 * 64
         physics = bytes(index % 3 for index in range(cells))
-        metadata = bytearray(cells)
-        metadata[0] = META_SELF
+        metadata = bytearray(cells * 64)
+        metadata[0] = META_SELF | META_SELF_CENTER
         metadata[-1] = META_OTHER_ACTOR
         grid = VisionGrid(64, 64, 64, physics, bytes(metadata), 987654)
         wire = observation_packet(grid)
@@ -376,9 +378,12 @@ class TrainingAckBoundaryTests(unittest.TestCase):
     @staticmethod
     def _vision_grid(tick: int) -> VisionGrid:
         physics = bytes(12 * 5)
-        metadata = bytearray(12 * 5)
-        metadata[2 * 12 + 3] = META_SELF
-        metadata[2 * 12 + 10] = META_GOAL
+        fine_columns = 12 * 8
+        metadata = bytearray(fine_columns * 5 * 8)
+        metadata[(2 * 8 + 4) * fine_columns + (3 * 8 + 4)] = (
+            META_SELF | META_SELF_CENTER
+        )
+        metadata[(2 * 8 + 4) * fine_columns + (10 * 8 + 4)] = META_GOAL
         return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
     class Connection:
