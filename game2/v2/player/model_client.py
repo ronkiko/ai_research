@@ -87,10 +87,16 @@ class _FrameReader:
         return messages
 
 
+MODEL_UPDATE_TIMEOUT = 120.0
+MODEL_SAVE_TIMEOUT = 30.0
+
+
 class ModelClient:
     """Keep the realtime loop non-blocking while exchanging model messages."""
 
     def __init__(self, host: str, port: int, *, connect_timeout: float = 5.0,
+                 update_timeout: float = MODEL_UPDATE_TIMEOUT,
+                 save_timeout: float = MODEL_SAVE_TIMEOUT,
                  socket_factory: Callable[..., socket.socket] = socket.create_connection):
         if type(host) is not str or not host:
             raise ValueError("Model host must be non-empty")
@@ -98,9 +104,15 @@ class ModelClient:
             raise ValueError("Model port must be in 1..65535")
         if connect_timeout <= 0:
             raise ValueError("Model connect timeout must be positive")
+        if update_timeout <= 0:
+            raise ValueError("Model update timeout must be positive")
+        if save_timeout <= 0:
+            raise ValueError("Model save timeout must be positive")
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
+        self.update_timeout = float(update_timeout)
+        self.save_timeout = float(save_timeout)
         self.socket_factory = socket_factory
         self._socket: socket.socket | None = None
         self._reader = _FrameReader()
@@ -244,7 +256,7 @@ class ModelClient:
         self._queue_control(episode_end_message(episode_id, result, reward, trainable))
         self._flush_until_empty()
         self._clear_observation_mailbox()
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + self.update_timeout
         while episode_id not in self._updates:
             self.poll()
             remaining = deadline - time.monotonic()
@@ -257,7 +269,7 @@ class ModelClient:
         self._queue_control(save_message())
         self._flush_until_empty()
         self._clear_observation_mailbox()
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + self.save_timeout
         while 0 not in self._updates:
             self.poll()
             remaining = deadline - time.monotonic()
@@ -286,4 +298,6 @@ class ModelClient:
                 pass
 
 
-__all__ = ["CompletedDecision", "ModelClient"]
+__all__ = [
+    "CompletedDecision", "MODEL_SAVE_TIMEOUT", "MODEL_UPDATE_TIMEOUT", "ModelClient",
+]

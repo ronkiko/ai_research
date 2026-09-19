@@ -18,7 +18,11 @@ from game2.v2.contracts.model import (
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.model_runtime import ModelRuntime
-from game2.v2.player.model_client import ModelClient
+from game2.v2.player.model_client import (
+    MODEL_SAVE_TIMEOUT,
+    MODEL_UPDATE_TIMEOUT,
+    ModelClient,
+)
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import _run_episode
@@ -111,6 +115,18 @@ class ModelRuntimeTests(unittest.TestCase):
                 return decision
             time.sleep(0.001)
         raise AssertionError("Model runtime did not publish the expected decision")
+
+
+    def test_model_control_timeouts_are_not_realtime_frame_deadlines(self):
+        self.assertGreaterEqual(MODEL_UPDATE_TIMEOUT, 60.0)
+        self.assertGreaterEqual(MODEL_SAVE_TIMEOUT, 10.0)
+        client = ModelClient("127.0.0.1", 1, update_timeout=7.5, save_timeout=3.0)
+        self.assertEqual(client.update_timeout, 7.5)
+        self.assertEqual(client.save_timeout, 3.0)
+        with self.assertRaises(ValueError):
+            ModelClient("127.0.0.1", 1, update_timeout=0)
+        with self.assertRaises(ValueError):
+            ModelClient("127.0.0.1", 1, save_timeout=0)
 
     def test_contract_carries_only_public_semantic_raster(self):
         message = observe_message(_frame(7))
