@@ -1,37 +1,28 @@
 # Console
 
-The virtual game console and its owned runtime subsystems. Console owns the
-authoritative World, Engine, Controller, internal transport, private protocols,
-and Player-facing peripheral production. It does not own Player, Model, Trainer,
-Management, or the operator Screen Server.
+Console owns the authoritative World, Engine, Controller, private transport, and
+Console-side presentation producers. It does not own Player, Model, Trainer,
+Management, or native operator windows.
 
-Its internal gameplay decomposition is:
+The persistent server is started by:
 
-```text
-Console
-├── Engine    authoritative mutable runtime and fixed-step world clock
-├── World     immutable tile-authored scene definition
-├── Controller
-└── Display
+```bash
+./game2/v2/boot.sh
 ```
 
-`WorldDefinition` is loaded before Engine starts. Engine materializes one shared
-physics/rules object and independent `ActorBody` values from that definition.
-Display loads the same immutable world resource independently and combines it
-with latest Engine STATE for read-only presentation. Physics remains an Engine
-hot-path component, not a separate process.
+It remains valid with zero Players and zero Actors.
 
-The canonical runtime is the persistent zero-player server started by
-`game2/v2/boot.sh`. External Players attach later and receive narrow public
-Joystick/Vision capabilities.
+For machine Players, each attached Player receives its own public Joystick and
+headless semantic Vision capabilities.
 
-The old embedded graphical demo shell was removed. Human observation is not a
-Console lifecycle mode; it will be attached through the independent Screen
-Server composition path.
+For human observation, Console also starts one headless `ScreenSource`. It
+consumes private Engine STATE inside the Console domain, renders the normal
+human-facing artwork off-screen, and publishes only RGB `ScreenFrame` pixels.
+The source discovery is published separately from Player discovery at
+`game2/v2/runtime/current-screen-source.json`.
 
-The target MMO-like Console model is normative in
-[`doc/MMO_SERVER_MODEL.md`](doc/MMO_SERVER_MODEL.md). Console may import public
-`contracts/*`; it must not import external runtime domains.
+A ScreenSource failure is spectator-only: it must not stop Engine or Player
+gameplay. Screen Server is external Management infrastructure and never receives
+raw Engine STATE.
 
-Entrypoint: `main.py`. Normative contract: `SPEC.md`. Local documentation:
-`doc/`.
+Normative contract: [`SPEC.md`](SPEC.md).

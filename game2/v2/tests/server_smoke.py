@@ -22,6 +22,7 @@ from game2.v2.contracts.connection import ATTACH, attach_message, probe_message,
 from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.manifests import PlayerManifest
+from game2.v2.contracts.screen import ScreenSourceDiscovery, recv_screen_frame
 from game2.v2.console.config import InternalManifest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -89,6 +90,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="game2-v2-server-test-")
         cls.discovery_path = Path(cls.temp.name) / "current-console.json"
+        cls.screen_discovery_path = Path(cls.temp.name) / "screen-source.json"
         config_path = V2 / "console" / "configs" / "server.json"
         cls.console = subprocess.Popen(
             [sys.executable, "-m", "game2.v2.console.main", "--server",
@@ -98,6 +100,8 @@ class PersistentConsoleSmoke(unittest.TestCase):
         )
         try:
             cls.discovery = _wait_for_discovery(cls.console, cls.discovery_path, timeout=30)
+            _wait_until(cls.screen_discovery_path.exists, 10)
+            cls.screen_source = ScreenSourceDiscovery.from_file(cls.screen_discovery_path)
             cls.run_dir = V2 / "console" / "runs" / cls.discovery.session_id
             internal_path = cls.run_dir / "internal-manifest.json"
             _wait_until(internal_path.exists, 5)
@@ -207,6 +211,14 @@ class PersistentConsoleSmoke(unittest.TestCase):
         scripted = None
         try:
             self.assertIsNone(self.console.poll())
+            screen = socket.create_connection(
+                (self.screen_source.endpoint.host, self.screen_source.endpoint.port), timeout=2)
+            try:
+                screen.settimeout(8)
+                frame = recv_screen_frame(screen, self.screen_source.session_id)
+                self.assertEqual((frame.width, frame.height), (1280, 768))
+            finally:
+                screen.close()
             initial = self._wait_telemetry(lambda payload:
                                            payload.get("actors") == [])
             self._probe()

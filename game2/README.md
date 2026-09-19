@@ -1,31 +1,27 @@
 # Game2
 
-## Active Implementation
+Game2 V2 is the sole active implementation.
 
-Game2 V2 is the sole active implementation: [`v2/`](v2/).
-
-V1 is retired. Its historical code remains available in Git history; retained
-lessons are documented in [`v2/doc/V1_LESSONS.md`](v2/doc/V1_LESSONS.md).
-
-## V2 Entry Points
+## Operator entry points
 
 ```text
 game2/v2/boot.sh
 game2/v2/op/screen_server.sh
+game2/v2/op/screen.sh
 ```
 
-`boot.sh` starts the persistent Console. `op/screen_server.sh` manages the
-independent background Screen Server.
+`boot.sh` starts the persistent Console and its read-only headless ScreenSource.
+`op/screen_server.sh` starts the independent background Screen Server.
+`op/screen.sh 1` binds Screen #1 to the currently running Console;
+`op/screen.sh 1 off` detaches it without stopping the world.
 
-The previous graphical Vision/demo launchers and unified Training/Exam launcher
-were removed in the modular corrective cut. Training composition will be
-rebuilt from independent processes in the next patch.
+Vision remains headless and machine-facing. The old graphical Vision/demo
+launchers and the all-owning Training launcher remain removed.
 
-Install the current V2 runtime dependency with:
+Install dependencies with:
 
 ```bash
 python -m pip install -r game2/v2/requirements.txt
 ```
 
-Detailed architecture and operation documentation live in
-[`v2/README.md`](v2/README.md).
+See [`v2/README.md`](v2/README.md) for architecture and operation.

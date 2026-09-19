@@ -1,6 +1,7 @@
 runs/
 runtime/checkpoints/
 runtime/current-console.json
+runtime/current-screen-source.json
 runtime/screen-server.json
 runtime/screen-server.log
 runtime/screen-server.pid

@@ -25,9 +25,11 @@ from ..contracts.discovery import (CURRENT_CONSOLE_PATH, ConsoleDiscovery,
                                    remove_current_console)
 from ..contracts.framing import encode_frame, recv_frame, send_frame
 from ..contracts.manifests import Endpoint, PlayerManifest
+from ..contracts.screen import (CURRENT_SCREEN_SOURCE_PATH, ScreenSourceDiscovery,
+                                publish_screen_source, remove_screen_source)
 from .config import (ControllerManifest, DisplayManifest, EngineManifest,
-                     InternalManifest, SessionConfig, allocate_endpoint,
-                     new_session_id)
+                     InternalManifest, ScreenSourceManifest, SessionConfig,
+                     allocate_endpoint, new_session_id)
 from .protocol import (despawn_message, respawn_message, spawn_message)
 from .transport.control_server import ControlServer
 from .world import WorldDefinition, load_world
@@ -36,6 +38,7 @@ from .world import WorldDefinition, load_world
 CONTROLLER_MODULES = {"default": "game2.v2.console.controller.main"}
 DISPLAY_MODULE = "game2.v2.console.display.main"
 VISION_RENDERER_MODULE = "game2.v2.console.display.vision.renderer"
+SCREEN_SOURCE_MODULE = "game2.v2.console.display.screen.source"
 
 
 def preflight(config_path: str | Path) -> tuple[SessionConfig, WorldDefinition]:
@@ -49,7 +52,7 @@ def preflight(config_path: str | Path) -> tuple[SessionConfig, WorldDefinition]:
         raise ValueError(f"Unknown controller subsystem: {config.controller}")
     for module_name in (
             "game2.v2.console.engine.main", controller_module, DISPLAY_MODULE,
-            VISION_RENDERER_MODULE):
+            VISION_RENDERER_MODULE, SCREEN_SOURCE_MODULE):
         module = importlib.import_module(module_name)
         if not callable(getattr(module, "main", None)) and module_name != VISION_RENDERER_MODULE:
             raise ValueError(f"Required subsystem entrypoint is missing: {module_name}")
@@ -487,15 +490,24 @@ def _check_discovery_directory(path: Path) -> None:
 
 
 def run_server(config_path: str | Path,
-               discovery_path: str | Path = CURRENT_CONSOLE_PATH) -> int:
+               discovery_path: str | Path = CURRENT_CONSOLE_PATH,
+               screen_discovery_path: str | Path | None = None) -> int:
     """Run one persistent Console until explicit shutdown or process failure."""
     config_path = Path(config_path).resolve()
     discovery_path = Path(discovery_path)
+    if screen_discovery_path is None:
+        screen_discovery_path = (
+            CURRENT_SCREEN_SOURCE_PATH
+            if discovery_path == CURRENT_CONSOLE_PATH
+            else discovery_path.with_name("screen-source.json")
+        )
+    screen_discovery_path = Path(screen_discovery_path)
     config, world = preflight(config_path)
     _check_discovery_directory(discovery_path)
     if discovery_path.exists() and _existing_console_is_live(discovery_path):
         print("Game2 V2 Console is already running", flush=True)
         return 0
+    screen_discovery_path.unlink(missing_ok=True)
 
     session_id = new_session_id()
     run_dir = Path(__file__).resolve().parent / "runs" / session_id
@@ -507,12 +519,22 @@ def run_server(config_path: str | Path,
     EngineManifest(session_id, internal.engine_control, internal.engine_state,
                    internal.engine_telemetry, internal.engine_events, internal.run_dir,
                    None, None).write(engine_manifest_path)
+    assert internal.engine_state is not None
+    screen_endpoint = allocate_endpoint()
+    screen_manifest_path = run_dir / "screen-source-manifest.json"
+    ScreenSourceManifest(
+        session_id, internal.engine_state, str(config.map_path(config_path).resolve()),
+        screen_endpoint,
+    ).write(screen_manifest_path)
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
     engine_log = (run_dir / "engine.log").open("w", encoding="utf-8")
+    screen_log = (run_dir / "screen-source.log").open("w", encoding="utf-8")
     engine = None
+    screen_source = None
     engine_control = None
     server = None
     own_discovery: ConsoleDiscovery | None = None
+    own_screen_source: ScreenSourceDiscovery | None = None
     interrupted = threading.Event()
 
     def stop(_signum, _frame):
@@ -529,6 +551,17 @@ def run_server(config_path: str | Path,
             root, engine_log, "Engine")
         engine_control = EngineLifecycleClient(internal.engine_control)
         engine_control.connect()
+        try:
+            screen_source = _launch_ready(
+                [sys.executable, "-m", SCREEN_SOURCE_MODULE,
+                 "--manifest", str(screen_manifest_path)],
+                root, screen_log, "ScreenSource")
+            own_screen_source = ScreenSourceDiscovery(
+                1, session_id, world.map_id, screen_endpoint)
+            publish_screen_source(own_screen_source, screen_discovery_path)
+        except (OSError, RuntimeError) as exc:
+            screen_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")
+            screen_log.flush()
         assert internal.engine_state is not None
         assert internal.engine_telemetry is not None
         assert internal.engine_events is not None
@@ -552,6 +585,11 @@ def run_server(config_path: str | Path,
             if engine.poll() is not None:
                 status = 0 if engine.returncode == 0 else 1
                 break
+            if screen_source is not None and screen_source.poll() is not None:
+                if own_screen_source is not None:
+                    remove_screen_source(own_screen_source, screen_discovery_path)
+                    own_screen_source = None
+                screen_source = None
             server.drain_commands()
             time.sleep(0.005)
         if interrupted.is_set():
@@ -565,13 +603,17 @@ def run_server(config_path: str | Path,
             server.close()
         if engine_control is not None:
             engine_control.close()
+        _terminate(screen_source)
         _terminate(engine)
+        if own_screen_source is not None:
+            remove_screen_source(own_screen_source, screen_discovery_path)
         if own_discovery is not None:
             remove_current_console(own_discovery, discovery_path)
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
         console_log.close()
         engine_log.close()
+        screen_log.close()
     return status
 
 

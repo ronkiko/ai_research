@@ -303,6 +303,51 @@ class DisplayManifest:
         Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
 
 
+
+@dataclass(frozen=True)
+class ScreenSourceManifest:
+    """Private Console wiring for one headless human-facing Screen source."""
+
+    session_id: str
+    engine_state: Endpoint
+    world_file: str
+    screen: Endpoint
+
+    def __post_init__(self) -> None:
+        if type(self.session_id) is not str or not self.session_id:
+            raise ValueError("session_id must be non-empty")
+        if type(self.world_file) is not str or not self.world_file:
+            raise ValueError("world_file must be non-empty")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "engine_state": self.engine_state.as_dict(),
+            "world_file": self.world_file,
+            "screen": self.screen.as_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ScreenSourceManifest":
+        session_id = _manifest_session(
+            data, {"session_id", "engine_state", "world_file", "screen"}
+        )
+        return cls(
+            session_id,
+            cast(Endpoint, _manifest_endpoint(data["engine_state"])),
+            data["world_file"],
+            cast(Endpoint, _manifest_endpoint(data["screen"])),
+        )
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "ScreenSourceManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8")
+
+
 @dataclass(frozen=True)
 class OperatorControlManifest:
     """Private lifecycle capability for a temporary operator shell."""
@@ -346,5 +391,5 @@ def new_session_id() -> str:
 
 
 __all__ = ["COMPATIBILITY_ACTOR_ID", "COMPATIBILITY_PLAYER_ID", "ControllerManifest", "DisplayManifest", "EngineManifest",
-           "InternalManifest", "OperatorControlManifest", "SessionConfig",
+           "InternalManifest", "OperatorControlManifest", "ScreenSourceManifest", "SessionConfig",
            "allocate_endpoint", "new_session_id"]

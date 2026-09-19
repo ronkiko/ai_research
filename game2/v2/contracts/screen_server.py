@@ -1,4 +1,4 @@
-"""Public control contract for the independent operator Screen Server."""
+"""Control contract for the independent operator Screen Server."""
 from __future__ import annotations
 
 import json
@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from .manifests import Endpoint
+from .screen import ScreenSourceDiscovery
 
 
 PROTOCOL_VERSION = 1
 PROBE = "screen_server_probe"
+BIND = "screen_server_bind"
+UNBIND = "screen_server_unbind"
 STATUS = "screen_server_status"
 DISCOVERY_TYPE = "screen_server_discovery"
 CURRENT_SCREEN_SERVER_PATH = (
@@ -94,12 +97,8 @@ def publish_screen_server(
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
+            "w", encoding="utf-8", dir=destination.parent,
+            prefix=f".{destination.name}.", suffix=".tmp", delete=False,
         ) as target:
             temporary = Path(target.name)
             target.write(json.dumps(discovery.to_dict(), sort_keys=True))
@@ -138,24 +137,62 @@ def probe_message() -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "type": PROBE}
 
 
-def status_message(slots: int) -> dict[str, Any]:
-    _positive_int("slots", slots)
+def bind_message(screen: int, source: ScreenSourceDiscovery) -> dict[str, Any]:
+    _positive_int("screen", screen)
+    if not isinstance(source, ScreenSourceDiscovery):
+        raise TypeError("bind source must be ScreenSourceDiscovery")
     return {
         "version": PROTOCOL_VERSION,
-        "type": STATUS,
-        "screens": [
-            {"screen": number, "state": "idle"}
-            for number in range(1, slots + 1)
-        ],
+        "type": BIND,
+        "screen": screen,
+        "source": source.to_dict(),
+    }
+
+
+def unbind_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": UNBIND,
+        "screen": _positive_int("screen", screen),
     }
 
 
 def decode_screen_server_request(message: dict[str, Any]) -> str:
-    if not isinstance(message, dict) or set(message) != {"version", "type"}:
-        raise ValueError("Screen Server request fields are invalid")
-    if message["version"] != PROTOCOL_VERSION or message["type"] != PROBE:
-        raise ValueError("Screen Server request is invalid")
-    return PROBE
+    if not isinstance(message, dict):
+        raise ValueError("Screen Server request must be an object")
+    kind = message.get("type")
+    if kind == PROBE:
+        if set(message) != {"version", "type"}:
+            raise ValueError("Screen Server probe fields are invalid")
+    elif kind == BIND:
+        if set(message) != {"version", "type", "screen", "source"}:
+            raise ValueError("Screen Server bind fields are invalid")
+        _positive_int("screen", message["screen"])
+        ScreenSourceDiscovery.from_dict(message["source"])
+    elif kind == UNBIND:
+        if set(message) != {"version", "type", "screen"}:
+            raise ValueError("Screen Server unbind fields are invalid")
+        _positive_int("screen", message["screen"])
+    else:
+        raise ValueError("unknown Screen Server request")
+    if message.get("version") != PROTOCOL_VERSION:
+        raise ValueError("unsupported Screen Server protocol version")
+    return kind
+
+
+def status_message(slots: int, bound: dict[int, ScreenSourceDiscovery] | None = None) -> dict[str, Any]:
+    _positive_int("slots", slots)
+    bound = bound or {}
+    screens = []
+    for number in range(1, slots + 1):
+        source = bound.get(number)
+        screens.append({
+            "screen": number,
+            "state": "bound" if source is not None else "idle",
+            "session_id": source.session_id if source is not None else None,
+            "map": source.map_id if source is not None else None,
+        })
+    return {"version": PROTOCOL_VERSION, "type": STATUS, "screens": screens}
 
 
 def decode_screen_server_status(message: dict[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -166,29 +203,30 @@ def decode_screen_server_status(message: dict[str, Any]) -> tuple[dict[str, Any]
     screens = message["screens"]
     if not isinstance(screens, list) or not screens:
         raise ValueError("Screen Server must expose at least one screen")
-    expected = 1
     normalized = []
-    for item in screens:
-        if not isinstance(item, dict) or set(item) != {"screen", "state"}:
+    for expected, item in enumerate(screens, start=1):
+        if not isinstance(item, dict) or set(item) != {
+            "screen", "state", "session_id", "map",
+        }:
             raise ValueError("Screen Server screen entry is invalid")
-        if item["screen"] != expected or item["state"] != "idle":
+        if item["screen"] != expected or item["state"] not in {"idle", "bound"}:
             raise ValueError("Screen Server screen entry is invalid")
+        if item["state"] == "idle":
+            if item["session_id"] is not None or item["map"] is not None:
+                raise ValueError("idle Screen cannot expose a source")
+        else:
+            if type(item["session_id"]) is not str or not item["session_id"]:
+                raise ValueError("bound Screen session_id is invalid")
+            if type(item["map"]) is not str or not item["map"]:
+                raise ValueError("bound Screen map is invalid")
         normalized.append(dict(item))
-        expected += 1
     return tuple(normalized)
 
 
 __all__ = [
-    "CURRENT_SCREEN_SERVER_PATH",
-    "DISCOVERY_TYPE",
-    "PROBE",
-    "PROTOCOL_VERSION",
-    "STATUS",
-    "ScreenServerDiscovery",
-    "decode_screen_server_request",
-    "decode_screen_server_status",
-    "probe_message",
-    "publish_screen_server",
-    "remove_screen_server",
-    "status_message",
+    "BIND", "CURRENT_SCREEN_SERVER_PATH", "DISCOVERY_TYPE", "PROBE",
+    "PROTOCOL_VERSION", "STATUS", "UNBIND", "ScreenServerDiscovery",
+    "bind_message", "decode_screen_server_request", "decode_screen_server_status",
+    "probe_message", "publish_screen_server", "remove_screen_server",
+    "status_message", "unbind_message",
 ]

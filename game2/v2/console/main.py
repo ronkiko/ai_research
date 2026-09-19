@@ -20,6 +20,7 @@ from game2.v2.console.config import (ControllerManifest, DisplayManifest, Engine
 from game2.v2.contracts.manifests import PeripheralManifest
 from game2.v2.console.world import load_world
 from game2.v2.console.server import run_server
+from game2.v2.contracts.discovery import CURRENT_CONSOLE_PATH
 
 
 MODULES = {"default": "game2.v2.console.controller.main"}
@@ -217,16 +218,21 @@ def main(argv=None) -> int:
                         help="run the persistent zero-player Console server")
     parser.add_argument("--discovery",
                         help="server-only path for the public Console discovery file")
+    parser.add_argument("--screen-discovery",
+                        help="server-only path for Screen source discovery")
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
     parser.add_argument("--control-capability",
                         help="private embedded-demo lifecycle CONTROL capability output path")
     args = parser.parse_args(argv)
     if args.server:
-        return (run_server(args.config, args.discovery)
-                if args.discovery is not None else run_server(args.config))
-    if args.discovery is not None:
-        parser.error("--discovery is only valid with --server")
+        return run_server(
+            args.config,
+            args.discovery if args.discovery is not None else CURRENT_CONSOLE_PATH,
+            args.screen_discovery,
+        )
+    if args.discovery is not None or args.screen_discovery is not None:
+        parser.error("--discovery and --screen-discovery are only valid with --server")
     status, summary = run_session(args.config, args.state_capability,
                                   args.control_capability)
     if summary:
