@@ -9,7 +9,6 @@ import time
 import unittest
 from unittest import mock
 
-from game2.v2 import vision_demo
 from game2.v2.contracts.connection import (
     ATTACH,
     DETACH,

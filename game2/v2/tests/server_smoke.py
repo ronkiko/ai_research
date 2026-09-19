@@ -16,7 +16,8 @@ import time
 import unittest
 from pathlib import Path
 
-from game2.v2 import vision_demo
+from game2.v2.player.connection import PlayerConnection
+from game2.v2.player.peripherals import VisionReceiver
 from game2.v2.contracts.connection import ATTACH, attach_message, probe_message, validate_probe_response
 from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.framing import recv_frame, send_frame
