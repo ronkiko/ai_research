@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import socket
 import threading
 import tempfile
@@ -243,13 +244,15 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(actions_first, actions_second)
         self.assertEqual(len(first.log_probabilities), 3)
 
-    def test_reinforce_updates_planner_and_motor_but_evaluate_is_frozen(self):
+
+    def test_ppo_updates_actor_and_critic_but_evaluate_is_frozen(self):
         player = self._player()
         player.prepare_episode("train", 42)
         sample = player.process_grid(_grid(1))
         player.record_sent_sample(sample)
         planner_before = [parameter.detach().clone() for parameter in player.planner.parameters()]
         motor_before = [parameter.detach().clone() for parameter in player.motor_controller.parameters()]
+        critic_before = [parameter.detach().clone() for parameter in player.critic.parameters()]
         updated, loss = player.apply_result(-1.0)
         self.assertTrue(updated)
         self.assertTrue(torch.isfinite(torch.tensor(loss)))
@@ -257,28 +260,49 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                             for before, after in zip(planner_before, player.planner.parameters())))
         self.assertTrue(any(not torch.equal(before, after)
                             for before, after in zip(motor_before, player.motor_controller.parameters())))
+        self.assertTrue(any(not torch.equal(before, after)
+                            for before, after in zip(critic_before, player.critic.parameters())))
 
         player.prepare_episode("evaluate", 42)
-        evaluate_before = [parameter.detach().clone()
-                           for parameter in list(player.planner.parameters()) +
-                           list(player.motor_controller.parameters())]
+        evaluate_before = [
+            parameter.detach().clone()
+            for parameter in (
+                list(player.planner.parameters())
+                + list(player.motor_controller.parameters())
+                + list(player.critic.parameters())
+            )
+        ]
         sample = player.process_grid(_grid(2))
         self.assertIsNone(sample.log_prob)
         self.assertEqual(player.training_records, ())
-        evaluate_after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
+        evaluate_after = (
+            list(player.planner.parameters())
+            + list(player.motor_controller.parameters())
+            + list(player.critic.parameters())
+        )
         self.assertTrue(all(torch.equal(before, after)
                             for before, after in zip(evaluate_before, evaluate_after)))
+
 
     def test_zero_reward_discards_trajectory_without_updating_weights(self):
         player = self._player()
         player.prepare_episode("train", 42)
         sample = player.process_grid(_grid(1))
         player.record_sent_sample(sample)
-        before = [parameter.detach().clone()
-                  for parameter in list(player.planner.parameters()) +
-                  list(player.motor_controller.parameters())]
+        before = [
+            parameter.detach().clone()
+            for parameter in (
+                list(player.planner.parameters())
+                + list(player.motor_controller.parameters())
+                + list(player.critic.parameters())
+            )
+        ]
         updated, loss = player.apply_result(0.0)
-        after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
+        after = (
+            list(player.planner.parameters())
+            + list(player.motor_controller.parameters())
+            + list(player.critic.parameters())
+        )
         self.assertFalse(updated)
         self.assertEqual(loss, 0.0)
         self.assertEqual(player.log_probabilities, ())
@@ -307,11 +331,12 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(unsent_player.training_records, ())
 
 
+
     def test_training_record_keeps_exact_small_grid_matrices(self):
         grid = _grid(77, self_x=2, goal_x=10)
         sample = DecisionSample(
             grid.world_tick, grid, MotorGoal(0.0, 0.0), 0.0,
-            ActionDecision(True, False), -0.5,
+            ActionDecision(True, False), -0.5, False, False, 0.25,
         )
         record = TrainingRecord.from_sample(sample)
         self.assertEqual(
@@ -321,6 +346,8 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(record.physics, grid.physics)
         self.assertEqual(record.metadata, grid.metadata)
         self.assertEqual(record.vision_grid, grid)
+        self.assertEqual(record.old_log_prob, -0.5)
+        self.assertEqual(record.old_value, 0.25)
 
     def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
         player = self._player()
@@ -337,61 +364,37 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                             for value in record.__dict__.values()))
         self.assertTrue(all(isinstance(value, float) for value in player.log_probabilities))
 
-    def test_sequential_replay_matches_reference_reinforce_gradient_and_step(self):
-        reference_planner = CNNPlanner.fresh(1)
-        reference_motor = MotorController582.fresh(2)
-        sequential_planner = CNNPlanner.fresh(99)
-        sequential_motor = MotorController582.fresh(100)
-        sequential_planner.load_state_dict(reference_planner.state_dict())
-        sequential_motor.load_state_dict(reference_motor.state_dict())
-        reference = LearnedPlayer(reference_planner, reference_motor)
-        sequential = LearnedPlayer(sequential_planner, sequential_motor)
-        frames = [_grid(1), _grid(2, self_x=5), _grid(3, self_x=7)]
-        for player in (reference, sequential):
-            player.prepare_episode("train", 42)
-            for frame in frames:
-                player.record_sent_sample(player.process_grid(frame))
-        self.assertEqual(reference.training_records, sequential.training_records)
 
-        reward = 0.0001
-        reference_parameters = list(reference.planner.parameters()) + \
-            list(reference.motor_controller.parameters())
-        reference.optimizer.zero_grad(set_to_none=True)
-        reference_log_probs = []
-        for record in reference.training_records:
-            vision = vision_to_tensor(record.vision_grid).unsqueeze(0)
-            planner_output = reference.planner(vision)[0]
-            logits = reference.motor_controller.forward_goal(
-                planner_output,
-                record.motion_x,
-                record.pad_right,
-                record.pad_jump,
-            )
-            action = torch.tensor([record.action_decision.right, record.action_decision.jump],
-                                  dtype=logits.dtype)
-            reference_log_probs.append(
-                -torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits, action, reduction="none").mean())
-        reference_loss = -reward * torch.stack(reference_log_probs).mean()
-        reference_loss.backward()
-        reference_gradients = [parameter.grad.detach().clone()
-                               for parameter in reference_parameters]
-        self.assertLess(float(torch.linalg.vector_norm(torch.cat([
-            gradient.reshape(-1) for gradient in reference_gradients]))), 1.0)
-        torch.nn.utils.clip_grad_norm_(reference_parameters, max_norm=1.0)
-        reference.optimizer.step()
+    def test_ppo_chunk_rewards_preserve_temporal_credit(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        frames = [
+            _grid(1, self_x=2, goal_x=10),
+            _grid(101, self_x=4, goal_x=10),
+            _grid(201, self_x=6, goal_x=10),
+        ]
+        for frame in frames:
+            player.record_sent_sample(player.process_grid(frame))
 
-        updated, sequential_loss = sequential.apply_result(reward)
+        records = player.training_records
+        self.assertEqual(len(records), 3)
+        self.assertTrue(all(isinstance(record.old_log_prob, float) for record in records))
+        self.assertTrue(all(isinstance(record.old_value, float) for record in records))
+        rewards = player._rewards_for_records(records, -1.0)
+        self.assertAlmostEqual(rewards[0], 0.0, delta=1e-8)
+        self.assertGreater(rewards[1], 0.0)
+        self.assertLess(rewards[2], 0.0)
+
+        advantages, returns = player._gae(records, rewards)
+        self.assertEqual(tuple(advantages.shape), (3,))
+        self.assertEqual(tuple(returns.shape), (3,))
+        self.assertTrue(torch.isfinite(advantages).all())
+        self.assertTrue(torch.isfinite(returns).all())
+
+        updated, loss = player.apply_result(-1.0)
         self.assertTrue(updated)
-        self.assertAlmostEqual(
-            sequential_loss, float(reference_loss.detach()), delta=1e-7
-        )
-        sequential_parameters = list(sequential.planner.parameters()) + \
-            list(sequential.motor_controller.parameters())
-        for expected, actual in zip(reference_gradients, sequential_parameters):
-            self.assertTrue(torch.allclose(expected, actual.grad, rtol=1e-6, atol=1e-7))
-        for expected, actual in zip(reference_parameters, sequential_parameters):
-            self.assertTrue(torch.allclose(expected, actual, rtol=1e-6, atol=1e-7))
+        self.assertTrue(math.isfinite(loss))
+        self.assertEqual(player.training_records, ())
 
     def test_zero_reward_does_not_backward_or_step(self):
         player = self._player()
@@ -408,7 +411,8 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(loss, 0.0)
         self.assertEqual(player.training_records, ())
 
-    def test_timeout_reward_remains_negative_and_progress_reduces_penalty(self):
+
+    def test_terminal_reward_is_separate_from_chunk_progress_shaping(self):
         stationary = VisionProgress()
         for frame in (
             VisionProgressTests._grid(2, 2),
@@ -428,11 +432,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         stationary_reward = reward_for_result("timeout", stationary.progress)
         progressing_reward = reward_for_result("timeout", progressing.progress)
         self.assertEqual(stationary.progress, 0.0)
-        self.assertEqual(stationary_reward, -1.0)
         self.assertAlmostEqual(progressing.progress, 0.5, delta=0.05)
-        self.assertAlmostEqual(progressing_reward, -0.75, delta=0.03)
-        self.assertGreater(progressing_reward, stationary_reward)
-        self.assertLess(progressing_reward, 0.0)
+        self.assertEqual(stationary_reward, -1.0)
+        self.assertEqual(progressing_reward, -1.0)
 
         player = self._player()
         player.prepare_episode("train", 42)
@@ -440,7 +442,6 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             player.record_sent_sample(player.process_grid(frame))
         updated, _loss = player.apply_result(progressing_reward)
         self.assertTrue(updated)
-
 
 class _ImmediateInference:
     """Deterministic unit-test inference; real worker lifecycle is tested separately."""
@@ -1444,6 +1445,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
         self.assertEqual([sample.world_tick for sample in player.recorded], [1])
         self.assertTrue(workers[0].joined)
 
+
     def test_episode_reports_public_partial_progress_to_training(self):
         class ProgressVision:
             failed = False
@@ -1487,8 +1489,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
         updated, _loss = player.apply_result(reward)
         self.assertTrue(trainable)
         self.assertAlmostEqual(finished["progress"], 0.5, delta=0.05)
-        self.assertLess(reward, 0.0)
-        self.assertGreater(reward, reward_for_result("timeout", 0.0))
+        self.assertEqual(reward, -1.0)
         self.assertTrue(updated)
 
     def test_one_right_press_stays_held_across_physics_ticks(self):
@@ -1508,19 +1509,16 @@ class TrainingActuatorClockTests(unittest.TestCase):
         self.assertTrue(actor.input_right)
 
 class TrainerRuntimeTests(unittest.TestCase):
+
     def test_reward_mapping_and_socket_handshake(self):
         self.assertEqual(reward_for_result("success", 0.0), 1.0)
         self.assertEqual(reward_for_result("success", 0.8), 1.0)
         self.assertEqual(reward_for_result("timeout", 0.0), -1.0)
-        self.assertEqual(reward_for_result("timeout", 0.4), -0.8)
-        self.assertEqual(reward_for_result("timeout", 1.0), -0.5)
+        self.assertEqual(reward_for_result("timeout", 0.4), -1.0)
+        self.assertEqual(reward_for_result("timeout", 1.0), -1.0)
         self.assertEqual(reward_for_result("dead", 0.0), -1.0)
-        self.assertEqual(reward_for_result("dead", 0.4), -0.8)
-        self.assertEqual(reward_for_result("dead", 1.0), -0.5)
-        self.assertLess(reward_for_result("timeout", 1.0), 0.0)
-        self.assertLess(reward_for_result("dead", 1.0), 0.0)
-        self.assertGreater(reward_for_result("timeout", 0.9),
-                           reward_for_result("timeout", 0.1))
+        self.assertEqual(reward_for_result("dead", 0.4), -1.0)
+        self.assertEqual(reward_for_result("dead", 1.0), -1.0)
         trainer = Trainer(listen_port=0, episodes=1, seed=100)
         server, client = socket.socketpair()
         summary = []
@@ -1553,7 +1551,3 @@ class TrainerRuntimeTests(unittest.TestCase):
             server.close()
         self.assertEqual(errors, [])
         self.assertEqual(summary[0].to_dict()["actual_update_count"], 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

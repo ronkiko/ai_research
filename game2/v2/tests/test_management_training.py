@@ -128,8 +128,10 @@ class ManagementTrainingTests(unittest.TestCase):
             checkpoint_dir.mkdir()
             planner = checkpoint_dir / "planner.pt"
             motor = checkpoint_dir / "motor.pt"
+            critic = checkpoint_dir / "critic.pt"
             planner.write_bytes(b"keep-planner")
             motor.write_bytes(b"keep-motor")
+            critic.write_bytes(b"keep-critic")
             run = TrainingRun(
                 popen_factory=_Factory(),
                 sleeper=lambda _seconds: None,
@@ -148,6 +150,7 @@ class ManagementTrainingTests(unittest.TestCase):
                 )
             self.assertEqual(planner.read_bytes(), b"keep-planner")
             self.assertEqual(motor.read_bytes(), b"keep-motor")
+            self.assertEqual(critic.read_bytes(), b"keep-critic")
 
     def test_headless_composition_does_not_touch_screen_and_console_display_is_off(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -190,8 +193,10 @@ class ManagementTrainingTests(unittest.TestCase):
             checkpoint_dir.mkdir()
             planner = checkpoint_dir / "planner.pt"
             motor = checkpoint_dir / "motor.pt"
+            critic = checkpoint_dir / "critic.pt"
             planner.write_bytes(b"old-planner")
             motor.write_bytes(b"old-motor")
+            critic.write_bytes(b"old-critic")
             old_log = checkpoint_dir / "logs" / "run-0007" / "old.jsonl"
             old_log.parent.mkdir(parents=True)
             old_log.write_text("old\n", encoding="utf-8")
@@ -212,9 +217,13 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertFalse(planner.exists())
             self.assertFalse(motor.exists())
+            self.assertFalse(critic.exists())
             self.assertFalse(old_log.exists())
             self.assertIn("FRESH reset logs", output.getvalue())
-            self.assertIn("FRESH reset checkpoints: planner.pt, motor.pt", output.getvalue())
+            self.assertIn(
+                "FRESH reset checkpoints: planner.pt, motor.pt, critic.pt",
+                output.getvalue(),
+            )
             log_runs = list((checkpoint_dir / "logs").glob("run-*"))
             self.assertEqual([path.name for path in log_runs], ["run-0001"])
             player_commands = [

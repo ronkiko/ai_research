@@ -128,7 +128,11 @@ class ModelRuntimeTests(unittest.TestCase):
 
         def run():
             try:
-                runtime.run(Path("/tmp/unused-planner.pt"), Path("/tmp/unused-motor.pt"))
+                runtime.run(
+                    Path("/tmp/unused-planner.pt"),
+                    Path("/tmp/unused-motor.pt"),
+                    Path("/tmp/unused-critic.pt"),
+                )
             except BaseException as exc:
                 errors.append(exc)
 
