@@ -5,7 +5,7 @@ import socket
 import time
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from game2.v2.contracts.framing import ProtocolError
 from game2.v2.contracts.training import (
@@ -144,6 +144,17 @@ def _checkpoint_paths(checkpoint_dir: str | Path) -> tuple[Path, Path]:
     return directory / "planner.pt", directory / "motor.pt"
 
 
+def _request_lifecycle_ack(connection: PlayerConnection, first_lifecycle: bool) -> dict | None:
+    request = cast(
+        Callable[[], dict | None],
+        getattr(connection, "request_start_ack", None)
+        if first_lifecycle else getattr(connection, "request_respawn_ack", None),
+    )
+    if not callable(request):
+        raise RuntimeError("Player lifecycle connection does not expose ACKs")
+    return request()
+
+
 def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id: int,
                  *, first_lifecycle: bool, vision, joystick, action_hz: int,
                  sleeper: Callable[[float], None], ack_settle_timeout: float,
@@ -158,9 +169,15 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     if type(pre_lifecycle_world_tick) is not int:
         pre_lifecycle_world_tick = -1
     try:
-        accepted_lifecycle = (connection.request_start() if first_lifecycle
-                              else connection.request_respawn())
+        lifecycle_ack = _request_lifecycle_ack(connection, first_lifecycle)
+        accepted_lifecycle = (
+            isinstance(lifecycle_ack, dict)
+            and lifecycle_ack.get("status") == "accepted"
+            and type(lifecycle_ack.get("world_tick")) is int
+            and lifecycle_ack["world_tick"] >= 0
+        )
     except (ConnectionError, OSError, TimeoutError):
+        lifecycle_ack = None
         accepted_lifecycle = False
 
     if not accepted_lifecycle:
@@ -169,6 +186,8 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         finished = episode_finished_message(episode_id, 0, 0, result, False, 0, 0)
         return finished, False, False
 
+    assert isinstance(lifecycle_ack, dict)
+    lifecycle_world_tick = lifecycle_ack["world_tick"]
     started_tick: int | None = None
     latest_frame_tick = pre_lifecycle_world_tick
     latest_terminal: dict | None = None
@@ -182,7 +201,14 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         if connection.failed or vision.failed or joystick.failed:
             dirty = True
             break
-        latest_terminal = connection.pop_terminal()
+        while True:
+            terminal = connection.pop_terminal()
+            if terminal is None:
+                break
+            if terminal["world_tick"] <= lifecycle_world_tick:
+                continue
+            latest_terminal = terminal
+            break
         if latest_terminal is not None:
             break
         frame = vision.latest

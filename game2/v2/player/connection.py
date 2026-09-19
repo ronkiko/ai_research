@@ -239,14 +239,22 @@ class PlayerConnection:
             return self._terminal_events.popleft()
 
     def request_start(self) -> bool:
-        self._send(start_message())
-        acknowledgement = self.wait_ack(START)
+        acknowledgement = self.request_start_ack()
         return acknowledgement is not None and acknowledgement["status"] == "accepted"
 
+    def request_start_ack(self) -> dict | None:
+        """Request START and return its validated public lifecycle ACK."""
+        self._send(start_message())
+        return self.wait_ack(START)
+
     def request_respawn(self) -> bool:
-        self._send(respawn_message())
-        acknowledgement = self.wait_ack(RESPAWN)
+        acknowledgement = self.request_respawn_ack()
         return acknowledgement is not None and acknowledgement["status"] == "accepted"
+
+    def request_respawn_ack(self) -> dict | None:
+        """Request RESPAWN and return its validated public lifecycle ACK."""
+        self._send(respawn_message())
+        return self.wait_ack(RESPAWN)
 
     def detach(self) -> None:
         try:
