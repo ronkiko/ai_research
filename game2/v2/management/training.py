@@ -260,10 +260,14 @@ class TrainingRun:
                 line = process.lines.get(timeout=min(remaining, 0.1))
             except queue.Empty:
                 if process.process.poll() is not None and process.output_done.is_set():
-                    raise TrainingRunError(f"process exited before {prefix}")
+                    raise TrainingRunError(
+                        f"process exited before {prefix}: {process.diagnostic()}"
+                    )
                 continue
             if line is _OUTPUT_END:
-                raise TrainingRunError(f"process exited before {prefix}")
+                raise TrainingRunError(
+                    f"process exited before {prefix}: {process.diagnostic()}"
+                )
             if not isinstance(line, str) or not line.startswith(prefix + " "):
                 continue
             try:
