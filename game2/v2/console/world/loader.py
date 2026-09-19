@@ -8,6 +8,7 @@ from typing import Any
 from .model import CollisionRect, Decoration, Rect, TileID, WorldDefinition
 
 TILE_SIZE = 64
+HAZARD_HEIGHT = 24
 DECORATION_SPRITES = {"tree", "bush", "ruin"}
 TILE_IDS = {".": TileID.EMPTY, "#": TileID.SOLID, "^": TileID.HAZARD}
 
@@ -68,11 +69,25 @@ def _collision_geometry(terrain: tuple[str, ...], columns: int,
             end = column + 1
             while end < columns and row[end] == row[column]:
                 end += 1
-            if row[column] != ".":
+            if row[column] == "#":
                 collision_rects.append(
-                    CollisionRect(column * tile_size, row_number * tile_size,
-                                  (end - column) * tile_size, tile_size,
-                                  row[column] == "^"))
+                    CollisionRect(
+                        column * tile_size,
+                        row_number * tile_size,
+                        (end - column) * tile_size,
+                        tile_size,
+                    )
+                )
+            elif row[column] == "^":
+                collision_rects.append(
+                    CollisionRect(
+                        column * tile_size,
+                        row_number * tile_size + tile_size - HAZARD_HEIGHT,
+                        (end - column) * tile_size,
+                        HAZARD_HEIGHT,
+                        True,
+                    )
+                )
             column = end
 
     # The arena boundary is one tile thick and sits outside the authored grid.

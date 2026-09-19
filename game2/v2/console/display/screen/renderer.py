@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ...world import TileID, WorldDefinition
 from ..view_state import DisplayState
-from .autotile import AVAILABLE_ATLAS_CELLS, AutoTiler, NeighborMask
+from .autotile import AVAILABLE_ATLAS_CELLS, AutoTiler
 
 
 ASSET_DIR = Path(__file__).with_name("assets")
@@ -17,7 +17,6 @@ DECORATION_ATLAS = {
     "ruin": (176, 80, 32, 32),
 }
 DECORATION_SCALE = 2
-SPIKE_HEIGHT = 26
 CHECKER_CELL_SIZE = 8
 CHECKER_COLUMNS = 6
 CHECKER_ROWS = 4
@@ -142,32 +141,33 @@ class ScreenRenderer:
         return layer
 
     def _build_hazards(self):
+        """Draw damage geometry exactly where the Engine can kill an Actor."""
         pygame = self._pygame()
         layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        autotiler = AutoTiler()
-        for row, cells in enumerate(self.world.tiles):
-            for column, tile in enumerate(cells):
-                if tile is not TileID.HAZARD:
-                    continue
-                x, y = column * self.world.tile_size, row * self.world.tile_size
-                rect = pygame.Rect(x, y, self.world.tile_size, self.world.tile_size)
-                layer.fill((70, 30, 43), rect)
-                variant = autotiler.variant_for(self.world.tiles, row, column)
-                if variant.neighbor_mask & NeighborMask.NORTH:
-                    continue
-                for offset in range(0, self.world.tile_size, SOURCE_TILE_SIZE):
-                    spike_x = x + offset
-                    pygame.draw.polygon(
-                        layer, (245, 232, 194),
-                        [(spike_x + 2, y + SPIKE_HEIGHT),
-                         (spike_x + 8, y + 3),
-                         (spike_x + 14, y + SPIKE_HEIGHT)],
-                    )
-                    pygame.draw.line(
-                        layer, (191, 53, 58),
-                        (spike_x + 8, y + 3),
-                        (spike_x + 11, y + SPIKE_HEIGHT - 5), 2,
-                    )
+        for hazard in self.world.collision_rects:
+            if not hazard.damage:
+                continue
+            rect = pygame.Rect(hazard.x, hazard.y, hazard.width, hazard.height)
+            layer.fill((70, 30, 43), rect)
+            for spike_x in range(hazard.x, hazard.x + hazard.width, SOURCE_TILE_SIZE):
+                center_x = spike_x + SOURCE_TILE_SIZE // 2
+                pygame.draw.polygon(
+                    layer,
+                    (245, 232, 194),
+                    [
+                        (spike_x + 2, hazard.y + hazard.height),
+                        (center_x, hazard.y + 2),
+                        (spike_x + SOURCE_TILE_SIZE - 2,
+                         hazard.y + hazard.height),
+                    ],
+                )
+                pygame.draw.line(
+                    layer,
+                    (191, 53, 58),
+                    (center_x, hazard.y + 2),
+                    (center_x + 3, hazard.y + hazard.height - 5),
+                    2,
+                )
         return layer
 
     def _build_decorations(self):

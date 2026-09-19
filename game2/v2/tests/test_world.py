@@ -91,9 +91,19 @@ class WorldLoaderTests(unittest.TestCase):
         self.assertEqual(first.collision_rects, second.collision_rects)
         self.assertEqual(first.collision_rects[:3], (
             CollisionRect(0, 0, 128, 64),
-            CollisionRect(256, 0, 128, 64, True),
+            CollisionRect(256, 40, 128, 24, True),
             CollisionRect(640, 0, 640, 64),
         ))
+
+    def test_hazard_collision_occupies_only_lower_fine_aligned_band(self):
+        data = json.loads(V2_MAP.read_text(encoding="utf-8"))
+        data["terrain"] = ["..^.................", *data["terrain"][1:]]
+        world = self._load_temp(data=data)
+        hazard = next(rect for rect in world.collision_rects if rect.damage)
+        self.assertEqual((hazard.x, hazard.y, hazard.width, hazard.height),
+                         (2 * 64, 40, 64, 24))
+        self.assertEqual(hazard.y % 8, 0)
+        self.assertEqual(hazard.height % 8, 0)
 
     def test_goal_rule_is_pure_and_requires_live_grounded_avatar(self):
         world = load_world(V2_MAP)
