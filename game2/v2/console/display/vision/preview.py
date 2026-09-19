@@ -207,9 +207,12 @@ class VisionPreviewRenderer:
             changed = (
                 episode_id != self._trajectory_episode
                 or bool(self._logged_ticks)
+                or bool(self._rated_ticks)
             )
             if episode_id != self._trajectory_episode:
                 self._logged_ticks.clear()
+                self._rated_ticks.clear()
+                self._rated_episode = None
             self._trajectory_episode = episode_id
             return changed
         point = self._trajectory_point(payload)
@@ -219,6 +222,10 @@ class VisionPreviewRenderer:
         if payload.get("k") == "a":
             reward = payload.get("rw")
             if type(reward) not in (int, float) or not math.isfinite(float(reward)):
+                return False
+            if abs(float(reward)) <= 1e-12:
+                return False
+            if episode_id != self._trajectory_episode:
                 return False
             if episode_id != self._rated_episode:
                 self._rated_episode = episode_id

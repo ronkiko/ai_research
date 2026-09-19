@@ -36,6 +36,14 @@ from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 from .motion import SELF, VisionProgress, has_metadata, self_center
 
 
+PPO_RATING_DISPLAY_SECONDS = 2.0
+
+
+def _pause_after_ppo_ratings(update: dict, sleeper: Callable[[float], None]) -> None:
+    if update.get("updated") is True:
+        sleeper(PPO_RATING_DISPLAY_SECONDS)
+
+
 class VisionTrajectoryLog:
     """Compact JSONL trajectory metadata derived only from public Vision."""
 
@@ -412,6 +420,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
                 terminal_result = awaiting_terminal["result"]
                 update = model.episode_end(message["episode_id"], terminal_result,
                                             message["reward"], True)
+                _pause_after_ppo_ratings(update, sleeper)
                 peer.send(update_result_message(message["episode_id"], update["updated"],
                                                 update["loss"]))
                 awaiting_update = None
@@ -456,5 +465,6 @@ def run_attached_training_player(connection: PlayerConnection, trainer_host: str
         connection.close()
 
 
-__all__ = ["ModelClient", "TrainingPeer", "VisionTrajectoryLog",
-           "run_attached_training_player", "run_training_player"]
+__all__ = ["ModelClient", "PPO_RATING_DISPLAY_SECONDS", "TrainingPeer",
+           "VisionTrajectoryLog", "run_attached_training_player",
+           "run_training_player"]

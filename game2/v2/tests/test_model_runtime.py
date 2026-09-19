@@ -35,7 +35,12 @@ from game2.v2.player.model_client import (
 )
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.realtime import run_player
-from game2.v2.player.learned.process import VisionTrajectoryLog, _run_episode
+from game2.v2.player.learned.process import (
+    PPO_RATING_DISPLAY_SECONDS,
+    VisionTrajectoryLog,
+    _pause_after_ppo_ratings,
+    _run_episode,
+)
 
 
 def _grid(tick: int) -> VisionGrid:
@@ -72,6 +77,13 @@ class VisionTrajectoryLogTests(unittest.TestCase):
 
 
 class PPOFlightRecorderTests(unittest.TestCase):
+    def test_rating_display_pause_only_follows_a_real_ppo_update(self):
+        sleeps = []
+        _pause_after_ppo_ratings({"updated": True}, sleeps.append)
+        _pause_after_ppo_ratings({"updated": False}, sleeps.append)
+        self.assertEqual(sleeps, [PPO_RATING_DISPLAY_SECONDS])
+        self.assertEqual(PPO_RATING_DISPLAY_SECONDS, 2.0)
+
     def test_runtime_appends_compact_per_action_ppo_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trajectory.jsonl"
