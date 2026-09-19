@@ -59,6 +59,7 @@ class PlayerConnection:
         self._acks: list[dict] = []
         self._terminal_events: deque[dict] = deque(maxlen=32)
         self._latest_event: dict | None = None
+        self._latest_episode_start_tick: int | None = None
         self._send_lock = threading.Lock()
 
     @property
@@ -81,6 +82,11 @@ class PlayerConnection:
     def latest_event(self) -> dict | None:
         with self._condition:
             return self._latest_event
+
+    @property
+    def latest_episode_start_tick(self) -> int | None:
+        with self._condition:
+            return self._latest_episode_start_tick
 
     def clear_terminal_events(self) -> None:
         """Discard terminal events from an attempt that has already ended."""
@@ -245,7 +251,11 @@ class PlayerConnection:
     def request_start_ack(self) -> dict | None:
         """Request START and return its validated public lifecycle ACK."""
         self._send(start_message())
-        return self.wait_ack(START)
+        acknowledgement = self.wait_ack(START)
+        if acknowledgement is not None and acknowledgement["status"] == "accepted":
+            with self._condition:
+                self._latest_episode_start_tick = acknowledgement["world_tick"]
+        return acknowledgement
 
     def request_respawn(self) -> bool:
         acknowledgement = self.request_respawn_ack()
@@ -254,7 +264,11 @@ class PlayerConnection:
     def request_respawn_ack(self) -> dict | None:
         """Request RESPAWN and return its validated public lifecycle ACK."""
         self._send(respawn_message())
-        return self.wait_ack(RESPAWN)
+        acknowledgement = self.wait_ack(RESPAWN)
+        if acknowledgement is not None and acknowledgement["status"] == "accepted":
+            with self._condition:
+                self._latest_episode_start_tick = acknowledgement["world_tick"]
+        return acknowledgement
 
     def detach(self) -> None:
         try:

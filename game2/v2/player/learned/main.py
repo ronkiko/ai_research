@@ -133,6 +133,24 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
     return 0
 
 
+def _emit_public_result(connection: PlayerConnection, manifest: PlayerManifest) -> None:
+    event = connection.latest_event
+    if not isinstance(event, dict) or event.get("event") != "terminal":
+        return
+    finish_tick = event.get("world_tick")
+    start_tick = getattr(connection, "latest_episode_start_tick", None)
+    if type(start_tick) is not int:
+        start_tick = finish_tick
+    if type(finish_tick) is not int or type(start_tick) is not int:
+        return
+    print("RESULT " + json.dumps({
+        "session_id": manifest.session_id,
+        "result": event["result"],
+        "start_world_tick": start_tick,
+        "finish_world_tick": finish_tick,
+    }, separators=(",", ":"), sort_keys=True), flush=True)
+
+
 def run_attached_player(connection: PlayerConnection, player: LearnedPlayer, *,
                         decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
                         vision_factory=VisionReceiver, joystick_factory=JoystickClient,
@@ -142,9 +160,11 @@ def run_attached_player(connection: PlayerConnection, player: LearnedPlayer, *,
     if not isinstance(manifest, PlayerManifest):
         raise ValueError("Player connection has no attached PlayerManifest")
     try:
-        return run_player(manifest, player, decisions=decisions, action_hz=action_hz,
-                          vision_factory=vision_factory, joystick_factory=joystick_factory,
-                          lifecycle=connection, clock=clock, sleeper=sleeper)
+        result = run_player(manifest, player, decisions=decisions, action_hz=action_hz,
+                            vision_factory=vision_factory, joystick_factory=joystick_factory,
+                            lifecycle=connection, clock=clock, sleeper=sleeper)
+        _emit_public_result(connection, manifest)
+        return result
     finally:
         connection.detach()
         connection.close()
@@ -177,6 +197,8 @@ def main(argv=None) -> int:
         discovery = ConsoleDiscovery.from_file(args.discovery)
         connection = PlayerConnection(discovery)
         manifest = connection.connect()
+        print("ATTACHED " + json.dumps(manifest.to_dict(), separators=(",", ":"),
+                                       sort_keys=True), flush=True)
         has_checkpoints = args.planner_checkpoint is not None or args.motor_checkpoint is not None
         if args.trainer_host is not None and not args.fresh and not has_checkpoints:
             if args.checkpoint_dir is None:

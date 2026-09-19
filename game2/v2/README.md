@@ -180,12 +180,17 @@ Connection:
 ./game2/v2/vision.sh
 ```
 
-`vision.sh` attaches to the existing Console, waits for the examiner and
-Scripted Player to become ARMED, then exposes an explicit `START` button. START
-spawns only that Actor. A terminal result is delivered as a Player lifecycle
-event; `RESPAWN` is actor-local. Closing the window detaches that Player and
-despawns only its Actor. Console, World, other Players, and `world_tick` remain
-alive. `vision.sh` never starts or restarts Console.
+`vision.sh` opens the spectator window immediately. It discovers Training Set
+manifests and starts only the unified process boundary:
+
+```bash
+python -m game2.v2.run train ...
+python -m game2.v2.run exam ...
+```
+
+The viewer subscribes to the learned Player's public Vision and never owns
+Console lifecycle or Joystick input. Closing the window terminates the unified
+launcher, which owns and cleans up its Console, Trainer, and Player children.
 
 The canonical server has no global Display: Vision Display is allocated per
 attached Player. STATE, TELEMETRY, and EVENTS remain private Console channels.
@@ -254,9 +259,7 @@ server workflow above:
 HumanKeyboardInput -> HumanJoystickClient -> Joystick -> Controller -> Engine
 ```
 
-The current V2 foundation intentionally does not implement an MLP, Trainer,
-hierarchical AI, or management UI. Console Display provides a headless semantic
-`vision` renderer and publishes it as the Player-facing Vision peripheral. The
-temporary `vision.sh` host launches an external Scripted Player and a second
-human examiner subscriber in one window. `enable_display: false` disables the
-Display process entirely; `display_mode` is `vision` or `screen`.
+Console Display provides a headless semantic `vision` renderer and publishes it
+as the Player-facing Vision peripheral. The operator viewer is a second public
+Vision subscriber. `enable_display: false` disables the Display process
+entirely; `display_mode` is `vision` or `screen`.

@@ -45,6 +45,7 @@ class TrainerSummary:
     dirty_episodes: int = 0
     actual_update_count: int = 0
     losses: list[float] = field(default_factory=list)
+    stopped_on_success: bool = False
 
     @property
     def success_rate_total(self) -> float:
@@ -60,6 +61,7 @@ class TrainerSummary:
             "actual_update_count": self.actual_update_count,
             "success_rate_total": self.success_rate_total,
             "losses": list(self.losses),
+            "stopped_on_success": self.stopped_on_success,
         }
 
 
@@ -68,7 +70,7 @@ class Trainer:
 
     def __init__(self, *, listen_host: str = "127.0.0.1", listen_port: int = 9000,
                  mode: str = TRAIN, episodes: int = 1, seed: int = 100,
-                 accept_timeout: float = 30.0):
+                 accept_timeout: float = 30.0, stop_on_success: bool = False):
         if type(listen_host) is not str or not listen_host:
             raise ValueError("listen_host must be non-empty")
         if type(listen_port) is not int or not 0 <= listen_port <= 65535:
@@ -81,12 +83,15 @@ class Trainer:
             raise ValueError("seed must be an integer")
         if accept_timeout <= 0:
             raise ValueError("accept_timeout must be positive")
+        if type(stop_on_success) is not bool:
+            raise ValueError("stop_on_success must be boolean")
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.mode = mode
         self.episodes = episodes
         self.seed = seed
         self.accept_timeout = accept_timeout
+        self.stop_on_success = stop_on_success
         self.bound_address: tuple[str, int] | None = None
 
     @staticmethod
@@ -134,15 +139,30 @@ class Trainer:
             else:
                 summary.dirty_episodes += 1
 
+            updated = False
             if self.mode == TRAIN and finished["trainable"]:
                 send_training_message(peer, apply_result_message(
                     episode_id, reward_for_result(finished["result"])))
                 update = self._expect(peer, UPDATE_RESULT)
                 if update["episode_id"] != episode_id:
                     raise ValueError("UPDATE_RESULT identity mismatch")
+                updated = update["updated"]
                 if update["updated"]:
                     summary.actual_update_count += 1
                     summary.losses.append(update["loss"])
+
+            print("PROGRESS " + json.dumps({
+                "episode_id": episode_id,
+                "result": finished["result"],
+                "trainable": finished["trainable"],
+                "updated": updated,
+                "attempts": summary.attempts,
+                "successes": summary.successes,
+            }, separators=(",", ":"), sort_keys=True), flush=True)
+            if (self.mode == TRAIN and self.stop_on_success and
+                    finished["result"] == "success" and finished["trainable"]):
+                summary.stopped_on_success = True
+                break
 
         if self.mode == TRAIN:
             send_training_message(peer, save_message())
@@ -157,6 +177,10 @@ class Trainer:
             listener.listen(1)
             listener.settimeout(self.accept_timeout)
             self.bound_address = listener.getsockname()[:2]
+            assert self.bound_address is not None
+            print("READY " + json.dumps({
+                "host": self.bound_address[0], "port": self.bound_address[1],
+            }, separators=(",", ":"), sort_keys=True), flush=True)
             peer, _address = listener.accept()
             with peer:
                 return self._run_peer(peer)
@@ -174,6 +198,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=(TRAIN, "evaluate"), default=TRAIN)
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--stop-on-success", action="store_true")
     return parser
 
 
@@ -183,6 +208,7 @@ def main(argv=None) -> int:
         summary = Trainer(
             listen_host=args.listen_host, listen_port=args.listen_port,
             mode=args.mode, episodes=args.episodes, seed=args.seed,
+            stop_on_success=args.stop_on_success,
         ).run()
     except (OSError, TimeoutError, ValueError, ConnectionError) as exc:
         print(f"ERROR Trainer failed: {exc}", file=sys.stderr, flush=True)

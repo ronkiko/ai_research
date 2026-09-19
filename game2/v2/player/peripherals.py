@@ -46,6 +46,7 @@ class VisionReceiver:
         self._condition = threading.Condition()
         self._error: BaseException | None = None
         self._latest: VisionFrame | None = None
+        self.latest_received_at: float | None = None
         self.frames_received = 0
 
     @property
@@ -96,6 +97,7 @@ class VisionReceiver:
                 frame = recv_vision_frame(stream, self.manifest.session_id)
                 with self._condition:
                     self._latest = frame
+                    self.latest_received_at = time.monotonic()
                     self.frames_received += 1
                     self._condition.notify_all()
         except (EOFError, OSError, ValueError) as exc:
