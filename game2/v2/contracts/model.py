@@ -7,7 +7,7 @@ from numbers import Real
 from typing import Any
 
 from .framing import PROTOCOL_VERSION, ProtocolError, decode_frame, encode_frame
-from .vision import PIXEL_FORMAT, VISION_MAX_PIXELS, VisionFrame
+from .vision import VISION_MAX_CELLS, VisionGrid
 
 
 PREPARE = "prepare"
@@ -60,24 +60,25 @@ def prepare_message(episode_id: int, mode: str, seed: int) -> dict[str, Any]:
     return _message(PREPARE, episode_id=episode_id, mode=mode, seed=seed)
 
 
-def observe_message(frame: VisionFrame) -> dict[str, Any]:
-    if not isinstance(frame, VisionFrame):
-        raise TypeError("observe_message requires a VisionFrame")
+def observe_message(grid: VisionGrid) -> dict[str, Any]:
+    if not isinstance(grid, VisionGrid):
+        raise TypeError("observe_message requires a VisionGrid")
     return _message(
         OBSERVE,
-        observation_world_tick=frame.world_tick,
-        width=frame.width,
-        height=frame.height,
-        pixel_format=PIXEL_FORMAT,
-        byte_length=len(frame.pixels),
+        observation_world_tick=grid.world_tick,
+        columns=grid.columns,
+        rows=grid.rows,
+        tile_size=grid.tile_size,
+        physics_length=len(grid.physics),
+        metadata_length=len(grid.metadata),
     )
 
 
-def observation_frame(frame: VisionFrame) -> bytes:
-    """Encode one OBSERVE header followed by its raw semantic raster."""
-    if not isinstance(frame, VisionFrame):
-        raise TypeError("observation_frame requires a VisionFrame")
-    return encode_frame(observe_message(frame)) + frame.pixels
+def observation_packet(grid: VisionGrid) -> bytes:
+    """Encode one OBSERVE header followed by both logical matrices."""
+    if not isinstance(grid, VisionGrid):
+        raise TypeError("observation_packet requires a VisionGrid")
+    return encode_frame(observe_message(grid)) + grid.physics + grid.metadata
 
 
 def actuated_message(decision_id: int) -> dict[str, Any]:
@@ -131,8 +132,10 @@ def saved_message() -> dict[str, Any]:
 
 _FIELDS = {
     PREPARE: frozenset(("version", "type", "episode_id", "mode", "seed")),
-    OBSERVE: frozenset(("version", "type", "observation_world_tick", "width",
-                       "height", "pixel_format", "byte_length")),
+    OBSERVE: frozenset((
+        "version", "type", "observation_world_tick", "columns", "rows",
+        "tile_size", "physics_length", "metadata_length",
+    )),
     ACTUATED: frozenset(("version", "type", "decision_id")),
     EPISODE_END: frozenset(("version", "type", "episode_id", "result", "reward",
                             "trainable")),
@@ -186,36 +189,46 @@ def recv_model_message(sock: socket.socket) -> dict[str, Any]:
 
 
 def _validate_observation_header(message: dict[str, Any]) -> None:
-    if message.get("pixel_format") != PIXEL_FORMAT:
-        raise ProtocolError("unsupported observation pixel format")
-    width = message.get("width")
-    height = message.get("height")
-    byte_length = message.get("byte_length")
+    columns = message.get("columns")
+    rows = message.get("rows")
+    tile_size = message.get("tile_size")
     world_tick = message.get("observation_world_tick")
-    if type(width) is not int or width <= 0 or type(height) is not int or height <= 0:
-        raise ProtocolError("observation dimensions are invalid")
+    if type(columns) is not int or columns <= 0 or type(rows) is not int or rows <= 0:
+        raise ProtocolError("observation grid dimensions are invalid")
+    cells = columns * rows
+    if cells > VISION_MAX_CELLS:
+        raise ProtocolError("observation grid is too large")
+    if type(tile_size) is not int or tile_size <= 0:
+        raise ProtocolError("observation tile_size is invalid")
     if type(world_tick) is not int or world_tick < 0:
         raise ProtocolError("observation tick is invalid")
-    if type(byte_length) is not int or byte_length != width * height:
-        raise ProtocolError("observation byte_length does not match dimensions")
-    if byte_length > VISION_MAX_PIXELS:
-        raise ProtocolError("observation raster is too large")
+    if message.get("physics_length") != cells or message.get("metadata_length") != cells:
+        raise ProtocolError("observation matrix lengths do not match dimensions")
 
 
-def observation_from_message(message: dict[str, Any],
-                             pixels: bytes | bytearray | None = None) -> VisionFrame:
+def observation_from_message(
+    message: dict[str, Any], matrices: bytes | bytearray | None = None
+) -> VisionGrid:
     if decode_model_message(message)["type"] != OBSERVE:
         raise ProtocolError("message is not an observation")
-    if not isinstance(pixels, (bytes, bytearray)):
-        raise ProtocolError("observation raster bytes are required")
-    if len(pixels) != message["byte_length"]:
-        raise ProtocolError("observation raster length does not match header")
-    return VisionFrame(message["width"], message["height"], bytes(pixels),
-                       message["observation_world_tick"])
+    if not isinstance(matrices, (bytes, bytearray)):
+        raise ProtocolError("observation matrix bytes are required")
+    cells = message["columns"] * message["rows"]
+    if len(matrices) != cells * 2:
+        raise ProtocolError("observation matrix payload length is invalid")
+    raw = bytes(matrices)
+    return VisionGrid(
+        message["columns"],
+        message["rows"],
+        message["tile_size"],
+        raw[:cells],
+        raw[cells:],
+        message["observation_world_tick"],
+    )
 
 
-def send_model_observation(sock: socket.socket, frame: VisionFrame) -> None:
-    sock.sendall(observation_frame(frame))
+def send_model_observation(sock: socket.socket, grid: VisionGrid) -> None:
+    sock.sendall(observation_packet(grid))
 
 
 __all__ = [
@@ -223,7 +236,7 @@ __all__ = [
     "PREPARE", "READY", "RESULTS", "SAVE", "SAVED", "TRAIN", "UPDATE_RESULT",
     "actuated_message", "decode_model_message", "decision_message",
     "episode_end_message", "message_frame", "observe_message", "observation_from_message",
-    "observation_frame", "prepare_message", "ready_message", "recv_model_message",
+    "observation_packet", "prepare_message", "ready_message", "recv_model_message",
     "save_message", "saved_message", "send_model_message", "send_model_observation",
     "update_result_message",
 ]

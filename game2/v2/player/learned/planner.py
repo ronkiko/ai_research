@@ -4,13 +4,13 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import VisionGrid
 
 from .contracts import MotorGoal
-from .vision import SEMANTIC_CHANNELS, vision_to_tensor
+from .vision import VISION_CHANNELS, vision_to_tensor
 
 
-PLANNER_CONFIGURATION = "adaptive-spatial-compact-160x96-v2"
+PLANNER_CONFIGURATION = "adaptive-spatial-grid-v3"
 
 
 class CNNPlanner(nn.Module):
@@ -19,7 +19,7 @@ class CNNPlanner(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(SEMANTIC_CHANNELS, 16, kernel_size=3, padding=1),
+            nn.Conv2d(VISION_CHANNELS, 16, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -51,19 +51,19 @@ class CNNPlanner(nn.Module):
             vision = vision.unsqueeze(0)
         elif vision.ndim != 4:
             raise ValueError("CNNPlanner input must have shape [C,H,W] or [B,C,H,W]")
-        if vision.shape[1] != SEMANTIC_CHANNELS:
-            raise ValueError(f"CNNPlanner expects {SEMANTIC_CHANNELS} semantic channels")
+        if vision.shape[1] != VISION_CHANNELS:
+            raise ValueError(f"CNNPlanner expects {VISION_CHANNELS} semantic channels")
         if vision.shape[2] <= 0 or vision.shape[3] <= 0:
             raise ValueError("CNNPlanner input must have positive spatial dimensions")
         return self.head(self.features(vision))
 
-    def decide(self, frame: VisionFrame) -> MotorGoal:
-        """Infer one MotorGoal from a public VisionFrame without gradients."""
+    def decide(self, grid: VisionGrid) -> MotorGoal:
+        """Infer one MotorGoal from a public VisionGrid without gradients."""
         was_training = self.training
         self.eval()
         try:
             with torch.no_grad():
-                output = self(vision_to_tensor(frame).unsqueeze(0))[0]
+                output = self(vision_to_tensor(grid).unsqueeze(0))[0]
         finally:
             self.train(was_training)
         return MotorGoal(float(output[0]), float(output[1]))

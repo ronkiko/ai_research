@@ -44,12 +44,16 @@ from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_semantic,
+from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_metadata,
                                              self_center)
 from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer, TrainingRecord
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.player.learned.vision import vision_to_tensor
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import (
+    META_GOAL,
+    META_SELF,
+    VisionGrid,
+)
 from game2.v2.training.main import Trainer, reward_for_result
 
 
@@ -57,13 +61,14 @@ ROOT = Path(__file__).resolve().parents[3]
 FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.json"
 
 
-def _frame(tick: int = 1, self_x: int | None = 3, goal_x: int | None = 10) -> VisionFrame:
-    pixels = bytearray(12 * 5)
+def _grid(tick: int = 1, self_x: int | None = 3, goal_x: int | None = 10) -> VisionGrid:
+    physics = bytes(12 * 5)
+    metadata = bytearray(12 * 5)
     if self_x is not None:
-        pixels[2 * 12 + self_x] = 3
+        metadata[2 * 12 + self_x] |= META_SELF
     if goal_x is not None:
-        pixels[2 * 12 + goal_x] = 4
-    return VisionFrame(12, 5, bytes(pixels), tick)
+        metadata[2 * 12 + goal_x] |= META_GOAL
+    return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
 
 class TrainingContractTests(unittest.TestCase):
@@ -96,17 +101,18 @@ class TrainingContractTests(unittest.TestCase):
 
 class VisionProgressTests(unittest.TestCase):
     @staticmethod
-    def _frame(self_x: int, self_y: int, goal_x: int = 10, goal_y: int = 2,
-               tick: int = 1, include_goal: bool = True) -> VisionFrame:
-        pixels = bytearray(16 * 8)
-        pixels[self_y * 16 + self_x] = 3
+    def _grid(self_x: int, self_y: int, goal_x: int = 10, goal_y: int = 2,
+              tick: int = 1, include_goal: bool = True) -> VisionGrid:
+        physics = bytes(16 * 8)
+        metadata = bytearray(16 * 8)
+        metadata[self_y * 16 + self_x] |= META_SELF
         if include_goal:
-            pixels[goal_y * 16 + goal_x] = 4
-        return VisionFrame(16, 8, bytes(pixels), tick)
+            metadata[goal_y * 16 + goal_x] |= META_GOAL
+        return VisionGrid(16, 8, 64, physics, bytes(metadata), tick)
 
     def test_starting_public_self_and_goal_have_zero_progress(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
+        tracker.update(self._grid(2, 2))
         self.assertEqual(tracker.progress, 0.0)
 
     def test_progress_tracker_rejects_non_vision_input(self):
@@ -115,49 +121,48 @@ class VisionProgressTests(unittest.TestCase):
 
     def test_public_self_moving_toward_goal_increases_progress(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
-        tracker.update(self._frame(6, 2, tick=2))
+        tracker.update(self._grid(2, 2))
+        tracker.update(self._grid(6, 2, tick=2))
         self.assertGreater(tracker.progress, 0.0)
 
     def test_halfway_public_distance_is_about_half_progress(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
-        tracker.update(self._frame(6, 2, tick=2))
+        tracker.update(self._grid(2, 2))
+        tracker.update(self._grid(6, 2, tick=2))
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
 
     def test_vertical_jump_at_same_x_does_not_make_progress(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
-        tracker.update(self._frame(2, 0, tick=2))
-        tracker.update(self._frame(2, 4, tick=3))
+        tracker.update(self._grid(2, 2))
+        tracker.update(self._grid(2, 0, tick=2))
+        tracker.update(self._grid(2, 4, tick=3))
         self.assertEqual(tracker.progress, 0.0)
 
     def test_best_progress_survives_moving_back(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
-        tracker.update(self._frame(6, 2, tick=2))
-        tracker.update(self._frame(3, 2, tick=3))
+        tracker.update(self._grid(2, 2))
+        tracker.update(self._grid(6, 2, tick=2))
+        tracker.update(self._grid(3, 2, tick=3))
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
 
     def test_briefly_missing_goal_preserves_the_last_best_progress(self):
         tracker = VisionProgress()
-        tracker.update(self._frame(2, 2))
-        tracker.update(self._frame(6, 2, tick=2))
-        tracker.update(self._frame(6, 2, tick=3, include_goal=False))
+        tracker.update(self._grid(2, 2))
+        tracker.update(self._grid(6, 2, tick=2))
+        tracker.update(self._grid(6, 2, tick=3, include_goal=False))
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
 
-    def test_large_raster_semantic_helpers_match_public_bbox_geometry(self):
-        width, height = 1280, 768
-        pixels = bytearray(width * height)
-        for x, y in ((3, 4), (19, 7), (8, 31)):
-            pixels[y * width + x] = 3
-        for x, y in ((100, 20), (120, 40)):
-            pixels[y * width + x] = 4
-        frame = VisionFrame(width, height, bytes(pixels), 77)
-        self.assertTrue(has_semantic(frame, 3))
-        self.assertEqual(self_center(frame), (11.0, 17.5))
-        self.assertEqual(goal_center(frame), (110.0, 30.0))
-        self.assertFalse(has_semantic(frame, 2))
+    def test_metadata_helpers_preserve_independent_self_and_goal_bits(self):
+        metadata = bytearray(16 * 8)
+        metadata[4 * 16 + 3] |= META_SELF
+        metadata[7 * 16 + 19 % 16] |= META_SELF
+        metadata[2 * 16 + 10] |= META_GOAL
+        metadata[2 * 16 + 10] |= META_SELF
+        grid = VisionGrid(16, 8, 64, bytes(16 * 8), bytes(metadata), 77)
+        self.assertTrue(has_metadata(grid, META_SELF))
+        self.assertTrue(has_metadata(grid, META_GOAL))
+        self.assertIsNotNone(self_center(grid))
+        self.assertIsNotNone(goal_center(grid))
 
 
 class TerminalQueueTests(unittest.TestCase):
@@ -171,12 +176,12 @@ class TerminalQueueTests(unittest.TestCase):
 
         def server_loop():
             try:
-                self.assertEqual(recv_frame(server)["type"], "attach")
-                send_frame(server, {"version": 1, "type": "player_manifest",
+                self.assertEqual(recv_grid(server)["type"], "attach")
+                send_grid(server, {"version": 1, "type": "player_manifest",
                                     **manifest.to_dict()})
-                send_frame(server, {"version": 1, "type": "player_event", "event": "terminal",
+                send_grid(server, {"version": 1, "type": "player_event", "event": "terminal",
                                     "world_tick": 7, "result": "dead"})
-                send_frame(server, {"version": 1, "type": "player_event", "event": "terminal",
+                send_grid(server, {"version": 1, "type": "player_event", "event": "terminal",
                                     "world_tick": 11, "result": "timeout"})
             except BaseException as exc:
                 errors.append(exc)
@@ -208,8 +213,8 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         actions_first = []
         actions_second = []
         for tick in (1, 2, 3):
-            sample_first = first.process_frame(_frame(tick))
-            sample_second = second.process_frame(_frame(tick))
+            sample_first = first.process_grid(_grid(tick))
+            sample_second = second.process_grid(_grid(tick))
             actions_first.append(sample_first.action_decision)
             actions_second.append(sample_second.action_decision)
             first.record_sent_sample(sample_first)
@@ -220,7 +225,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
     def test_reinforce_updates_planner_and_motor_but_evaluate_is_frozen(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        sample = player.process_frame(_frame(1))
+        sample = player.process_grid(_grid(1))
         player.record_sent_sample(sample)
         planner_before = [parameter.detach().clone() for parameter in player.planner.parameters()]
         motor_before = [parameter.detach().clone() for parameter in player.motor_controller.parameters()]
@@ -236,7 +241,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         evaluate_before = [parameter.detach().clone()
                            for parameter in list(player.planner.parameters()) +
                            list(player.motor_controller.parameters())]
-        sample = player.process_frame(_frame(2))
+        sample = player.process_grid(_grid(2))
         self.assertIsNone(sample.log_prob)
         self.assertEqual(player.training_records, ())
         evaluate_after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
@@ -246,7 +251,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
     def test_zero_reward_discards_trajectory_without_updating_weights(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        sample = player.process_frame(_frame(1))
+        sample = player.process_grid(_grid(1))
         player.record_sent_sample(sample)
         before = [parameter.detach().clone()
                   for parameter in list(player.planner.parameters()) +
@@ -261,7 +266,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
     def test_repeated_sent_decision_has_one_detached_training_record(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        sample = player.process_frame(_frame(1))
+        sample = player.process_grid(_grid(1))
         for _ in range(4):
             player.record_sent_sample(sample)
 
@@ -269,36 +274,34 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         record = player.training_records[0]
         self.assertIsInstance(record, TrainingRecord)
         self.assertEqual(record.world_tick, 1)
-        self.assertEqual(record.vision_frame, sample.vision_frame)
-        self.assertLess(len(record.compressed_pixels), len(sample.vision_frame.pixels))
+        self.assertEqual(record.vision_grid, sample.vision_grid)
+        self.assertEqual(record.physics, sample.vision_grid.physics)
+        self.assertEqual(record.metadata, sample.vision_grid.metadata)
         self.assertEqual(record.action_decision, sample.action_decision)
 
         unsent_player = self._player()
         unsent_player.prepare_episode("train", 42)
-        unsent_player.process_frame(_frame(1))
+        unsent_player.process_grid(_grid(1))
         self.assertEqual(unsent_player.training_records, ())
 
 
-    def test_large_sparse_training_record_is_model_compact(self):
-        width, height = 1280, 768
-        pixels = bytearray(width * height)
-        pixels[100 * width + 100] = 3
-        pixels[100 * width + 1100] = 4
-        frame = VisionFrame(width, height, bytes(pixels), 77)
+    def test_training_record_keeps_exact_small_grid_matrices(self):
+        grid = _grid(77, self_x=2, goal_x=10)
         sample = DecisionSample(
-            frame.world_tick, frame, MotorGoal(0.0, 0.0), 0.0,
+            grid.world_tick, grid, MotorGoal(0.0, 0.0), 0.0,
             ActionDecision(True, False), -0.5,
         )
         record = TrainingRecord.from_sample(sample)
-        self.assertLess(record.width, frame.width)
-        self.assertLess(record.height, frame.height)
-        self.assertLess(len(record.compressed_pixels), len(frame.pixels) // 100)
+        self.assertEqual((record.columns, record.rows, record.tile_size), (12, 5, 64))
+        self.assertEqual(record.physics, grid.physics)
+        self.assertEqual(record.metadata, grid.metadata)
+        self.assertEqual(record.vision_grid, grid)
 
     def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
         player = self._player()
         player.prepare_episode("train", 42)
         for tick in (1, 2, 3):
-            sample = player.process_frame(_frame(tick))
+            sample = player.process_grid(_grid(tick))
             player.record_sent_sample(sample)
 
         self.assertIsNotNone(player.latest_sample)
@@ -318,11 +321,11 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         sequential_motor.load_state_dict(reference_motor.state_dict())
         reference = LearnedPlayer(reference_planner, reference_motor)
         sequential = LearnedPlayer(sequential_planner, sequential_motor)
-        frames = [_frame(1), _frame(2, self_x=5), _frame(3, self_x=7)]
+        frames = [_grid(1), _grid(2, self_x=5), _grid(3, self_x=7)]
         for player in (reference, sequential):
             player.prepare_episode("train", 42)
             for frame in frames:
-                player.record_sent_sample(player.process_frame(frame))
+                player.record_sent_sample(player.process_grid(frame))
         self.assertEqual(reference.training_records, sequential.training_records)
 
         reward = 0.0001
@@ -331,7 +334,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         reference.optimizer.zero_grad(set_to_none=True)
         reference_log_probs = []
         for record in reference.training_records:
-            vision = vision_to_tensor(record.vision_frame).unsqueeze(0)
+            vision = vision_to_tensor(record.vision_grid).unsqueeze(0)
             planner_output = reference.planner(vision)[0]
             logits = reference.motor_controller.forward_goal(planner_output, record.motion_x)
             action = torch.tensor([record.action_decision.right, record.action_decision.jump],
@@ -361,7 +364,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
     def test_zero_reward_does_not_backward_or_step(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        player.record_sent_sample(player.process_frame(_frame(1)))
+        player.record_sent_sample(player.process_grid(_grid(1)))
         with mock.patch.object(player.optimizer, "zero_grad",
                                side_effect=AssertionError("zero_grad called")), \
                 mock.patch.object(player.optimizer, "step",
@@ -375,14 +378,14 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
     def test_jump_in_place_timeout_has_zero_reward_and_no_update(self):
         tracker = VisionProgress()
-        frames = [VisionProgressTests._frame(2, 2),
-                  VisionProgressTests._frame(2, 0, tick=2),
-                  VisionProgressTests._frame(2, 4, tick=3)]
+        frames = [VisionProgressTests._grid(2, 2),
+                  VisionProgressTests._grid(2, 0, tick=2),
+                  VisionProgressTests._grid(2, 4, tick=3)]
         for frame in frames:
             tracker.update(frame)
         player = self._player()
         player.prepare_episode("train", 42)
-        player.record_sent_sample(player.process_frame(frames[0]))
+        player.record_sent_sample(player.process_grid(frames[0]))
         reward = reward_for_result("timeout", tracker.progress)
         updated, loss = player.apply_result(reward)
         self.assertEqual(tracker.progress, 0.0)
@@ -392,13 +395,13 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
     def test_rightward_partial_timeout_has_positive_reward_and_update(self):
         tracker = VisionProgress()
-        frames = [VisionProgressTests._frame(2, 2),
-                  VisionProgressTests._frame(6, 2, tick=2)]
+        frames = [VisionProgressTests._grid(2, 2),
+                  VisionProgressTests._grid(6, 2, tick=2)]
         player = self._player()
         player.prepare_episode("train", 42)
         for frame in frames:
             tracker.update(frame)
-            player.record_sent_sample(player.process_frame(frame))
+            player.record_sent_sample(player.process_grid(frame))
         reward = reward_for_result("timeout", tracker.progress)
         updated, _loss = player.apply_result(reward)
         self.assertGreater(tracker.progress, 0.0)
@@ -462,7 +465,7 @@ class _FakeVision:
 
     @property
     def latest(self):
-        return _frame(self.connection.episode * 10)
+        return _grid(self.connection.episode * 10)
 
     def connect(self):
         self.connected = True
@@ -674,13 +677,13 @@ class TrainingPlayerFlowTests(unittest.TestCase):
             @property
             def latest(self):
                 if self.connection.episode == 0:
-                    return _frame(0)
+                    return _grid(0)
                 if self.connection.episode == 1:
-                    return _frame(100)
+                    return _grid(100)
                 if self.stale_respawn_frame:
                     self.stale_respawn_frame = False
-                    return _frame(100)
-                return _frame(105)
+                    return _grid(100)
+                return _grid(105)
 
         class StaleJoystick(_FakeJoystick):
             def send_state(self, right, jump):
@@ -726,7 +729,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         class RaceVision(_FakeVision):
             @property
             def latest(self):
-                return _frame(0 if self.connection.episode == 0 else
+                return _grid(0 if self.connection.episode == 0 else
                                (100 if self.connection.episode == 1 else 106))
 
         class RaceJoystick(_FakeJoystick):
@@ -764,16 +767,16 @@ class TrainingPlayerFlowTests(unittest.TestCase):
 
             def __init__(self):
                 self.frames = [
-                    _frame(100, self_x=3, goal_x=10),
-                    _frame(103, self_x=0, goal_x=11),
-                    _frame(106, self_x=3, goal_x=10),
+                    _grid(100, self_x=3, goal_x=10),
+                    _grid(103, self_x=0, goal_x=11),
+                    _grid(106, self_x=3, goal_x=10),
                 ]
 
             @property
             def latest(self):
                 if self.frames:
                     return self.frames.pop(0)
-                return _frame(106, self_x=3, goal_x=10)
+                return _grid(106, self_x=3, goal_x=10)
 
         class RaceJoystick(_FakeJoystick):
             def send_state(self, right, jump):
@@ -785,9 +788,9 @@ class TrainingPlayerFlowTests(unittest.TestCase):
                 super().__init__(planner, motor)
                 self.processed_ticks = []
 
-            def process_frame(self, frame):
+            def process_grid(self, frame):
                 self.processed_ticks.append(frame.world_tick)
-                return super().process_frame(frame)
+                return super().process_grid(frame)
 
         vision = RaceVision()
         joystick = RaceJoystick(connection)
@@ -828,7 +831,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         class StartRaceVision(_FakeVision):
             @property
             def latest(self):
-                return _frame(0 if self.connection.episode == 0 else 6)
+                return _grid(0 if self.connection.episode == 0 else 6)
 
         class StartRaceJoystick(_FakeJoystick):
             def send_state(self, right, jump):
@@ -939,20 +942,20 @@ class TrainingPlayerFlowTests(unittest.TestCase):
             def __init__(self, owner):
                 super().__init__(owner)
                 self.initial = True
-                self.frames = [_frame(10), _frame(11)]
+                self.frames = [_grid(10), _grid(11)]
 
             @property
             def latest(self):
                 if self.initial:
                     self.initial = False
-                    return _frame(0)
+                    return _grid(0)
                 if self.frames:
                     return self.frames.pop(0)
                 self.connection.terminal = {
                     "version": 1, "type": "player_event", "event": "terminal",
                     "world_tick": 12, "result": "dead",
                 }
-                return _frame(11)
+                return _grid(11)
 
         class RecordingPlayer(LearnedPlayer):
             def __init__(self, planner, motor):
@@ -1063,17 +1066,17 @@ class _ActionVision:
     def latest(self):
         self.calls += 1
         if self.calls == 1:
-            return _frame(tick=0, self_x=None)
+            return _grid(tick=0, self_x=None)
         now = self.clock.now()
         if self.mode == "hold":
             if now < 0.001:
-                return _frame(tick=1, self_x=None)
+                return _grid(tick=1, self_x=None)
             if now < 1 / 30:
-                return _frame(self_x=3, tick=2)
-            return _frame(self_x=3, tick=3)
+                return _grid(self_x=3, tick=2)
+            return _grid(self_x=3, tick=3)
         if now < 0.004:
-            return _frame(self_x=3, tick=1 if now == 0 else 2)
-        return _frame(self_x=3, tick=3)
+            return _grid(self_x=3, tick=1 if now == 0 else 2)
+        return _grid(self_x=3, tick=3)
 
 
 class _ActionPlayer:
@@ -1082,8 +1085,8 @@ class _ActionPlayer:
     def __init__(self):
         self.recorded = []
 
-    def process_frame(self, frame):
-        if 3 not in frame.pixels:
+    def process_grid(self, frame):
+        if not any(value & META_SELF for value in frame.metadata):
             return None
         return SimpleNamespace(
             world_tick=frame.world_tick,
@@ -1136,7 +1139,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
         )
         return result, player, joystick
 
-    def test_latest_action_is_resend_at_action_hz_between_vision_frames(self):
+    def test_latest_action_is_resend_at_action_hz_between_vision_grids(self):
         _result, player, joystick = self._episode("hold", terminal_after=5)
         self.assertEqual(len(joystick.sent), 5)
         self.assertEqual(joystick.sent[:4], [(True, False)] * 4)
@@ -1170,8 +1173,8 @@ class TrainingActuatorClockTests(unittest.TestCase):
             def latest(self):
                 if self.first:
                     self.first = False
-                    return _frame(0, self_x=None)
-                return _frame(2 if first_ready.is_set() else 1)
+                    return _grid(0, self_x=None)
+                return _grid(2 if first_ready.is_set() else 1)
 
         class Player:
             episode_mode = "train"
@@ -1184,7 +1187,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
                 return DecisionSample(frame.world_tick, frame, MotorGoal(0.0, 0.0), 0.0,
                                       ActionDecision(right, jump))
 
-            def process_frame(self, frame):
+            def process_grid(self, frame):
                 if frame.world_tick == 1:
                     first_ready.set()
                     return self._sample(frame, True, False)
@@ -1246,8 +1249,8 @@ class TrainingActuatorClockTests(unittest.TestCase):
             def latest(self):
                 if self.first:
                     self.first = False
-                    return _frame(0, self_x=None)
-                return _frame(2 if first_ready.is_set() else 1)
+                    return _grid(0, self_x=None)
+                return _grid(2 if first_ready.is_set() else 1)
 
         class Player:
             episode_mode = "train"
@@ -1255,7 +1258,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
             def __init__(self):
                 self.recorded = []
 
-            def process_frame(self, frame):
+            def process_grid(self, frame):
                 if frame.world_tick == 1:
                     first_ready.set()
                     return DecisionSample(1, frame, MotorGoal(0.0, 0.0), 0.0,
@@ -1330,8 +1333,8 @@ class TrainingActuatorClockTests(unittest.TestCase):
             def latest(self):
                 if self.first:
                     self.first = False
-                    return _frame(0, self_x=None)
-                return _frame(2 if first_ready.is_set() else 1)
+                    return _grid(0, self_x=None)
+                return _grid(2 if first_ready.is_set() else 1)
 
         class Player:
             episode_mode = "train"
@@ -1339,7 +1342,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
             def __init__(self):
                 self.recorded = []
 
-            def process_frame(self, frame):
+            def process_grid(self, frame):
                 if frame.world_tick == 1:
                     first_ready.set()
                     return DecisionSample(1, frame, MotorGoal(0.0, 0.0), 0.0,
@@ -1390,15 +1393,15 @@ class TrainingActuatorClockTests(unittest.TestCase):
 
             def __init__(self):
                 self.calls = 0
-                self.frames = [_frame(tick=1, self_x=2),
-                               _frame(tick=2, self_x=6)]
+                self.frames = [_grid(tick=1, self_x=2),
+                               _grid(tick=2, self_x=6)]
                 self.last = None
 
             @property
             def latest(self):
                 self.calls += 1
                 if self.calls == 1:
-                    return _frame(tick=0, self_x=None)
+                    return _grid(tick=0, self_x=None)
                 if self.frames:
                     self.last = self.frames.pop(0)
                 return self.last

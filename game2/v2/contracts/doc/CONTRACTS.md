@@ -13,7 +13,7 @@ capabilities. Its current Player-facing surface is:
 - `framing.py` - generic length-prefixed framing and protocol versioning
   utility.
 
-Vision pixels deliberately do not pass through JSON or Base64. The following
+Vision physics and metadata matrices deliberately do not pass through JSON or Base64. The following
 remain Console-private and are not public Player contracts:
 
 - Engine CONTROL;

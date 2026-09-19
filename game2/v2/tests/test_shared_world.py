@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 from game2.v2.console.display.view_state import DisplayState
-from game2.v2.console.display.vision.renderer import VisionClass, VisionRenderer
+from game2.v2.console.display.vision.renderer import VisionGridRenderer
+from game2.v2.contracts.vision import META_OTHER_ACTOR, META_SELF
 from game2.v2.console.engine.engine import Engine, PlayerRegistry, TERMINAL
 from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import load_world
@@ -140,16 +141,18 @@ class SharedWorldRuntimeTests(unittest.TestCase):
         engine.actors["actor-B"].body.x = world.spawn.x + 128
         state = DisplayState.from_state(engine.world_state(), engine.session_id, world,
                                         "actor-A")
-        renderer = VisionRenderer(world)
-        frame_a = renderer.render(state)
-        frame_b = renderer.render(state, self_actor_id="actor-B")
-        a_pixel = int(world.spawn.x + world.spawn.width // 2)
-        b_pixel = int(world.spawn.x + 128 + world.spawn.width // 2)
-        row = int(world.spawn.y + world.spawn.height // 2) * world.width
-        self.assertEqual(frame_a.pixels[row + a_pixel], VisionClass.SELF)
-        self.assertEqual(frame_a.pixels[row + b_pixel], VisionClass.OTHER_ACTOR)
-        self.assertEqual(frame_b.pixels[row + a_pixel], VisionClass.OTHER_ACTOR)
-        self.assertEqual(frame_b.pixels[row + b_pixel], VisionClass.SELF)
+        renderer = VisionGridRenderer(world)
+        grid_a = renderer.render(state)
+        grid_b = renderer.render(state, self_actor_id="actor-B")
+        row = int(world.spawn.y // world.tile_size)
+        a_column = int(world.spawn.x // world.tile_size)
+        b_column = int((world.spawn.x + 128) // world.tile_size)
+        a_cell = row * world.columns + a_column
+        b_cell = row * world.columns + b_column
+        self.assertEqual(grid_a.metadata[a_cell], META_SELF)
+        self.assertEqual(grid_a.metadata[b_cell], META_OTHER_ACTOR)
+        self.assertEqual(grid_b.metadata[a_cell], META_OTHER_ACTOR)
+        self.assertEqual(grid_b.metadata[b_cell], META_SELF)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import time
 from typing import Callable, TypeAlias
 
 from game2.v2.contracts.manifests import PeripheralManifest, PlayerManifest
-from game2.v2.contracts.vision import VisionFrame, recv_vision_frame
+from game2.v2.contracts.vision import VisionGrid, recv_vision_grid
 from game2.v2.player.human.client import HumanJoystickClient
 
 
@@ -45,12 +45,12 @@ class VisionReceiver:
         self._closed = threading.Event()
         self._condition = threading.Condition()
         self._error: BaseException | None = None
-        self._latest: VisionFrame | None = None
+        self._latest: VisionGrid | None = None
         self.latest_received_at: float | None = None
         self.frames_received = 0
 
     @property
-    def latest(self) -> VisionFrame | None:
+    def latest(self) -> VisionGrid | None:
         with self._condition:
             return self._latest
 
@@ -94,7 +94,7 @@ class VisionReceiver:
             return
         try:
             while not self._closed.is_set():
-                frame = recv_vision_frame(stream, self.manifest.session_id)
+                frame = recv_vision_grid(stream, self.manifest.session_id)
                 with self._condition:
                     self._latest = frame
                     self.latest_received_at = time.monotonic()
@@ -111,9 +111,9 @@ class VisionReceiver:
                     self._socket = None
                 self._condition.notify_all()
 
-    def wait_for_frame(self, timeout: float) -> VisionFrame:
+    def wait_for_grid(self, timeout: float) -> VisionGrid:
         if timeout <= 0:
-            raise ValueError("Vision frame timeout must be positive")
+            raise ValueError("Vision grid timeout must be positive")
         deadline = time.monotonic() + timeout
         with self._condition:
             while self._latest is None:
@@ -121,7 +121,7 @@ class VisionReceiver:
                     raise ConnectionError("Vision receiver failed") from self._error
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise TimeoutError("Vision receiver did not provide a frame")
+                    raise TimeoutError("Vision receiver did not provide a grid")
                 self._condition.wait(remaining)
             return self._latest
 

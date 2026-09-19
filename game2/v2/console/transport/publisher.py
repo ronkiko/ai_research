@@ -7,7 +7,7 @@ import threading
 from typing import Any
 
 from ...contracts.framing import encode_frame
-from ...contracts.vision import VisionFrame, send_vision_frame
+from ...contracts.vision import VisionGrid, send_vision_grid
 
 
 class _LatestClient:
@@ -199,12 +199,12 @@ class _LatestVisionClient:
         self.sock = sock
         self.session_id = session_id
         self.condition = threading.Condition()
-        self.latest: VisionFrame | None = None
+        self.latest: VisionGrid | None = None
         self.closed = False
         self.thread = threading.Thread(target=self._send_loop, name="v2-vision-sender", daemon=True)
         self.thread.start()
 
-    def offer(self, frame: VisionFrame) -> None:
+    def offer(self, frame: VisionGrid) -> None:
         with self.condition:
             if not self.closed:
                 self.latest = frame
@@ -221,7 +221,7 @@ class _LatestVisionClient:
                     frame = self.latest
                     self.latest = None
                 if frame is not None:
-                    send_vision_frame(self.sock, self.session_id, frame)
+                    send_vision_grid(self.sock, self.session_id, frame)
         except (OSError, ValueError):
             pass
         finally:
@@ -254,9 +254,9 @@ class VisionPublisher(_Publisher):
     def _make_client(self, sock):
         return _LatestVisionClient(sock, self.session_id)
 
-    def publish(self, frame: VisionFrame) -> bool:
-        if not isinstance(frame, VisionFrame):
-            raise TypeError("VisionPublisher.publish requires a VisionFrame")
+    def publish(self, frame: VisionGrid) -> bool:
+        if not isinstance(frame, VisionGrid):
+            raise TypeError("VisionPublisher.publish requires a VisionGrid")
         with self.lock:
             clients = [client for client in self.clients if not client.closed]
             self.clients[:] = clients

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import threading
 import time
 
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import VisionGrid
 
 from .runtime import DecisionSample
 
@@ -22,17 +22,17 @@ class InferenceSnapshot:
 class InferenceWorker:
     """Run one Player model on a latest-only Vision mailbox.
 
-    The worker never overlaps calls to ``process_frame``.  A submitted frame
-    replaces an older pending frame while the model is busy, so inference
+    The worker never overlaps calls to ``process_grid``.  A submitted grid
+    replaces an older pending grid while the model is busy, so inference
     follows the newest available observation rather than building a queue.
     """
 
     def __init__(self, player):
-        if not callable(getattr(player, "process_frame", None)):
-            raise TypeError("inference worker requires a Player with process_frame")
+        if not callable(getattr(player, "process_grid", None)):
+            raise TypeError("inference worker requires a Player with process_grid")
         self.player = player
         self._condition = threading.Condition()
-        self._pending: VisionFrame | None = None
+        self._pending: VisionGrid | None = None
         self._latest_sample: DecisionSample | None = None
         self._result_tick: int | None = None
         self._serial = 0
@@ -87,18 +87,18 @@ class InferenceWorker:
             return InferenceSnapshot(self._serial, self._result_tick,
                                      self._latest_sample)
 
-    def submit(self, frame: VisionFrame) -> None:
-        """Replace the pending frame with ``frame`` for the worker."""
-        if not isinstance(frame, VisionFrame):
-            raise TypeError("inference worker requires a VisionFrame")
+    def submit(self, grid: VisionGrid) -> None:
+        """Replace the pending grid with ``grid`` for the worker."""
+        if not isinstance(grid, VisionGrid):
+            raise TypeError("inference worker requires a VisionGrid")
         with self._condition:
             if self._closed:
                 raise RuntimeError("inference worker is closed")
             if self._error is not None:
                 raise RuntimeError("learned inference failed") from self._error
-            self._pending = frame
+            self._pending = grid
             self._condition.notify()
-        # Let a ready worker take the frame without imposing an inference wait
+        # Let a ready worker take the grid without imposing an inference wait
         # on the action loop.  This also keeps injected-clock tests cooperative.
         time.sleep(0)
 
@@ -135,11 +135,11 @@ class InferenceWorker:
                     self._condition.wait()
                 if self._closed:
                     return
-                frame = self._pending
+                grid = self._pending
                 self._pending = None
-            assert frame is not None
+            assert grid is not None
             try:
-                sample = self.player.process_frame(frame)
+                sample = self.player.process_grid(grid)
             except BaseException as exc:
                 with self._condition:
                     if not self._closed:
@@ -151,7 +151,7 @@ class InferenceWorker:
                 if self._closed:
                     return
                 self._latest_sample = sample
-                self._result_tick = frame.world_tick
+                self._result_tick = grid.world_tick
                 self._serial += 1
                 self._condition.notify_all()
 

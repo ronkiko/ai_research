@@ -66,7 +66,7 @@ WorldDefinition + WorldState
 
 `screen` is a human-facing visual renderer using V2-owned assets, decoration
 artwork, and presentation autotiling. `vision` is a deterministic model-oriented
-semantic raster derived from stable World tile IDs and dynamic entity positions.
+logical two-matrix grid derived from stable World tile IDs and dynamic entity occupancy.
 Neither presentation changes World or affects Physics. Vision is a representation
 of what exists in the game world, not raw Engine debug telemetry such as x/y or
 velocity metadata.
@@ -112,7 +112,7 @@ Display consumes authoritative multi-Actor Engine STATE plus its immutable
 `world_file`, selected `mode`, and private self Actor perspective; it is
 independent of Controller, Player, model, and UI. It
 never consumes TELEMETRY or EVENTS. `screen` initializes Pygame only in its own
-subsystem; `vision` is fully headless and emits an immutable `VisionFrame`.
+subsystem; `vision` is fully headless and emits an immutable `VisionGrid`.
 A future VisionAdapter may expose that semantic presentation through a
 Player-facing contract; Display and VisionAdapter remain distinct consumers, and
 raw Engine STATE is never their public protocol.
@@ -172,7 +172,7 @@ serialization. The internal manifest is issued only to Console composition.
 There is no public Display/video socket in this patch. Raw Engine STATE must
 never be used as a substitute for presentation. Display consumes private STATE,
 validates it, and exposes no raw STATE externally; its internal output is either
-the human screen or `VisionFrame`.
+the human screen or `VisionGrid`.
 
 ## Joystick Specification v1
 
@@ -276,7 +276,7 @@ same immutable WorldDefinition used by Engine. Its interfaces are:
 
 ```text
 WorldDefinition + WorldState -> Display.screen -> Pygame human presentation
-WorldDefinition + WorldState -> Display.vision -> VisionFrame
+WorldDefinition + WorldState -> Display.vision -> VisionGrid
 ```
 
 `Display.vision` is a semantic representation of what exists in the world, not

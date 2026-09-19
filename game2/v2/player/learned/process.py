@@ -31,8 +31,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.model_client import ModelClient
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
-from .motion import SELF, VisionProgress, has_semantic
-from .vision import compact_vision_frame
+from .motion import SELF, VisionProgress, has_metadata
 
 
 class TrainingPeer:
@@ -215,13 +214,13 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
                 and frame.world_tick > vision_floor_tick:
             latest_frame_tick = frame.world_tick
             progress_tracker.update(frame)
-            has_self = has_semantic(frame, SELF)
+            has_self = has_metadata(frame, SELF)
             if has_self:
                 saw_self_frame = True
                 missing_self_after_seen = False
             elif gameplay_started:
                 missing_self_after_seen = True
-            model.observe(compact_vision_frame(frame))
+            model.observe(frame)
             if has_self and started_tick is None:
                 started_tick = frame.world_tick
                 on_started(episode_started_message(episode_id, started_tick))

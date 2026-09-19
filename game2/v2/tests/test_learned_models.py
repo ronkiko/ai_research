@@ -7,7 +7,12 @@ from pathlib import Path
 
 import torch
 
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import (
+    META_GOAL,
+    META_OTHER_ACTOR,
+    META_SELF,
+    VisionGrid,
+)
 from game2.v2.player.learned.checkpoint import (load_motor_controller,
                                                  load_planner,
                                                  save_motor_controller,
@@ -21,27 +26,25 @@ from game2.v2.player.learned.runtime import (
     REPLAY_BATCH_SIZE,
     TrainingRecord,
 )
-from game2.v2.player.learned.vision import (
-    MODEL_VISION_MAX_HEIGHT,
-    MODEL_VISION_MAX_WIDTH,
-    compact_vision_frame,
-    vision_to_tensor,
-)
+from game2.v2.player.learned.vision import vision_to_tensor
 
 
-def _frame(width: int, height: int) -> VisionFrame:
-    pixels = bytes(index % 6 for index in range(width * height))
-    return VisionFrame(width, height, pixels, world_tick=1)
+def _grid(columns: int, rows: int) -> VisionGrid:
+    cells = columns * rows
+    physics = bytes(index % 3 for index in range(cells))
+    flags = (0, META_SELF, META_GOAL, META_OTHER_ACTOR)
+    metadata = bytes(flags[index % len(flags)] for index in range(cells))
+    return VisionGrid(columns, rows, 64, physics, metadata, world_tick=1)
 
 
 def _parameters(model: torch.nn.Module) -> list[torch.Tensor]:
     return [parameter.detach().clone() for parameter in model.parameters()]
 
 
-def _record(frame: VisionFrame, action: ActionDecision) -> TrainingRecord:
+def _record(grid: VisionGrid, action: ActionDecision) -> TrainingRecord:
     return TrainingRecord.from_sample(DecisionSample(
-        frame.world_tick,
-        frame,
+        grid.world_tick,
+        grid,
         MotorGoal(0.0, 0.0),
         0.0,
         action,
@@ -62,40 +65,28 @@ class LearnedContractTests(unittest.TestCase):
             ActionDecision(1, False)
         self.assertEqual(ActionDecision(True, False), ActionDecision(True, False))
 
-    def test_vision_frame_becomes_exact_six_channel_one_hot(self):
-        frame = VisionFrame(3, 2, bytes((0, 1, 2, 3, 4, 5)), world_tick=7)
-        encoded = vision_to_tensor(frame)
+    def test_vision_grid_becomes_six_physics_and_metadata_channels(self):
+        grid = VisionGrid(
+            3, 2, 64,
+            bytes((0, 1, 2, 0, 1, 2)),
+            bytes((0, 0, 0, META_SELF, META_GOAL, META_OTHER_ACTOR)),
+            world_tick=7,
+        )
+        encoded = vision_to_tensor(grid)
         self.assertEqual(tuple(encoded.shape), (6, 2, 3))
         self.assertEqual(encoded.dtype, torch.float32)
-        for index, semantic_class in enumerate(frame.pixels):
-            y, x = divmod(index, frame.width)
-            self.assertEqual(float(encoded[:, y, x].sum()), 1.0)
-            self.assertEqual(float(encoded[semantic_class, y, x]), 1.0)
-            self.assertTrue(torch.count_nonzero(encoded[:, y, x]) == 1)
+        for index, physics_class in enumerate(grid.physics):
+            y, x = divmod(index, grid.columns)
+            self.assertEqual(float(encoded[:3, y, x].sum()), 1.0)
+            self.assertEqual(float(encoded[physics_class, y, x]), 1.0)
+        self.assertEqual(float(encoded[3, 1, 0]), 1.0)
+        self.assertEqual(float(encoded[4, 1, 1]), 1.0)
+        self.assertEqual(float(encoded[5, 1, 2]), 1.0)
 
-
-
-    def test_large_public_vision_is_compacted_before_cnn(self):
-        width, height = 1280, 768
-        pixels = bytearray(width * height)
-        for y in range(320, 384):
-            for x in range(128, 192):
-                pixels[y * width + x] = 3
-        for y in range(320, 384):
-            for x in range(1152, 1216):
-                pixels[y * width + x] = 4
-        frame = VisionFrame(width, height, bytes(pixels), world_tick=9)
-        compact = compact_vision_frame(frame)
-        self.assertLessEqual(compact.width, MODEL_VISION_MAX_WIDTH)
-        self.assertLessEqual(compact.height, MODEL_VISION_MAX_HEIGHT)
-        self.assertLess(len(compact.pixels), len(frame.pixels) // 50)
-        self.assertIn(3, compact.pixels)
-        self.assertIn(4, compact.pixels)
-        encoded = vision_to_tensor(frame)
-        self.assertEqual(
-            tuple(encoded.shape),
-            (6, compact.height, compact.width),
-        )
+    def test_public_grid_keeps_authored_resolution_before_cnn(self):
+        grid = _grid(20, 12)
+        encoded = vision_to_tensor(grid)
+        self.assertEqual(tuple(encoded.shape), (6, 12, 20))
 
     def test_motion_input_includes_current_virtual_pad_state(self):
         values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)
@@ -113,7 +104,7 @@ class LearnedContractTests(unittest.TestCase):
 
 class LearnedModelTests(unittest.TestCase):
     @staticmethod
-    def _action_probabilities(player: LearnedPlayer, frame: VisionFrame):
+    def _action_probabilities(player: LearnedPlayer, frame: VisionGrid):
         with torch.no_grad():
             vision = vision_to_tensor(frame).unsqueeze(0)
             goal = player.planner(vision)[0]
@@ -123,7 +114,7 @@ class LearnedModelTests(unittest.TestCase):
     def _controlled_update(action: ActionDecision, reward: float) -> LearnedPlayer:
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
-        player._training_records.append(_record(_frame(6, 5), action))
+        player._training_records.append(_record(_grid(6, 5), action))
         updated, _loss = player.apply_result(reward)
         if not updated:
             raise AssertionError("controlled regression record did not update")
@@ -134,7 +125,7 @@ class LearnedModelTests(unittest.TestCase):
     def test_actuated_state_tracks_engine_accepted_virtual_pad(self):
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("evaluate", 7)
-        frame = _frame(6, 5)
+        frame = _grid(6, 5)
         sample = DecisionSample(
             frame.world_tick,
             frame,
@@ -150,7 +141,7 @@ class LearnedModelTests(unittest.TestCase):
 
     def test_cnn_planner_supports_variable_resolution_and_returns_goals(self):
         planner = CNNPlanner.fresh(11)
-        for frame in (_frame(5, 4), _frame(8, 3)):
+        for frame in (_grid(5, 4), _grid(8, 3)):
             encoded = vision_to_tensor(frame)
             features = planner.features(encoded.unsqueeze(0))
             self.assertEqual(tuple(features.shape[-2:]), (4, 4))
@@ -214,7 +205,7 @@ class LearnedModelTests(unittest.TestCase):
                             for parameter in motor_a.parameters()))
 
     def test_positive_right_no_jump_reward_moves_both_policy_outputs_in_expected_direction(self):
-        frame = _frame(6, 5)
+        frame = _grid(6, 5)
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
@@ -229,7 +220,7 @@ class LearnedModelTests(unittest.TestCase):
 
 
     def test_replay_update_uses_bounded_batches_and_preserves_policy_direction(self):
-        frame = _frame(40, 24)
+        frame = _grid(40, 24)
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
@@ -245,7 +236,7 @@ class LearnedModelTests(unittest.TestCase):
         self.assertLess(float(after[1]), float(before[1]))
 
     def test_negative_reward_reduces_probability_of_the_selected_joint_action(self):
-        frame = _frame(6, 5)
+        frame = _grid(6, 5)
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
@@ -260,7 +251,7 @@ class LearnedModelTests(unittest.TestCase):
         self.assertLess(float(after_joint), float(before_joint))
 
     def test_mixed_positive_right_trajectory_increases_right_probability(self):
-        frame = _frame(6, 5)
+        frame = _grid(6, 5)
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
@@ -282,7 +273,7 @@ class LearnedModelTests(unittest.TestCase):
 class LearnedCheckpointTests(unittest.TestCase):
     def test_planner_checkpoint_roundtrip_and_role_validation(self):
         planner = CNNPlanner.fresh(41)
-        frame = _frame(6, 5)
+        frame = _grid(6, 5)
         expected = planner.decide(frame)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "planner.pt"

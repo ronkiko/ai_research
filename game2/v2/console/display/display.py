@@ -8,7 +8,7 @@ import time
 
 from ..config import DisplayManifest
 from ...contracts.framing import recv_frame
-from ...contracts.vision import VisionFrame
+from ...contracts.vision import VisionGrid
 from ..world import load_world
 from ..transport.publisher import VisionPublisher
 from .view_state import DisplayState
@@ -57,8 +57,8 @@ class DisplayService:
 
     def _create_renderer(self):
         if self.manifest.mode == "vision":
-            from .vision.renderer import VisionRenderer
-            return VisionRenderer(self.world, self.manifest.self_actor_id)
+            from .vision.renderer import VisionGridRenderer
+            return VisionGridRenderer(self.world, self.manifest.self_actor_id)
         from .screen.renderer import ScreenRenderer
         return ScreenRenderer(self.world, self_actor_id=self.manifest.self_actor_id)
 
@@ -109,8 +109,8 @@ class DisplayService:
             return False
         self.latest_frame = self.renderer.render(view)
         if self.vision_publisher is not None:
-            if not isinstance(self.latest_frame, VisionFrame):
-                raise TypeError("Vision Display renderer must return a VisionFrame")
+            if not isinstance(self.latest_frame, VisionGrid):
+                raise TypeError("Vision Display renderer must return a VisionGrid")
             self.vision_publisher.publish(self.latest_frame)
         with self._state_condition:
             self._presented_world_tick = max(self._presented_world_tick, view.world_tick)

@@ -23,6 +23,7 @@ from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.manifests import PlayerManifest
 from game2.v2.contracts.screen import ScreenSourceDiscovery, recv_screen_frame
+from game2.v2.contracts.vision import META_OTHER_ACTOR, META_SELF
 from game2.v2.console.config import InternalManifest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -74,9 +75,16 @@ def _wait_until(predicate, timeout: float, interval: float = 0.01):
     raise AssertionError("condition did not become true before timeout")
 
 
-def _vision_bounds(frame, semantic_class: int):
-    points = [(index % frame.width, index // frame.width)
-              for index, value in enumerate(frame.pixels) if value == semantic_class]
+def _has_meta(grid, flag: int) -> bool:
+    return any(value & flag for value in grid.metadata)
+
+
+def _vision_bounds(grid, flag: int):
+    points = [
+        (index % grid.columns, index // grid.columns)
+        for index, value in enumerate(grid.metadata)
+        if value & flag
+    ]
     if not points:
         return None
     xs, ys = zip(*points)
@@ -180,7 +188,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             joystick.close()
             stream = VisionReceiver(manifest, connect_timeout=8)
             stream.connect()
-            first = stream.wait_for_frame(8)
+            first = stream.wait_for_grid(8)
             return connection, stream, manifest, first
         except BaseException:
             if stream is not None:
@@ -266,7 +274,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             connections.append(connection_a)
             streams.append(stream_a)
             self.assertNotEqual(manifest_a.player_id, manifest_a.actor_id)
-            self.assertNotIn(3, first_a.pixels)
+            self.assertFalse(_has_meta(first_a, META_SELF))
             later_a = self._wait_frame(stream_a,
                                        lambda frame: frame.world_tick > first_a.world_tick)
             self.assertGreater(later_a.world_tick, first_a.world_tick)
@@ -275,7 +283,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             self.assertTrue(connection_a.request_start())
             started_a = self._wait_frame(
                 stream_a, lambda frame: frame.world_tick > before_start_tick and
-                3 in frame.pixels)
+                _has_meta(frame, META_SELF))
             self.assertGreater(started_a.world_tick, before_start_tick)
             self.assertIsNone(self.console.poll())
             actor_started = self._wait_telemetry(
@@ -309,7 +317,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             self.assertTrue(connection_a.request_respawn())
             respawned_a = self._wait_frame(
                 stream_a, lambda frame: frame.world_tick >= before_respawn and
-                3 in frame.pixels)
+                _has_meta(frame, META_SELF))
             self.assertGreaterEqual(respawned_a.world_tick, before_respawn)
             respawn_state = self._wait_telemetry(
                 lambda payload: any(actor.get("actor_id") == manifest_a.actor_id and
@@ -333,7 +341,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             self.assertNotEqual(manifest_b.player_id, manifest_a.player_id)
             self.assertNotEqual(manifest_b.actor_id, manifest_a.actor_id)
             self.assertGreater(first_b.world_tick, respawned_a.world_tick)
-            self.assertNotIn(3, first_b.pixels)
+            self.assertFalse(_has_meta(first_b, META_SELF))
 
             connection_b.detach()
             connection_b.close()
@@ -368,15 +376,15 @@ class PersistentConsoleSmoke(unittest.TestCase):
             streams.extend((stream_c, stream_d))
             stream_c.connect()
             stream_d.connect()
-            first_c = stream_c.wait_for_frame(8)
-            first_d = stream_d.wait_for_frame(8)
-            self.assertNotIn(3, first_c.pixels)
-            self.assertNotIn(3, first_d.pixels)
+            first_c = stream_c.wait_for_grid(8)
+            first_d = stream_d.wait_for_grid(8)
+            self.assertFalse(_has_meta(first_c, META_SELF))
+            self.assertFalse(_has_meta(first_d, META_SELF))
             two_before_start = max(first_c.world_tick, first_d.world_tick)
             self.assertTrue(connection_c.request_start())
             self.assertTrue(connection_d.request_start())
-            running_c = self._wait_frame(stream_c, lambda frame: 3 in frame.pixels)
-            running_d = self._wait_frame(stream_d, lambda frame: 3 in frame.pixels)
+            running_c = self._wait_frame(stream_c, lambda frame: _has_meta(frame, META_SELF))
+            running_d = self._wait_frame(stream_d, lambda frame: _has_meta(frame, META_SELF))
             self.assertGreaterEqual(min(running_c.world_tick, running_d.world_tick),
                                     two_before_start)
             joystick_d = self._hold_right(manifest_d)
@@ -397,13 +405,13 @@ class PersistentConsoleSmoke(unittest.TestCase):
                     for actor in held.get("actors", [])
                 ))
                 visible_c = self._wait_frame(
-                    stream_c, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
+                    stream_c, lambda frame: _has_meta(frame, META_SELF) and _has_meta(frame, META_OTHER_ACTOR))
                 visible_d = self._wait_frame(
-                    stream_d, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
-                self.assertLess(_vision_bounds(visible_c, 3)[0],
-                                _vision_bounds(visible_c, 5)[0])
-                self.assertGreater(_vision_bounds(visible_d, 3)[0],
-                                   _vision_bounds(visible_d, 5)[0])
+                    stream_d, lambda frame: _has_meta(frame, META_SELF) and _has_meta(frame, META_OTHER_ACTOR))
+                self.assertLess(_vision_bounds(visible_c, META_SELF)[0],
+                                _vision_bounds(visible_c, META_OTHER_ACTOR)[0])
+                self.assertGreater(_vision_bounds(visible_d, META_SELF)[0],
+                                   _vision_bounds(visible_d, META_OTHER_ACTOR)[0])
                 self._release_right(joystick_d)
                 released = self._wait_telemetry(
                     lambda payload: next(

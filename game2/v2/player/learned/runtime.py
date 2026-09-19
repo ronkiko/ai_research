@@ -3,17 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-import zlib
 
 import torch
 
 from game2.v2.contracts.joystick import JoystickState
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import VisionGrid
 
 from .contracts import ActionDecision, MotorGoal
 from .motor import motor_input_tensor
 from .motion import MotionEstimator
-from .vision import compact_vision_frame, vision_to_tensor
+from .vision import vision_to_tensor
 
 
 @dataclass(frozen=True)
@@ -21,7 +20,7 @@ class DecisionSample:
     """One in-memory Player-side inference sample; never persisted automatically."""
 
     world_tick: int
-    vision_frame: VisionFrame
+    vision_grid: VisionGrid
     motor_goal: MotorGoal
     motion_x: float
     action_decision: ActionDecision
@@ -32,12 +31,14 @@ class DecisionSample:
 
 @dataclass(frozen=True)
 class TrainingRecord:
-    """Compact semantic replay data for one acknowledged neural decision."""
+    """Small logical-grid replay record for one acknowledged neural decision."""
 
-    width: int
-    height: int
+    columns: int
+    rows: int
+    tile_size: int
     world_tick: int
-    compressed_pixels: bytes
+    physics: bytes
+    metadata: bytes
     motion_x: float
     action_decision: ActionDecision
     pad_right: bool = False
@@ -45,12 +46,14 @@ class TrainingRecord:
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
-        frame = compact_vision_frame(sample.vision_frame)
+        grid = sample.vision_grid
         return cls(
-            frame.width,
-            frame.height,
-            frame.world_tick,
-            zlib.compress(frame.pixels, level=1),
+            grid.columns,
+            grid.rows,
+            grid.tile_size,
+            grid.world_tick,
+            bytes(grid.physics),
+            bytes(grid.metadata),
             float(sample.motion_x),
             sample.action_decision,
             sample.pad_right,
@@ -58,9 +61,15 @@ class TrainingRecord:
         )
 
     @property
-    def vision_frame(self) -> VisionFrame:
-        pixels = zlib.decompress(self.compressed_pixels)
-        return VisionFrame(self.width, self.height, pixels, self.world_tick)
+    def vision_grid(self) -> VisionGrid:
+        return VisionGrid(
+            self.columns,
+            self.rows,
+            self.tile_size,
+            self.physics,
+            self.metadata,
+            self.world_tick,
+        )
 
 
 def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState:
@@ -79,7 +88,7 @@ class LearnedPlayer:
     def __init__(self, planner, motor_controller, motion_estimator: MotionEstimator | None = None,
                  learning_rate: float = 0.01):
         if not hasattr(planner, "decide"):
-            raise TypeError("planner must provide decide(frame)")
+            raise TypeError("planner must provide decide(grid)")
         if not hasattr(motor_controller, "decide"):
             raise TypeError("motor_controller must provide decide(goal, motion_x)")
         self.planner = planner
@@ -173,7 +182,7 @@ class LearnedPlayer:
         )
         return planner_output, logits
 
-    def _process_model_frame(self, frame: VisionFrame, motion_x: float) -> DecisionSample:
+    def _process_model_grid(self, frame: VisionGrid, motion_x: float) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
         pad_state = self.actuated_state
         if self._episode_mode == "train":
@@ -213,21 +222,21 @@ class LearnedPlayer:
             pad_state.jump,
         )
 
-    def process_frame(self, frame: VisionFrame) -> DecisionSample | None:
-        """Run one valid public Vision observation through the learned hierarchy.
+    def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
+        """Run one valid public VisionGrid through the learned hierarchy.
 
         Missing SELF or a temporal discontinuity only resets/updates the motion
         representation. The last complete goal and action remain available to
         the caller, while the first observation starts with a neutral motion.
         """
-        if not isinstance(frame, VisionFrame):
-            raise TypeError("LearnedPlayer requires a VisionFrame")
+        if not isinstance(frame, VisionGrid):
+            raise TypeError("LearnedPlayer requires a VisionGrid")
         motion_x = self.motion_estimator.update(frame)
         if not self.motion_estimator.last_observation_usable:
             return None
 
         if self._episode_mode in {"train", "evaluate"}:
-            sample = self._process_model_frame(frame, motion_x)
+            sample = self._process_model_grid(frame, motion_x)
         else:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
@@ -287,15 +296,15 @@ class LearnedPlayer:
         hundreds of times in Python.
         """
         loss_value = 0.0
-        groups: dict[tuple[int, int], list[TrainingRecord]] = {}
+        groups: dict[tuple[int, int, int], list[TrainingRecord]] = {}
         for record in records:
-            groups.setdefault((record.width, record.height), []).append(record)
+            groups.setdefault((record.columns, record.rows, record.tile_size), []).append(record)
 
         for group in groups.values():
             for start in range(0, len(group), REPLAY_BATCH_SIZE):
                 batch = group[start:start + REPLAY_BATCH_SIZE]
                 vision = torch.stack([
-                    vision_to_tensor(record.vision_frame) for record in batch
+                    vision_to_tensor(record.vision_grid) for record in batch
                 ])
                 planner_output = self.planner(vision)
                 motion = torch.tensor(

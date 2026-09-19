@@ -1,9 +1,10 @@
-# Vision
+# Display Vision
 
-The Vision subsystem is the headless semantic branch of Display. It converts one
-`WorldDefinition` and one validated latest state into an immutable world-resolution
-`VisionFrame` containing one semantic class byte per pixel.
+The Vision subsystem converts `WorldDefinition + DisplayState` into a compact,
+headless `VisionGrid`.
 
-It has no Pygame, artwork, telemetry, Controller, Player, or Engine control
-dependency. `DisplayService` publishes the resulting frame through the public
-Vision transport; the transport does not expose the private STATE snapshot.
+It has no Pygame dependency and no image pipeline. Static terrain is copied
+directly from the World tile matrix into `physics`. Goal and Actor occupancy
+are ORed into the independent `metadata` bit-mask matrix.
+
+See [doc/VISION_RENDERER.md](doc/VISION_RENDERER.md).

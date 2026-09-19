@@ -23,11 +23,11 @@ from game2.v2.contracts.model import (
     decode_model_message,
     episode_end_message,
     message_frame,
-    observation_frame,
+    observation_packet,
     prepare_message,
     save_message,
 )
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import VisionGrid
 from game2.v2.player.learned.contracts import ActionDecision
 
 
@@ -237,9 +237,9 @@ class ModelClient:
         self._clear_observation_mailbox()
         self._latest_decision = None
 
-    def observe(self, frame: VisionFrame) -> None:
+    def observe(self, frame: VisionGrid) -> None:
         self._require_socket()
-        encoded = observation_frame(frame)
+        encoded = observation_packet(frame)
         if self._pending_observation is None and self._current_out is None \
                 and not self._control_out:
             self._pending_observation = encoded

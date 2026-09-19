@@ -1,21 +1,27 @@
 # Display Versus Vision
 
-Display owns two read-only rendering interfaces for one authoritative world:
+Human Screen and machine Vision are separate observations of one authoritative
+world:
 
 ```text
 WorldDefinition + WorldState
            |             |
-    Display.screen  Display.vision
-       artwork       semantic raster
+           |             +--> ScreenRenderer --> RGB --> human
+           |
+           +--> VisionGridRenderer --> two logical matrices --> Player
 ```
 
-`vision` is a representation of what exists in the world, not raw
-`x/y/vx/vy` telemetry. The public Player-facing sensory transport is:
+Screen owns artwork and presentation. Vision owns no artwork and no raster.
+
+The public Player-facing path is:
 
 ```text
-Engine STATE -> Display.vision -> VisionFrame -> public Vision peripheral -> Player
+Engine STATE -> Display.vision -> VisionGrid -> public Vision peripheral -> Player
 ```
 
-The public adapter does not expose raw Engine STATE. The temporary `vision.sh`
-examiner is only a second subscriber and colorizes the same semantic bytes for
-human viewing; it does not render from STATE or send actions.
+`VisionGrid.physics` comes from authored World tiles.
+`VisionGrid.metadata` contains independent `GOAL`, `SELF`, and
+`OTHER_ACTOR` bits for intersected cells.
+
+Raw Engine STATE remains private. Vision does not expose `x/y/vx/vy`,
+grounded state, collision rectangles, input state, or telemetry.

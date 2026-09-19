@@ -1,15 +1,17 @@
-# Vision Renderer
+# VisionGridRenderer
 
-Static terrain is expanded and cached when the renderer receives a world. Each
-render copies that semantic raster, overlays the goal, then overlays OTHER
-Actors and the selected perspective Actor. The deterministic priority is
-`SELF > OTHER_ACTOR > GOAL > HAZARD > SOLID > EMPTY`.
+`VisionGridRenderer` is a deterministic logical sensor, not an image renderer.
 
-Semantic class 3 is `SELF`; class 5 is `OTHER_ACTOR`. The same multi-Actor
-STATE can therefore produce different frames for different `self_actor_id`
-perspectives without exposing data outside STATE and immutable World.
+The first matrix, `physics`, is a byte-for-byte logical projection of authored
+World tiles: `EMPTY`, `SOLID`, or `HAZARD`.
 
-The current raster resolution is `WorldDefinition.width` by
-`WorldDefinition.height`, so an avatar at continuous pixel coordinates remains
-visible between tile boundaries. `VisionFrame` is frozen and stores bytes only;
-it is not a privileged state or telemetry record.
+The second matrix, `metadata`, is a bit mask. `GOAL`, `SELF`, and
+`OTHER_ACTOR` are ORed into every grid cell intersected by their rectangle.
+Because metadata is independent from physics and uses bits, overlap never
+destroys information.
+
+Different Player perspectives share identical physics and Goal metadata. Only
+which Actor receives `SELF` versus `OTHER_ACTOR` changes.
+
+The output size is always `columns × rows`; `tile_size` is carried explicitly
+so a Player can interpret cell geometry without receiving private Engine STATE.

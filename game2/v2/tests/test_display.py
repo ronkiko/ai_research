@@ -14,7 +14,8 @@ from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
 from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
-from game2.v2.console.display.vision.renderer import VisionClass, VisionRenderer
+from game2.v2.console.display.vision.renderer import VisionGridRenderer
+from game2.v2.contracts.vision import META_GOAL, META_SELF
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
@@ -103,27 +104,45 @@ class AutoTilerTests(unittest.TestCase):
         self.assertEqual(hazard.tile, TileID.HAZARD)
 
 
-class VisionRendererTests(unittest.TestCase):
-    def test_semantic_raster_contains_static_goal_and_dynamic_avatar(self):
+class VisionGridRendererTests(unittest.TestCase):
+    def test_logical_grid_keeps_physics_and_metadata_separate(self):
         world = _tiny_world()
-        frame = VisionRenderer().render(world, _view(world))
-        self.assertEqual((frame.width, frame.height, frame.world_tick), (8, 6, 0))
-        self.assertEqual(frame.pixels[0:8], bytes((0, 0, 1, 1, 2, 2, 4, 4)))
-        self.assertEqual(frame.pixels[2 * frame.width + 2], VisionClass.AVATAR)
-        self.assertEqual(set(frame.pixels), {0, 1, 2, 3, 4})
+        grid = VisionGridRenderer().render(world, _view(world))
+        self.assertEqual(
+            (grid.columns, grid.rows, grid.tile_size, grid.world_tick),
+            (4, 3, 2, 0),
+        )
+        self.assertEqual(
+            grid.physics,
+            bytes((0, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1)),
+        )
+        self.assertEqual(grid.metadata[3], META_GOAL)
+        self.assertEqual(grid.metadata[1 * grid.columns + 1], META_SELF)
+
+    def test_self_and_goal_overlap_without_overwriting_each_other(self):
+        world = _tiny_world()
+        grid = VisionGridRenderer().render(
+            world, _view(world, x=world.goal.x, y=world.goal.y)
+        )
+        goal_index = 3
+        self.assertEqual(grid.physics[goal_index], 0)
+        self.assertEqual(grid.metadata[goal_index], META_SELF | META_GOAL)
 
     def test_public_vision_is_immutable_and_does_not_leak_physics_metadata(self):
-        frame = VisionRenderer().render(_tiny_world(), _view(_tiny_world()))
-        self.assertEqual({field.name for field in fields(frame)},
-                         {"width", "height", "pixels", "world_tick"})
-        self.assertIs(type(frame.pixels), bytes)
+        grid = VisionGridRenderer().render(_tiny_world(), _view(_tiny_world()))
+        self.assertEqual(
+            {field.name for field in fields(grid)},
+            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick"},
+        )
+        self.assertIs(type(grid.physics), bytes)
+        self.assertIs(type(grid.metadata), bytes)
         for name in (
             "vx", "vy", "grounded", "accepted_inputs", "input_right",
             "input_jump", "collision_rects",
         ):
-            self.assertFalse(hasattr(frame, name), name)
+            self.assertFalse(hasattr(grid, name), name)
         with self.assertRaises(FrozenInstanceError):
-            frame.pixels = b""
+            grid.metadata = b""
 
 
 class DisplayServiceTests(unittest.TestCase):

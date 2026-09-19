@@ -13,10 +13,15 @@ from game2.v2.contracts.model import (
     OBSERVE,
     decode_model_message,
     observe_message,
-    observation_frame,
+    observation_packet,
 )
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import (
+    META_GOAL,
+    META_OTHER_ACTOR,
+    META_SELF,
+    VisionGrid,
+)
 from game2.v2.model_runtime import ModelRuntime
 from game2.v2.player.model_client import (
     MODEL_SAVE_TIMEOUT,
@@ -28,10 +33,11 @@ from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import _run_episode
 
 
-def _frame(tick: int) -> VisionFrame:
-    pixels = bytearray(12 * 5)
-    pixels[2 * 12 + 3] = 3
-    return VisionFrame(12, 5, bytes(pixels), tick)
+def _grid(tick: int) -> VisionGrid:
+    physics = bytes(12 * 5)
+    metadata = bytearray(12 * 5)
+    metadata[2 * 12 + 3] = META_SELF
+    return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
 
 class _StubModel:
@@ -51,7 +57,7 @@ class _StubModel:
     def prepare_episode(self, mode, _seed):
         self.episode_mode = mode
 
-    def process_frame(self, frame):
+    def process_grid(self, frame):
         self.calls.append(frame.world_tick)
         self.frames.append(frame)
         if frame.world_tick == self.slow_tick:
@@ -131,40 +137,43 @@ class ModelRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ModelClient("127.0.0.1", 1, save_timeout=0)
 
-    def test_contract_carries_only_public_semantic_raster(self):
-        message = observe_message(_frame(7))
+    def test_contract_carries_only_public_logical_grid(self):
+        message = observe_message(_grid(7))
         self.assertEqual(set(message), {
-            "version", "type", "observation_world_tick", "width", "height",
-            "pixel_format", "byte_length",
+            "version", "type", "observation_world_tick", "columns", "rows",
+            "tile_size", "physics_length", "metadata_length",
         })
         decoded = decode_model_message(message)
         self.assertEqual(decoded["type"], OBSERVE)
         self.assertNotIn("engine", decoded)
         self.assertNotIn("joystick", decoded)
+        self.assertNotIn("pixel_format", decoded)
 
-    def test_full_size_observation_round_trip_uses_header_and_exact_raw_raster(self):
+    def test_max_grid_observation_round_trip_uses_two_exact_raw_matrices(self):
         model = _StubModel()
         _runtime, worker, client, errors = self._start(model)
-        pixels = bytearray(1280 * 768)
-        pixels[0] = 3
-        pixels[-1] = 5
-        frame = VisionFrame(1280, 768, bytes(pixels), 987654)
-        wire = observation_frame(frame)
+        cells = 64 * 64
+        physics = bytes(index % 3 for index in range(cells))
+        metadata = bytearray(cells)
+        metadata[0] = META_SELF
+        metadata[-1] = META_OTHER_ACTOR
+        grid = VisionGrid(64, 64, 64, physics, bytes(metadata), 987654)
+        wire = observation_packet(grid)
         header_size = int.from_bytes(wire[:4], "big")
         header = wire[4:4 + header_size]
         self.assertNotIn(b'"pixels"', header)
-        self.assertNotIn(b'"base64"', header)
-        self.assertNotIn(b'"raster"', header)
-        self.assertEqual(wire[4 + header_size:], frame.pixels)
+        self.assertNotIn(b'"pixel_format"', header)
+        self.assertEqual(wire[4 + header_size:], grid.physics + grid.metadata)
         try:
             client.prepare(1, "evaluate", 1)
-            client.observe(frame)
-            decision = self._wait_decision(client, frame.world_tick)
-            self.assertEqual(decision.observation_world_tick, frame.world_tick)
-            self.assertEqual(model.frames[0], frame)
-            self.assertEqual(model.frames[0].width, 1280)
-            self.assertEqual(model.frames[0].height, 768)
-            self.assertEqual(model.frames[0].pixels, frame.pixels)
+            client.observe(grid)
+            decision = self._wait_decision(client, grid.world_tick)
+            self.assertEqual(decision.observation_world_tick, grid.world_tick)
+            self.assertEqual(model.frames[0], grid)
+            self.assertEqual(model.frames[0].columns, 64)
+            self.assertEqual(model.frames[0].rows, 64)
+            self.assertEqual(model.frames[0].physics, grid.physics)
+            self.assertEqual(model.frames[0].metadata, grid.metadata)
         finally:
             client.close()
             worker.join(timeout=2)
@@ -175,10 +184,10 @@ class ModelRuntimeTests(unittest.TestCase):
         _runtime, worker, client, errors = self._start(model)
         try:
             client.prepare(1, "evaluate", 1)
-            client.observe(_frame(100))
+            client.observe(_grid(100))
             self.assertTrue(model.started.wait(1.0))
             for tick in (101, 102, 103, 104):
-                client.observe(_frame(tick))
+                client.observe(_grid(tick))
             model.release.set()
             self._wait_decision(client, 104)
             self.assertEqual(model.calls, [100, 104])
@@ -193,11 +202,11 @@ class ModelRuntimeTests(unittest.TestCase):
         _runtime, worker, client, errors = self._start(model)
         try:
             client.prepare(1, "train", 1)
-            client.observe(_frame(1))
+            client.observe(_grid(1))
             first = self._wait_decision(client, 1)
             for _ in range(8):
                 client.actuated(first.decision_id)
-            client.observe(_frame(2))
+            client.observe(_grid(2))
             self._wait_decision(client, 2)
             update = client.episode_end(1, "dead", 0.0, False)
             self.assertFalse(update["updated"])
@@ -213,7 +222,7 @@ class ModelRuntimeTests(unittest.TestCase):
         update = []
         try:
             client.prepare(1, "train", 1)
-            client.observe(_frame(100))
+            client.observe(_grid(100))
             self.assertTrue(model.started.wait(1.0))
 
             def finish():
@@ -247,8 +256,8 @@ class ModelRuntimeTests(unittest.TestCase):
     def test_realtime_actuator_repeats_completed_action_while_model_is_slow(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
-        first = _frame(1)
-        second = _frame(2)
+        first = _grid(1)
+        second = _grid(2)
 
         class Clock:
             value = 0.0
@@ -350,11 +359,12 @@ class ModelRuntimeTests(unittest.TestCase):
 
 class TrainingAckBoundaryTests(unittest.TestCase):
     @staticmethod
-    def _vision_frame(tick: int) -> VisionFrame:
-        pixels = bytearray(12 * 5)
-        pixels[2 * 12 + 3] = 3
-        pixels[2 * 12 + 10] = 4
-        return VisionFrame(12, 5, bytes(pixels), tick)
+    def _vision_grid(tick: int) -> VisionGrid:
+        physics = bytes(12 * 5)
+        metadata = bytearray(12 * 5)
+        metadata[2 * 12 + 3] = META_SELF
+        metadata[2 * 12 + 10] = META_GOAL
+        return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
 
     class Connection:
         failed = False
@@ -446,7 +456,7 @@ class TrainingAckBoundaryTests(unittest.TestCase):
         finished, trainable, lifecycle = _run_episode(
             connection, model, 1, "train",
             first_lifecycle=True,
-            vision=self.Vision(self._vision_frame(1)),
+            vision=self.Vision(self._vision_grid(1)),
             joystick=joystick,
             action_hz=120,
             sleeper=lambda _duration: None,

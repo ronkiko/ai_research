@@ -1,13 +1,14 @@
 # Screen Versus Vision
 
-Screen and vision are two views, not two worlds. Both receive the same immutable
-WorldDefinition and latest authoritative WorldState-derived view:
-
-| Interface | Consumer | Output |
+| Interface | Consumer | Representation |
 |---|---|---|
-| `screen` | human | Pygame artwork and a game window |
-| `vision` | future machine sensor | deterministic semantic `VisionFrame` |
+| `screen` | human observer | rendered RGB frame |
+| `vision` | machine Player | deterministic logical `VisionGrid` |
 
-Changing a tileset or screen autotile mapping cannot change World semantics,
-collision geometry, or Engine timing. A future Player VisionAdapter may transport
-`VisionFrame`; implementing that adapter is outside this patch.
+Changing artwork, tilesets, autotiling, HUD, or Screen resolution cannot change
+the machine observation. Vision is built from stable World tile semantics and
+public-safe Actor occupancy.
+
+The two Vision matrices have the authored map size. For a 20×12 training map
+the sensor carries 240 physics bytes and 240 metadata bytes, rather than a
+1280×768 semantic image.

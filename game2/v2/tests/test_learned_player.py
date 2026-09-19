@@ -11,42 +11,43 @@ from types import SimpleNamespace
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.joystick import joystick_ack
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
-from game2.v2.contracts.vision import VisionFrame
+from game2.v2.contracts.vision import META_SELF, VisionGrid
 from game2.v2.player.learned.main import run_attached_player, run_player
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.peripherals import JoystickClient
 
 
-def _frame(*, width=12, height=5, self_x=None, tick=1):
-    pixels = bytearray(width * height)
+def _grid(*, width=12, height=5, self_x=None, tick=1):
+    physics = bytes(width * height)
+    metadata = bytearray(width * height)
     if self_x is not None:
-        pixels[2 * width + self_x] = 3
-    return VisionFrame(width, height, bytes(pixels), tick)
+        metadata[2 * width + self_x] = META_SELF
+    return VisionGrid(width, height, 64, physics, bytes(metadata), tick)
 
 
 class MotionEstimatorTests(unittest.TestCase):
     def test_first_frame_is_neutral_and_horizontal_direction_is_signed(self):
         estimator = MotionEstimator()
-        self.assertEqual(estimator.update(_frame(self_x=2, tick=10)), 0.0)
-        self.assertEqual(estimator.update(_frame(self_x=5, tick=11)), 1.0)
-        self.assertLess(estimator.update(_frame(self_x=2, tick=12)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=2, tick=10)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=5, tick=11)), 1.0)
+        self.assertLess(estimator.update(_grid(self_x=2, tick=12)), 0.0)
 
     def test_world_tick_delta_is_used_and_result_is_bounded(self):
-        estimator = MotionEstimator(pixels_per_tick_scale=2.0)
-        estimator.update(_frame(self_x=1, tick=4))
-        self.assertEqual(estimator.update(_frame(self_x=5, tick=6)), 1.0)
-        estimator.update(_frame(self_x=5, tick=7))
-        self.assertEqual(estimator.update(_frame(self_x=11, tick=8)), 1.0)
+        estimator = MotionEstimator(cells_per_tick_scale=2.0)
+        estimator.update(_grid(self_x=1, tick=4))
+        self.assertEqual(estimator.update(_grid(self_x=5, tick=6)), 1.0)
+        estimator.update(_grid(self_x=5, tick=7))
+        self.assertEqual(estimator.update(_grid(self_x=11, tick=8)), 1.0)
 
     def test_missing_self_and_discontinuity_reset_the_temporal_state(self):
         estimator = MotionEstimator()
-        estimator.update(_frame(self_x=2, tick=4))
-        self.assertEqual(estimator.update(_frame(tick=5)), 0.0)
+        estimator.update(_grid(self_x=2, tick=4))
+        self.assertEqual(estimator.update(_grid(tick=5)), 0.0)
         self.assertFalse(estimator.last_observation_usable)
-        self.assertEqual(estimator.update(_frame(self_x=5, tick=6)), 0.0)
-        self.assertEqual(estimator.update(_frame(self_x=6, tick=6)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=5, tick=6)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=6, tick=6)), 0.0)
         self.assertFalse(estimator.last_observation_usable)
-        self.assertEqual(estimator.update(_frame(self_x=7, tick=7)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=7, tick=7)), 0.0)
 
 
 class _Lifecycle:
@@ -136,7 +137,7 @@ class _RemoteModel:
         self.episode_end_calls = []
 
     def observe(self, frame):
-        if 3 not in frame.pixels:
+        if not any(value & META_SELF for value in frame.metadata):
             return
         self.latest_decision = SimpleNamespace(
             decision_id=frame.world_tick,
@@ -176,7 +177,7 @@ class LearnedLifecycleTests(unittest.TestCase):
         order = []
         lifecycle = _Lifecycle(self._manifest(), order)
         result, _vision, joystick, _model = self._run(
-            lifecycle, [_frame(tick=1), _frame(self_x=3, tick=2)])
+            lifecycle, [_grid(tick=1), _grid(self_x=3, tick=2)])
         self.assertEqual(result, 0)
         self.assertEqual(joystick.sent, [(True, True)])
         self.assertEqual(order, ["start", "detach", "close"])
@@ -189,7 +190,7 @@ class LearnedLifecycleTests(unittest.TestCase):
             lifecycle.latest_event = {"event": "terminal", "result": "dead", "world_tick": 3}
 
         result, _vision, joystick, _model = self._run(
-            lifecycle, [_frame(self_x=3, tick=1), _frame(self_x=4, tick=2)],
+            lifecycle, [_grid(self_x=3, tick=1), _grid(self_x=4, tick=2)],
             decisions=10, on_send=terminal_after_first_action)
         self.assertEqual(result, 0)
         self.assertEqual(len(joystick.sent), 1)
@@ -198,14 +199,14 @@ class LearnedLifecycleTests(unittest.TestCase):
         order = []
         lifecycle = _Lifecycle(self._manifest(), order)
         result, _vision, joystick, _model = self._run(
-            lifecycle, [_frame(self_x=3, tick=1), _frame(tick=2)], decisions=10)
+            lifecycle, [_grid(self_x=3, tick=1), _grid(tick=2)], decisions=10)
         self.assertEqual(result, 0)
         self.assertEqual(len(joystick.sent), 1)
 
     def test_start_failure_is_fail_closed_and_still_detaches(self):
         order = []
         lifecycle = _Lifecycle(self._manifest(), order, start_result=False)
-        vision = _LifecycleVision([_frame(self_x=3, tick=1)])
+        vision = _LifecycleVision([_grid(self_x=3, tick=1)])
         joystick = _LifecycleJoystick()
         with self.assertRaises(ConnectionError):
             with redirect_stdout(StringIO()):
@@ -231,7 +232,7 @@ class LearnedJoystickTests(unittest.TestCase):
             frames_received = 0
 
             def __init__(self, _manifest):
-                self.frames = [_frame(tick=1), _frame(self_x=3, tick=2)]
+                self.frames = [_grid(tick=1), _grid(self_x=3, tick=2)]
 
             @property
             def connected(self):
@@ -293,7 +294,7 @@ class LearnedJoystickTests(unittest.TestCase):
             error = None
             connected = True
             frames_received = 1
-            latest = _frame(self_x=3, tick=1)
+            latest = _grid(self_x=3, tick=1)
 
             def connect(self):
                 return None
@@ -364,7 +365,7 @@ class LearnedJoystickTests(unittest.TestCase):
             error = None
             connected = True
             frames_received = 0
-            latest = _frame(self_x=3, tick=1)
+            latest = _grid(self_x=3, tick=1)
 
             def __init__(self, _manifest):
                 return None
@@ -444,8 +445,8 @@ class _AckServer:
         try:
             connection, _ = self.listener.accept()
             for sequence, status in enumerate(("accepted", "rejected", "duplicate"), 1):
-                recv_frame(connection)
-                send_frame(connection, joystick_ack(sequence, status))
+                recv_grid(connection)
+                send_grid(connection, joystick_ack(sequence, status))
             self.release.wait(2)
         except BaseException as exc:
             self.error = exc

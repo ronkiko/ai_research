@@ -1,18 +1,4 @@
-"""Headless semantic presentation for the Console world."""
+"""Logical machine-facing Vision grid."""
+from .renderer import VisionGrid, VisionGridRenderer
 
-from .renderer import (AVATAR, EMPTY, GOAL, HAZARD, OTHER_ACTOR, SELF, SOLID,
-                       SemanticClass, VisionClass, VisionFrame, VisionRenderer)
-
-__all__ = [
-    "AVATAR",
-    "EMPTY",
-    "GOAL",
-    "HAZARD",
-    "OTHER_ACTOR",
-    "SELF",
-    "SOLID",
-    "SemanticClass",
-    "VisionClass",
-    "VisionFrame",
-    "VisionRenderer",
-]
+__all__ = ["VisionGrid", "VisionGridRenderer"]
