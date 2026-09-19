@@ -505,18 +505,18 @@ class TrainingAckBoundaryTests(unittest.TestCase):
         )
         return finished, trainable, lifecycle, model
 
-    def test_terminal_race_rejection_is_reported_but_not_recorded_or_dirty(self):
-        finished, trainable, lifecycle, model = self._run("rejected")
-        self.assertTrue(lifecycle)
-        self.assertTrue(trainable)
-        self.assertEqual(finished["rejected_actions"], 1)
-        self.assertEqual(model.actuated_ids, [])
-
-    def test_only_acknowledged_decision_is_recorded_as_actuated(self):
-        finished, trainable, _lifecycle, model = self._run("accepted")
-        self.assertTrue(trainable)
-        self.assertEqual(finished["accepted_actions"], 1)
-        self.assertEqual(model.actuated_ids, [1])
+    def test_terminal_race_ack_status_controls_actuation_without_dirtying_episode(self):
+        cases = (
+            ("rejected", "rejected_actions", 1, []),
+            ("accepted", "accepted_actions", 1, [1]),
+        )
+        for status, counter, expected_count, expected_actuated in cases:
+            with self.subTest(status=status):
+                finished, trainable, lifecycle, model = self._run(status)
+                self.assertTrue(lifecycle)
+                self.assertTrue(trainable)
+                self.assertEqual(finished[counter], expected_count)
+                self.assertEqual(model.actuated_ids, expected_actuated)
 
 
     def test_accepted_ack_actuates_before_episode_end(self):
