@@ -35,11 +35,14 @@ Detach the Screen without stopping the world:
 Training is composed by Management from independent Console, Trainer, Model, and
 Player processes.
 
-Headless Training Set Level 1:
+Headless Training Set Level 1 from new weights:
 
 ```bash
 ./game2/v2/op/train.sh --fresh
 ```
+
+`--fresh` explicitly resets the current Training Set checkpoints
+(`planner.pt` and `motor.pt`) before starting.
 
 Observe exactly the same Training on Screen #1:
 
@@ -47,11 +50,13 @@ Observe exactly the same Training on Screen #1:
 ./game2/v2/op/train.sh --fresh --screen 1
 ```
 
-Resume existing checkpoints:
+Continue the existing learned checkpoints:
 
 ```bash
 ./game2/v2/op/train.sh --resume
 ```
+
+`--resume` fails if either checkpoint is missing.
 
 `--screen` exists only in Management. It is never forwarded to Console,
 Trainer, Model, or Player. When omitted, Training does not contact Screen Server

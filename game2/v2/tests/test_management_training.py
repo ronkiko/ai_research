@@ -134,6 +134,39 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(modules.count("game2.v2.player.learned.main"), 2)
             self.assertIn("headless", output.getvalue())
 
+
+    def test_fresh_resets_known_checkpoints_instead_of_refusing_to_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_dir = Path(directory) / "checkpoints"
+            checkpoint_dir.mkdir()
+            planner = checkpoint_dir / "planner.pt"
+            motor = checkpoint_dir / "motor.pt"
+            planner.write_bytes(b"old-planner")
+            motor.write_bytes(b"old-motor")
+            output = io.StringIO()
+            factory = _Factory()
+            run = TrainingRun(
+                popen_factory=factory,
+                sleeper=lambda _seconds: None,
+                output=output,
+            )
+            result = run.train(
+                set_path=self._manifest(directory),
+                checkpoint_dir=checkpoint_dir,
+                max_episodes=1,
+                fresh=True,
+                episode_limit=10,
+            )
+            self.assertEqual(result, 0)
+            self.assertFalse(planner.exists())
+            self.assertFalse(motor.exists())
+            self.assertIn("FRESH reset checkpoints: planner.pt, motor.pt", output.getvalue())
+            model_commands = [
+                command for command in factory.commands
+                if command[command.index("-m") + 1] == "game2.v2.training.model_runtime"
+            ]
+            self.assertIn("--fresh", model_commands[0])
+
     def test_screen_is_optional_management_binding_not_child_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             events = []

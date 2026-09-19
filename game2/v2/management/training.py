@@ -448,9 +448,15 @@ class TrainingRun:
         manifest = TrainingSetManifest.from_file(manifest_path)
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
-        if fresh and (planner.exists() or motor.exists()):
-            raise TrainingRunError("fresh Training refuses to overwrite checkpoints")
-        if not fresh and (not planner.is_file() or not motor.is_file()):
+        if fresh:
+            removed = []
+            for checkpoint in (planner, motor):
+                if checkpoint.exists():
+                    checkpoint.unlink()
+                    removed.append(checkpoint.name)
+            if removed:
+                self._write("FRESH reset checkpoints: " + ", ".join(removed))
+        elif not planner.is_file() or not motor.is_file():
             raise TrainingRunError("resume requires planner.pt and motor.pt")
         if type(max_episodes) is not int or max_episodes <= 0:
             raise ValueError("max_episodes must be positive")

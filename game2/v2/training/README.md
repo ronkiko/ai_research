@@ -21,6 +21,9 @@ and wire contracts:
 ./game2/v2/op/train.sh --resume
 ```
 
+`--fresh` removes the known Level checkpoint pair before launching a new
+training run. `--resume` requires that pair and continues from it.
+
 Human observation is outside Training. An optional Management-only
 `--screen N` binds the current Console ScreenSource to Screen Server but does
 not alter Trainer, Model, Player, rewards, observations, or action timing.
