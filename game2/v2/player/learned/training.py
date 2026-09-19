@@ -32,6 +32,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
 from .checkpoint import save_motor_controller, save_planner
+from .inference import InferenceWorker
 from .motion import VisionProgress, self_center_x
 from .runtime import LearnedPlayer
 
@@ -159,7 +160,8 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
                  *, first_lifecycle: bool, vision, joystick, action_hz: int,
                  sleeper: Callable[[float], None], clock: Callable[[], float],
                  ack_settle_timeout: float,
-                 on_started: Callable[[dict], None]) -> tuple[dict, bool, bool]:
+                 on_started: Callable[[dict], None],
+                 inference_factory=InferenceWorker) -> tuple[dict, bool, bool]:
     connection.clear_terminal_events()
     connection.clear_acknowledgements()
     ack_statuses: dict[int, list[str]] = {}
@@ -200,58 +202,82 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     latest_sample = None
     last_recorded_sample = None
     progress_tracker = VisionProgress()
+    observed_result_serial = 0
+    inference = inference_factory(player)
 
-    while latest_terminal is None:
-        _drain_acknowledgements(joystick, ack_statuses)
-        if connection.failed or vision.failed or joystick.failed:
-            dirty = True
-            break
-        while True:
-            terminal = connection.pop_terminal()
-            if terminal is None:
+    try:
+        while latest_terminal is None:
+            _drain_acknowledgements(joystick, ack_statuses)
+            if connection.failed or vision.failed or joystick.failed:
+                dirty = True
                 break
-            if terminal["world_tick"] <= lifecycle_world_tick:
+            if inference.failed:
+                dirty = True
+            while True:
+                terminal = connection.pop_terminal()
+                if terminal is None:
+                    break
+                if terminal["world_tick"] <= lifecycle_world_tick:
+                    continue
+                latest_terminal = terminal
+                break
+            if latest_terminal is not None:
+                break
+            frame = vision.latest
+            if frame is not None and frame.world_tick > latest_frame_tick \
+                    and frame.world_tick > vision_floor_tick:
+                latest_frame_tick = frame.world_tick
+                progress_tracker.update(frame)
+                has_self = self_center_x(frame) is not None
+                if not inference.failed:
+                    try:
+                        inference.submit(frame)
+                    except RuntimeError:
+                        dirty = True
+                if has_self and started_tick is None:
+                    started_tick = frame.world_tick
+                    on_started(episode_started_message(episode_id, started_tick))
+
+            snapshot = inference.snapshot()
+            if snapshot.serial != observed_result_serial:
+                observed_result_serial = snapshot.serial
+                if snapshot.sample is not None:
+                    latest_sample = snapshot.sample
+            while latest_terminal is None:
+                terminal = connection.pop_terminal()
+                if terminal is None:
+                    break
+                if terminal["world_tick"] <= lifecycle_world_tick:
+                    continue
+                latest_terminal = terminal
+            if started_tick is not None and latest_sample is not None:
+                now = clock()
+                if latest_terminal is None and now >= next_send:
+                    state = joystick.send_state(latest_sample.action_decision.right,
+                                                latest_sample.action_decision.jump)
+                    sequence = getattr(state, "sequence", None)
+                    if type(sequence) is not int:
+                        sequence = int(getattr(joystick, "sequence", before_sequence +
+                                              len(sent_sequences) + 1))
+                    sent_sequences.add(sequence)
+                    if player.episode_mode == "train" and latest_sample is not last_recorded_sample:
+                        player.record_sent_sample(latest_sample)
+                        last_recorded_sample = latest_sample
+                    _drain_acknowledgements(joystick, ack_statuses)
+                    next_send += send_period
+                    if next_send < now:
+                        next_send = now
+            if latest_terminal is not None:
                 continue
-            latest_terminal = terminal
-            break
-        if latest_terminal is not None:
-            break
-        frame = vision.latest
-        if frame is not None and frame.world_tick > latest_frame_tick \
-                and frame.world_tick > vision_floor_tick:
-            latest_frame_tick = frame.world_tick
-            progress_tracker.update(frame)
-            has_self = self_center_x(frame) is not None
-            try:
-                sample = player.process_frame(frame)
-            except Exception:
-                dirty = True
-                sample = None
-            if started_tick is not None and sample is None:
-                dirty = True
-            if sample is not None:
-                latest_sample = sample
-            if has_self and started_tick is None:
-                started_tick = frame.world_tick
-                on_started(episode_started_message(episode_id, started_tick))
-        if started_tick is not None and latest_sample is not None:
-            now = clock()
-            if now >= next_send:
-                state = joystick.send_state(latest_sample.action_decision.right,
-                                            latest_sample.action_decision.jump)
-                sequence = getattr(state, "sequence", None)
-                if type(sequence) is not int:
-                    sequence = int(getattr(joystick, "sequence", before_sequence +
-                                          len(sent_sequences) + 1))
-                sent_sequences.add(sequence)
-                if player.episode_mode == "train" and latest_sample is not last_recorded_sample:
-                    player.record_sent_sample(latest_sample)
-                    last_recorded_sample = latest_sample
-                _drain_acknowledgements(joystick, ack_statuses)
-                next_send += send_period
-                if next_send < now:
-                    next_send = now
-        sleeper(0.001)
+            if latest_sample is None:
+                # Waiting for the first usable decision is allowed; once a
+                # sample exists, the actuator path never waits for inference.
+                inference.wait_for_change(observed_result_serial, timeout=0.005)
+            sleeper(0.001)
+            time.sleep(0)
+    finally:
+        # No model call may overlap APPLY_RESULT, optimizer work, or SAVE.
+        inference.close()
 
     terminal = latest_terminal
     if terminal is None:
@@ -280,7 +306,8 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                         peer_factory=TrainingPeer, checkpoint_dir: str | Path = "runtime/checkpoints",
                         sleeper: Callable[[float], None] = time.sleep,
                         clock: Callable[[], float] = time.monotonic,
-                        ack_settle_timeout: float = 0.25) -> int:
+                        ack_settle_timeout: float = 0.25,
+                        inference_factory=InferenceWorker) -> int:
     """Own one attached Player's public peripherals and Trainer session."""
     if action_hz <= 0:
         raise ValueError("action_hz must be positive")
@@ -324,7 +351,7 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                     connection, player, episode_id, first_lifecycle=not actor_started,
                     vision=vision, joystick=joystick, action_hz=action_hz,
                     sleeper=sleeper, clock=clock, ack_settle_timeout=ack_settle_timeout,
-                    on_started=peer.send)
+                    on_started=peer.send, inference_factory=inference_factory)
                 peer.send(finished)
                 if lifecycle_accepted:
                     actor_started = True

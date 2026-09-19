@@ -15,10 +15,11 @@ from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.player.learned.checkpoint import save_motor_controller, save_planner
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.main import build_player, run_attached_player, run_player
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import LearnedPlayer, action_to_joystick
+from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer, action_to_joystick
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.peripherals import JoystickClient
 
@@ -110,6 +111,65 @@ class LearnedRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "inference failed"):
             player.process_frame(_frame(self_x=3, tick=1))
         self.assertIsNone(player.latest_sample)
+
+
+class InferenceWorkerTests(unittest.TestCase):
+    @staticmethod
+    def _sample(frame, right, jump):
+        return DecisionSample(frame.world_tick, frame, MotorGoal(0.0, 0.0), 0.0,
+                              ActionDecision(right, jump))
+
+    def test_latest_only_mailbox_skips_intermediate_frames(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class Model:
+            def __init__(self):
+                self.calls = []
+
+            def process_frame(self, frame):
+                self.calls.append(frame.world_tick)
+                if frame.world_tick == 100:
+                    started.set()
+                    release.wait(1.0)
+                return InferenceWorkerTests._sample(frame, True, False)
+
+        model = Model()
+        worker = InferenceWorker(model)
+        try:
+            worker.submit(_frame(self_x=3, tick=100))
+            self.assertTrue(started.wait(1.0))
+            for tick in (101, 102, 103, 104):
+                worker.submit(_frame(self_x=3, tick=tick))
+            release.set()
+            snapshot = worker.snapshot()
+            for _ in range(2):
+                if snapshot.serial >= 2:
+                    break
+                snapshot = worker.wait_for_change(snapshot.serial, timeout=1.0)
+            self.assertEqual(snapshot.result_tick, 104)
+            self.assertEqual(snapshot.sample.world_tick, 104)
+        finally:
+            release.set()
+            worker.close()
+        self.assertEqual(model.calls, [100, 104])
+        self.assertTrue(worker.joined)
+
+    def test_inference_exception_is_published_to_owner_and_worker_joins(self):
+        class Broken:
+            def process_frame(self, _frame):
+                raise RuntimeError("controlled inference failure")
+
+        worker = InferenceWorker(Broken())
+        try:
+            snapshot = worker.submit(_frame(self_x=3, tick=1))
+            self.assertIsNone(snapshot)
+            worker.wait_for_change(0, timeout=1.0)
+            with self.assertRaisesRegex(RuntimeError, "learned inference failed"):
+                worker.raise_if_failed()
+        finally:
+            worker.close()
+        self.assertTrue(worker.joined)
 
 
 class _Lifecycle:
@@ -378,6 +438,160 @@ class LearnedJoystickTests(unittest.TestCase):
                 sleeper=lambda _duration: None,
             ), 0)
         self.assertEqual(joystick.sent, [(True, True)])
+
+    def test_slow_inference_holds_completed_action_then_switches_atomically(self):
+        manifest = PlayerManifest("session", "player", "actor", Endpoint("127.0.0.1", 1),
+                                  Endpoint("127.0.0.1", 2))
+        first_frame = _frame(self_x=3, tick=1)
+        second_frame = _frame(self_x=3, tick=2)
+        first_ready = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+        release_second = threading.Event()
+
+        class Clock:
+            def __init__(self):
+                self.value = 0.0
+
+            def now(self):
+                return self.value
+
+            def sleep(self, duration):
+                self.value += duration
+
+        class Vision:
+            failed = False
+            error = None
+            frames_received = 0
+
+            @property
+            def connected(self):
+                return True
+
+            def connect(self):
+                return None
+
+            @property
+            def latest(self):
+                return second_frame if first_ready.is_set() else first_frame
+
+            def close(self):
+                return None
+
+        class Joystick:
+            connected = True
+            failed = False
+            error = None
+
+            def __init__(self, _manifest):
+                self.sequence = 0
+                self.sent = []
+                self.accepted_count = 0
+                self.rejected_count = 0
+                self.duplicate_count = 0
+
+            def connect(self):
+                return None
+
+            def send_state(self, right, jump):
+                self.sequence += 1
+                self.sent.append((right, jump))
+                if self.sequence == 2 and not second_started.wait(1.0):
+                    release_second.set()
+                    raise AssertionError("second inference did not start")
+                if self.sequence == 3:
+                    release_second.set()
+                    if not second_finished.wait(1.0):
+                        raise AssertionError("second inference did not finish")
+
+            def close(self):
+                return None
+
+        class Player:
+            def process_frame(self, frame):
+                if frame.world_tick == 1:
+                    first_ready.set()
+                    return DecisionSample(1, frame, MotorGoal(0.0, 0.0), 0.0,
+                                          ActionDecision(True, False))
+                second_started.set()
+                release_second.wait(1.0)
+                second_finished.set()
+                return DecisionSample(2, frame, MotorGoal(0.0, 0.0), 0.0,
+                                      ActionDecision(False, True))
+
+        clock = Clock()
+        joystick = Joystick(manifest)
+        with redirect_stdout(StringIO()):
+            self.assertEqual(run_player(
+                manifest, Player(), decisions=6, action_hz=120,
+                vision_factory=lambda _manifest: Vision(),
+                joystick_factory=lambda _manifest: joystick,
+                clock=clock.now, sleeper=clock.sleep,
+            ), 0)
+
+        self.assertTrue(second_started.is_set())
+        self.assertEqual(joystick.sent[:3], [(True, False)] * 3)
+        switch = next(index for index, action in enumerate(joystick.sent)
+                      if action == (False, True))
+        self.assertGreaterEqual(switch, 3)
+        self.assertEqual(joystick.sent[switch:], [(False, True)] * (6 - switch))
+
+    def test_standalone_inference_failure_is_reported_and_does_not_send(self):
+        manifest = PlayerManifest("session", "player", "actor", Endpoint("127.0.0.1", 1),
+                                  Endpoint("127.0.0.1", 2))
+
+        class Vision:
+            failed = False
+            error = None
+            frames_received = 0
+
+            @property
+            def connected(self):
+                return True
+
+            def connect(self):
+                return None
+
+            @property
+            def latest(self):
+                return _frame(self_x=3, tick=1)
+
+            def close(self):
+                return None
+
+        class Joystick:
+            connected = True
+            failed = False
+            error = None
+            sequence = 0
+            sent = []
+            accepted_count = 0
+            rejected_count = 0
+            duplicate_count = 0
+
+            def connect(self):
+                return None
+
+            def send_state(self, _right, _jump):
+                self.sent.append((_right, _jump))
+
+            def close(self):
+                return None
+
+        class BrokenPlayer:
+            def process_frame(self, _frame):
+                raise ValueError("broken model")
+
+        joystick = Joystick()
+        with self.assertRaisesRegex(RuntimeError, "learned inference failed"):
+            with redirect_stdout(StringIO()):
+                run_player(
+                    manifest, BrokenPlayer(), decisions=1,
+                    vision_factory=lambda _manifest: Vision(),
+                    joystick_factory=lambda _manifest: joystick,
+                    clock=lambda: 0.0, sleeper=lambda _duration: None,
+                )
+        self.assertEqual(joystick.sent, [])
 
     def test_public_ack_diagnostics_count_each_status(self):
         server = _AckServer()

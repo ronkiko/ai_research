@@ -16,6 +16,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
 from .checkpoint import load_motor_controller, load_planner
+from .inference import InferenceWorker
 from .motor import MotorController382
 from .motion import self_center_x
 from .planner import CNNPlanner
@@ -50,7 +51,7 @@ def build_player(*, fresh: bool, planner_seed: int = DEFAULT_PLANNER_SEED,
 def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: int | None = None,
                action_hz: int = PLAYER_ACTION_HZ, vision_factory=VisionReceiver,
                joystick_factory=JoystickClient, lifecycle=None, clock=time.monotonic,
-               sleeper=time.sleep) -> int:
+               sleeper=time.sleep, inference_factory=InferenceWorker) -> int:
     if not isinstance(manifest, PlayerManifest):
         raise TypeError("learned Player requires a PlayerManifest")
     if decisions is not None and (type(decisions) is not int or decisions < 0):
@@ -65,6 +66,11 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
     next_send = clock()
     send_period = 1 / action_hz
     gameplay_started = False
+    latest_sample = None
+    observed_result_serial = 0
+    saw_self_frame = False
+    missing_self_after_seen = False
+    inference = None
     try:
         vision.connect()
         joystick.connect()
@@ -76,6 +82,7 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
             if not lifecycle.request_start():
                 raise ConnectionError("Console rejected START")
 
+        inference = inference_factory(player)
         while decisions is None or sent < decisions:
             if vision.failed:
                 raise ConnectionError("Vision receiver failed") from vision.error
@@ -90,13 +97,28 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
             frame = vision.latest
             if frame is not None and frame.world_tick != latest_world_tick:
                 latest_world_tick = frame.world_tick
-                if self_center_x(frame) is None:
-                    if gameplay_started:
-                        break
-                    player.process_frame(frame)
+                has_self = self_center_x(frame) is not None
+                if has_self:
+                    saw_self_frame = True
+                    missing_self_after_seen = False
+                elif gameplay_started:
+                    break
+                elif saw_self_frame:
+                    # Do not replace an in-flight usable frame with a stale
+                    # disappearance before the first decision is published.
+                    missing_self_after_seen = True
                 else:
-                    sample = player.process_frame(frame)
-                    if sample is not None and not gameplay_started:
+                    inference.submit(frame)
+                if has_self:
+                    inference.submit(frame)
+
+            inference.raise_if_failed()
+            snapshot = inference.snapshot()
+            if snapshot.serial != observed_result_serial:
+                observed_result_serial = snapshot.serial
+                if snapshot.sample is not None:
+                    latest_sample = snapshot.sample
+                    if not gameplay_started:
                         gameplay_started = True
                         print("READY " + json.dumps({"session_id": manifest.session_id,
                                                      "status": "ready", "vision": True},
@@ -104,6 +126,7 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
                               flush=True)
 
             if not gameplay_started:
+                inference.wait_for_change(observed_result_serial, timeout=0.005)
                 sleeper(0.005)
                 continue
 
@@ -113,23 +136,35 @@ def run_player(manifest: PlayerManifest, player: LearnedPlayer, *, decisions: in
                 if lifecycle.latest_event is not None:
                     break
 
+            if latest_sample is None:
+                continue
             now = clock()
             if now < next_send:
                 sleeper(min(next_send - now, 0.005))
+                time.sleep(0)
                 continue
-            state = player.joystick_state(joystick.sequence + 1)
-            joystick.send_state(state.right, state.jump)
+            if lifecycle is not None and lifecycle.latest_event is not None:
+                break
+            decision = latest_sample.action_decision
+            joystick.send_state(decision.right, decision.jump)
             sent += 1
             next_send += send_period
+            if missing_self_after_seen:
+                break
             if next_send < now:
                 next_send = now
+            time.sleep(0)
     finally:
+        if inference is not None:
+            inference.close()
         vision.close()
         joystick.close()
         print(f"DIAGNOSTICS accepted_actions={joystick.accepted_count} "
               f"rejected_actions={joystick.rejected_count} "
               f"duplicate_actions={joystick.duplicate_count} "
               f"vision_frames={vision.frames_received}", flush=True)
+    if inference is not None:
+        inference.raise_if_failed()
     return 0
 
 
@@ -154,15 +189,17 @@ def _emit_public_result(connection: PlayerConnection, manifest: PlayerManifest) 
 def run_attached_player(connection: PlayerConnection, player: LearnedPlayer, *,
                         decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
                         vision_factory=VisionReceiver, joystick_factory=JoystickClient,
-                        clock=time.monotonic, sleeper=time.sleep) -> int:
+                        clock=time.monotonic, sleeper=time.sleep,
+                        inference_factory=InferenceWorker) -> int:
     """Run a Player after ATTACH and always release its lifecycle ownership."""
     manifest = connection.manifest
     if not isinstance(manifest, PlayerManifest):
         raise ValueError("Player connection has no attached PlayerManifest")
     try:
         result = run_player(manifest, player, decisions=decisions, action_hz=action_hz,
-                            vision_factory=vision_factory, joystick_factory=joystick_factory,
-                            lifecycle=connection, clock=clock, sleeper=sleeper)
+                             vision_factory=vision_factory, joystick_factory=joystick_factory,
+                             lifecycle=connection, clock=clock, sleeper=sleeper,
+                             inference_factory=inference_factory)
         _emit_public_result(connection, manifest)
         return result
     finally:

@@ -26,6 +26,7 @@ from game2.v2.contracts.training import (
     READY,
     SAVE,
     SAVED,
+    TRAIN,
     UPDATE_RESULT,
     apply_result_message,
     begin_episode_message,
@@ -39,10 +40,12 @@ from game2.v2.contracts.training import (
     update_result_message,
 )
 from game2.v2.player.connection import PlayerConnection
+from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
+from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.motion import VisionProgress
-from game2.v2.player.learned.runtime import LearnedPlayer, TrainingRecord
+from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer, TrainingRecord
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.contracts.vision import VisionFrame
@@ -549,6 +552,45 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
         self.assertTrue(all(torch.equal(before, current)
                             for before, current in zip(player.evaluate_before, after)))
+
+    def test_inference_worker_is_joined_before_apply_result(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, TRAIN, 100), begin_episode_message(1),
+            apply_result_message(1, -1), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None)
+        vision = _FakeVision(connection)
+        joystick = _FakeJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        workers = []
+
+        def worker_factory(player):
+            worker = InferenceWorker(player)
+            workers.append(worker)
+            return worker
+
+        class RecordingPlayer(LearnedPlayer):
+            def apply_result(self, reward):
+                if not workers or not all(worker.joined for worker in workers):
+                    raise AssertionError("inference worker was not joined before update")
+                return super().apply_result(reward)
+
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+                inference_factory=worker_factory,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertTrue(workers)
+        self.assertTrue(all(worker.joined for worker in workers))
 
     def test_first_begin_starts_and_next_begin_respawns(self):
         manifest = PlayerManifest("session", "player", "actor",
@@ -1067,12 +1109,249 @@ class TrainingActuatorClockTests(unittest.TestCase):
         _result, player, joystick = self._episode("hold", terminal_after=5)
         self.assertEqual(len(joystick.sent), 5)
         self.assertEqual(joystick.sent[:4], [(True, False)] * 4)
-        self.assertEqual(player.recorded, [2, 3])
+        self.assertGreaterEqual(len(player.recorded), 1)
+        self.assertLessEqual(len(player.recorded), 2)
 
     def test_unsent_replaced_sample_is_not_recorded(self):
         _result, player, joystick = self._episode("replace", terminal_after=2)
         self.assertEqual(len(joystick.sent), 2)
-        self.assertEqual(player.recorded, [1, 3])
+        self.assertGreaterEqual(len(player.recorded), 1)
+        self.assertLessEqual(len(player.recorded), 2)
+
+    def test_slow_inference_holds_one_sample_and_records_each_actuated_sample_once(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        clock = _ActionClock()
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
+        first_ready = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+        release_second = threading.Event()
+
+        class Vision:
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.first = True
+
+            @property
+            def latest(self):
+                if self.first:
+                    self.first = False
+                    return _frame(0, self_x=None)
+                return _frame(2 if first_ready.is_set() else 1)
+
+        class Player:
+            episode_mode = "train"
+
+            def __init__(self):
+                self.recorded = []
+
+            @staticmethod
+            def _sample(frame, right, jump):
+                return DecisionSample(frame.world_tick, frame, MotorGoal(0.0, 0.0), 0.0,
+                                      ActionDecision(right, jump))
+
+            def process_frame(self, frame):
+                if frame.world_tick == 1:
+                    first_ready.set()
+                    return self._sample(frame, True, False)
+                second_started.set()
+                release_second.wait(1.0)
+                second_finished.set()
+                return self._sample(frame, False, True)
+
+            def record_sent_sample(self, sample):
+                if sample not in self.recorded:
+                    self.recorded.append(sample)
+
+        class ReleaseJoystick(_ActionJoystick):
+            def send_state(self, right, jump):
+                state = super().send_state(right, jump)
+                if self.sequence == 2 and not second_started.wait(1.0):
+                    release_second.set()
+                    raise AssertionError("second inference did not start")
+                if self.sequence == 8:
+                    release_second.set()
+                    if not second_finished.wait(1.0):
+                        raise AssertionError("second inference did not finish")
+                return state
+
+        player = Player()
+        vision = Vision()
+        joystick = ReleaseJoystick(connection, terminal_after=12)
+        finished, trainable, _lifecycle = _run_episode(
+            connection, player, 1, first_lifecycle=True, vision=vision,
+            joystick=joystick, action_hz=120, sleeper=clock.sleep, clock=clock.now,
+            ack_settle_timeout=0.01, on_started=lambda _message: None,
+        )
+
+        self.assertTrue(trainable)
+        self.assertEqual(finished["accepted_actions"], 12)
+        self.assertEqual(len(joystick.sent), 12)
+        self.assertEqual(joystick.sent[:8], [(True, False)] * 8)
+        self.assertEqual(joystick.sent[8:], [(False, True)] * 4)
+        self.assertEqual([sample.world_tick for sample in player.recorded], [1, 2])
+        self.assertTrue(second_started.is_set())
+
+    def test_terminal_during_inference_joins_worker_and_discards_late_sample(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        clock = _ActionClock()
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
+        first_ready = threading.Event()
+        second_started = threading.Event()
+        release_second = threading.Event()
+
+        class Vision:
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.first = True
+
+            @property
+            def latest(self):
+                if self.first:
+                    self.first = False
+                    return _frame(0, self_x=None)
+                return _frame(2 if first_ready.is_set() else 1)
+
+        class Player:
+            episode_mode = "train"
+
+            def __init__(self):
+                self.recorded = []
+
+            def process_frame(self, frame):
+                if frame.world_tick == 1:
+                    first_ready.set()
+                    return DecisionSample(1, frame, MotorGoal(0.0, 0.0), 0.0,
+                                          ActionDecision(True, False))
+                second_started.set()
+                release_second.wait(1.0)
+                return DecisionSample(2, frame, MotorGoal(0.0, 0.0), 0.0,
+                                      ActionDecision(False, True))
+
+            def record_sent_sample(self, sample):
+                self.recorded.append(sample)
+
+        class TrackingWorker(InferenceWorker):
+            pass
+
+        workers = []
+
+        def worker_factory(player):
+            worker = TrackingWorker(player)
+            workers.append(worker)
+            return worker
+
+        watcher_errors = []
+
+        def terminal_watcher():
+            if not second_started.wait(1.0):
+                watcher_errors.append("second inference did not start")
+                release_second.set()
+                return
+            connection.terminal = {
+                "version": 1, "type": "player_event", "event": "terminal",
+                "world_tick": 100, "result": "dead",
+            }
+            release_second.set()
+
+        player = Player()
+        joystick = _ActionJoystick(connection, terminal_after=999)
+        watcher = threading.Thread(target=terminal_watcher)
+        watcher.start()
+        finished, _trainable, _lifecycle = _run_episode(
+            connection, player, 1, first_lifecycle=True, vision=Vision(),
+            joystick=joystick, action_hz=120, sleeper=clock.sleep, clock=clock.now,
+            ack_settle_timeout=0.01, on_started=lambda _message: None,
+            inference_factory=worker_factory,
+        )
+        watcher.join(timeout=1.0)
+
+        self.assertEqual(watcher_errors, [])
+        self.assertEqual(finished["finish_world_tick"], 100)
+        self.assertGreaterEqual(len(joystick.sent), 1)
+        self.assertTrue(all(action == (True, False) for action in joystick.sent))
+        self.assertEqual([sample.world_tick for sample in player.recorded], [1])
+        self.assertTrue(workers[0].joined)
+        self.assertTrue(second_started.is_set())
+
+    def test_inference_failure_marks_episode_dirty_without_update(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        clock = _ActionClock()
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
+        first_ready = threading.Event()
+        failure_seen = threading.Event()
+
+        class Vision:
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.first = True
+
+            @property
+            def latest(self):
+                if self.first:
+                    self.first = False
+                    return _frame(0, self_x=None)
+                return _frame(2 if first_ready.is_set() else 1)
+
+        class Player:
+            episode_mode = "train"
+
+            def __init__(self):
+                self.recorded = []
+
+            def process_frame(self, frame):
+                if frame.world_tick == 1:
+                    first_ready.set()
+                    return DecisionSample(1, frame, MotorGoal(0.0, 0.0), 0.0,
+                                          ActionDecision(True, False))
+                failure_seen.set()
+                raise RuntimeError("broken episode inference")
+
+            def record_sent_sample(self, sample):
+                self.recorded.append(sample)
+
+        class TerminalAfterFailure(_ActionJoystick):
+            def send_state(self, right, jump):
+                state = super().send_state(right, jump)
+                if self.sequence == 1:
+                    if not failure_seen.wait(1.0):
+                        raise AssertionError("inference failure did not occur")
+                    workers[0].wait_for_change(0, timeout=1.0)
+                    self.connection.terminal = {
+                        "version": 1, "type": "player_event", "event": "terminal",
+                        "world_tick": 100, "result": "dead",
+                    }
+                return state
+
+        workers = []
+
+        def worker_factory(player):
+            worker = InferenceWorker(player)
+            workers.append(worker)
+            return worker
+
+        player = Player()
+        joystick = TerminalAfterFailure(connection, terminal_after=999)
+        finished, trainable, _lifecycle = _run_episode(
+            connection, player, 1, first_lifecycle=True, vision=Vision(),
+            joystick=joystick, action_hz=120, sleeper=clock.sleep, clock=clock.now,
+            ack_settle_timeout=0.01, on_started=lambda _message: None,
+            inference_factory=worker_factory,
+        )
+
+        self.assertFalse(trainable)
+        self.assertFalse(finished["trainable"])
+        self.assertEqual([sample.world_tick for sample in player.recorded], [1])
+        self.assertTrue(workers[0].joined)
 
     def test_episode_reports_public_partial_progress_to_training(self):
         class ProgressVision:

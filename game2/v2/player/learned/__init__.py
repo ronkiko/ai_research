@@ -1,6 +1,7 @@
 """Trainable Player-side model components."""
 
 from .contracts import ActionDecision, MotorGoal
+from .inference import InferenceSnapshot, InferenceWorker
 from .motor import MotorController382, motor_input
 from .motion import MOTION_PIXELS_PER_TICK_SCALE, MotionEstimator, SELF, self_center_x
 from .planner import CNNPlanner
@@ -11,6 +12,8 @@ __all__ = [
     "ActionDecision",
     "CNNPlanner",
     "DecisionSample",
+    "InferenceSnapshot",
+    "InferenceWorker",
     "LearnedPlayer",
     "MOTION_PIXELS_PER_TICK_SCALE",
     "MotorController382",
