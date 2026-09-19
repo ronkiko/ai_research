@@ -41,6 +41,7 @@ from game2.v2.contracts.training import (
     update_result_message,
 )
 from game2.v2.player.connection import PlayerConnection
+from game2.v2.player.learned.checkpoint import load_optimizer, save_optimizer
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController582
@@ -226,6 +227,29 @@ class TerminalQueueTests(unittest.TestCase):
 class LearnedPolicyTrainingTests(unittest.TestCase):
     def _player(self):
         return LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
+
+    def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        player.record_sent_sample(player.process_grid(_grid(1)))
+        updated, _loss = player.apply_result(-1.0)
+        self.assertTrue(updated)
+        assert player.optimizer is not None
+        self.assertTrue(player.optimizer.state)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "optimizer.pt"
+            save_optimizer(player.optimizer, path)
+
+            restored = self._player()
+            assert restored.optimizer is not None
+            self.assertFalse(restored.optimizer.state)
+            load_optimizer(restored.optimizer, path)
+            self.assertTrue(restored.optimizer.state)
+            self.assertEqual(
+                restored.optimizer.state_dict()["param_groups"],
+                player.optimizer.state_dict()["param_groups"],
+            )
 
     def test_train_seed_reproduces_independent_bernoulli_actions(self):
         first = self._player()

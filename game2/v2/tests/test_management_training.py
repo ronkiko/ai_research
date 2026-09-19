@@ -129,9 +129,11 @@ class ManagementTrainingTests(unittest.TestCase):
             planner = checkpoint_dir / "planner.pt"
             motor = checkpoint_dir / "motor.pt"
             critic = checkpoint_dir / "critic.pt"
+            optimizer = checkpoint_dir / "optimizer.pt"
             planner.write_bytes(b"keep-planner")
             motor.write_bytes(b"keep-motor")
             critic.write_bytes(b"keep-critic")
+            optimizer.write_bytes(b"keep-optimizer")
             run = TrainingRun(
                 popen_factory=_Factory(),
                 sleeper=lambda _seconds: None,
@@ -151,6 +153,7 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(planner.read_bytes(), b"keep-planner")
             self.assertEqual(motor.read_bytes(), b"keep-motor")
             self.assertEqual(critic.read_bytes(), b"keep-critic")
+            self.assertEqual(optimizer.read_bytes(), b"keep-optimizer")
 
     def test_headless_composition_does_not_touch_screen_and_console_display_is_off(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -194,9 +197,11 @@ class ManagementTrainingTests(unittest.TestCase):
             planner = checkpoint_dir / "planner.pt"
             motor = checkpoint_dir / "motor.pt"
             critic = checkpoint_dir / "critic.pt"
+            optimizer = checkpoint_dir / "optimizer.pt"
             planner.write_bytes(b"old-planner")
             motor.write_bytes(b"old-motor")
             critic.write_bytes(b"old-critic")
+            optimizer.write_bytes(b"old-optimizer")
             old_log = checkpoint_dir / "logs" / "run-0007" / "old.jsonl"
             old_log.parent.mkdir(parents=True)
             old_log.write_text("old\n", encoding="utf-8")
@@ -218,10 +223,11 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertFalse(planner.exists())
             self.assertFalse(motor.exists())
             self.assertFalse(critic.exists())
+            self.assertFalse(optimizer.exists())
             self.assertFalse(old_log.exists())
             self.assertIn("FRESH reset logs", output.getvalue())
             self.assertIn(
-                "FRESH reset checkpoints: planner.pt, motor.pt, critic.pt",
+                "FRESH reset checkpoints: planner.pt, motor.pt, critic.pt, optimizer.pt",
                 output.getvalue(),
             )
             log_runs = list((checkpoint_dir / "logs").glob("run-*"))

@@ -132,6 +132,7 @@ class ModelRuntimeTests(unittest.TestCase):
                     Path("/tmp/unused-planner.pt"),
                     Path("/tmp/unused-motor.pt"),
                     Path("/tmp/unused-critic.pt"),
+                    Path("/tmp/unused-optimizer.pt"),
                 )
             except BaseException as exc:
                 errors.append(exc)

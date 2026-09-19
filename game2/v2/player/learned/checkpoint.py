@@ -51,6 +51,18 @@ def save_critic(model: CNNCritic, path: str | Path) -> None:
                         configuration=CRITIC_CONFIGURATION), Path(path))
 
 
+def save_optimizer(optimizer: torch.optim.Optimizer, path: str | Path) -> None:
+    """Save PPO optimizer state so resume preserves Adam moments."""
+    if not isinstance(optimizer, torch.optim.Adam):
+        raise TypeError("save_optimizer requires torch.optim.Adam")
+    torch.save({
+        "schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "role": "ppo_optimizer",
+        "implementation": "adam",
+        "state_dict": optimizer.state_dict(),
+    }, Path(path))
+
+
 def save_motor_controller(model: MotorController582, path: str | Path) -> None:
     """Save a Motor Controller checkpoint without serializing the runtime object."""
     if not isinstance(model, MotorController582):
@@ -109,6 +121,31 @@ def load_critic(path: str | Path) -> CNNCritic:
     return _restore(CNNCritic.fresh(payload["seed"]), payload)
 
 
+def load_optimizer(optimizer: torch.optim.Optimizer, path: str | Path) -> None:
+    """Restore PPO Adam state into an already constructed optimizer."""
+    if not isinstance(optimizer, torch.optim.Adam):
+        raise TypeError("load_optimizer requires torch.optim.Adam")
+    try:
+        payload = torch.load(Path(path), map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ValueError("could not load optimizer checkpoint") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("optimizer checkpoint must contain a mapping")
+    if payload.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
+        raise ValueError("unsupported optimizer checkpoint schema_version")
+    if payload.get("role") != "ppo_optimizer":
+        raise ValueError("checkpoint role does not match ppo_optimizer")
+    if payload.get("implementation") != "adam":
+        raise ValueError("optimizer checkpoint implementation does not match Adam")
+    state_dict = payload.get("state_dict")
+    if not isinstance(state_dict, Mapping):
+        raise ValueError("optimizer checkpoint state_dict must be a mapping")
+    try:
+        optimizer.load_state_dict(state_dict)
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError("optimizer checkpoint does not match PPO parameters") from exc
+
+
 def load_motor_controller(path: str | Path) -> MotorController582:
     """Load and validate a 5-8-2 Motor Controller checkpoint onto the CPU."""
     payload = _read(path, role="motor_controller", implementation="mlp",
@@ -120,8 +157,10 @@ __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
     "load_critic",
     "load_motor_controller",
+    "load_optimizer",
     "load_planner",
     "save_critic",
     "save_motor_controller",
+    "save_optimizer",
     "save_planner",
 ]

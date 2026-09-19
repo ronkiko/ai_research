@@ -499,21 +499,27 @@ class TrainingRun:
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
         critic = checkpoint_path / "critic.pt"
+        optimizer = checkpoint_path / "optimizer.pt"
         log_root = checkpoint_path / "logs"
         if fresh:
             if log_root.exists():
                 shutil.rmtree(log_root)
             self._write("FRESH reset logs")
             removed = []
-            for checkpoint in (planner, motor, critic):
+            for checkpoint in (planner, motor, critic, optimizer):
                 if checkpoint.exists():
                     checkpoint.unlink()
                     removed.append(checkpoint.name)
             if removed:
                 self._write("FRESH reset checkpoints: " + ", ".join(removed))
-        elif not planner.is_file() or not motor.is_file() or not critic.is_file():
+        elif (
+            not planner.is_file()
+            or not motor.is_file()
+            or not critic.is_file()
+            or not optimizer.is_file()
+        ):
             raise TrainingRunError(
-                "resume requires planner.pt, motor.pt, and critic.pt"
+                "resume requires planner.pt, motor.pt, critic.pt, and optimizer.pt"
             )
         if type(max_episodes) is not int or max_episodes <= 0:
             raise ValueError("max_episodes must be positive")
