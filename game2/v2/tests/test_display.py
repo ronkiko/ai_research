@@ -128,6 +128,19 @@ class VisionGridRendererTests(unittest.TestCase):
         self.assertEqual(grid.physics[goal_index], 0)
         self.assertEqual(grid.metadata[goal_index], META_SELF | META_GOAL)
 
+    def test_actor_aabb_marks_every_intersected_cell_and_keeps_physics(self):
+        world = _tiny_world()
+        grid = VisionGridRenderer().render(
+            world,
+            _view(world, x=3, y=2),
+        )
+        left = 1 * grid.columns + 1
+        right = 1 * grid.columns + 2
+        self.assertTrue(grid.metadata[left] & META_SELF)
+        self.assertTrue(grid.metadata[right] & META_SELF)
+        self.assertEqual(grid.physics[left], TileID.EMPTY)
+        self.assertEqual(grid.physics[right], TileID.EMPTY)
+
     def test_public_vision_is_immutable_and_does_not_leak_physics_metadata(self):
         grid = VisionGridRenderer().render(_tiny_world(), _view(_tiny_world()))
         self.assertEqual(
