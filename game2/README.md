@@ -8,15 +8,22 @@ Game2 V2 is the sole active implementation.
 game2/v2/boot.sh
 game2/v2/op/screen_server.sh
 game2/v2/op/screen.sh
+game2/v2/op/train.sh
 ```
 
-`boot.sh` starts the persistent Console and its read-only headless ScreenSource.
-`op/screen_server.sh` starts the independent background Screen Server.
-`op/screen.sh 1` binds Screen #1 to the currently running Console;
-`op/screen.sh 1 off` detaches it without stopping the world.
+Examples:
 
-Vision remains headless and machine-facing. The old graphical Vision/demo
-launchers and the all-owning Training launcher remain removed.
+```bash
+./game2/v2/boot.sh
+./game2/v2/op/screen_server.sh
+./game2/v2/op/screen.sh 1
+./game2/v2/op/train.sh --fresh
+./game2/v2/op/train.sh --fresh --screen 1
+```
+
+Vision is headless and machine-facing. Screen is an independent human observer.
+Training is composed from independent processes by Management; there is no
+graphical Training owner.
 
 Install dependencies with:
 

@@ -3,42 +3,66 @@
 Status: modular runtime
 
 ```text
-                    Management
-                        |
-          +-------------+-------------+
-          |                           |
-   Screen Server                  experiment composition
-          ^
-          |
-     ScreenSource
-          |
-       Console <---- Joystick ---- Player <----> Model
-          |                          ^
-          +------ Vision ------------+
-                                     |
-                                  Trainer
+                         Management
+                    /        |        \
+                   /         |         \
+          Screen Server   Training      operator
+               ^          composer
+               |        /   |   |   \
+          ScreenSource  C    T   M    P
+               |       |         ^    |
+               |       |         |    |
+             Console <-+---- Joystick-+
+               |                    ^
+               +-------- Vision -----+
 ```
 
-The arrows are contracts, not object ownership across domains.
+Legend: C=Console process, T=Trainer, M=Model, P=Player. Management owns process
+composition only; it does not own their runtime objects or gameplay messages.
+
+## Runtime ownership
+
+```text
+Console       -> world, Engine clock, Controller, Player peripherals, ScreenSource
+Player        -> realtime perception/action timing
+Model         -> inference, trajectories, updates, checkpoints
+Trainer       -> episodes, reward, mastery metrics
+Screen Server -> numbered native human windows
+Management    -> start/stop/connect process boundaries
+```
 
 ## Screen boundary
 
-Console owns a headless `ScreenSource` presentation plugin. It consumes private
-Engine STATE inside the Console domain and emits only already-rendered RGB
-`ScreenFrame` values through the public read-only Screen contract.
+Console ScreenSource consumes private Engine STATE inside the Console domain and
+publishes only already-rendered RGB `ScreenFrame` values.
 
-Screen Server is independent Management infrastructure. A numbered Screen slot
-can bind to any `ScreenSourceDiscovery`. Each bound slot owns only its native
-window process. Closing the window or stopping Screen Server cannot stop Console,
-Player, Model, or Trainer.
+Screen Server binds a numbered slot to a ScreenSource. It never receives Engine
+STATE and never uses Player Vision as a human-display shortcut.
 
-Screen Server must not consume Player Vision as a human-display shortcut and
-must never receive Engine STATE.
+Closing a Screen window, stopping Screen Server, or losing Screen connectivity
+must not stop Console, Player, Model, or Trainer.
 
-## Machine boundary
+## Training composition
 
-Vision is headless and machine-facing. Player observes Vision and acts through
-Joystick. Screen is not an input to Player and is not part of Training data.
+Management composes the Training Set map-by-map:
+
+```text
+Console -> public Player attach
+Trainer <-> Player training contract
+Model   <-> Player model contract
+Player  <-> Console Vision/Joystick
+```
+
+The default path is headless.
+
+With `--screen N`, Management separately performs:
+
+```text
+Console ScreenSource -> Screen Server slot N
+```
+
+The Screen number never enters Console, Trainer, Model, Player, Vision, or
+Joystick configuration.
 
 ## Timing
 
@@ -46,12 +70,5 @@ Joystick. Screen is not an input to Player and is not part of Training data.
 world clock != player/model clock != training clock != screen clock
 ```
 
-No presentation, inference, training, or management process may block Engine
+No UI, rendering, inference, Training, or Management operation may gate Engine
 physics.
-
-## Composition
-
-The previous all-owning Training/GUI launcher remains removed. Management may
-compose independent processes only through executable contracts. The next
-Training patch can add optional Screen-slot binding, but absence or failure of
-Screen must not alter Training behavior.

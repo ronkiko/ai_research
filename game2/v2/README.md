@@ -6,45 +6,70 @@ never gate world progress.
 
 ## Independent runtime blocks
 
-Start the persistent Console:
+Persistent world:
 
 ```bash
 ./game2/v2/boot.sh
 ```
 
-Start the independent background Screen Server:
+Independent background Screen Server:
 
 ```bash
 ./game2/v2/op/screen_server.sh
 ```
 
-Bind Screen #1 to the currently running Console:
+Observe the persistent Console on Screen #1:
 
 ```bash
 ./game2/v2/op/screen.sh 1
 ```
 
-Detach it without stopping the Console:
+Detach the Screen without stopping the world:
 
 ```bash
 ./game2/v2/op/screen.sh 1 off
 ```
 
-Show all slots:
+## Training
+
+Training is composed by Management from independent Console, Trainer, Model, and
+Player processes.
+
+Headless Training Set Level 1:
 
 ```bash
-./game2/v2/op/screen.sh
+./game2/v2/op/train.sh --fresh
 ```
 
-The Console publishes a read-only `ScreenSource` containing already-rendered
-RGB frames. Screen Server never receives Engine STATE, Vision, Joystick, Player
-internals, Model data, or Trainer data. Closing a Screen window only frees that
-Screen slot.
+Observe exactly the same Training on Screen #1:
 
-`Vision` remains a separate headless machine-facing Player peripheral.
-Screen is human-facing only.
+```bash
+./game2/v2/op/train.sh --fresh --screen 1
+```
 
-The retained runtime blocks are independently testable:
+Resume existing checkpoints:
+
+```bash
+./game2/v2/op/train.sh --resume
+```
+
+`--screen` exists only in Management. It is never forwarded to Console,
+Trainer, Model, or Player. When omitted, Training does not contact Screen Server
+at all. If an already-bound Screen disappears after Training starts, learning
+continues headless.
+
+The default checkpoint directory is
+`game2/v2/runtime/checkpoints/level-1`.
+
+## Boundaries
+
+`Vision` is a headless machine-facing Player peripheral.
+
+`ScreenSource` is human-facing: Console converts private Engine STATE into
+already-rendered RGB frames before they cross the Console boundary. Screen
+Server never receives Engine STATE or Player Vision.
+
+The independently testable runtime blocks are:
 
 ```text
 Console
@@ -55,11 +80,8 @@ Joystick
 Vision
 ScreenSource
 Screen Server
+Management Training composer
 ```
-
-Training composition is intentionally not rebuilt in this patch. The next
-composition step may optionally bind a Training Console's ScreenSource to a
-numbered Screen; headless Training must remain the default.
 
 ## Architecture
 

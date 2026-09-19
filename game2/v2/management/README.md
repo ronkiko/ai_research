@@ -1,23 +1,32 @@
 # Management
 
-Management is outside the gameplay data path.
+Management is outside the gameplay data path. It may compose independent
+processes, but it must not import their runtime implementations or proxy
+gameplay messages.
 
-The independent Screen Server is started with:
+## Screen infrastructure
 
 ```bash
 ./game2/v2/op/screen_server.sh
-```
-
-A Screen slot is attached to the current Console with:
-
-```bash
 ./game2/v2/op/screen.sh 1
 ```
 
-The server owns only numbered native Screen windows. It receives rendered
-`ScreenFrame` pixels from a Console `ScreenSource`; it never receives Engine
-STATE or Player Vision. A Screen can disappear without affecting the source.
+Screen Server owns numbered native Screen windows only. It receives rendered
+`ScreenFrame` pixels from Console ScreenSource; it never receives Engine STATE
+or Player Vision.
 
-Future Training composition belongs here, but must launch and connect independent
-Console, Player, Model, and Trainer processes rather than import their runtime
-objects.
+## Training composition
+
+```bash
+./game2/v2/op/train.sh --fresh
+./game2/v2/op/train.sh --fresh --screen 1
+./game2/v2/op/train.sh --resume
+```
+
+The Management Training composer launches Console, Trainer, Model, and realtime
+Player as separate OS processes using their existing entrypoints. It imports
+only shared contracts.
+
+`--screen N` performs an independent Screen Server BIND after a Console starts.
+It is not forwarded to any learning/gameplay child process. Screen failure after
+startup is spectator-only and does not fail Training.
