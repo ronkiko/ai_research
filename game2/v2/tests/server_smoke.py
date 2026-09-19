@@ -81,7 +81,7 @@ def _has_meta(grid, flag: int) -> bool:
 
 def _vision_bounds(grid, flag: int):
     points = [
-        (index % grid.columns, index // grid.columns)
+        (index % grid.metadata_columns, index // grid.metadata_columns)
         for index, value in enumerate(grid.metadata)
         if value & flag
     ]
