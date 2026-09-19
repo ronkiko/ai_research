@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import socket
 import sys
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any
 
 from game2.v2.contracts.training import (
@@ -28,11 +30,17 @@ from game2.v2.contracts.training import (
 )
 
 
-def reward_for_result(result: str) -> float:
+def reward_for_result(result: str, progress: Real) -> float:
+    if type(progress) is bool or not isinstance(progress, Real) \
+            or not math.isfinite(float(progress)) or not 0.0 <= float(progress) <= 1.0:
+        raise ValueError("progress must be finite and in [0.0, 1.0]")
+    progress_value = float(progress)
     if result == "success":
         return 1.0
-    if result in {"dead", "timeout"}:
-        return -1.0
+    if result == "timeout":
+        return progress_value
+    if result == "dead":
+        return progress_value - 1.0
     raise ValueError("unknown terminal result")
 
 
@@ -139,10 +147,12 @@ class Trainer:
             else:
                 summary.dirty_episodes += 1
 
+            reward = reward_for_result(finished["result"], finished["progress"]) \
+                if finished["trainable"] else 0.0
             updated = False
             if self.mode == TRAIN and finished["trainable"]:
                 send_training_message(peer, apply_result_message(
-                    episode_id, reward_for_result(finished["result"])))
+                    episode_id, reward))
                 update = self._expect(peer, UPDATE_RESULT)
                 if update["episode_id"] != episode_id:
                     raise ValueError("UPDATE_RESULT identity mismatch")
@@ -156,6 +166,8 @@ class Trainer:
                 "result": finished["result"],
                 "trainable": finished["trainable"],
                 "updated": updated,
+                "progress": finished["progress"],
+                "reward": reward,
                 "attempts": summary.attempts,
                 "successes": summary.successes,
             }, separators=(",", ":"), sort_keys=True), flush=True)

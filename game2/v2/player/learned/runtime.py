@@ -190,6 +190,10 @@ class LearnedPlayer:
         if type(reward) is bool or not isinstance(reward, (int, float)) \
                 or not math.isfinite(float(reward)):
             raise ValueError("reward must be finite")
+        if float(reward) == 0.0:
+            self._log_probabilities.clear()
+            self.last_update_loss = 0.0
+            return False, 0.0
         if self.optimizer is None:
             raise RuntimeError("trainable models are required for updates")
         if not self._log_probabilities:

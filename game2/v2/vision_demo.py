@@ -71,6 +71,9 @@ class TrainingSetView:
     expanded: bool = False
     map_status: dict[str, str] = field(default_factory=dict)
     current_map: str | None = None
+    episode_id: int | None = None
+    progress: float | None = None
+    reward: float | None = None
     exam_result: str | None = None
 
     def __post_init__(self) -> None:
@@ -84,7 +87,13 @@ class TrainingSetView:
     def reset_session(self) -> None:
         self.map_status = {item.map_id: "pending" for item in self.entry.manifest.training_maps}
         self.current_map = None
+        self.reset_progress()
         self.exam_result = None
+
+    def reset_progress(self) -> None:
+        self.episode_id = None
+        self.progress = None
+        self.reward = None
 
 
 class TrainingSetUIState:
@@ -130,6 +139,7 @@ class TrainingSetUIState:
             return False
         item = self._get(level)
         item.expanded = True
+        item.reset_progress()
         item.exam_result = None
         self.active, self.mode, self.level = True, "exam", level
         self.error = None
@@ -145,25 +155,32 @@ class TrainingSetUIState:
             item = self._get(event["level"])
             item.current_map = event["map_id"]
             item.map_status[event["map_id"]] = "current"
+            item.reset_progress()
         elif kind == "vision_ready":
             self.vision_manifest = PlayerManifest.from_dict(event["player_manifest"])
         elif kind == "map_progress":
             item = self._get(event["level"])
             if event["map_id"] == item.current_map:
                 item.map_status[event["map_id"]] = "current"
+                item.episode_id = event["episode_id"]
+                item.progress = event["progress"]
+                item.reward = event["reward"]
         elif kind == "map_passed":
             item = self._get(event["level"])
             item.map_status[event["map_id"]] = "passed"
             item.current_map = next((map_id for map_id, status in item.map_status.items()
                                      if status == "pending"), None)
+            item.reset_progress()
         elif kind == "map_failed":
             item = self._get(event["level"])
             item.map_status[event["map_id"]] = "failed"
             item.current_map = None
+            item.reset_progress()
         elif kind == "training_set_finished":
             self.active = False
             item = self._get(event["level"])
             item.current_map = None
+            item.reset_progress()
         elif kind == "exam_countdown":
             self.active, self.mode, self.level = True, "exam", event["level"]
             self.osd_active = True
@@ -461,7 +478,14 @@ class VisionViewer:
                     color = muted
                 _draw_status_icon(self.pygame, self.sidebar, status, (25, y + 9), color)
                 self._draw_text(map_id, self.body_font, y, color, x=38)
-                y += 23
+                if (status == "current" and item.current_map == map_id and
+                        item.episode_id is not None and item.progress is not None):
+                    self._draw_text(
+                        f"attempt {item.episode_id} | progress {item.progress * 100:0.0f}%",
+                        self.body_font, y + 16, muted, x=38)
+                    y += 39
+                else:
+                    y += 23
             train_rect = self.pygame.Rect(18, y + 2, SIDEBAR_WIDTH - 36, 30)
             self._train_rects[item.level] = train_rect
             self._button(train_rect, f"TRAIN LEVEL {item.level}", not self.state.active)
@@ -487,6 +511,16 @@ class VisionViewer:
         self._draw_text(f"Vision: {'connected' if connected else 'disconnected'}",
                         self.body_font, debug_y, passed if connected else muted)
         debug_y += 22
+        if self.state.mode == "train" and self.state.level is not None:
+            item = self.state._get(self.state.level)
+            episode = item.episode_id if item.episode_id is not None else "waiting"
+            progress = (f"{item.progress * 100:0.0f}%"
+                        if item.progress is not None else "waiting")
+            reward = (f"{item.reward:+0.2f}"
+                      if item.reward is not None else "waiting")
+            self._draw_text(f"Episode: {episode}  Progress: {progress}  Reward: {reward}",
+                            self.body_font, debug_y, bright)
+            debug_y += 22
         tick = frame.world_tick if frame is not None else None
         self._draw_text(f"World tick: {tick if tick is not None else 'waiting'}",
                         self.body_font, debug_y, bright if tick is not None else muted)

@@ -32,7 +32,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
 from .checkpoint import save_motor_controller, save_planner
-from .motion import self_center_x
+from .motion import VisionProgress, self_center_x
 from .runtime import LearnedPlayer
 
 
@@ -184,7 +184,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     if not accepted_lifecycle:
         result = "timeout"
         finished_tick = 0
-        finished = episode_finished_message(episode_id, 0, 0, result, False, 0, 0)
+        finished = episode_finished_message(episode_id, 0, 0, result, False, 0.0, 0, 0)
         return finished, False, False
 
     assert isinstance(lifecycle_ack, dict)
@@ -198,6 +198,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     sent_sequences: set[int] = set()
     latest_sample = None
     last_recorded_sample = None
+    progress_tracker = VisionProgress()
 
     while latest_terminal is None:
         _drain_acknowledgements(joystick, ack_statuses)
@@ -217,6 +218,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         frame = vision.latest
         if frame is not None and frame.world_tick > latest_frame_tick:
             latest_frame_tick = frame.world_tick
+            progress_tracker.update(frame)
             has_self = self_center_x(frame) is not None
             try:
                 sample = player.process_frame(frame)
@@ -261,9 +263,12 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     if started_tick is None:
         started_tick = finish_tick
         dirty = True
+    if not progress_tracker.has_baseline:
+        dirty = True
+    progress = 0.0 if dirty else progress_tracker.progress
     finished = episode_finished_message(
         episode_id, started_tick, finish_tick, terminal["result"],
-        not dirty, accepted, rejected)
+        not dirty, progress, accepted, rejected)
     return finished, not dirty, True
 
 

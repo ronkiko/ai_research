@@ -50,6 +50,13 @@ def _finite_number(name: str, value: object) -> float:
     return value
 
 
+def _bounded_number(name: str, value: object, lower: float, upper: float) -> float:
+    number = _finite_number(name, value)
+    if not lower <= number <= upper:
+        raise ProtocolError(f"{name} must be in [{lower}, {upper}]")
+    return number
+
+
 def prepare_message(episode_id: int, mode: str, seed: int) -> dict[str, Any]:
     _positive_int("episode_id", episode_id)
     if type(mode) is not str or mode not in MODES:
@@ -84,7 +91,8 @@ def episode_started_message(episode_id: int, start_world_tick: int) -> dict[str,
 
 def episode_finished_message(episode_id: int, start_world_tick: int,
                              finish_world_tick: int, result: str, trainable: bool,
-                             accepted_actions: int, rejected_actions: int) -> dict[str, Any]:
+                             progress: Real, accepted_actions: int,
+                             rejected_actions: int) -> dict[str, Any]:
     episode_id = _positive_int("episode_id", episode_id)
     start_world_tick = _non_negative_int("start_world_tick", start_world_tick)
     finish_world_tick = _non_negative_int("finish_world_tick", finish_world_tick)
@@ -94,6 +102,7 @@ def episode_finished_message(episode_id: int, start_world_tick: int,
         raise ProtocolError("result is invalid")
     if type(trainable) is not bool:
         raise ProtocolError("trainable must be a boolean")
+    progress_value = _bounded_number("progress", progress, 0.0, 1.0)
     return _message(
         EPISODE_FINISHED,
         episode_id=episode_id,
@@ -101,6 +110,7 @@ def episode_finished_message(episode_id: int, start_world_tick: int,
         finish_world_tick=finish_world_tick,
         result=result,
         trainable=trainable,
+        progress=progress_value,
         accepted_actions=_non_negative_int("accepted_actions", accepted_actions),
         rejected_actions=_non_negative_int("rejected_actions", rejected_actions),
     )
@@ -126,7 +136,7 @@ _FIELDS = {
     EPISODE_STARTED: frozenset(("version", "type", "episode_id", "start_world_tick")),
     EPISODE_FINISHED: frozenset((
         "version", "type", "episode_id", "start_world_tick", "finish_world_tick",
-        "result", "trainable", "accepted_actions", "rejected_actions",
+        "result", "trainable", "progress", "accepted_actions", "rejected_actions",
     )),
     UPDATE_RESULT: frozenset(("version", "type", "episode_id", "updated", "loss")),
     SAVED: frozenset(("version", "type")),
@@ -157,6 +167,7 @@ def decode_training_message(message: dict[str, Any]) -> dict[str, Any]:
         episode_finished_message(
             message["episode_id"], message["start_world_tick"],
             message["finish_world_tick"], message["result"], message["trainable"],
+            message["progress"],
             message["accepted_actions"], message["rejected_actions"],
         )
     elif message_type == UPDATE_RESULT:

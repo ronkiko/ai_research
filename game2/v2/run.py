@@ -262,13 +262,24 @@ class UnifiedRunner:
 
     @staticmethod
     def _progress(data: dict[str, Any]) -> dict[str, Any]:
-        required = {"episode_id", "result", "trainable", "updated", "attempts", "successes"}
+        required = {
+            "episode_id", "result", "trainable", "updated", "progress", "reward",
+            "attempts", "successes",
+        }
         if set(data) != required:
             raise RunError("Trainer PROGRESS fields are invalid")
         if type(data["episode_id"]) is not int or data["episode_id"] <= 0 \
                 or data["result"] not in {"success", "dead", "timeout"} \
                 or type(data["trainable"]) is not bool \
                 or type(data["updated"]) is not bool \
+                or type(data["progress"]) is bool \
+                or not isinstance(data["progress"], (int, float)) \
+                or not math.isfinite(float(data["progress"])) \
+                or not 0.0 <= float(data["progress"]) <= 1.0 \
+                or type(data["reward"]) is bool \
+                or not isinstance(data["reward"], (int, float)) \
+                or not math.isfinite(float(data["reward"])) \
+                or not -1.0 <= float(data["reward"]) <= 1.0 \
                 or type(data["attempts"]) is not int or data["attempts"] <= 0 \
                 or type(data["successes"]) is not int or data["successes"] < 0 \
                 or data["successes"] > data["attempts"]:

@@ -40,6 +40,7 @@ from game2.v2.contracts.training import (
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.motion import VisionProgress
 from game2.v2.player.learned.runtime import LearnedPlayer
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.contracts.vision import VisionFrame
@@ -50,10 +51,12 @@ ROOT = Path(__file__).resolve().parents[3]
 FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.json"
 
 
-def _frame(tick: int = 1, self_x: int | None = 3) -> VisionFrame:
+def _frame(tick: int = 1, self_x: int | None = 3, goal_x: int | None = 10) -> VisionFrame:
     pixels = bytearray(12 * 5)
     if self_x is not None:
         pixels[2 * 12 + self_x] = 3
+    if goal_x is not None:
+        pixels[2 * 12 + goal_x] = 4
     return VisionFrame(12, 5, bytes(pixels), tick)
 
 
@@ -63,7 +66,7 @@ class TrainingContractTests(unittest.TestCase):
             prepare_message(1, "train", 100), begin_episode_message(1),
             apply_result_message(1, -1), save_message(), ready_message(),
             episode_started_message(1, 12),
-            episode_finished_message(1, 12, 20, "dead", True, 3, 0),
+            episode_finished_message(1, 12, 20, "dead", True, 0.25, 3, 0),
             update_result_message(1, True, -0.5), saved_message(),
         ]
         for message in messages:
@@ -78,6 +81,64 @@ class TrainingContractTests(unittest.TestCase):
             decode_training_message({**messages[2], "reward": float("inf")})
         with self.assertRaises(ProtocolError):
             decode_training_message({**messages[7], "type": PREPARE})
+        with self.assertRaises(ProtocolError):
+            decode_training_message({key: value for key, value in messages[6].items()
+                                     if key != "progress"})
+        with self.assertRaises(ProtocolError):
+            episode_finished_message(1, 1, 2, "timeout", True, 1.1, 0, 0)
+
+
+class VisionProgressTests(unittest.TestCase):
+    @staticmethod
+    def _frame(self_x: int, self_y: int, goal_x: int = 10, goal_y: int = 2,
+               tick: int = 1, include_goal: bool = True) -> VisionFrame:
+        pixels = bytearray(16 * 8)
+        pixels[self_y * 16 + self_x] = 3
+        if include_goal:
+            pixels[goal_y * 16 + goal_x] = 4
+        return VisionFrame(16, 8, bytes(pixels), tick)
+
+    def test_starting_public_self_and_goal_have_zero_progress(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        self.assertEqual(tracker.progress, 0.0)
+
+    def test_progress_tracker_rejects_non_vision_input(self):
+        with self.assertRaises(TypeError):
+            VisionProgress().update(object())
+
+    def test_public_self_moving_toward_goal_increases_progress(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        tracker.update(self._frame(6, 2, tick=2))
+        self.assertGreater(tracker.progress, 0.0)
+
+    def test_halfway_public_distance_is_about_half_progress(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        tracker.update(self._frame(6, 2, tick=2))
+        self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
+
+    def test_vertical_jump_at_same_x_does_not_make_progress(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        tracker.update(self._frame(2, 0, tick=2))
+        tracker.update(self._frame(2, 4, tick=3))
+        self.assertEqual(tracker.progress, 0.0)
+
+    def test_best_progress_survives_moving_back(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        tracker.update(self._frame(6, 2, tick=2))
+        tracker.update(self._frame(3, 2, tick=3))
+        self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
+
+    def test_briefly_missing_goal_preserves_the_last_best_progress(self):
+        tracker = VisionProgress()
+        tracker.update(self._frame(2, 2))
+        tracker.update(self._frame(6, 2, tick=2))
+        tracker.update(self._frame(6, 2, tick=3, include_goal=False))
+        self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
 
 
 class TerminalQueueTests(unittest.TestCase):
@@ -161,6 +222,53 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         evaluate_after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
         self.assertTrue(all(torch.equal(before, after)
                             for before, after in zip(evaluate_before, evaluate_after)))
+
+    def test_zero_reward_discards_trajectory_without_updating_weights(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        sample = player.process_frame(_frame(1))
+        player.record_sent_sample(sample)
+        before = [parameter.detach().clone()
+                  for parameter in list(player.planner.parameters()) +
+                  list(player.motor_controller.parameters())]
+        updated, loss = player.apply_result(0.0)
+        after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
+        self.assertFalse(updated)
+        self.assertEqual(loss, 0.0)
+        self.assertEqual(player.log_probabilities, ())
+        self.assertTrue(all(torch.equal(old, new) for old, new in zip(before, after)))
+
+    def test_jump_in_place_timeout_has_zero_reward_and_no_update(self):
+        tracker = VisionProgress()
+        frames = [VisionProgressTests._frame(2, 2),
+                  VisionProgressTests._frame(2, 0, tick=2),
+                  VisionProgressTests._frame(2, 4, tick=3)]
+        for frame in frames:
+            tracker.update(frame)
+        player = self._player()
+        player.prepare_episode("train", 42)
+        player.record_sent_sample(player.process_frame(frames[0]))
+        reward = reward_for_result("timeout", tracker.progress)
+        updated, loss = player.apply_result(reward)
+        self.assertEqual(tracker.progress, 0.0)
+        self.assertEqual(reward, 0.0)
+        self.assertFalse(updated)
+        self.assertEqual(loss, 0.0)
+
+    def test_rightward_partial_timeout_has_positive_reward_and_update(self):
+        tracker = VisionProgress()
+        frames = [VisionProgressTests._frame(2, 2),
+                  VisionProgressTests._frame(6, 2, tick=2)]
+        player = self._player()
+        player.prepare_episode("train", 42)
+        for frame in frames:
+            tracker.update(frame)
+            player.record_sent_sample(player.process_frame(frame))
+        reward = reward_for_result("timeout", tracker.progress)
+        updated, _loss = player.apply_result(reward)
+        self.assertGreater(tracker.progress, 0.0)
+        self.assertGreater(reward, 0.0)
+        self.assertTrue(updated)
 
 
 class _FakeConnection:
@@ -763,6 +871,52 @@ class TrainingActuatorClockTests(unittest.TestCase):
         self.assertEqual(len(joystick.sent), 2)
         self.assertEqual(player.recorded, [1, 3])
 
+    def test_episode_reports_public_partial_progress_to_training(self):
+        class ProgressVision:
+            failed = False
+
+            def __init__(self):
+                self.calls = 0
+                self.frames = [_frame(tick=1, self_x=2),
+                               _frame(tick=2, self_x=6)]
+                self.last = None
+
+            @property
+            def latest(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return _frame(tick=0, self_x=None)
+                if self.frames:
+                    self.last = self.frames.pop(0)
+                return self.last
+
+        class TimeoutJoystick(_ActionJoystick):
+            def send_state(self, right, jump):
+                state = super().send_state(right, jump)
+                if self.connection.terminal is not None:
+                    self.connection.terminal["result"] = "timeout"
+                return state
+
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        clock = _ActionClock()
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
+        vision = ProgressVision()
+        joystick = TimeoutJoystick(connection, terminal_after=2)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        finished, trainable, _lifecycle = _run_episode(
+            connection, player, 1, first_lifecycle=True, vision=vision,
+            joystick=joystick, action_hz=120, sleeper=clock.sleep, clock=clock.now,
+            ack_settle_timeout=0.01, on_started=lambda _message: None,
+        )
+        reward = reward_for_result(finished["result"], finished["progress"])
+        updated, _loss = player.apply_result(reward)
+        self.assertTrue(trainable)
+        self.assertAlmostEqual(finished["progress"], 0.5, delta=0.05)
+        self.assertGreater(reward, 0.0)
+        self.assertTrue(updated)
+
     def test_sustained_right_at_physics_cadence_accelerates_on_flat_ground(self):
         engine = Engine(load_world(FLAT_RUN), physics_hz=120)
         actor = engine.spawn_actor("training-player", "training-actor")
@@ -777,9 +931,14 @@ class TrainingActuatorClockTests(unittest.TestCase):
 
 class TrainerRuntimeTests(unittest.TestCase):
     def test_reward_mapping_and_socket_handshake(self):
-        self.assertEqual(reward_for_result("success"), 1.0)
-        self.assertEqual(reward_for_result("dead"), -1.0)
-        self.assertEqual(reward_for_result("timeout"), -1.0)
+        self.assertEqual(reward_for_result("success", 0.0), 1.0)
+        self.assertEqual(reward_for_result("success", 0.8), 1.0)
+        self.assertEqual(reward_for_result("timeout", 0.0), 0.0)
+        self.assertEqual(reward_for_result("timeout", 0.4), 0.4)
+        self.assertEqual(reward_for_result("timeout", 1.0), 1.0)
+        self.assertEqual(reward_for_result("dead", 0.0), -1.0)
+        self.assertEqual(reward_for_result("dead", 0.4), -0.6)
+        self.assertEqual(reward_for_result("dead", 1.0), 0.0)
         trainer = Trainer(listen_port=0, episodes=1, seed=100)
         server, client = socket.socketpair()
         summary = []
@@ -799,7 +958,8 @@ class TrainerRuntimeTests(unittest.TestCase):
             self.assertEqual(recv_training_message(client)["type"], PREPARE)
             self.assertEqual(recv_training_message(client)["type"], BEGIN_EPISODE)
             send_training_message(client, episode_started_message(1, 10))
-            send_training_message(client, episode_finished_message(1, 10, 20, "success", True, 1, 0))
+            send_training_message(client, episode_finished_message(
+                1, 10, 20, "success", True, 0.0, 1, 0))
             apply = recv_training_message(client)
             self.assertEqual((apply["type"], apply["reward"]), (APPLY_RESULT, 1.0))
             send_training_message(client, update_result_message(1, True, 0.25))

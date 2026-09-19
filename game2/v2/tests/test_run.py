@@ -43,10 +43,19 @@ class RunEventTests(unittest.TestCase):
     def test_events_are_strict_and_do_not_accept_private_extra_fields(self):
         event = make_event("map_progress", level=1, map_id="flat_run",
                            episode_id=1, result="success", trainable=True,
-                           updated=True, attempts=1, successes=1)
+                           updated=True, progress=1.0, reward=1.0,
+                           attempts=1, successes=1)
         self.assertIs(validate_run_event(event), event)
         with self.assertRaises(ValueError):
             validate_run_event({**event, "engine_state": {}})
+        with self.assertRaises(ValueError):
+            make_event("map_progress", level=1, map_id="flat_run", episode_id=1,
+                       result="timeout", trainable=True, updated=False,
+                       progress=1.1, reward=0.0, attempts=1, successes=0)
+        with self.assertRaises(ValueError):
+            make_event("map_progress", level=1, map_id="flat_run", episode_id=1,
+                       result="dead", trainable=True, updated=True,
+                       progress=0.4, reward=float("inf"), attempts=1, successes=0)
         with self.assertRaises(ValueError):
             make_event("exam_finished", level=1, resource_id="exam", result="success")
 
@@ -92,8 +101,12 @@ class LauncherContractTests(unittest.TestCase):
         state.apply_event(make_event("map_started", level=1, map_id="flat_run"))
         state.apply_event(make_event(
             "map_progress", level=1, map_id="flat_run", episode_id=1,
-            result="success", trainable=True, updated=True, attempts=1, successes=1,
+            result="success", trainable=True, updated=True, progress=1.0, reward=1.0,
+            attempts=1, successes=1,
         ))
+        self.assertEqual(state._get(1).episode_id, 1)
+        self.assertEqual(state._get(1).progress, 1.0)
+        self.assertEqual(state._get(1).reward, 1.0)
         state.apply_event(make_event("map_passed", level=1, map_id="flat_run"))
         self.assertEqual(state.map_state(1, "flat_run"), "passed")
         self.assertEqual(state._get(1).current_map, "short_gap")
@@ -303,6 +316,7 @@ class _FakeLauncherProcesses:
                 'READY {"host":"127.0.0.1","port":12346}\n',
                 'PROGRESS {"episode_id":1,"result":"success",'
                 f'"trainable":true,"updated":{str(self.trainer_updated).lower()},'
+                '"progress":1.0,"reward":1.0,'
                 '"attempts":1,"successes":1}\n',
                 'SUMMARY {"attempts":1,"successes":1}\n',
             ]
@@ -355,7 +369,8 @@ class _PlayerBeforeSummaryProcesses:
                 ['READY ' + json.dumps(discovery.to_dict()) + "\n"], returncode=0)
         if module == "game2.v2.training.main":
             progress = ('PROGRESS {"episode_id":1,"result":"success",'
-                        '"trainable":true,"updated":true,"attempts":1,"successes":1}\n')
+                        '"trainable":true,"updated":true,"progress":1.0,'
+                        '"reward":1.0,"attempts":1,"successes":1}\n')
             process = _FakeProcess(returncode=None)
             process.stdout = _GatedOutput(
                 ['READY {"host":"127.0.0.1","port":12346}\n', progress,
@@ -601,7 +616,7 @@ class TrainerOutputTests(unittest.TestCase):
             self.assertEqual(recv_training_message(right)["type"], BEGIN_EPISODE)
             send_training_message(right, episode_started_message(1, 10))
             send_training_message(right, episode_finished_message(
-                1, 10, 20, "success", True, 2, 0))
+                1, 10, 20, "success", True, 0.0, 2, 0))
             self.assertEqual(recv_training_message(right)["type"], APPLY_RESULT)
             send_training_message(right, {
                 "version": 1, "type": UPDATE_RESULT, "episode_id": 1,
@@ -616,6 +631,8 @@ class TrainerOutputTests(unittest.TestCase):
         self.assertEqual(result[0].stopped_on_success, True)
         self.assertIn('"episode_id":1', output.getvalue())
         self.assertIn('"updated":true', output.getvalue())
+        self.assertIn('"progress":0.0', output.getvalue())
+        self.assertIn('"reward":1.0', output.getvalue())
 
     def test_stop_on_success_requires_a_real_update_before_requesting_save(self):
         import socket
@@ -639,7 +656,8 @@ class TrainerOutputTests(unittest.TestCase):
                 self.assertEqual(recv_training_message(right)["type"], BEGIN_EPISODE)
                 send_training_message(right, episode_started_message(episode, episode * 10))
                 send_training_message(right, episode_finished_message(
-                    episode, episode * 10, episode * 10 + 10, "success", True, 2, 0))
+                    episode, episode * 10, episode * 10 + 10, "success", True,
+                    0.0, 2, 0))
                 self.assertEqual(recv_training_message(right)["type"], APPLY_RESULT)
                 send_training_message(right, {
                     "version": 1, "type": UPDATE_RESULT, "episode_id": episode,

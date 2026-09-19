@@ -9,16 +9,90 @@ from game2.v2.contracts.vision import VisionFrame
 # A running avatar covers roughly this many rendered pixels per world tick.
 MOTION_PIXELS_PER_TICK_SCALE = 3.0
 SELF = 3
+GOAL = 4
+
+
+def _semantic_center(frame: VisionFrame, semantic_class: int) -> tuple[float, float] | None:
+    indices = [index for index, value in enumerate(frame.pixels) if value == semantic_class]
+    if not indices:
+        return None
+    xs = [index % frame.width for index in indices]
+    ys = [index // frame.width for index in indices]
+    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+
+def self_center(frame: VisionFrame) -> tuple[float, float] | None:
+    """Return the geometric center of public SELF semantic pixels."""
+    if not isinstance(frame, VisionFrame):
+        raise TypeError("self_center requires a VisionFrame")
+    return _semantic_center(frame, SELF)
+
+
+def goal_center(frame: VisionFrame) -> tuple[float, float] | None:
+    """Return the geometric center of public GOAL semantic pixels."""
+    if not isinstance(frame, VisionFrame):
+        raise TypeError("goal_center requires a VisionFrame")
+    return _semantic_center(frame, GOAL)
 
 
 def self_center_x(frame: VisionFrame) -> float | None:
     """Return the horizontal center of the public SELF semantic pixels."""
-    if not isinstance(frame, VisionFrame):
-        raise TypeError("self_center_x requires a VisionFrame")
-    xs = [index % frame.width for index, value in enumerate(frame.pixels) if value == SELF]
-    if not xs:
+    center = self_center(frame)
+    if center is None:
         return None
-    return (min(xs) + max(xs)) / 2.0
+    return center[0]
+
+
+class VisionProgress:
+    """Track best public-Vision distance to the Goal within one episode."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    @property
+    def start_distance(self) -> float | None:
+        return self._start_distance
+
+    @property
+    def best_distance(self) -> float | None:
+        return self._best_distance
+
+    @property
+    def has_baseline(self) -> bool:
+        return self._start_distance is not None
+
+    @property
+    def progress(self) -> float:
+        if self._start_distance is None or self._start_distance <= 0:
+            return 0.0
+        assert self._best_distance is not None
+        return max(0.0, min(1.0,
+                            (self._start_distance - self._best_distance) /
+                            self._start_distance))
+
+    def reset(self) -> None:
+        self._start_distance: float | None = None
+        self._best_distance: float | None = None
+
+    def update(self, frame: VisionFrame) -> bool:
+        """Observe one public frame; return whether it contains SELF and GOAL."""
+        if not isinstance(frame, VisionFrame):
+            raise TypeError("VisionProgress requires a VisionFrame")
+        self_position = self_center(frame)
+        goal_position = goal_center(frame)
+        if self_position is None or goal_position is None:
+            return False
+
+        distance = math.hypot(self_position[0] - goal_position[0],
+                              self_position[1] - goal_position[1])
+        if self._start_distance is None:
+            self._start_distance = distance
+            self._best_distance = distance
+        else:
+            assert self._best_distance is not None
+            if distance < self._best_distance:
+                self._best_distance = distance
+        return True
 
 
 class MotionEstimator:
@@ -82,4 +156,7 @@ class MotionEstimator:
         return motion_x
 
 
-__all__ = ["MOTION_PIXELS_PER_TICK_SCALE", "SELF", "MotionEstimator", "self_center_x"]
+__all__ = [
+    "GOAL", "MOTION_PIXELS_PER_TICK_SCALE", "SELF", "MotionEstimator", "VisionProgress",
+    "goal_center", "self_center", "self_center_x",
+]

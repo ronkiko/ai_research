@@ -16,7 +16,7 @@ EVENT_FIELDS = {
     )),
     "map_progress": frozenset((
         "event", "level", "map_id", "episode_id", "result", "trainable",
-        "updated", "attempts", "successes",
+        "updated", "progress", "reward", "attempts", "successes",
     )),
     "map_passed": frozenset(("event", "level", "map_id")),
     "map_failed": frozenset(("event", "level", "map_id", "attempts", "successes")),
@@ -45,6 +45,12 @@ def _non_negative_int(name: str, value: object) -> None:
 def _non_empty_string(name: str, value: object) -> None:
     if type(value) is not str or not value:
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _bounded_number(name: str, value: object, lower: float, upper: float) -> None:
+    if type(value) is bool or not isinstance(value, (int, float)) \
+            or not math.isfinite(float(value)) or not lower <= float(value) <= upper:
+        raise ValueError(f"{name} must be finite and in [{lower}, {upper}]")
 
 
 def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +84,8 @@ def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("map_progress result is invalid")
         if type(event["trainable"]) is not bool or type(event["updated"]) is not bool:
             raise ValueError("map_progress flags must be boolean")
+        _bounded_number("progress", event["progress"], 0.0, 1.0)
+        _bounded_number("reward", event["reward"], -1.0, 1.0)
         _positive_int("attempts", event["attempts"])
         _non_negative_int("successes", event["successes"])
         if event["successes"] > event["attempts"]:
