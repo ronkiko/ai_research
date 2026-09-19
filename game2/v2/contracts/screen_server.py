@@ -13,10 +13,19 @@ from .screen import ScreenSourceDiscovery
 
 
 PROTOCOL_VERSION = 1
+
 PROBE = "screen_server_probe"
+OPEN = "screen_server_open"
+CLOSE = "screen_server_close"
 BIND = "screen_server_bind"
 UNBIND = "screen_server_unbind"
 STATUS = "screen_server_status"
+
+SLOT_OPENED = "screen_slot_opened"
+SLOT_ATTACH = "screen_slot_attach"
+SLOT_DETACH = "screen_slot_detach"
+SLOT_CLOSE = "screen_slot_close"
+
 DISCOVERY_TYPE = "screen_server_discovery"
 CURRENT_SCREEN_SERVER_PATH = (
     Path(__file__).resolve().parents[1] / "runtime" / "screen-server.json"
@@ -97,8 +106,12 @@ def publish_screen_server(
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=destination.parent,
-            prefix=f".{destination.name}.", suffix=".tmp", delete=False,
+            "w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as target:
             temporary = Path(target.name)
             target.write(json.dumps(discovery.to_dict(), sort_keys=True))
@@ -137,6 +150,22 @@ def probe_message() -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "type": PROBE}
 
 
+def open_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": OPEN,
+        "screen": _positive_int("screen", screen),
+    }
+
+
+def close_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": CLOSE,
+        "screen": _positive_int("screen", screen),
+    }
+
+
 def bind_message(screen: int, source: ScreenSourceDiscovery) -> dict[str, Any]:
     _positive_int("screen", screen)
     if not isinstance(source, ScreenSourceDiscovery):
@@ -157,38 +186,101 @@ def unbind_message(screen: int) -> dict[str, Any]:
     }
 
 
+def opened_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": SLOT_OPENED,
+        "screen": _positive_int("screen", screen),
+    }
+
+
+def attach_message(screen: int, source: ScreenSourceDiscovery) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": SLOT_ATTACH,
+        "screen": _positive_int("screen", screen),
+        "source": source.to_dict(),
+    }
+
+
+def detach_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": SLOT_DETACH,
+        "screen": _positive_int("screen", screen),
+    }
+
+
+def slot_close_message(screen: int) -> dict[str, Any]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": SLOT_CLOSE,
+        "screen": _positive_int("screen", screen),
+    }
+
+
 def decode_screen_server_request(message: dict[str, Any]) -> str:
     if not isinstance(message, dict):
         raise ValueError("Screen Server request must be an object")
     kind = message.get("type")
     if kind == PROBE:
-        if set(message) != {"version", "type"}:
-            raise ValueError("Screen Server probe fields are invalid")
+        expected = {"version", "type"}
+    elif kind in {OPEN, CLOSE, UNBIND}:
+        expected = {"version", "type", "screen"}
+        _positive_int("screen", message.get("screen"))
     elif kind == BIND:
-        if set(message) != {"version", "type", "screen", "source"}:
-            raise ValueError("Screen Server bind fields are invalid")
-        _positive_int("screen", message["screen"])
-        ScreenSourceDiscovery.from_dict(message["source"])
-    elif kind == UNBIND:
-        if set(message) != {"version", "type", "screen"}:
-            raise ValueError("Screen Server unbind fields are invalid")
-        _positive_int("screen", message["screen"])
+        expected = {"version", "type", "screen", "source"}
+        _positive_int("screen", message.get("screen"))
+        ScreenSourceDiscovery.from_dict(message.get("source"))
     else:
         raise ValueError("unknown Screen Server request")
+    if set(message) != expected:
+        raise ValueError("Screen Server request fields are invalid")
     if message.get("version") != PROTOCOL_VERSION:
         raise ValueError("unsupported Screen Server protocol version")
     return kind
 
 
-def status_message(slots: int, bound: dict[int, ScreenSourceDiscovery] | None = None) -> dict[str, Any]:
+def decode_screen_slot_message(message: dict[str, Any], screen: int) -> str:
+    if not isinstance(message, dict):
+        raise ValueError("Screen slot message must be an object")
+    kind = message.get("type")
+    if kind in {SLOT_OPENED, SLOT_DETACH, SLOT_CLOSE}:
+        expected = {"version", "type", "screen"}
+    elif kind == SLOT_ATTACH:
+        expected = {"version", "type", "screen", "source"}
+        ScreenSourceDiscovery.from_dict(message.get("source"))
+    else:
+        raise ValueError("unknown Screen slot message")
+    if set(message) != expected:
+        raise ValueError("Screen slot message fields are invalid")
+    if message.get("version") != PROTOCOL_VERSION:
+        raise ValueError("unsupported Screen slot protocol version")
+    if message.get("screen") != screen:
+        raise ValueError("Screen slot identity mismatch")
+    return kind
+
+
+def status_message(
+    slots: int,
+    open_screens: set[int] | None = None,
+    bound: dict[int, ScreenSourceDiscovery] | None = None,
+) -> dict[str, Any]:
     _positive_int("slots", slots)
+    open_screens = open_screens or set()
     bound = bound or {}
     screens = []
     for number in range(1, slots + 1):
         source = bound.get(number)
+        if number not in open_screens:
+            state = "closed"
+        elif source is None:
+            state = "waiting"
+        else:
+            state = "bound"
         screens.append({
             "screen": number,
-            "state": "bound" if source is not None else "idle",
+            "state": state,
             "session_id": source.session_id if source is not None else None,
             "map": source.map_id if source is not None else None,
         })
@@ -209,11 +301,13 @@ def decode_screen_server_status(message: dict[str, Any]) -> tuple[dict[str, Any]
             "screen", "state", "session_id", "map",
         }:
             raise ValueError("Screen Server screen entry is invalid")
-        if item["screen"] != expected or item["state"] not in {"idle", "bound"}:
+        if item["screen"] != expected or item["state"] not in {
+            "closed", "waiting", "bound",
+        }:
             raise ValueError("Screen Server screen entry is invalid")
-        if item["state"] == "idle":
+        if item["state"] != "bound":
             if item["session_id"] is not None or item["map"] is not None:
-                raise ValueError("idle Screen cannot expose a source")
+                raise ValueError("unbound Screen cannot expose a source")
         else:
             if type(item["session_id"]) is not str or not item["session_id"]:
                 raise ValueError("bound Screen session_id is invalid")
@@ -224,9 +318,11 @@ def decode_screen_server_status(message: dict[str, Any]) -> tuple[dict[str, Any]
 
 
 __all__ = [
-    "BIND", "CURRENT_SCREEN_SERVER_PATH", "DISCOVERY_TYPE", "PROBE",
-    "PROTOCOL_VERSION", "STATUS", "UNBIND", "ScreenServerDiscovery",
-    "bind_message", "decode_screen_server_request", "decode_screen_server_status",
-    "probe_message", "publish_screen_server", "remove_screen_server",
-    "status_message", "unbind_message",
+    "BIND", "CLOSE", "CURRENT_SCREEN_SERVER_PATH", "DISCOVERY_TYPE",
+    "OPEN", "PROBE", "PROTOCOL_VERSION", "SLOT_ATTACH", "SLOT_CLOSE",
+    "SLOT_DETACH", "SLOT_OPENED", "STATUS", "UNBIND", "ScreenServerDiscovery",
+    "attach_message", "bind_message", "close_message", "decode_screen_server_request",
+    "decode_screen_server_status", "decode_screen_slot_message", "detach_message",
+    "open_message", "opened_message", "probe_message", "publish_screen_server",
+    "remove_screen_server", "slot_close_message", "status_message", "unbind_message",
 ]

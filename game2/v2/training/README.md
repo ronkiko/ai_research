@@ -12,21 +12,32 @@ The Model owns inference, trajectory state, updates, and checkpoints.
 
 Training Set Level 1 is data: `flat_run`, `short_gap`, and `long_gap`.
 
-Process composition does not live in the Training domain. Management launches
-independent Console, Trainer, Model, and Player processes through their command
-and wire contracts:
+Process composition lives in Management:
 
 ```bash
 ./game2/v2/op/train.sh --fresh
 ./game2/v2/op/train.sh --resume
 ```
 
-`--fresh` removes the known Level checkpoint pair before launching a new
-training run. `--resume` requires that pair and continues from it.
+`--fresh` resets the known checkpoint pair before starting. `--resume`
+requires that pair and continues from it.
 
-Human observation is outside Training. An optional Management-only
-`--screen N` binds the current Console ScreenSource to Screen Server but does
-not alter Trainer, Model, Player, rewards, observations, or action timing.
+Human observation is external to Training. To observe a run, the operator first
+starts a persistent foreground Screen in another terminal:
+
+```bash
+./game2/v2/op/screen.sh 1
+```
+
+and then requests that already-open Screen:
+
+```bash
+./game2/v2/op/train.sh --fresh --screen 1
+```
+
+Training only sends BIND/UNBIND to Screen Server. It never starts, stops, or owns
+the Screen process. The same Screen survives map transitions and returns to
+waiting after UNBIND.
 
 A Training Episode remains a Training-domain record and never owns or resets the
 Console global `world_tick`.

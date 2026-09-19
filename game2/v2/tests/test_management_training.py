@@ -9,7 +9,9 @@ from pathlib import Path
 from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.screen import ScreenSourceDiscovery, publish_screen_source
-from game2.v2.management.training import SCREEN_REQUEST_TIMEOUT, TrainingRun
+from game2.v2.management.training import (
+    SCREEN_REQUEST_TIMEOUT, TrainingRun, TrainingRunError,
+)
 
 
 class _FakeProcess:
@@ -92,8 +94,8 @@ class _ScreenControl:
 
 
 class ManagementTrainingTests(unittest.TestCase):
-    def test_screen_request_timeout_covers_viewer_startup(self):
-        self.assertGreaterEqual(SCREEN_REQUEST_TIMEOUT, 10.0)
+    def test_screen_request_is_only_broker_control_not_gui_startup(self):
+        self.assertLessEqual(SCREEN_REQUEST_TIMEOUT, 5.0)
 
 
     def _manifest(self, directory):
@@ -112,6 +114,40 @@ class ManagementTrainingTests(unittest.TestCase):
             "exam_resource_id": "exam",
         }), encoding="utf-8")
         return manifest
+
+
+    def test_screen_preflight_happens_before_fresh_checkpoint_reset(self):
+        class ClosedScreen:
+            def __init__(self, screen, discovery_path):
+                self.screen = screen
+            def preflight(self):
+                raise TrainingRunError("Screen is closed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_dir = Path(directory) / "checkpoints"
+            checkpoint_dir.mkdir()
+            planner = checkpoint_dir / "planner.pt"
+            motor = checkpoint_dir / "motor.pt"
+            planner.write_bytes(b"keep-planner")
+            motor.write_bytes(b"keep-motor")
+            run = TrainingRun(
+                popen_factory=_Factory(),
+                sleeper=lambda _seconds: None,
+                output=io.StringIO(),
+                screen_control_factory=ClosedScreen,
+            )
+            with self.assertRaises(TrainingRunError):
+                run.train(
+                    set_path=self._manifest(directory),
+                    checkpoint_dir=checkpoint_dir,
+                    max_episodes=1,
+                    fresh=True,
+                    episode_limit=10,
+                    screen=1,
+                    screen_server=Path(directory) / "screen-server.json",
+                )
+            self.assertEqual(planner.read_bytes(), b"keep-planner")
+            self.assertEqual(motor.read_bytes(), b"keep-motor")
 
     def test_headless_composition_does_not_touch_screen_and_console_display_is_off(self):
         with tempfile.TemporaryDirectory() as directory:

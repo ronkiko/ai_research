@@ -3,66 +3,65 @@
 Status: modular runtime
 
 ```text
-                         Management
-                    /        |        \
-                   /         |         \
-          Screen Server   Training      operator
-               ^          composer
-               |        /   |   |   \
-          ScreenSource  C    T   M    P
-               |       |         ^    |
-               |       |         |    |
-             Console <-+---- Joystick-+
-               |                    ^
-               +-------- Vision -----+
+                          Management
+                     /        |        \
+                    /         |         \
+          Screen Broker    Training      operator
+               ^           composer         |
+               |         /   |   |   \      |
+        registered       C    T   M    P     |
+        Screen #N        |         ^    |     |
+               ^         |         |    |     |
+               |       Console <- Joystick --+
+               |         |
+               +---- ScreenSource
+                         |
+                         +--------- Vision -> Player
 ```
 
-Legend: C=Console process, T=Trainer, M=Model, P=Player. Management owns process
-composition only; it does not own their runtime objects or gameplay messages.
+Legend: C=Console process, T=Trainer, M=Model, P=Player.
 
 ## Runtime ownership
 
 ```text
-Console       -> world, Engine clock, Controller, Player peripherals, ScreenSource
-Player        -> realtime perception/action timing
-Model         -> inference, trajectories, updates, checkpoints
-Trainer       -> episodes, reward, mastery metrics
-Screen Server -> numbered native human windows
-Management    -> start/stop/connect process boundaries
+Console        -> world, Engine clock, Controller, Vision, ScreenSource
+Player         -> realtime perception/action timing
+Model          -> inference, trajectories, updates, checkpoints
+Trainer        -> episodes, reward, mastery metrics
+Screen Server  -> numbered slot registry and source bindings only
+Screen Window  -> one foreground native Pygame window
+Management     -> process composition and binding
 ```
 
 ## Screen boundary
 
-Console ScreenSource consumes private Engine STATE inside the Console domain and
-publishes only already-rendered RGB `ScreenFrame` values.
+The graphical Screen is started independently:
 
-Screen Server binds a numbered slot to a ScreenSource. It never receives Engine
-STATE and never uses Player Vision as a human-display shortcut.
-
-Closing a Screen window, stopping Screen Server, or losing Screen connectivity
-must not stop Console, Player, Model, or Trainer.
-
-## Training composition
-
-Management composes the Training Set map-by-map:
-
-```text
-Console -> public Player attach
-Trainer <-> Player training contract
-Model   <-> Player model contract
-Player  <-> Console Vision/Joystick
+```bash
+./game2/v2/op/screen.sh 1
 ```
 
-The default path is headless.
+It registers itself with the background Screen Server and remains alive while
+unbound. Training never creates or owns a graphical process.
 
-With `--screen N`, Management separately performs:
+With `--screen 1`, Management performs only:
 
 ```text
-Console ScreenSource -> Screen Server slot N
+current Console ScreenSource
+            |
+            v
+Screen Server BIND
+            |
+            v
+already-open Screen #1
 ```
 
-The Screen number never enters Console, Trainer, Model, Player, Vision, or
-Joystick configuration.
+At map transition, UNBIND/BIND changes the source while the window remains the
+same process. Closing the Screen cannot stop Console, Player, Model, or Trainer.
+
+Screen Server never receives Engine STATE and never uses Player Vision as a
+human-display shortcut; it only brokers the public rendered ScreenSource
+capability.
 
 ## Timing
 

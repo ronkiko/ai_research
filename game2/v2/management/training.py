@@ -36,7 +36,7 @@ DEFAULT_CHECKPOINT_DIR = ROOT / "game2" / "v2" / "runtime" / "checkpoints" / "le
 DEFAULT_SCREEN_SERVER = ROOT / "game2" / "v2" / "runtime" / "screen-server.json"
 DEFAULT_EPISODE_LIMIT = 1200
 PROCESS_TIMEOUT = 30.0
-SCREEN_REQUEST_TIMEOUT = 12.0
+SCREEN_REQUEST_TIMEOUT = 3.0
 _OUTPUT_END = object()
 
 
@@ -168,7 +168,12 @@ class ScreenControl:
         try:
             sock.settimeout(SCREEN_REQUEST_TIMEOUT)
             send_frame(sock, message)
-            return decode_screen_server_status(recv_frame(sock))
+            response = recv_frame(sock)
+            if response.get("type") == "screen_server_error":
+                raise TrainingRunError(
+                    response.get("message", "Screen Server request failed")
+                )
+            return decode_screen_server_status(response)
         finally:
             sock.close()
 
@@ -177,6 +182,12 @@ class ScreenControl:
         if self.screen > len(status):
             raise TrainingRunError(
                 f"Screen #{self.screen} is outside the Screen Server slot range"
+            )
+        slot = status[self.screen - 1]
+        if slot["state"] == "closed":
+            raise TrainingRunError(
+                f"Screen #{self.screen} is not open; "
+                f"run ./game2/v2/op/screen.sh {self.screen} in another terminal"
             )
 
     def bind(self, source: ScreenSourceDiscovery) -> None:
@@ -430,7 +441,7 @@ class TrainingRun:
             if screen_control is not None and screen_bound:
                 try:
                     screen_control.unbind()
-                except (OSError, TimeoutError, ValueError):
+                except (OSError, TimeoutError, ValueError, TrainingRunError):
                     pass
             self._stop(processes)
 
@@ -448,6 +459,12 @@ class TrainingRun:
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
         manifest = TrainingSetManifest.from_file(manifest_path)
+
+        screen_control = None
+        if screen is not None:
+            screen_control = self.screen_control_factory(screen, screen_server)
+            screen_control.preflight()
+
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
         if fresh:
@@ -464,11 +481,6 @@ class TrainingRun:
             raise ValueError("max_episodes must be positive")
         if type(episode_limit) is not int or episode_limit <= 0:
             raise ValueError("episode_limit must be positive")
-
-        screen_control = None
-        if screen is not None:
-            screen_control = self.screen_control_factory(screen, screen_server)
-            screen_control.preflight()
 
         self._write(
             f"TRAINING SET {manifest.training_set_level}: "

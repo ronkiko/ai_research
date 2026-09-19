@@ -2,33 +2,34 @@
 
 Game2 V2 is the sole active implementation.
 
-## Operator entry points
+## Operator flow
 
-```text
-game2/v2/boot.sh
-game2/v2/op/screen_server.sh
-game2/v2/op/screen.sh
-game2/v2/op/train.sh
-```
-
-Examples:
+Terminal 1:
 
 ```bash
-./game2/v2/boot.sh
 ./game2/v2/op/screen_server.sh
+```
+
+Terminal 2:
+
+```bash
 ./game2/v2/op/screen.sh 1
-./game2/v2/op/train.sh --fresh
+```
+
+Terminal 3:
+
+```bash
 ./game2/v2/op/train.sh --fresh --screen 1
 ```
 
-Vision is headless and machine-facing. Screen is an independent human observer.
-Training is composed from independent processes by Management; there is no
-graphical Training owner.
+The second command is the graphical foreground Screen. Training only connects
+its current Console ScreenSource to that already-running window.
 
-Install dependencies with:
+For headless Training:
 
 ```bash
-python -m pip install -r game2/v2/requirements.txt
+./game2/v2/op/train.sh --fresh
 ```
 
-See [`v2/README.md`](v2/README.md) for architecture and operation.
+Vision remains headless and machine-facing. See [`v2/README.md`](v2/README.md)
+for architecture and operation.

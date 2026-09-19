@@ -1,19 +1,34 @@
 # Management
 
-Management is outside the gameplay data path. It may compose independent
-processes, but it must not import their runtime implementations or proxy
-gameplay messages.
+Management is outside the gameplay data path.
 
 ## Screen infrastructure
 
+Screen is deliberately split into two independent pieces:
+
+```text
+Screen Server  = background broker only
+Screen Window  = foreground operator process
+```
+
+Start the broker:
+
 ```bash
 ./game2/v2/op/screen_server.sh
+```
+
+Open a persistent Screen window in another terminal:
+
+```bash
 ./game2/v2/op/screen.sh 1
 ```
 
-Screen Server owns numbered native Screen windows only. It receives rendered
-`ScreenFrame` pixels from Console ScreenSource; it never receives Engine STATE
-or Player Vision.
+The Screen registers slot 1 with the broker and waits. The broker never launches
+Pygame and does not own that graphical process.
+
+Training with `--screen 1` only binds a Console ScreenSource to the registered
+slot. UNBIND returns the same window to `Waiting for source...`; it does not
+close it.
 
 ## Training composition
 
@@ -23,10 +38,6 @@ or Player Vision.
 ./game2/v2/op/train.sh --resume
 ```
 
-The Management Training composer launches Console, Trainer, Model, and realtime
-Player as separate OS processes using their existing entrypoints. It imports
-only shared contracts.
-
-`--screen N` performs an independent Screen Server BIND after a Console starts.
-It is not forwarded to any learning/gameplay child process. Screen failure after
-startup is spectator-only and does not fail Training.
+Management launches Console, Trainer, Model, and Player as independent OS
+processes through their public contracts. Screen is a detachable spectator and
+never owns Training.
