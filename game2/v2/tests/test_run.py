@@ -195,11 +195,15 @@ class LauncherContractTests(unittest.TestCase):
             viewer._draw()
         self.assertEqual(viewer.latest_frame.world_tick, 1)
 
-    def test_passed_map_sidebar_uses_green_checkmark(self):
+    def test_map_status_sidebar_uses_geometry_and_plain_map_labels(self):
         state = vision_demo.TrainingSetUIState(vision_demo.discover_training_sets())
         item = state._get(1)
         item.expanded = True
-        item.map_status["flat_run"] = "passed"
+        item.map_status.update({
+            "flat_run": "pending",
+            "short_gap": "current",
+            "long_gap": "passed",
+        })
         viewer = vision_demo.VisionViewer(
             tuple(item.entry for item in state.sets), checkpoint_root=Path("checkpoints"),
             max_episodes=1, episode_limit=10, exam_root=None, delay=1,
@@ -213,7 +217,22 @@ class LauncherContractTests(unittest.TestCase):
             def get_height(self):
                 return 768
 
+        class Draw:
+            def __init__(self):
+                self.calls = []
+
+            def circle(self, *args, **kwargs):
+                self.calls.append(("circle", args, kwargs))
+
+            def polygon(self, *args, **kwargs):
+                self.calls.append(("polygon", args, kwargs))
+
+            def line(self, *args, **kwargs):
+                self.calls.append(("line", args, kwargs))
+
         class FakePygame:
+            draw = Draw()
+
             @staticmethod
             def Rect(*args):
                 return args
@@ -221,10 +240,23 @@ class LauncherContractTests(unittest.TestCase):
         drawn = []
         viewer.sidebar = Sidebar()
         viewer.pygame = FakePygame()
-        viewer._draw_text = lambda text, _font, _y, color: drawn.append((text, color))
+        viewer._draw_text = lambda text, _font, _y, color, x=18: drawn.append(
+            (text, x, color))
         viewer._button = lambda _rect, _label, _enabled: None
         viewer._draw_sidebar(None)
-        self.assertIn(("  ✓ flat_run", (119, 224, 151)), drawn)
+        vision_demo._draw_status_icon(viewer.pygame, viewer.sidebar, "failed", (25, 100),
+                                      (245, 118, 118))
+        labels = {text: (x, color) for text, x, color in drawn
+                  if text in {"flat_run", "short_gap", "long_gap"}}
+        self.assertEqual(set(labels), {"flat_run", "short_gap", "long_gap"})
+        self.assertTrue(all(x == 38 for x, _color in labels.values()))
+        calls = FakePygame.draw.calls
+        self.assertEqual([call[0] for call in calls],
+                         ["circle", "polygon", "line", "line", "line", "line"])
+        self.assertEqual(calls[0][1][1], (157, 174, 188))
+        self.assertEqual(calls[1][1][1], (255, 218, 82))
+        self.assertEqual(calls[2][1][1], (119, 224, 151))
+        self.assertEqual(calls[4][1][1], (245, 118, 118))
 
 
 class _FakeProcess:

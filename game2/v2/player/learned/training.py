@@ -157,7 +157,8 @@ def _request_lifecycle_ack(connection: PlayerConnection, first_lifecycle: bool) 
 
 def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id: int,
                  *, first_lifecycle: bool, vision, joystick, action_hz: int,
-                 sleeper: Callable[[float], None], ack_settle_timeout: float,
+                 sleeper: Callable[[float], None], clock: Callable[[], float],
+                 ack_settle_timeout: float,
                  on_started: Callable[[dict], None]) -> tuple[dict, bool, bool]:
     connection.clear_terminal_events()
     connection.clear_acknowledgements()
@@ -191,10 +192,12 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     started_tick: int | None = None
     latest_frame_tick = pre_lifecycle_world_tick
     latest_terminal: dict | None = None
-    next_send = time.monotonic()
+    next_send = clock()
     send_period = 1 / action_hz
     dirty = False
     sent_sequences: set[int] = set()
+    latest_sample = None
+    last_recorded_sample = None
 
     while latest_terminal is None:
         _drain_acknowledgements(joystick, ack_statuses)
@@ -222,25 +225,28 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
                 sample = None
             if started_tick is not None and sample is None:
                 dirty = True
+            if sample is not None:
+                latest_sample = sample
             if has_self and started_tick is None:
                 started_tick = frame.world_tick
                 on_started(episode_started_message(episode_id, started_tick))
-            if started_tick is not None and sample is not None:
-                now = time.monotonic()
-                if now >= next_send:
-                    state = joystick.send_state(sample.action_decision.right,
-                                                sample.action_decision.jump)
-                    sequence = getattr(state, "sequence", None)
-                    if type(sequence) is not int:
-                        sequence = int(getattr(joystick, "sequence", before_sequence +
-                                              len(sent_sequences) + 1))
-                    sent_sequences.add(sequence)
-                    if player.episode_mode == "train":
-                        player.record_sent_sample(sample)
-                    _drain_acknowledgements(joystick, ack_statuses)
-                    next_send += send_period
-                    if next_send < now:
-                        next_send = now
+        if started_tick is not None and latest_sample is not None:
+            now = clock()
+            if now >= next_send:
+                state = joystick.send_state(latest_sample.action_decision.right,
+                                            latest_sample.action_decision.jump)
+                sequence = getattr(state, "sequence", None)
+                if type(sequence) is not int:
+                    sequence = int(getattr(joystick, "sequence", before_sequence +
+                                          len(sent_sequences) + 1))
+                sent_sequences.add(sequence)
+                if player.episode_mode == "train" and latest_sample is not last_recorded_sample:
+                    player.record_sent_sample(latest_sample)
+                    last_recorded_sample = latest_sample
+                _drain_acknowledgements(joystick, ack_statuses)
+                next_send += send_period
+                if next_send < now:
+                    next_send = now
         sleeper(0.001)
 
     terminal = latest_terminal
@@ -266,6 +272,7 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                         vision_factory=VisionReceiver, joystick_factory=JoystickClient,
                         peer_factory=TrainingPeer, checkpoint_dir: str | Path = "runtime/checkpoints",
                         sleeper: Callable[[float], None] = time.sleep,
+                        clock: Callable[[], float] = time.monotonic,
                         ack_settle_timeout: float = 0.25) -> int:
     """Own one attached Player's public peripherals and Trainer session."""
     if action_hz <= 0:
@@ -309,7 +316,7 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                 finished, trainable, lifecycle_accepted = _run_episode(
                     connection, player, episode_id, first_lifecycle=not actor_started,
                     vision=vision, joystick=joystick, action_hz=action_hz,
-                    sleeper=sleeper, ack_settle_timeout=ack_settle_timeout,
+                    sleeper=sleeper, clock=clock, ack_settle_timeout=ack_settle_timeout,
                     on_started=peer.send)
                 peer.send(finished)
                 if lifecycle_accepted:

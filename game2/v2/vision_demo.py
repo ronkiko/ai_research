@@ -309,6 +309,23 @@ def _colorize_frame(pygame_module, frame: VisionFrame):
     return surface.convert()
 
 
+def _draw_status_icon(pygame_module, surface, status: str, center: tuple[int, int], color) -> None:
+    x, y = center
+    if status == "pending":
+        pygame_module.draw.circle(surface, color, center, 6, width=1)
+    elif status == "current":
+        pygame_module.draw.polygon(surface, color, ((x - 4, y - 6),
+                                                     (x - 4, y + 6), (x + 6, y)))
+    elif status == "passed":
+        pygame_module.draw.line(surface, color, (x - 6, y), (x - 2, y + 4), width=2)
+        pygame_module.draw.line(surface, color, (x - 2, y + 4), (x + 6, y - 6), width=2)
+    elif status == "failed":
+        pygame_module.draw.line(surface, color, (x - 5, y - 5), (x + 5, y + 5), width=2)
+        pygame_module.draw.line(surface, color, (x + 5, y - 5), (x - 5, y + 5), width=2)
+    else:
+        raise ValueError(f"unknown map status: {status}")
+
+
 class VisionViewer:
     """One native window that only subscribes to public Vision and launcher events."""
 
@@ -404,9 +421,9 @@ class VisionViewer:
         except (OSError, RuntimeError, ValueError) as exc:
             self.state.apply_event({"event": "run_failed", "message": str(exc)})
 
-    def _draw_text(self, text: str, font, y: int, color) -> None:
+    def _draw_text(self, text: str, font, y: int, color, x: int = 18) -> None:
         assert self.sidebar is not None
-        self.sidebar.blit(font.render(text, True, color), (18, y))
+        self.sidebar.blit(font.render(text, True, color), (x, y))
 
     def _button(self, rect, label: str, enabled: bool) -> None:
         assert self.sidebar is not None and self.pygame is not None
@@ -435,14 +452,15 @@ class VisionViewer:
                 continue
             for map_id, status in item.map_status.items():
                 if status == "passed":
-                    mark, color = "✓", passed
+                    color = passed
                 elif status == "failed":
-                    mark, color = "✕", failed
+                    color = failed
                 elif status == "current":
-                    mark, color = "▶", current
+                    color = current
                 else:
-                    mark, color = "○", muted
-                self._draw_text(f"  {mark} {map_id}", self.body_font, y, color)
+                    color = muted
+                _draw_status_icon(self.pygame, self.sidebar, status, (25, y + 9), color)
+                self._draw_text(map_id, self.body_font, y, color, x=38)
                 y += 23
             train_rect = self.pygame.Rect(18, y + 2, SIDEBAR_WIDTH - 36, 30)
             self._train_rects[item.level] = train_rect

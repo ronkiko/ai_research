@@ -5,12 +5,16 @@ import threading
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
 from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.framing import ProtocolError, recv_frame, send_frame
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
+from game2.v2.console.engine.engine import Engine
+from game2.v2.console.protocol import ActionCommand
+from game2.v2.console.world.loader import load_world
 from game2.v2.contracts.training import (
     APPLY_RESULT,
     BEGIN_EPISODE,
@@ -37,14 +41,19 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer
-from game2.v2.player.learned.training import _settle_acks, run_training_player
+from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.training.main import Trainer, reward_for_result
 
 
-def _frame(tick: int = 1) -> VisionFrame:
+ROOT = Path(__file__).resolve().parents[3]
+FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.json"
+
+
+def _frame(tick: int = 1, self_x: int | None = 3) -> VisionFrame:
     pixels = bytearray(12 * 5)
-    pixels[2 * 12 + 3] = 3
+    if self_x is not None:
+        pixels[2 * 12 + self_x] = 3
     return VisionFrame(12, 5, bytes(pixels), tick)
 
 
@@ -647,6 +656,124 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         with self.assertRaises(EOFError):
             self._run_with_eof(messages)
 
+
+class _ActionClock:
+    def __init__(self):
+        self.value = 0.0
+
+    def now(self):
+        return self.value
+
+    def sleep(self, duration):
+        self.value += duration
+
+
+class _ActionVision:
+    def __init__(self, clock, mode):
+        self.clock = clock
+        self.mode = mode
+        self.calls = 0
+        self.failed = False
+
+    @property
+    def latest(self):
+        self.calls += 1
+        if self.calls == 1:
+            return _frame(tick=0, self_x=None)
+        now = self.clock.now()
+        if self.mode == "hold":
+            if now < 0.001:
+                return _frame(tick=1, self_x=None)
+            if now < 1 / 30:
+                return _frame(self_x=3, tick=2)
+            return _frame(self_x=3, tick=3)
+        if now < 0.004:
+            return _frame(self_x=3, tick=1 if now == 0 else 2)
+        return _frame(self_x=3, tick=3)
+
+
+class _ActionPlayer:
+    episode_mode = "train"
+
+    def __init__(self):
+        self.recorded = []
+
+    def process_frame(self, frame):
+        if 3 not in frame.pixels:
+            return None
+        return SimpleNamespace(
+            world_tick=frame.world_tick,
+            action_decision=SimpleNamespace(right=True, jump=False),
+        )
+
+    def record_sent_sample(self, sample):
+        self.recorded.append(sample.world_tick)
+
+
+class _ActionJoystick:
+    def __init__(self, connection, terminal_after):
+        self.connection = connection
+        self.terminal_after = terminal_after
+        self.sequence = 0
+        self.sent = []
+        self.acknowledgements = []
+        self.failed = False
+
+    def send_state(self, right, jump):
+        self.sequence += 1
+        self.sent.append((right, jump))
+        self.acknowledgements.append({"sequence": self.sequence, "status": "accepted"})
+        if self.sequence == self.terminal_after:
+            self.connection.terminal = {
+                "version": 1, "type": "player_event", "event": "terminal",
+                "world_tick": 100, "result": "dead",
+            }
+        return SimpleNamespace(sequence=self.sequence)
+
+    def drain_acknowledgements(self):
+        acknowledgements, self.acknowledgements = self.acknowledgements, []
+        return acknowledgements
+
+
+class TrainingActuatorClockTests(unittest.TestCase):
+    def _episode(self, mode, terminal_after):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        clock = _ActionClock()
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
+        vision = _ActionVision(clock, mode)
+        joystick = _ActionJoystick(connection, terminal_after)
+        player = _ActionPlayer()
+        started = []
+        result = _run_episode(
+            connection, player, 1, first_lifecycle=True, vision=vision,
+            joystick=joystick, action_hz=120, sleeper=clock.sleep, clock=clock.now,
+            ack_settle_timeout=0.01, on_started=started.append,
+        )
+        return result, player, joystick
+
+    def test_latest_action_is_resend_at_action_hz_between_vision_frames(self):
+        _result, player, joystick = self._episode("hold", terminal_after=5)
+        self.assertEqual(len(joystick.sent), 5)
+        self.assertEqual(joystick.sent[:4], [(True, False)] * 4)
+        self.assertEqual(player.recorded, [2, 3])
+
+    def test_unsent_replaced_sample_is_not_recorded(self):
+        _result, player, joystick = self._episode("replace", terminal_after=2)
+        self.assertEqual(len(joystick.sent), 2)
+        self.assertEqual(player.recorded, [1, 3])
+
+    def test_sustained_right_at_physics_cadence_accelerates_on_flat_ground(self):
+        engine = Engine(load_world(FLAT_RUN), physics_hz=120)
+        actor = engine.spawn_actor("training-player", "training-actor")
+        start_x = actor.body.x
+        for sequence in range(1, 17):
+            self.assertEqual(engine.submit_action(ActionCommand(
+                "training-actor", sequence, engine.world_tick + 1, 1, True, False,
+            )), "accepted")
+            engine.tick()
+        self.assertGreater(actor.body.vx, 0.0)
+        self.assertGreater(actor.body.x, start_x)
 
 class TrainerRuntimeTests(unittest.TestCase):
     def test_reward_mapping_and_socket_handshake(self):
