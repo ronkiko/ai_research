@@ -20,7 +20,7 @@ from game2.v2.contracts.vision import META_SELF, PHYSICS_SOLID, VisionGrid
 from game2.v2.player.peripherals import VisionReceiver
 
 
-LOOKAHEAD_CELLS = 2
+LOOKAHEAD_TILES = 2
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ def _self_bounds(grid: VisionGrid) -> tuple[int, int, int, int] | None:
     for index, value in enumerate(grid.metadata):
         if not value & META_SELF:
             continue
-        y, x = divmod(index, grid.columns)
+        y, x = divmod(index, grid.metadata_columns)
         left = min(left, x)
         right = max(right, x)
         top = min(top, y)
@@ -46,12 +46,12 @@ def _self_bounds(grid: VisionGrid) -> tuple[int, int, int, int] | None:
     return left, top, right, bottom
 
 
-def _solid_at(grid: VisionGrid, x: int, y: int) -> bool:
-    return (
-        0 <= x < grid.columns
-        and 0 <= y < grid.rows
-        and grid.physics[y * grid.columns + x] == PHYSICS_SOLID
-    )
+def _solid_at_sensor(grid: VisionGrid, x: int, y: int) -> bool:
+    if not (0 <= x < grid.metadata_columns and 0 <= y < grid.metadata_rows):
+        return False
+    tile_x = x // grid.subdivisions
+    tile_y = y // grid.subdivisions
+    return grid.physics[tile_y * grid.columns + tile_x] == PHYSICS_SOLID
 
 
 def decide(grid: VisionGrid) -> VisualDecision:
@@ -64,14 +64,20 @@ def decide(grid: VisionGrid) -> VisualDecision:
 
     left, _top, right, bottom = bounds
     foot_y = bottom + 1
-    support_now = any(_solid_at(grid, x, foot_y) for x in range(left, right + 1))
+    support_now = any(
+        _solid_at_sensor(grid, x, foot_y) for x in range(left, right + 1)
+    )
     if not support_now:
         return VisualDecision(right=True, jump=False)
 
     ahead_start = right + 1
-    ahead_end = min(grid.columns, ahead_start + LOOKAHEAD_CELLS)
+    ahead_end = min(
+        grid.metadata_columns,
+        ahead_start + LOOKAHEAD_TILES * grid.subdivisions,
+    )
     edge_nearby = any(
-        not _solid_at(grid, x, foot_y) for x in range(ahead_start, ahead_end)
+        not _solid_at_sensor(grid, x, foot_y)
+        for x in range(ahead_start, ahead_end)
     )
     return VisualDecision(right=True, jump=edge_nearby)
 

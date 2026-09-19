@@ -36,6 +36,7 @@ class TrainingRecord:
     columns: int
     rows: int
     tile_size: int
+    subdivisions: int
     world_tick: int
     physics: bytes
     metadata: bytes
@@ -51,6 +52,7 @@ class TrainingRecord:
             grid.columns,
             grid.rows,
             grid.tile_size,
+            grid.subdivisions,
             grid.world_tick,
             bytes(grid.physics),
             bytes(grid.metadata),
@@ -69,6 +71,7 @@ class TrainingRecord:
             self.physics,
             self.metadata,
             self.world_tick,
+            self.subdivisions,
         )
 
 
@@ -296,9 +299,11 @@ class LearnedPlayer:
         hundreds of times in Python.
         """
         loss_value = 0.0
-        groups: dict[tuple[int, int, int], list[TrainingRecord]] = {}
+        groups: dict[tuple[int, int, int, int], list[TrainingRecord]] = {}
         for record in records:
-            groups.setdefault((record.columns, record.rows, record.tile_size), []).append(record)
+            groups.setdefault(
+                (record.columns, record.rows, record.tile_size, record.subdivisions), []
+            ).append(record)
 
         for group in groups.values():
             for start in range(0, len(group), REPLAY_BATCH_SIZE):
