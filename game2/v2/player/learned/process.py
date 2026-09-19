@@ -179,7 +179,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     send_period = 1 / action_hz
     dirty = False
     sent_sequences: set[int] = set()
-    actuated_ids: set[int] = set()
+    sequence_decisions: dict[int, int] = {}
     latest_decision = None
     progress_tracker = VisionProgress()
     saw_self_frame = False
@@ -231,9 +231,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
                     sequence = int(getattr(joystick, "sequence", before_sequence +
                                        len(sent_sequences) + 1))
                 sent_sequences.add(sequence)
-                if latest_decision.decision_id not in actuated_ids:
-                    model.actuated(latest_decision.decision_id)
-                    actuated_ids.add(latest_decision.decision_id)
+                sequence_decisions[sequence] = latest_decision.decision_id
                 _drain_acknowledgements(joystick, ack_statuses)
                 next_send += send_period
                 if next_send < now:
@@ -246,7 +244,16 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
         latest_terminal = {"result": "timeout", "world_tick": max(latest_frame_tick, 0)}
     accepted, rejected, complete = _settle_acks(
         joystick, sent_sequences, ack_statuses, ack_settle_timeout, sleeper)
-    if rejected or not complete or started_tick is None or connection.failed \
+    actuated_ids: set[int] = set()
+    for sequence in sorted(sent_sequences):
+        if "accepted" not in ack_statuses.get(sequence, ()):
+            continue
+        decision_id = sequence_decisions.get(sequence)
+        if decision_id is None or decision_id in actuated_ids:
+            continue
+        model.actuated(decision_id)
+        actuated_ids.add(decision_id)
+    if not complete or started_tick is None or connection.failed \
             or vision.failed or joystick.failed:
         dirty = True
     finish_tick = int(latest_terminal["world_tick"])

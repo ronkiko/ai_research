@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+from collections import deque
 import signal
 import socket
 import subprocess
@@ -48,6 +49,7 @@ class ManagedProcess:
     lines: queue.Queue
     reader: threading.Thread
     output_done: threading.Event
+    tail: deque[str]
 
     @classmethod
     def start(cls, command: list[str], *, cwd: Path,
@@ -63,6 +65,7 @@ class ManagedProcess:
         )
         lines: queue.Queue = queue.Queue()
         output_done = threading.Event()
+        tail: deque[str] = deque(maxlen=20)
 
         def read_output() -> None:
             try:
@@ -70,6 +73,7 @@ class ManagedProcess:
                 if source is not None:
                     try:
                         for line in source:
+                            tail.append(line.rstrip())
                             lines.put(line)
                     finally:
                         try:
@@ -84,7 +88,7 @@ class ManagedProcess:
             target=read_output, name="game2-management-training-output", daemon=True
         )
         reader.start()
-        return cls(process, lines, reader, output_done)
+        return cls(process, lines, reader, output_done, tail)
 
     def stop(self, timeout: float = 5.0) -> None:
         if self.process.poll() is not None:
@@ -99,6 +103,11 @@ class ManagedProcess:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait()
+
+    def diagnostic(self) -> str:
+        useful = [line for line in self.tail
+                  if line and not line.startswith(("READY ", "ATTACHED "))]
+        return " | ".join(useful[-4:]) if useful else f"exit={self.process.poll()}"
 
     def drain(self) -> list[str]:
         result = []
@@ -383,7 +392,9 @@ class TrainingRun:
                 trainer_exited = trainer.process.poll() is not None
                 model_exited = model.process.poll() is not None
                 if model_exited and not player_exited:
-                    raise TrainingRunError("Model exited before Player finalization")
+                    raise TrainingRunError(
+                        "Model exited before Player finalization: " + model.diagnostic()
+                    )
                 if player_exited or trainer_exited:
                     if finalization_deadline is None:
                         finalization_deadline = time.monotonic() + 5.0
@@ -393,9 +404,16 @@ class TrainingRun:
                     if summary is not None:
                         break
                     if trainer_exited and trainer.output_done.is_set():
-                        raise TrainingRunError("Trainer exited without SUMMARY")
+                        raise TrainingRunError(
+                            "Trainer exited without SUMMARY: " + trainer.diagnostic()
+                        )
                     if time.monotonic() >= finalization_deadline:
-                        raise TrainingRunError("Trainer did not emit SUMMARY after Player exit")
+                        raise TrainingRunError(
+                            "Training child failed before SUMMARY; "
+                            "Player: " + player.diagnostic()
+                            + "; Trainer: " + trainer.diagnostic()
+                            + "; Model: " + model.diagnostic()
+                        )
                 self.sleeper(0.005)
 
             mastered = summary.get("mastered")

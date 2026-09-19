@@ -162,7 +162,7 @@ class ModelRuntime:
                 return pending_observation
             return observation_from_message(message, observation_pixels)
         if message_type == ACTUATED:
-            sample = self._samples.get(message["decision_id"])
+            sample = self._samples.pop(message["decision_id"], None)
             if sample is not None and self.player.episode_mode == "train":
                 self.player.record_sent_sample(sample)
             return pending_observation

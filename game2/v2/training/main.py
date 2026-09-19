@@ -256,7 +256,7 @@ def main(argv=None) -> int:
             mode=args.mode, episodes=args.episodes, seed=args.seed,
             stop_on_success=args.stop_on_success,
         ).run()
-    except (OSError, TimeoutError, ValueError, ConnectionError) as exc:
+    except (EOFError, OSError, TimeoutError, ValueError, ConnectionError) as exc:
         print(f"ERROR Trainer failed: {exc}", file=sys.stderr, flush=True)
         return 1
     print("SUMMARY " + json.dumps(summary.to_dict(), separators=(",", ":"),

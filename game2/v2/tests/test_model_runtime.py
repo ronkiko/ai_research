@@ -21,6 +21,7 @@ from game2.v2.model_runtime import ModelRuntime
 from game2.v2.player.model_client import ModelClient
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.realtime import run_player
+from game2.v2.player.learned.process import _run_episode
 
 
 def _frame(tick: int) -> VisionFrame:
@@ -326,6 +327,128 @@ class ModelRuntimeTests(unittest.TestCase):
         self.assertEqual(joystick.sent[:3], [(True, False)] * 3)
         self.assertIn((False, True), joystick.sent)
         self.assertEqual(model.actuated_ids, [1, 2])
+
+
+class TrainingAckBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def _vision_frame(tick: int) -> VisionFrame:
+        pixels = bytearray(12 * 5)
+        pixels[2 * 12 + 3] = 3
+        pixels[2 * 12 + 10] = 4
+        return VisionFrame(12, 5, bytes(pixels), tick)
+
+    class Connection:
+        failed = False
+        error = None
+
+        def __init__(self):
+            self.terminal = None
+
+        def clear_terminal_events(self):
+            self.terminal = None
+
+        def clear_acknowledgements(self):
+            return None
+
+        def request_start_ack(self):
+            return {"status": "accepted", "world_tick": 0}
+
+        def request_respawn_ack(self):
+            return {"status": "accepted", "world_tick": 0}
+
+        def pop_terminal(self):
+            terminal, self.terminal = self.terminal, None
+            return terminal
+
+    class Vision:
+        failed = False
+        error = None
+
+        def __init__(self, frame):
+            self.frame = frame
+
+        @property
+        def latest(self):
+            return self.frame
+
+    class Model:
+        failed = False
+        error = None
+
+        def __init__(self):
+            self.latest_decision = None
+            self.actuated_ids = []
+            self.episode_ends = []
+
+        def observe(self, frame):
+            self.latest_decision = SimpleNamespace(
+                decision_id=1,
+                action_decision=ActionDecision(True, False),
+            )
+
+        def poll(self):
+            return None
+
+        def actuated(self, decision_id):
+            self.actuated_ids.append(decision_id)
+
+        def episode_end(self, *args):
+            self.episode_ends.append(args)
+            return {"updated": False, "loss": 0.0}
+
+    class Joystick:
+        failed = False
+        error = None
+
+        def __init__(self, connection, status):
+            self.connection = connection
+            self.status = status
+            self.sequence = 0
+            self.acks = []
+
+        def send_state(self, _right, _jump):
+            self.sequence += 1
+            self.acks.append({"sequence": self.sequence, "status": self.status})
+            self.connection.terminal = {
+                "world_tick": 3, "result": "success",
+            }
+            return SimpleNamespace(sequence=self.sequence)
+
+        def drain_acknowledgements(self):
+            result, self.acks = self.acks, []
+            return result
+
+    def _run(self, status):
+        connection = self.Connection()
+        model = self.Model()
+        joystick = self.Joystick(connection, status)
+        started = []
+        ticks = iter((1.0, 1.0, 1.01, 1.02, 1.03))
+        finished, trainable, lifecycle = _run_episode(
+            connection, model, 1, "train",
+            first_lifecycle=True,
+            vision=self.Vision(self._vision_frame(1)),
+            joystick=joystick,
+            action_hz=120,
+            sleeper=lambda _duration: None,
+            clock=lambda: next(ticks, 2.0),
+            ack_settle_timeout=0.01,
+            on_started=started.append,
+        )
+        return finished, trainable, lifecycle, model
+
+    def test_terminal_race_rejection_is_reported_but_not_recorded_or_dirty(self):
+        finished, trainable, lifecycle, model = self._run("rejected")
+        self.assertTrue(lifecycle)
+        self.assertTrue(trainable)
+        self.assertEqual(finished["rejected_actions"], 1)
+        self.assertEqual(model.actuated_ids, [])
+
+    def test_only_acknowledged_decision_is_recorded_as_actuated(self):
+        finished, trainable, _lifecycle, model = self._run("accepted")
+        self.assertTrue(trainable)
+        self.assertEqual(finished["accepted_actions"], 1)
+        self.assertEqual(model.actuated_ids, [1])
 
 
 if __name__ == "__main__":
