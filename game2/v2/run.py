@@ -358,10 +358,13 @@ class UnifiedRunner:
                     if finalization_deadline is None:
                         finalization_deadline = time.monotonic() + FINALIZATION_TIMEOUT
                     remaining = finalization_deadline - time.monotonic()
+                    if not player.output_done.is_set() and remaining > 0:
+                        player.wait_output_done(remaining)
+                        continue
+                    if not trainer.output_done.is_set() and remaining > 0:
+                        trainer.wait_output_done(remaining)
+                        continue
                     if trainer_exited:
-                        if not trainer.output_done.is_set() and remaining > 0:
-                            trainer.wait_output_done(remaining)
-                            continue
                         if trainer.output_done.is_set():
                             raise RunError("Trainer exited without SUMMARY")
                     if remaining <= 0:
