@@ -492,10 +492,13 @@ def _check_discovery_directory(path: Path) -> None:
 
 def run_server(config_path: str | Path,
                discovery_path: str | Path = CURRENT_CONSOLE_PATH,
-               screen_discovery_path: str | Path | None = None) -> int:
+               screen_discovery_path: str | Path | None = None,
+               screen_view: str = "screen") -> int:
     """Run one persistent Console until explicit shutdown or process failure."""
     config_path = Path(config_path).resolve()
     discovery_path = Path(discovery_path)
+    if screen_view not in {"screen", "vision"}:
+        raise ValueError("screen_view must be screen or vision")
     if screen_discovery_path is None:
         screen_discovery_path = (
             CURRENT_SCREEN_SOURCE_PATH
@@ -530,6 +533,7 @@ def run_server(config_path: str | Path,
         screen_endpoint,
         config.physics_hz,
         config.episode_limit,
+        screen_view,
     ).write(screen_manifest_path)
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
     engine_log = (run_dir / "engine.log").open("w", encoding="utf-8")

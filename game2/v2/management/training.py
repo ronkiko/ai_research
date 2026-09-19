@@ -292,7 +292,7 @@ class TrainingRun:
         }
 
     def _start_console(
-        self, directory: Path, map_path: Path, episode_limit: int
+        self, directory: Path, map_path: Path, episode_limit: int, view: str
     ) -> tuple[ManagedProcess, Path, Path]:
         config_path = directory / "console.json"
         discovery_path = directory / "console-discovery.json"
@@ -306,6 +306,7 @@ class TrainingRun:
             "--config", str(config_path),
             "--discovery", str(discovery_path),
             "--screen-discovery", str(screen_source_path),
+            "--screen-view", view,
         ])
         try:
             ConsoleDiscovery.from_dict(
@@ -338,13 +339,14 @@ class TrainingRun:
         episode_limit: int,
         directory: Path,
         screen_control: ScreenControl | None,
+        view: str,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
         screen_bound = False
         try:
             console, discovery_path, screen_source_path = self._start_console(
-                directory, _resolve_map(manifest_path, spec), episode_limit
+                directory, _resolve_map(manifest_path, spec), episode_limit, view
             )
             processes.append(console)
 
@@ -461,9 +463,14 @@ class TrainingRun:
         episode_limit: int,
         screen: int | None = None,
         screen_server: str | Path = DEFAULT_SCREEN_SERVER,
+        view: str = "screen",
     ) -> int:
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
+        if view not in {"screen", "vision"}:
+            raise ValueError("view must be screen or vision")
+        if view != "screen" and screen is None:
+            raise ValueError("--view vision requires --screen")
         manifest = TrainingSetManifest.from_file(manifest_path)
 
         screen_control = None
@@ -491,7 +498,10 @@ class TrainingRun:
         self._write(
             f"TRAINING SET {manifest.training_set_level}: "
             f"{'fresh' if fresh else 'resume'}"
-            + (f", screen={screen}" if screen is not None else ", headless")
+            + (
+                f", screen={screen}, view={view}"
+                if screen is not None else ", headless"
+            )
         )
         with tempfile.TemporaryDirectory(prefix="game2-v2-training-") as temporary:
             root = Path(temporary)
@@ -507,6 +517,7 @@ class TrainingRun:
                     episode_limit=episode_limit,
                     directory=directory,
                     screen_control=screen_control,
+                    view=view,
                 )
                 if not passed:
                     self._write(f"TRAINING SET {manifest.training_set_level}: FAIL")
@@ -525,6 +536,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-episodes-per-map", type=int, default=50)
     parser.add_argument("--episode-limit", type=int, default=DEFAULT_EPISODE_LIMIT)
     parser.add_argument("--screen", type=int)
+    parser.add_argument("--view", choices=("screen", "vision"), default="screen")
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fresh", action="store_true")
@@ -546,6 +558,7 @@ def main(argv=None) -> int:
             episode_limit=args.episode_limit,
             screen=args.screen,
             screen_server=args.screen_server,
+            view=args.view,
         )
     except KeyboardInterrupt:
         print("Training interrupted", file=sys.stderr, flush=True)

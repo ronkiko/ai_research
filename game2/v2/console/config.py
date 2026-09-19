@@ -319,6 +319,7 @@ class ScreenSourceManifest:
     screen: Endpoint
     physics_hz: int
     episode_limit: int | None
+    view: str = "screen"
 
     def __post_init__(self) -> None:
         if type(self.session_id) is not str or not self.session_id:
@@ -327,6 +328,8 @@ class ScreenSourceManifest:
             raise ValueError("world_file must be non-empty")
         if type(self.physics_hz) is not int or self.physics_hz <= 0:
             raise ValueError("physics_hz must be a positive integer")
+        if self.view not in {"screen", "vision"}:
+            raise ValueError("Screen source view must be screen or vision")
         if self.episode_limit is not None and (
             type(self.episode_limit) is not int or self.episode_limit <= 0
         ):
@@ -340,6 +343,7 @@ class ScreenSourceManifest:
             "screen": self.screen.as_dict(),
             "physics_hz": self.physics_hz,
             "episode_limit": self.episode_limit,
+            "view": self.view,
         }
 
     @classmethod
@@ -347,7 +351,7 @@ class ScreenSourceManifest:
         session_id = _manifest_session(
             data, {
                 "session_id", "engine_state", "world_file", "screen",
-                "physics_hz", "episode_limit",
+                "physics_hz", "episode_limit", "view",
             }
         )
         return cls(
@@ -357,6 +361,7 @@ class ScreenSourceManifest:
             cast(Endpoint, _manifest_endpoint(data["screen"])),
             data["physics_hz"],
             data["episode_limit"],
+            data["view"],
         )
 
     @classmethod

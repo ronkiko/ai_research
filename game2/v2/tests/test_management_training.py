@@ -174,6 +174,14 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(modules.count("game2.v2.training.model_runtime"), 2)
             self.assertEqual(modules.count("game2.v2.player.learned.main"), 2)
             self.assertIn("headless", output.getvalue())
+            console_commands = [
+                command for command in factory.commands
+                if command[command.index("-m") + 1] == "game2.v2.console.main"
+            ]
+            self.assertTrue(all(
+                command[command.index("--screen-view") + 1] == "screen"
+                for command in console_commands
+            ))
 
 
     def test_fresh_resets_known_checkpoints_instead_of_refusing_to_start(self):
@@ -207,6 +215,60 @@ class ManagementTrainingTests(unittest.TestCase):
                 if command[command.index("-m") + 1] == "game2.v2.training.model_runtime"
             ]
             self.assertIn("--fresh", model_commands[0])
+
+    def test_vision_view_is_forwarded_only_to_console_screen_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            events = []
+            factory = _Factory(with_screen=True)
+
+            def screen_factory(screen, discovery_path):
+                return _ScreenControl(screen, discovery_path, events)
+
+            run = TrainingRun(
+                popen_factory=factory,
+                sleeper=lambda _seconds: None,
+                output=io.StringIO(),
+                screen_control_factory=screen_factory,
+            )
+            self.assertEqual(run.train(
+                set_path=self._manifest(directory),
+                checkpoint_dir=Path(directory) / "checkpoints",
+                max_episodes=1,
+                fresh=True,
+                episode_limit=10,
+                screen=1,
+                screen_server=Path(directory) / "screen-server.json",
+                view="vision",
+            ), 0)
+            console_commands = [
+                command for command in factory.commands
+                if command[command.index("-m") + 1] == "game2.v2.console.main"
+            ]
+            self.assertTrue(console_commands)
+            self.assertTrue(all(
+                command[command.index("--screen-view") + 1] == "vision"
+                for command in console_commands
+            ))
+            for command in factory.commands:
+                if command[command.index("-m") + 1] != "game2.v2.console.main":
+                    self.assertNotIn("--screen-view", command)
+
+    def test_vision_view_requires_screen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = TrainingRun(
+                popen_factory=_Factory(),
+                sleeper=lambda _seconds: None,
+                output=io.StringIO(),
+            )
+            with self.assertRaises(ValueError):
+                run.train(
+                    set_path=self._manifest(directory),
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    max_episodes=1,
+                    fresh=True,
+                    episode_limit=10,
+                    view="vision",
+                )
 
     def test_screen_is_optional_management_binding_not_child_argument(self):
         with tempfile.TemporaryDirectory() as directory:
