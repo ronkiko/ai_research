@@ -30,8 +30,8 @@ class VisualDecision:
 
 
 def _self_bounds(grid: VisionGrid) -> tuple[int, int, int, int] | None:
-    left = grid.columns
-    top = grid.rows
+    left = grid.metadata_columns
+    top = grid.metadata_rows
     right = bottom = -1
     for index, value in enumerate(grid.metadata):
         if not value & META_SELF:
