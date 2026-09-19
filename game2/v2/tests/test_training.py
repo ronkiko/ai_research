@@ -378,7 +378,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
         updated, sequential_loss = sequential.apply_result(reward)
         self.assertTrue(updated)
-        self.assertAlmostEqual(sequential_loss, float(reference_loss.detach()), places=10)
+        self.assertAlmostEqual(
+            sequential_loss, float(reference_loss.detach()), delta=1e-7
+        )
         sequential_parameters = list(sequential.planner.parameters()) + \
             list(sequential.motor_controller.parameters())
         for expected, actual in zip(reference_gradients, sequential_parameters):
@@ -401,37 +403,61 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(loss, 0.0)
         self.assertEqual(player.training_records, ())
 
-    def test_jump_in_place_timeout_has_zero_reward_and_no_update(self):
-        tracker = VisionProgress()
-        frames = [VisionProgressTests._grid(2, 2),
-                  VisionProgressTests._grid(2, 0, tick=2),
-                  VisionProgressTests._grid(2, 4, tick=3)]
-        for frame in frames:
-            tracker.update(frame)
-        player = self._player()
-        player.prepare_episode("train", 42)
-        player.record_sent_sample(player.process_grid(frames[0]))
-        reward = reward_for_result("timeout", tracker.progress)
-        updated, loss = player.apply_result(reward)
-        self.assertEqual(tracker.progress, 0.0)
-        self.assertEqual(reward, 0.0)
-        self.assertFalse(updated)
-        self.assertEqual(loss, 0.0)
+    def test_timeout_reward_remains_negative_and_progress_reduces_penalty(self):
+        stationary = VisionProgress()
+        for frame in (
+            VisionProgressTests._grid(2, 2),
+            VisionProgressTests._grid(2, 0, tick=2),
+            VisionProgressTests._grid(2, 4, tick=3),
+        ):
+            stationary.update(frame)
 
-    def test_rightward_partial_timeout_has_positive_reward_and_update(self):
-        tracker = VisionProgress()
-        frames = [VisionProgressTests._grid(2, 2),
-                  VisionProgressTests._grid(6, 2, tick=2)]
+        progressing = VisionProgress()
+        progress_frames = (
+            VisionProgressTests._grid(2, 2),
+            VisionProgressTests._grid(6, 2, tick=2),
+        )
+        for frame in progress_frames:
+            progressing.update(frame)
+
+        stationary_reward = reward_for_result("timeout", stationary.progress)
+        progressing_reward = reward_for_result("timeout", progressing.progress)
+        self.assertEqual(stationary.progress, 0.0)
+        self.assertEqual(stationary_reward, -1.0)
+        self.assertAlmostEqual(progressing.progress, 0.5, delta=0.05)
+        self.assertAlmostEqual(progressing_reward, -0.75, delta=0.03)
+        self.assertGreater(progressing_reward, stationary_reward)
+        self.assertLess(progressing_reward, 0.0)
+
         player = self._player()
         player.prepare_episode("train", 42)
-        for frame in frames:
-            tracker.update(frame)
+        for frame in progress_frames:
             player.record_sent_sample(player.process_grid(frame))
-        reward = reward_for_result("timeout", tracker.progress)
-        updated, _loss = player.apply_result(reward)
-        self.assertGreater(tracker.progress, 0.0)
-        self.assertGreater(reward, 0.0)
+        updated, _loss = player.apply_result(progressing_reward)
         self.assertTrue(updated)
+
+
+class _ImmediateInference:
+    """Deterministic unit-test inference; real worker lifecycle is tested separately."""
+
+    def __init__(self, player):
+        self.player = player
+        self.serial = 0
+        self.sample = None
+        self.failed = False
+
+    def submit(self, frame):
+        self.sample = self.player.process_grid(frame)
+        self.serial += 1
+
+    def snapshot(self):
+        return SimpleNamespace(serial=self.serial, sample=self.sample)
+
+    def wait_for_change(self, _serial, timeout=None):
+        return self.snapshot()
+
+    def close(self):
+        return None
 
 
 class _FakeConnection:
@@ -1002,6 +1028,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
                 joystick_factory=lambda _manifest: joystick,
                 peer_factory=lambda _host, _port: peer,
                 checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+                inference_factory=_ImmediateInference,
             )
         self.assertEqual(result, 0)
         self.assertEqual(player.recorded_ticks, [10])

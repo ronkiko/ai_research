@@ -144,15 +144,16 @@ class SharedWorldRuntimeTests(unittest.TestCase):
         renderer = VisionGridRenderer(world)
         grid_a = renderer.render(state)
         grid_b = renderer.render(state, self_actor_id="actor-B")
-        row = int(world.spawn.y // world.tile_size)
-        a_column = int(world.spawn.x // world.tile_size)
-        b_column = int((world.spawn.x + 128) // world.tile_size)
-        a_cell = row * world.columns + a_column
-        b_cell = row * world.columns + b_column
-        self.assertEqual(grid_a.metadata[a_cell], META_SELF)
-        self.assertEqual(grid_a.metadata[b_cell], META_OTHER_ACTOR)
-        self.assertEqual(grid_b.metadata[a_cell], META_OTHER_ACTOR)
-        self.assertEqual(grid_b.metadata[b_cell], META_SELF)
+        cell_size = grid_a.sensor_cell_size
+        row = int(world.spawn.y // cell_size)
+        a_column = int(world.spawn.x // cell_size)
+        b_column = int((world.spawn.x + 128) // cell_size)
+        a_cell = row * grid_a.metadata_columns + a_column
+        b_cell = row * grid_a.metadata_columns + b_column
+        self.assertTrue(grid_a.metadata[a_cell] & META_SELF)
+        self.assertTrue(grid_a.metadata[b_cell] & META_OTHER_ACTOR)
+        self.assertTrue(grid_b.metadata[a_cell] & META_OTHER_ACTOR)
+        self.assertTrue(grid_b.metadata[b_cell] & META_SELF)
 
 
 if __name__ == "__main__":

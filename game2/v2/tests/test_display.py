@@ -445,7 +445,7 @@ class ScreenTelemetryTests(unittest.TestCase):
         manifest = ScreenSourceManifest(
             "session",
             Endpoint("127.0.0.1", 1),
-            "unused-map",
+            str(PIT),
             Endpoint("127.0.0.1", 2),
             120,
             1200,

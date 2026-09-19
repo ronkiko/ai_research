@@ -318,6 +318,7 @@ class ModelRuntimeTests(unittest.TestCase):
             def __init__(self, _manifest):
                 self.sent = []
                 self.sequence = 0
+                self.acks = []
 
             def connect(self):
                 return None
@@ -325,7 +326,15 @@ class ModelRuntimeTests(unittest.TestCase):
             def send_state(self, right, jump):
                 self.sequence += 1
                 self.sent.append((right, jump))
+                self.acks.append({
+                    "sequence": self.sequence,
+                    "status": "accepted",
+                })
                 return SimpleNamespace(sequence=self.sequence)
+
+            def drain_acknowledgements(self):
+                result, self.acks = self.acks, []
+                return result
 
             def close(self):
                 return None
@@ -421,9 +430,13 @@ class TrainingAckBoundaryTests(unittest.TestCase):
 
         def __init__(self, frame):
             self.frame = frame
+            self.pre_lifecycle = True
 
         @property
         def latest(self):
+            if self.pre_lifecycle:
+                self.pre_lifecycle = False
+                return TrainingAckBoundaryTests._vision_grid(0)
             return self.frame
 
     class Model:

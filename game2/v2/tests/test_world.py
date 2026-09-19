@@ -98,12 +98,16 @@ class WorldLoaderTests(unittest.TestCase):
         self.assertEqual(hazard.y % 8, 0)
         self.assertEqual(hazard.height % 8, 0)
 
-    def test_goal_rule_is_pure_and_requires_live_grounded_avatar(self):
+    def test_goal_rule_requires_live_overlap_but_not_grounded_state(self):
         world = load_world(V2_MAP)
         geometry = (world.goal.x, world.goal.y, 64, 64)
         self.assertTrue(world.completed(*geometry, grounded=True, alive=True))
-        self.assertFalse(world.completed(*geometry, grounded=False, alive=True))
+        self.assertTrue(world.completed(*geometry, grounded=False, alive=True))
         self.assertFalse(world.completed(*geometry, grounded=True, alive=False))
+        self.assertFalse(world.completed(
+            world.goal.x - 64, world.goal.y, 64, 64,
+            grounded=True, alive=True,
+        ))
 
     def test_goal_is_last_two_cells_without_changing_terrain_or_spawn(self):
         source = json.loads(V2_MAP.read_text(encoding="utf-8"))
