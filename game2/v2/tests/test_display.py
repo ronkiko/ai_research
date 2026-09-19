@@ -17,9 +17,9 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
-    ACTION_TICK_COLOR, MAJOR_GRID_COLOR, MINOR_GRID_COLOR,
-    REWARD_NEGATIVE_COLOR, REWARD_POSITIVE_COLOR, REWARD_ZERO_COLOR,
-    SELF_CENTER_COLOR, TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
+    ACTION_TICK_COLOR, ADVANTAGE_NEGATIVE_COLOR, ADVANTAGE_POSITIVE_COLOR,
+    MAJOR_GRID_COLOR, MINOR_GRID_COLOR, SELF_CENTER_COLOR,
+    TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
@@ -436,6 +436,7 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 {"e": 1, "t": 9, "x": 96, "y": 384},
                 {"e": 1, "k": "a", "t": 10, "x": 128, "y": 384, "a": "R"},
                 {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "a": "RJ"},
+                {"e": 1, "k": "a", "t": 30, "x": 256, "y": 384, "a": "R"},
                 {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "a": "-"},
             ]
             trajectory.write_text(
@@ -462,9 +463,18 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 self.assertNotIn(9, preview._action_ticks)
 
                 action_rows = [
-                    {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "rw": -0.25},
-                    {"e": 1, "k": "a", "t": 30, "x": 256, "y": 384, "rw": 0.031},
-                    {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "rw": 0.0},
+                    {
+                        "e": 1, "k": "a", "t": 20, "x": 192, "y": 384,
+                        "rw": 0.75, "adv": -0.25,
+                    },
+                    {
+                        "e": 1, "k": "a", "t": 30, "x": 256, "y": 384,
+                        "rw": -0.75, "adv": 0.031,
+                    },
+                    {
+                        "e": 1, "k": "a", "t": 40, "x": 320, "y": 448,
+                        "rw": 1.0, "adv": 0.0,
+                    },
                 ]
                 with trajectory.open("a", encoding="utf-8") as handle:
                     for row in action_rows:
@@ -472,17 +482,19 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 self.assertTrue(preview.refresh_trajectory())
                 preview.render(grid)
                 self.assertEqual(
-                    tuple(surface.get_at((192, 384)))[:3], REWARD_NEGATIVE_COLOR
+                    tuple(surface.get_at((192, 384)))[:3], ADVANTAGE_NEGATIVE_COLOR
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((256, 384)))[:3], REWARD_POSITIVE_COLOR
+                    tuple(surface.get_at((256, 384)))[:3], ADVANTAGE_POSITIVE_COLOR
                 )
                 self.assertEqual(
                     tuple(surface.get_at((320, 448)))[:3], ACTION_TICK_COLOR
                 )
                 self.assertNotIn(40, preview._rated_ticks)
-                self.assertEqual(preview._reward_visual(0.031)[0], "+0.031")
-                self.assertEqual(preview._reward_visual(-1.0)[0], "-1.000")
+                self.assertEqual(preview._advantage_visual(0.031)[0], "+0.031")
+                self.assertEqual(preview._advantage_visual(-1.0)[0], "-1.000")
+                with self.assertRaises(ValueError):
+                    preview._advantage_visual(0.0)
 
                 with trajectory.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"e": 2, "m": "train"}) + "\n")
@@ -498,10 +510,10 @@ class VisionPreviewRendererTests(unittest.TestCase):
                     tuple(surface.get_at((128, 448)))[:3], ACTION_TICK_COLOR
                 )
                 self.assertNotEqual(
-                    tuple(surface.get_at((192, 384)))[:3], REWARD_NEGATIVE_COLOR
+                    tuple(surface.get_at((192, 384)))[:3], ADVANTAGE_NEGATIVE_COLOR
                 )
                 self.assertNotEqual(
-                    tuple(surface.get_at((256, 384)))[:3], REWARD_POSITIVE_COLOR
+                    tuple(surface.get_at((256, 384)))[:3], ADVANTAGE_POSITIVE_COLOR
                 )
             finally:
                 preview.close()

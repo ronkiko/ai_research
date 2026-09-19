@@ -30,10 +30,9 @@ SELF_CENTER_COLOR = (255, 226, 72)
 OTHER_CENTER_COLOR = (255, 255, 255)
 TRAIL_COLOR = (255, 226, 72)
 ACTION_TICK_COLOR = TRAIL_COLOR
-REWARD_POSITIVE_COLOR = (72, 220, 92)
-REWARD_NEGATIVE_COLOR = (240, 72, 72)
-REWARD_ZERO_COLOR = (246, 236, 178)
-REWARD_OUTLINE_COLOR = (5, 9, 14)
+ADVANTAGE_POSITIVE_COLOR = (72, 220, 92)
+ADVANTAGE_NEGATIVE_COLOR = (240, 72, 72)
+ADVANTAGE_OUTLINE_COLOR = (5, 9, 14)
 MAJOR_GRID_COLOR = (228, 234, 238)
 MINOR_GRID_COLOR = (124, 136, 148)
 RULER_BACKGROUND = (5, 9, 14, 190)
@@ -65,7 +64,7 @@ class VisionPreviewRenderer:
         self._static_surface = None
         self._font = None
         self._terminal_font = None
-        self._reward_font = None
+        self._advantage_font = None
         self._trail: list[tuple[int, int]] = []
         self._trail_epoch: int | None = None
         self._trail_tick = -1
@@ -171,14 +170,14 @@ class VisionPreviewRenderer:
             self._font = pygame.font.Font(None, 18)
         return self._font
 
-    def _font_for_reward(self):
+    def _font_for_advantage(self):
         pygame = self.pygame
         if not pygame.font.get_init():
             pygame.font.init()
-        if self._reward_font is None:
-            self._reward_font = pygame.font.Font(None, 20)
-            self._reward_font.set_bold(True)
-        return self._reward_font
+        if self._advantage_font is None:
+            self._advantage_font = pygame.font.Font(None, 20)
+            self._advantage_font.set_bold(True)
+        return self._advantage_font
 
     @staticmethod
     def _trajectory_point(payload: dict) -> tuple[int, tuple[int, int]] | None:
@@ -221,19 +220,19 @@ class VisionPreviewRenderer:
         if point is None:
             return False
         tick, position = point
-        if "rw" not in payload:
+        if "adv" not in payload:
             changed = self._action_ticks.get(tick) != position
             self._action_ticks[tick] = position
             return changed
-        reward = payload.get("rw")
-        if type(reward) not in (int, float) or not math.isfinite(float(reward)):
+        advantage = payload.get("adv")
+        if type(advantage) not in (int, float) or not math.isfinite(float(advantage)):
             return False
-        if abs(float(reward)) <= 1e-12:
-            return False
+        if abs(float(advantage)) <= 1e-12:
+            return self._rated_ticks.pop(tick, None) is not None
         if episode_id != self._rated_episode:
             self._rated_episode = episode_id
             self._rated_ticks.clear()
-        item = (position, float(reward))
+        item = (position, float(advantage))
         changed = self._rated_ticks.get(tick) != item
         self._rated_ticks[tick] = item
         return changed
@@ -278,12 +277,12 @@ class VisionPreviewRenderer:
         return changed
 
     @staticmethod
-    def _reward_visual(reward: float) -> tuple[str, tuple[int, int, int]]:
-        if reward > 0:
-            return f"+{reward:.3f}", REWARD_POSITIVE_COLOR
-        if reward < 0:
-            return f"{reward:.3f}", REWARD_NEGATIVE_COLOR
-        return "0.000", REWARD_ZERO_COLOR
+    def _advantage_visual(advantage: float) -> tuple[str, tuple[int, int, int]]:
+        if advantage > 0:
+            return f"+{advantage:.3f}", ADVANTAGE_POSITIVE_COLOR
+        if advantage < 0:
+            return f"{advantage:.3f}", ADVANTAGE_NEGATIVE_COLOR
+        raise ValueError("zero advantage has no rated visualization")
 
     def _draw_trajectory_annotations(self, surface) -> None:
         pygame = self.pygame
@@ -294,13 +293,13 @@ class VisionPreviewRenderer:
             )
             if not rated_here:
                 pygame.draw.circle(surface, ACTION_TICK_COLOR, position, 2)
-        font = self._font_for_reward()
+        font = self._font_for_advantage()
         occupied = []
-        for _tick, (position, reward) in sorted(self._rated_ticks.items()):
-            label, color = self._reward_visual(reward)
+        for _tick, (position, advantage) in sorted(self._rated_ticks.items()):
+            label, color = self._advantage_visual(advantage)
             pygame.draw.circle(surface, color, position, 3)
             glyph = font.render(label, True, color)
-            outline = font.render(label, True, REWARD_OUTLINE_COLOR)
+            outline = font.render(label, True, ADVANTAGE_OUTLINE_COLOR)
             rect = glyph.get_rect(
                 topleft=(position[0] + 6, position[1] - 8 - glyph.get_height())
             )
@@ -472,7 +471,7 @@ class VisionPreviewRenderer:
         self._static_surface = None
         self._font = None
         self._terminal_font = None
-        self._reward_font = None
+        self._advantage_font = None
         self._trail.clear()
         self._trail_epoch = None
         self._trail_tick = -1
@@ -482,7 +481,7 @@ class VisionPreviewRenderer:
 
 
 __all__ = [
-    "ACTION_TICK_COLOR", "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
-    "REWARD_NEGATIVE_COLOR", "REWARD_POSITIVE_COLOR", "REWARD_ZERO_COLOR",
+    "ACTION_TICK_COLOR", "ADVANTAGE_NEGATIVE_COLOR", "ADVANTAGE_POSITIVE_COLOR",
+    "MAJOR_GRID_COLOR", "MINOR_GRID_COLOR", "PHYSICS_COLORS",
     "TERMINAL_LABELS", "TRAIL_COLOR", "VisionPreviewRenderer",
 ]

@@ -129,8 +129,8 @@ class PPOFlightRecorderTests(unittest.TestCase):
                 "rw": 0.0,
                 "v": -0.10,
                 "nv": -0.08,
-                "gae": 0.0,
-                "adv": 0.0,
+                "gae": -0.4,
+                "adv": -0.5,
                 "ret": -0.08,
                 "lp": -1.0,
                 "nlp": -0.9,
@@ -155,6 +155,22 @@ class PPOFlightRecorderTests(unittest.TestCase):
                 for line in path.read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(rows, [{
+                "a": "R",
+                "adv": -0.5,
+                "e": 7,
+                "gae": -0.4,
+                "k": "a",
+                "lp": -1,
+                "nlp": -0.9,
+                "nv": -0.08,
+                "ratio": 1.1,
+                "ret": -0.08,
+                "rw": 0,
+                "t": 400,
+                "v": -0.1,
+                "x": 350,
+                "y": 420,
+            }, {
                 "a": "RJ",
                 "adv": 0.61,
                 "e": 7,

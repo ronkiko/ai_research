@@ -207,12 +207,6 @@ class ModelRuntime:
         self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
         with self.trajectory_log.open("a", encoding="utf-8") as handle:
             for diagnostic in diagnostics:
-                reward = diagnostic.get("rw")
-                if (
-                    type(reward) not in (int, float)
-                    or abs(float(reward)) <= 1e-12
-                ):
-                    continue
                 payload = {"e": episode_id, "k": "a"}
                 for key, value in diagnostic.items():
                     payload[key] = (
