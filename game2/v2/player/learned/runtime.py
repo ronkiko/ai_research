@@ -126,7 +126,6 @@ class LearnedPlayer:
             action_tensor = (random_values < probabilities).to(dtype=logits.dtype)
             log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
                 logits, action_tensor, reduction="none").mean()
-            self._log_probabilities.append(log_prob)
         else:
             with torch.no_grad():
                 planner_output = self.planner(vision)[0]
@@ -173,6 +172,16 @@ class LearnedPlayer:
         self.latest_decision = decision
         self.latest_sample = sample
         return sample
+
+    def record_sent_sample(self, sample: DecisionSample) -> None:
+        """Record a train sample only after its action reached Joystick."""
+        if self._episode_mode != "train":
+            raise ValueError("sent samples can be recorded only in train mode")
+        if not isinstance(sample, DecisionSample):
+            raise TypeError("record_sent_sample requires a DecisionSample")
+        if sample.log_prob is None:
+            raise ValueError("train DecisionSample has no log probability")
+        self._log_probabilities.append(sample.log_prob)
 
     def apply_result(self, reward: float) -> tuple[bool, float]:
         """Apply one terminal episodic REINFORCE reward in Train mode."""

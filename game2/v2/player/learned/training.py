@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import socket
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Callable
 
@@ -99,25 +100,42 @@ class TrainingPeer:
 TrainingConnection = TrainingPeer
 
 
-def _ack_totals(joystick) -> tuple[int, int, int]:
-    return (int(getattr(joystick, "accepted_count", 0)),
-            int(getattr(joystick, "rejected_count", 0)),
-            int(getattr(joystick, "duplicate_count", 0)))
+def _drain_acknowledgements(joystick, statuses: dict[int, list[str]]) -> None:
+    drain = getattr(joystick, "drain_acknowledgements", None)
+    if not callable(drain):
+        return
+    acknowledgements = drain()
+    if not isinstance(acknowledgements, Iterable):
+        return
+    for acknowledgement in acknowledgements:
+        if not isinstance(acknowledgement, dict):
+            continue
+        sequence = acknowledgement.get("sequence")
+        status = acknowledgement.get("status")
+        if type(sequence) is int and status in {"accepted", "rejected", "duplicate"}:
+            statuses.setdefault(sequence, []).append(status)
 
 
-def _settle_acks(joystick, expected: int, before: tuple[int, int, int],
+def _settle_acks(joystick, sequences: set[int], statuses: dict[int, list[str]],
                  timeout: float, sleeper: Callable[[float], None]) -> tuple[int, int, bool]:
     deadline = time.monotonic() + timeout
     while True:
-        totals = _ack_totals(joystick)
-        received = sum(current - old for current, old in zip(totals, before))
-        if received >= expected or time.monotonic() >= deadline:
+        _drain_acknowledgements(joystick, statuses)
+        if sequences.issubset(statuses) or time.monotonic() >= deadline:
             break
         sleeper(0.001)
-    totals = _ack_totals(joystick)
-    accepted = max(0, totals[0] - before[0])
-    rejected = max(0, totals[1] - before[1]) + max(0, totals[2] - before[2])
-    complete = accepted + rejected >= expected
+    accepted = 0
+    rejected = 0
+    for sequence in sequences:
+        sequence_statuses = statuses.get(sequence, ())
+        if "accepted" in sequence_statuses:
+            accepted += 1
+        if any(status in {"rejected", "duplicate"} for status in sequence_statuses):
+            rejected += 1
+    complete = all(
+        any(status in {"accepted", "rejected", "duplicate"} for status in statuses.get(sequence, ()))
+        for sequence in sequences
+    )
     return accepted, rejected, complete
 
 
@@ -129,14 +147,16 @@ def _checkpoint_paths(checkpoint_dir: str | Path) -> tuple[Path, Path]:
 def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id: int,
                  *, first_lifecycle: bool, vision, joystick, action_hz: int,
                  sleeper: Callable[[float], None], ack_settle_timeout: float,
-                 on_started: Callable[[dict], None]) -> tuple[dict, bool]:
+                 on_started: Callable[[dict], None]) -> tuple[dict, bool, bool]:
     connection.clear_terminal_events()
     connection.clear_acknowledgements()
-    drain_acknowledgements = getattr(joystick, "drain_acknowledgements", None)
-    if callable(drain_acknowledgements):
-        drain_acknowledgements()
-    before_acks = _ack_totals(joystick)
+    ack_statuses: dict[int, list[str]] = {}
+    _drain_acknowledgements(joystick, ack_statuses)
     before_sequence = int(getattr(joystick, "sequence", 0))
+    pre_lifecycle_frame = vision.latest
+    pre_lifecycle_world_tick = getattr(pre_lifecycle_frame, "world_tick", -1)
+    if type(pre_lifecycle_world_tick) is not int:
+        pre_lifecycle_world_tick = -1
     try:
         accepted_lifecycle = (connection.request_start() if first_lifecycle
                               else connection.request_respawn())
@@ -147,16 +167,18 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         result = "timeout"
         finished_tick = 0
         finished = episode_finished_message(episode_id, 0, 0, result, False, 0, 0)
-        return finished, False
+        return finished, False, False
 
     started_tick: int | None = None
-    latest_frame_tick: int | None = None
+    latest_frame_tick = pre_lifecycle_world_tick
     latest_terminal: dict | None = None
     next_send = time.monotonic()
     send_period = 1 / action_hz
     dirty = False
+    sent_sequences: set[int] = set()
 
     while latest_terminal is None:
+        _drain_acknowledgements(joystick, ack_statuses)
         if connection.failed or vision.failed or joystick.failed:
             dirty = True
             break
@@ -164,7 +186,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         if latest_terminal is not None:
             break
         frame = vision.latest
-        if frame is not None and frame.world_tick != latest_frame_tick:
+        if frame is not None and frame.world_tick > latest_frame_tick:
             latest_frame_tick = frame.world_tick
             has_self = self_center_x(frame) is not None
             try:
@@ -180,8 +202,16 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
             if started_tick is not None and sample is not None:
                 now = time.monotonic()
                 if now >= next_send:
-                    joystick.send_state(sample.action_decision.right,
-                                        sample.action_decision.jump)
+                    state = joystick.send_state(sample.action_decision.right,
+                                                sample.action_decision.jump)
+                    sequence = getattr(state, "sequence", None)
+                    if type(sequence) is not int:
+                        sequence = int(getattr(joystick, "sequence", before_sequence +
+                                              len(sent_sequences) + 1))
+                    sent_sequences.add(sequence)
+                    if player.episode_mode == "train":
+                        player.record_sent_sample(sample)
+                    _drain_acknowledgements(joystick, ack_statuses)
                     next_send += send_period
                     if next_send < now:
                         next_send = now
@@ -189,10 +219,9 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
 
     terminal = latest_terminal
     if terminal is None:
-        terminal = {"result": "timeout", "world_tick": max(latest_frame_tick or 0, 0)}
+        terminal = {"result": "timeout", "world_tick": max(latest_frame_tick, 0)}
     accepted, rejected, complete = _settle_acks(
-        joystick, max(0, int(getattr(joystick, "sequence", 0)) - before_sequence),
-        before_acks, ack_settle_timeout, sleeper)
+        joystick, sent_sequences, ack_statuses, ack_settle_timeout, sleeper)
     if rejected or not complete or started_tick is None or connection.failed \
             or vision.failed or joystick.failed:
         dirty = True
@@ -203,7 +232,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     finished = episode_finished_message(
         episode_id, started_tick, finish_tick, terminal["result"],
         not dirty, accepted, rejected)
-    return finished, not dirty
+    return finished, not dirty, True
 
 
 def run_training_player(connection: PlayerConnection, player: LearnedPlayer, trainer_host: str,
@@ -221,10 +250,12 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
     vision = vision_factory(manifest)
     joystick = joystick_factory(manifest)
     peer = peer_factory(trainer_host, trainer_port)
-    first_lifecycle = True
+    actor_started = False
     prepared: dict | None = None
     awaiting_update: int | None = None
     awaiting_mode: str | None = None
+    last_episode_completed = False
+    last_completed_mode: str | None = None
     try:
         vision.connect()
         joystick.connect()
@@ -239,6 +270,8 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                 if prepared is not None or awaiting_update is not None:
                     raise ProtocolError("PREPARE arrived before the prior episode completed")
                 prepared = message
+                last_episode_completed = False
+                last_completed_mode = None
                 connection.clear_terminal_events()
                 connection.clear_acknowledgements()
                 player.prepare_episode(message["mode"], message["seed"])
@@ -247,15 +280,18 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                 if prepared is None or message["episode_id"] != prepared["episode_id"]:
                     raise ProtocolError("BEGIN_EPISODE does not match PREPARE")
                 episode_id = message["episode_id"]
-                finished, trainable = _run_episode(
-                    connection, player, episode_id, first_lifecycle=first_lifecycle,
+                finished, trainable, lifecycle_accepted = _run_episode(
+                    connection, player, episode_id, first_lifecycle=not actor_started,
                     vision=vision, joystick=joystick, action_hz=action_hz,
                     sleeper=sleeper, ack_settle_timeout=ack_settle_timeout,
                     on_started=peer.send)
                 peer.send(finished)
-                first_lifecycle = False
+                if lifecycle_accepted:
+                    actor_started = True
                 awaiting_mode = prepared["mode"]
                 awaiting_update = episode_id if awaiting_mode == TRAIN and trainable else None
+                last_episode_completed = True
+                last_completed_mode = awaiting_mode
                 prepared = None
                 continue
             if message_type == APPLY_RESULT:
@@ -286,8 +322,13 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
                 raise ProtocolError("unexpected Training message direction or state")
             raise ProtocolError("unknown Training message")
     except EOFError:
-        # Evaluate has no SAVE mutation; the Trainer closes after its summary.
-        return 0
+        clean_evaluate_eof = (
+            prepared is None and awaiting_update is None and last_episode_completed
+            and last_completed_mode == EVALUATE
+        )
+        if clean_evaluate_eof:
+            return 0
+        raise
     finally:
         peer.close()
         vision.close()

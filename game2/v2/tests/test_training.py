@@ -16,6 +16,7 @@ from game2.v2.contracts.training import (
     BEGIN_EPISODE,
     EPISODE_FINISHED,
     EPISODE_STARTED,
+    EVALUATE,
     PREPARE,
     READY,
     SAVE,
@@ -36,7 +37,7 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer
-from game2.v2.player.learned.training import run_training_player
+from game2.v2.player.learned.training import _settle_acks, run_training_player
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.training.main import Trainer, reward_for_result
 
@@ -115,17 +116,23 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         second = self._player()
         first.prepare_episode("train", 42)
         second.prepare_episode("train", 42)
-        actions_first = [first.process_frame(_frame(tick)).action_decision
-                         for tick in (1, 2, 3)]
-        actions_second = [second.process_frame(_frame(tick)).action_decision
-                          for tick in (1, 2, 3)]
+        actions_first = []
+        actions_second = []
+        for tick in (1, 2, 3):
+            sample_first = first.process_frame(_frame(tick))
+            sample_second = second.process_frame(_frame(tick))
+            actions_first.append(sample_first.action_decision)
+            actions_second.append(sample_second.action_decision)
+            first.record_sent_sample(sample_first)
+            second.record_sent_sample(sample_second)
         self.assertEqual(actions_first, actions_second)
         self.assertEqual(len(first.log_probabilities), 3)
 
     def test_reinforce_updates_planner_and_motor_but_evaluate_is_frozen(self):
         player = self._player()
         player.prepare_episode("train", 42)
-        player.process_frame(_frame(1))
+        sample = player.process_frame(_frame(1))
+        player.record_sent_sample(sample)
         planner_before = [parameter.detach().clone() for parameter in player.planner.parameters()]
         motor_before = [parameter.detach().clone() for parameter in player.motor_controller.parameters()]
         updated, loss = player.apply_result(-1.0)
@@ -148,7 +155,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
 
 class _FakeConnection:
-    def __init__(self, manifest, vision):
+    def __init__(self, manifest, vision, *, start_results=None):
         self.manifest = manifest
         self.vision = vision
         self.failed = False
@@ -156,6 +163,7 @@ class _FakeConnection:
         self.terminal = None
         self.lifecycle = []
         self.episode = 0
+        self.start_results = list(start_results or [])
 
     def clear_terminal_events(self):
         self.terminal = None
@@ -166,7 +174,7 @@ class _FakeConnection:
     def request_start(self):
         self.lifecycle.append("start")
         self.episode += 1
-        return True
+        return self.start_results.pop(0) if self.start_results else True
 
     def request_respawn(self):
         self.lifecycle.append("respawn")
@@ -208,20 +216,33 @@ class _FakeJoystick:
         self.accepted_count = 0
         self.rejected_count = 0
         self.duplicate_count = 0
+        self.acknowledgements = []
+        self.sent = []
 
     def connect(self):
         self.connected = True
 
     def send_state(self, _right, _jump):
         self.sequence += 1
+        self.sent.append(self.sequence)
         if self.reject:
             self.rejected_count += 1
+            status = "rejected"
         elif not self.drop_ack:
             self.accepted_count += 1
+            status = "accepted"
+        else:
+            status = None
+        if status is not None:
+            self.acknowledgements.append({"sequence": self.sequence, "status": status})
         self.connection.terminal = {
             "version": 1, "type": "player_event", "event": "terminal",
             "world_tick": self.connection.episode * 10 + 2, "result": "dead",
         }
+
+    def drain_acknowledgements(self):
+        acknowledgements, self.acknowledgements = self.acknowledgements, []
+        return acknowledgements
 
     def close(self):
         self.connected = False
@@ -239,6 +260,8 @@ class _FakePeer:
         self.sent.append(message)
 
     def receive(self):
+        if not self.messages:
+            raise EOFError("fake Trainer closed")
         return self.messages.pop(0)
 
     def close(self):
@@ -278,6 +301,180 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         self.assertEqual(len([message for message in peer.sent if message["type"] == UPDATE_RESULT]), 2)
         self.assertEqual(peer.sent[-1]["type"], SAVED)
 
+    def test_stale_terminal_vision_cannot_start_respawn_episode(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            apply_result_message(1, -1),
+            prepare_message(2, "train", 101), begin_episode_message(2),
+            apply_result_message(2, -1), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None)
+
+        class StaleVision(_FakeVision):
+            def __init__(self, owner):
+                super().__init__(owner)
+                self.stale_respawn_frame = True
+
+            @property
+            def latest(self):
+                if self.connection.episode == 0:
+                    return _frame(0)
+                if self.connection.episode == 1:
+                    return _frame(100)
+                if self.stale_respawn_frame:
+                    self.stale_respawn_frame = False
+                    return _frame(100)
+                return _frame(105)
+
+        class StaleJoystick(_FakeJoystick):
+            def send_state(self, right, jump):
+                super().send_state(right, jump)
+                self.connection.terminal["world_tick"] = 102 if self.connection.episode == 1 else 107
+
+        vision = StaleVision(connection)
+        joystick = StaleJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+        self.assertEqual(result, 0)
+        started = [message for message in peer.sent if message["type"] == EPISODE_STARTED]
+        self.assertEqual([message["start_world_tick"] for message in started], [100, 105])
+        self.assertEqual(len(joystick.sent), 2)
+
+    def test_rejected_initial_start_is_retried_before_respawn(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            prepare_message(2, "train", 101), begin_episode_message(2),
+            apply_result_message(2, -1),
+            prepare_message(3, "train", 102), begin_episode_message(3),
+            apply_result_message(3, -1), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None, start_results=[False, True])
+        vision = _FakeVision(connection)
+        joystick = _FakeJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(connection.lifecycle, ["start", "start", "respawn"])
+
+    def test_late_ack_from_dirty_episode_cannot_validate_next_sequence(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            prepare_message(2, "train", 101), begin_episode_message(2), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None)
+
+        class LateAckJoystick(_FakeJoystick):
+            def __init__(self, owner):
+                super().__init__(owner, drop_ack=True)
+
+            def send_state(self, right, jump):
+                if self.connection.episode == 2:
+                    self.acknowledgements.append({"sequence": 1, "status": "accepted"})
+                    self.accepted_count += 1
+                super().send_state(right, jump)
+
+        vision = _FakeVision(connection)
+        joystick = LateAckJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+        self.assertEqual(result, 0)
+        finished = [message for message in peer.sent if message["type"] == EPISODE_FINISHED]
+        self.assertEqual([message["trainable"] for message in finished], [False, False])
+        self.assertEqual([message["type"] for message in peer.sent].count(UPDATE_RESULT), 0)
+
+    def test_sequence_ack_settle_handles_more_than_diagnostic_deque_limit(self):
+        class BatchJoystick:
+            def drain_acknowledgements(self):
+                return [{"sequence": sequence, "status": "accepted"}
+                        for sequence in range(1, 301)]
+
+        accepted, rejected, complete = _settle_acks(
+            BatchJoystick(), set(range(1, 301)), {}, 0.01, lambda _duration: None)
+        self.assertEqual((accepted, rejected, complete), (300, 0, True))
+
+    def test_only_sent_train_decisions_are_recorded(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            apply_result_message(1, -1), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None)
+
+        class TwoFrameVision(_FakeVision):
+            def __init__(self, owner):
+                super().__init__(owner)
+                self.initial = True
+                self.frames = [_frame(10), _frame(11)]
+
+            @property
+            def latest(self):
+                if self.initial:
+                    self.initial = False
+                    return _frame(0)
+                if self.frames:
+                    return self.frames.pop(0)
+                self.connection.terminal = {
+                    "version": 1, "type": "player_event", "event": "terminal",
+                    "world_tick": 12, "result": "dead",
+                }
+                return _frame(11)
+
+        class RecordingPlayer(LearnedPlayer):
+            def __init__(self, planner, motor):
+                super().__init__(planner, motor)
+                self.recorded_ticks = []
+
+            def record_sent_sample(self, sample):
+                self.recorded_ticks.append(sample.world_tick)
+                super().record_sent_sample(sample)
+
+        vision = TwoFrameVision(connection)
+        joystick = _FakeJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1, action_hz=1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(player.recorded_ticks, [10])
+        self.assertEqual(len(joystick.sent), 1)
+
     def test_rejected_action_is_dirty_and_never_receives_apply_result(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
@@ -299,6 +496,45 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         self.assertEqual(len(finished), 1)
         self.assertFalse(finished[0]["trainable"])
         self.assertEqual([message["type"] for message in peer.sent].count(UPDATE_RESULT), 0)
+
+    def _run_with_eof(self, messages):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        connection = _FakeConnection(manifest, None)
+        vision = _FakeVision(connection)
+        joystick = _FakeJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            return run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+
+    def test_evaluate_eof_after_completed_episode_is_clean(self):
+        messages = [prepare_message(1, EVALUATE, 100), begin_episode_message(1)]
+        self.assertEqual(self._run_with_eof(messages), 0)
+
+    def test_train_eof_after_prepare_is_failure(self):
+        messages = [prepare_message(1, "train", 100)]
+        with self.assertRaises(EOFError):
+            self._run_with_eof(messages)
+
+    def test_train_eof_after_episode_finished_before_apply_is_failure(self):
+        messages = [prepare_message(1, "train", 100), begin_episode_message(1)]
+        with self.assertRaises(EOFError):
+            self._run_with_eof(messages)
+
+    def test_train_eof_after_update_before_save_is_failure(self):
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            apply_result_message(1, -1),
+        ]
+        with self.assertRaises(EOFError):
+            self._run_with_eof(messages)
 
 
 class TrainerRuntimeTests(unittest.TestCase):
