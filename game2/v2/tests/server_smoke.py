@@ -195,15 +195,37 @@ class PersistentConsoleSmoke(unittest.TestCase):
                            timeout)
 
     @staticmethod
-    def _drive_right(manifest: PlayerManifest, count: int = 60):
-        joystick = socket.create_connection((manifest.joystick.host, manifest.joystick.port),
-                                            timeout=2)
-        try:
-            for sequence in range(1, count + 1):
-                send_frame(joystick, {"version": 1, "type": "joystick",
-                                      "sequence": sequence, "right": True, "jump": False})
-        finally:
+    def _hold_right(manifest: PlayerManifest):
+        """Press RIGHT once and keep the physical-style Joystick connection alive."""
+        joystick = socket.create_connection(
+            (manifest.joystick.host, manifest.joystick.port), timeout=2
+        )
+        joystick.settimeout(2)
+        send_frame(joystick, {
+            "version": 1,
+            "type": "joystick",
+            "sequence": 1,
+            "right": True,
+            "jump": False,
+        })
+        acknowledgement = recv_frame(joystick)
+        if acknowledgement.get("status") != "accepted":
             joystick.close()
+            raise AssertionError("RIGHT latch was not accepted")
+        return joystick
+
+    @staticmethod
+    def _release_right(joystick: socket.socket) -> None:
+        send_frame(joystick, {
+            "version": 1,
+            "type": "joystick",
+            "sequence": 2,
+            "right": False,
+            "jump": False,
+        })
+        acknowledgement = recv_frame(joystick)
+        if acknowledgement.get("status") != "accepted":
+            raise AssertionError("RIGHT release was not accepted")
 
     def test_real_persistent_lifecycle_and_pending_attach_cleanup(self):
         connections = []
@@ -357,15 +379,49 @@ class PersistentConsoleSmoke(unittest.TestCase):
             running_d = self._wait_frame(stream_d, lambda frame: 3 in frame.pixels)
             self.assertGreaterEqual(min(running_c.world_tick, running_d.world_tick),
                                     two_before_start)
-            self._drive_right(manifest_d)
-            visible_c = self._wait_frame(
-                stream_c, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
-            visible_d = self._wait_frame(
-                stream_d, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
-            self.assertLess(_vision_bounds(visible_c, 3)[0],
-                            _vision_bounds(visible_c, 5)[0])
-            self.assertGreater(_vision_bounds(visible_d, 3)[0],
-                               _vision_bounds(visible_d, 5)[0])
+            joystick_d = self._hold_right(manifest_d)
+            try:
+                held = self._wait_telemetry(
+                    lambda payload: next(
+                        (
+                            actor for actor in payload.get("actors", [])
+                            if actor.get("actor_id") == manifest_d.actor_id
+                            and actor.get("input_right") is True
+                        ),
+                        None,
+                    )
+                )
+                self.assertTrue(any(
+                    actor.get("actor_id") == manifest_d.actor_id
+                    and actor.get("input_right") is True
+                    for actor in held.get("actors", [])
+                ))
+                visible_c = self._wait_frame(
+                    stream_c, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
+                visible_d = self._wait_frame(
+                    stream_d, lambda frame: 3 in frame.pixels and 5 in frame.pixels)
+                self.assertLess(_vision_bounds(visible_c, 3)[0],
+                                _vision_bounds(visible_c, 5)[0])
+                self.assertGreater(_vision_bounds(visible_d, 3)[0],
+                                   _vision_bounds(visible_d, 5)[0])
+                self._release_right(joystick_d)
+                released = self._wait_telemetry(
+                    lambda payload: next(
+                        (
+                            actor for actor in payload.get("actors", [])
+                            if actor.get("actor_id") == manifest_d.actor_id
+                            and actor.get("input_right") is False
+                        ),
+                        None,
+                    )
+                )
+                self.assertTrue(any(
+                    actor.get("actor_id") == manifest_d.actor_id
+                    and actor.get("input_right") is False
+                    for actor in released.get("actors", [])
+                ))
+            finally:
+                joystick_d.close()
             self.assertIsNone(self.console.poll())
 
             connection_c.detach()

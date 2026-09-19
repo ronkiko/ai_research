@@ -335,6 +335,7 @@ class LearnedJoystickTests(unittest.TestCase):
                 return None
 
         model = _RemoteModel()
+        clock_ticks = iter((0.0, 0.0, 0.01, 0.02, 0.03))
         with redirect_stdout(StringIO()):
             self.assertEqual(
                 run_player(
@@ -343,7 +344,7 @@ class LearnedJoystickTests(unittest.TestCase):
                     decisions=2,
                     vision_factory=lambda _manifest: Vision(),
                     joystick_factory=lambda _manifest: Joystick(),
-                    clock=lambda: 0.0,
+                    clock=lambda: next(clock_ticks, 1.0),
                     sleeper=lambda _duration: None,
                 ),
                 0,
