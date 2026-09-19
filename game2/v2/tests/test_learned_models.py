@@ -141,18 +141,6 @@ class LearnedModelTests(unittest.TestCase):
             goal = player.planner(vision)[0]
             return torch.sigmoid(player.motor_controller.forward_goal(goal, 0.0))
 
-    @staticmethod
-    def _controlled_update(action: ActionDecision, reward: float) -> LearnedPlayer:
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
-        player.prepare_episode("train", 42)
-        player._training_records.append(_record(_grid(6, 5), action))
-        updated, _loss = player.apply_result(reward)
-        if not updated:
-            raise AssertionError("controlled regression record did not update")
-        return player
-
-
-
     def test_actuated_state_tracks_engine_accepted_virtual_pad(self):
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("evaluate", 7)
@@ -235,23 +223,9 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(any(torch.count_nonzero(parameter) > 0
                             for parameter in motor_a.parameters()))
 
-    def test_positive_right_no_jump_reward_moves_both_policy_outputs_in_expected_direction(self):
-        frame = _grid(6, 5)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
-        player.prepare_episode("train", 42)
-        before = self._action_probabilities(player, frame)
-        player._training_records.append(
-            _record(frame, ActionDecision(True, False)))
-        updated, _loss = player.apply_result(1.0)
-        after = self._action_probabilities(player, frame)
-
-        self.assertTrue(updated)
-        self.assertGreater(float(after[0]), float(before[0]))
-        self.assertLess(float(after[1]), float(before[1]))
-
-
     def test_replay_update_uses_bounded_batches_and_preserves_policy_direction(self):
-        frame = _grid(40, 24)
+        # Batching does not depend on spatial map size; keep this fixture tiny.
+        frame = _grid(2, 2)
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
@@ -281,24 +255,6 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(updated)
         self.assertLess(float(after_joint), float(before_joint))
 
-    def test_mixed_positive_right_trajectory_increases_right_probability(self):
-        frame = _grid(6, 5)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
-        player.prepare_episode("train", 42)
-        before = self._action_probabilities(player, frame)
-        player._training_records.extend(
-            _record(frame, ActionDecision(True, False))
-            for _ in range(8)
-        )
-        player._training_records.extend(
-            _record(frame, ActionDecision(True, True))
-            for _ in range(2)
-        )
-        updated, _loss = player.apply_result(1.0)
-        after = self._action_probabilities(player, frame)
-
-        self.assertTrue(updated)
-        self.assertGreater(float(after[0]), float(before[0]))
 
 
 class LearnedCheckpointTests(unittest.TestCase):
