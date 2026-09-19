@@ -164,7 +164,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
         return tuple(players.iterdir()) if players.exists() else ()
 
     def _attach_player(self):
-        connection = vision_demo.PlayerConnection(self.discovery, connect_timeout=8)
+        connection = PlayerConnection(self.discovery, connect_timeout=8)
         stream = None
         try:
             manifest = connection.connect()
@@ -173,7 +173,7 @@ class PersistentConsoleSmoke(unittest.TestCase):
             joystick = socket.create_connection((manifest.joystick.host, manifest.joystick.port),
                                                 timeout=2)
             joystick.close()
-            stream = vision_demo.VisionStream(manifest, connect_timeout=8)
+            stream = VisionReceiver(manifest, connect_timeout=8)
             stream.connect()
             first = stream.wait_for_frame(8)
             return connection, stream, manifest, first
@@ -304,8 +304,8 @@ class PersistentConsoleSmoke(unittest.TestCase):
             connection_b.close()
             stream_b.close()
             self.assertTrue(_wait_until(lambda: not self._player_directories(), 8))
-            connection_c = vision_demo.PlayerConnection(self.discovery, connect_timeout=8)
-            connection_d = vision_demo.PlayerConnection(self.discovery, connect_timeout=8)
+            connection_c = PlayerConnection(self.discovery, connect_timeout=8)
+            connection_d = PlayerConnection(self.discovery, connect_timeout=8)
             connections.extend((connection_c, connection_d))
             attached = {}
             errors = []
@@ -328,8 +328,8 @@ class PersistentConsoleSmoke(unittest.TestCase):
             self.assertEqual(len({manifest_c.player_id, manifest_d.player_id}), 2)
             self.assertEqual(len({manifest_c.actor_id, manifest_d.actor_id}), 2)
 
-            stream_c = vision_demo.VisionStream(manifest_c, connect_timeout=8)
-            stream_d = vision_demo.VisionStream(manifest_d, connect_timeout=8)
+            stream_c = VisionReceiver(manifest_c, connect_timeout=8)
+            stream_d = VisionReceiver(manifest_d, connect_timeout=8)
             streams.extend((stream_c, stream_d))
             stream_c.connect()
             stream_d.connect()

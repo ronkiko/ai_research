@@ -1,34 +1,25 @@
 # Management
 
-The operator and "god mode" plane. Management may later select configs, launch
-or stop independent Console, Player, and Training processes, and collect
-operator telemetry. It is also the future home of the autonomous Research
-Strategist, which operates through explicit control-plane capabilities rather
-than Player or Training runtime imports.
+Management is the operator and control plane. It is outside the gameplay data
+path and must not proxy Vision, Joystick, Engine STATE, model inference, or
+Trainer messages.
 
-Management, not Console, decides whether to launch the UI, Console, Player/model,
-or Trainer and which experiment/configuration to use. Console receives no
-management configuration and has no UI feature toggle.
+The first real independent management service is the Screen Server:
 
-Management is not a gameplay proxy and does not import runtime objects from
-other domains. Current entrypoint: `main.py` placeholder. Local documentation:
-`doc/`.
+```bash
+./game2/v2/op/screen_server.sh
+```
 
-Future Management will choose the Player/model, training algorithm, Train or
-Evaluate mode, World, seed, attempt count, Fresh or Resume mode, checkpoint,
-and Start or Stop. It will consume Training metrics and results, but will not
-compute learning semantics, serialize model state, or become a Trainer/UI
-implementation in this architecture patch.
+It runs in the background, publishes
+`game2/v2/runtime/screen-server.json`, and owns numbered screen slots. In this
+corrective cut those slots are intentionally idle: Console/Training source
+binding is deferred to the next block-composition patch.
 
-Future Strategist capabilities are mode-scoped:
+Management may later compose independent Console, Player, Model, and Trainer
+processes through explicit contracts. It must not import their runtime objects.
+Closing the Screen Server or any future operator UI must not terminate gameplay
+or Training processes.
 
-- **Training:** inspect Training Set structure and Training Maps, train, replay,
-  evaluate, compare candidates, and optionally publish StrategyGuidance.
-- **Exam:** request an Exam Run and receive PASS/FAIL plus aggregate
-  certification metrics. It does not inspect an Exam Map or receive raw exam
-  experience.
-- **Free Play:** observe aggregate behavior, optionally collect permitted
-  learning experience, and optionally request continued training.
-
-These capabilities are not implemented here. Strategist is not a gameplay
-hot-path dependency and does not assist gameplay during Exam.
+The autonomous Research Strategist also belongs to this plane. It may request
+training, evaluation, exams, candidate comparison, or later Free Play learning,
+but it is not a gameplay component and does not control Joystick directly.

@@ -49,7 +49,9 @@ interaction problem, not merely an implementation metric.
   peripherals, currently the Joystick and Vision contracts.
 - Console, Player, Training, and Management have independent responsibilities
   and timing domains.
-- The UI is outside the gameplay Console and is not a Console feature toggle.
+- Human Screen observation is optional and must never own or gate Console,
+  Player, Model, or Training lifecycle.
+- Vision is a headless machine-facing peripheral, not an operator GUI.
 - A future design must not silently turn the system into lockstep or turn-based
   simulation.
 
@@ -134,19 +136,19 @@ action policy.
 
 ## Management Responsibility
 
-Management is the external operator domain. In the future it decides whether
-to launch the UI, Console, Player/model, and Trainer, and which experiment or
-configuration to use. Console does not receive management configuration and
-does not decide whether a management UI exists.
+Management is the external operator domain. It may launch independent
+infrastructure such as the Screen Server and, in later patches, compose
+experiments from Console, Player/model, and Trainer processes. Management is
+outside the gameplay data path and must not proxy gameplay messages.
 
 ## Repository Domains
 
 | Domain | Responsibility |
 |---|---|
 | [`console/`](console/) | Authoritative game console and its private subsystems |
-| [`player/`](player/) | External decision maker and future model runtimes |
+| [`player/`](player/) | External realtime Player shell and model-facing adapters |
 | [`training/`](training/) | External learning processes and training contracts |
-| [`management/`](management/) | Experiment selection, process lifecycle, and future UI |
+| [`management/`](management/) | Operator infrastructure and future experiment orchestration |
 | [`contracts/`](contracts/) | Public cross-domain capability and peripheral contracts |
 | [`tests/`](tests/) | Structural, boundary, and runtime regression tests |
 
@@ -161,40 +163,58 @@ does not decide whether a management UI exists.
 - [Normative Console contract](console/SPEC.md)
 - Domain and subsystem details in the local `README.md` and `doc/` files
 
-## Canonical Persistent Console
+## Independent Runtime Blocks
 
-Patch 3 makes Console a long-lived local server. Start it independently of any
-Player:
+Start the persistent Console independently of any Player:
 
 ```bash
 ./game2/v2/boot.sh
 ```
 
-It creates one `pit` World, one Engine, and one realtime `world_tick` with zero
-Players and zero Actors. The public attach point is atomically published at
-`game2/v2/runtime/current-console.json`. Each client gets a distinct
-Player/Actor identity, Joystick endpoint, Vision perspective, and lifecycle
-Connection:
+It creates one realtime World/Engine and publishes
+`game2/v2/runtime/current-console.json`. It remains valid with zero Players and
+zero Actors.
+
+Start the operator Screen Server independently:
 
 ```bash
-./game2/v2/vision.sh
+./game2/v2/op/screen_server.sh
 ```
 
-`vision.sh` opens the spectator window immediately. It discovers Training Set
-manifests and starts only the unified process boundary:
+The script backgrounds the server, publishes
+`game2/v2/runtime/screen-server.json`, and exposes numbered idle screen slots.
+The current corrective cut deliberately does **not** bind those slots to a
+Console or Training run yet. That binding belongs to the next block-composition
+patch.
+
+Useful Screen Server operations are:
 
 ```bash
-python -m game2.v2.run train ...
-python -m game2.v2.run exam ...
+./game2/v2/op/screen_server.sh status
+./game2/v2/op/screen_server.sh stop
+./game2/v2/op/screen_server.sh restart
 ```
 
-The viewer subscribes to the learned Player's public Vision and never owns
-Console lifecycle or Joystick input. Closing the window terminates the unified
-launcher, which owns and cleans up its Console, Trainer, and Player children.
+`Vision` remains headless and machine-facing. There is no graphical Vision
+launcher and no operator UI that owns Training.
 
-The canonical server has no global Display: Vision Display is allocated per
-attached Player. STATE, TELEMETRY, and EVENTS remain private Console channels.
-Training Episode remains outside Console and is not an Engine lifecycle.
+## Training Cut
+
+The temporary unified Training/Exam launcher has been removed. The retained
+building blocks are independently executable and testable:
+
+```text
+Console
+Player realtime shell
+Model runtime
+Trainer
+Vision peripheral
+Joystick peripheral
+Screen Server
+```
+
+No retained Training module launches Console, Player, or a graphical viewer.
+The next patch will compose these blocks through explicit contracts.
 
 ## Run and Test
 
@@ -204,62 +224,9 @@ Run the fast local contract and core-semantics suite:
 python -m unittest discover -s game2/v2/tests -v
 ```
 
-For persistent Console, attach, or Player lifecycle changes, run the one
-explicit server smoke:
+For persistent Console, attach, or Player lifecycle changes, run the explicit
+server smoke:
 
 ```bash
 python -m game2.v2.tests.server_smoke
 ```
-
-Manual UI checks, when relevant:
-
-```bash
-./game2/v2/vision.sh
-./game2/v2/demo.sh
-```
-
-## Temporary gameplay demo
-
-```bash
-./game2/v2/demo.sh
-```
-
-`demo.sh` is temporary compatibility tooling. It starts the realtime V2 Console with
-`embedded-demo.json`, waits for its public `PeripheralManifest` and private
-operator-only STATE and actor-scoped lifecycle CONTROL capabilities, then hosts
-the Human keyboard adapter in-process. Console explicitly creates one
-compatibility Player/Actor binding after Engine construction.
-The demo owns exactly one native Pygame window: a 1280x768 game viewport plus a
-sidebar. The Player controls are:
-
-```text
-RIGHT / D    move right
-SPACE / Up / W jump
-R             respawn the compatibility Actor
-Ctrl+C       stop the whole demo
-```
-
-Keyboard input still sends only the public Joystick contract. Engine STATE is
-consumed separately by the embedded Screen presentation and is never passed to
-the Human Player. R uses the private actor-scoped respawn command through the
-operator lifecycle capability, not through Joystick. Closing the native window
-stops the temporary shell and Console. This is not the final boot or startup
-design.
-
-Actor result is authoritative. After `success`, `dead`, or `timeout`, that
-Actor is frozen and new actions for it are rejected, while the global
-`world_tick` and other Actors continue. Screen displays the self Actor result; R
-respawns only that Actor without restarting Console or the shell.
-
-The temporary gameplay flow connects a Human keyboard adapter through the
-existing Player-facing Joystick contract. It is separate from the persistent
-server workflow above:
-
-```text
-HumanKeyboardInput -> HumanJoystickClient -> Joystick -> Controller -> Engine
-```
-
-Console Display provides a headless semantic `vision` renderer and publishes it
-as the Player-facing Vision peripheral. The operator viewer is a second public
-Vision subscriber. `enable_display: false` disables the Display process
-entirely; `display_mode` is `vision` or `screen`.

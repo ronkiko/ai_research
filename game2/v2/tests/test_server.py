@@ -66,9 +66,6 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class PlayerConnectionDeadlineTests(unittest.TestCase):
-    def test_vision_demo_reuses_shared_player_connection(self):
-        self.assertIs(vision_demo.PlayerConnection, player_connection.PlayerConnection)
-
     def test_attach_wait_retries_socket_timeouts_inside_one_deadline(self):
         client, server = socket.socketpair()
         manifest = PlayerManifest("session", "player", "actor",
@@ -87,7 +84,7 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
 
         worker = threading.Thread(target=delayed_manifest)
         worker.start()
-        connection = vision_demo.PlayerConnection(discovery, connect_timeout=2.5)
+        connection = player_connection.PlayerConnection(discovery, connect_timeout=2.5)
         try:
             with mock.patch.object(player_connection, "_connect", return_value=client):
                 self.assertEqual(connection.connect(), manifest)
@@ -110,7 +107,7 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
 
         worker = threading.Thread(target=consume_request)
         worker.start()
-        connection = vision_demo.PlayerConnection(discovery, connect_timeout=0.45)
+        connection = player_connection.PlayerConnection(discovery, connect_timeout=0.45)
         started = time.monotonic()
         try:
             with mock.patch.object(player_connection, "_connect", return_value=client):
@@ -143,7 +140,7 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
 
         worker = threading.Thread(target=lifecycle_server)
         worker.start()
-        connection = vision_demo.PlayerConnection(discovery)
+        connection = player_connection.PlayerConnection(discovery)
         try:
             with mock.patch.object(player_connection, "_connect", return_value=client):
                 self.assertEqual(connection.connect(), manifest)

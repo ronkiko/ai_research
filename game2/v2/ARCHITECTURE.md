@@ -1,6 +1,6 @@
 # Game2 V2 Architecture
 
-Status: Patch 3 implementation complete
+Status: corrective modular cut
 
 Game2 V2 is a real-time research system. The normative realtime contract is
 [doc/REALTIME_SYSTEM.md](doc/REALTIME_SYSTEM.md).
@@ -15,7 +15,7 @@ Normative Console contract: [console/SPEC.md](console/SPEC.md)
 
 Normative target MMO server model: [console/doc/MMO_SERVER_MODEL.md](console/doc/MMO_SERVER_MODEL.md)
 
-Game2 V2 consists of five physically separated domains:
+Game2 V2 keeps the major runtime domains physically separated:
 
 ```text
                 MANAGEMENT
@@ -28,21 +28,33 @@ Game2 V2 consists of five physically separated domains:
             +-- CONTRACTS --+
 ```
 
-`console` is the virtual game console. It owns the authoritative gameplay
-runtime, its internal World, Controller, Display, internal transport,
-composition, lifecycle, and private topology. `player` is the external subject
-that acts through peripherals.
-`training` contains future learning processes and contracts. `management` is
-the operator or "god mode" plane. `contracts` contains the public agreements
-that do not know their consumers.
+`console` owns the authoritative gameplay runtime and world clock. `player` is
+the external realtime subject that acts only through public peripherals.
+`training` owns learning semantics and Trainer-side work. `management` owns
+operator infrastructure and later experiment composition. `contracts` contains
+the shared executable agreements and imports no runtime domain.
 
 The gameplay path is:
 
 ```text
 Player -> Joystick contract -> Console Controller -> Console Engine
-Console Engine -> Console Display
-WorldDefinition + WorldState -> Display.screen / Display.vision
+Console Engine -> headless Vision presentation -> Player
 ```
+
+Human observation is a separate optional path. It must not become a gameplay
+dependency:
+
+```text
+Console/world presentation --> Screen Server --> human
+```
+
+The Screen Server is independently launched management infrastructure. In the
+current corrective cut it owns only numbered screen slots and its own
+lifecycle; source binding is intentionally deferred to the next composition
+patch. It does not own Console, Player, Model, Trainer, or Training lifecycle.
+
+`Vision` is exclusively machine-facing and headless. No graphical Vision
+launcher is part of the architecture.
 
 Player may contain hierarchical intelligence: a Planner / Policy produces
 MotorGoals for a Motor Controller, which produces ActionDecisions for the
@@ -57,9 +69,8 @@ Training -> Exam -> Certified / Graduated -> Free Play
 ```
 
 Training and Exam use Training Set Levels; Free Play is the persistent/open
-environment after graduation. All three remain in the same Platformer World when
-their laws and mechanics family are unchanged. The normative mode, isolation,
-and graduation rules live in [training/doc/TRAINING_SYSTEM.md](training/doc/TRAINING_SYSTEM.md).
+environment after graduation. All three remain in the same Platformer World
+when their laws and mechanics family are unchanged.
 
 ## Console Internal Decomposition
 
@@ -81,41 +92,41 @@ and creates independent Actor bodies within it. World does not import Engine,
 and Physics remains an Engine hot-path component rather than a separate
 process. Engine never waits for Player while advancing fixed ticks.
 
-The Display domain provides two read-only presentations of the same authoritative
-world:
-
-```text
-                 WorldDefinition + WorldState
-                              |
-                           Display
-                         /         \
-                     screen       vision
-                    for humans    for models
-```
-
-`screen` uses V2-owned assets, decorations, and deterministic autotiling for
-humans. `vision` uses stable semantic classes in a headless world-resolution
-raster for future machine-facing sensing. Neither presentation changes World or
-affects Physics. A future Player VisionAdapter remains a separate transport
-contract and is not Display.
+Display remains a read-only Console presentation domain. Its semantic Vision
+renderer is used for machine sensing; its ScreenRenderer remains a reusable
+human-rendering brick. The old graphical Vision and embedded demo shells are
+removed. The ScreenRenderer is not itself a lifecycle owner.
 
 The Engine remains the sole mutable world owner. It advances one global
 `world_tick` without waiting for a Player, steps active Actors in sorted
 `actor_id` order, and leaves terminal Actors frozen without stopping the World.
 The Controller translates public Joystick decisions into private actor-scoped
-commands scheduled against that global clock. Display consumes multi-Actor
-Engine STATE and does not control gameplay or expose raw STATE as vision. The
-temporary compatibility path explicitly binds one Player ID to a distinct
-Actor ID after Engine construction.
+commands scheduled against that global clock.
 
-Management is outside the gameplay data path. It may later select configs and
-launch independent Console, Player, and Trainer processes, but it must not hold
-their runtime objects or proxy gameplay messages.
+## Process Ownership
+
+The previous unified `run.py` Training/Exam launcher and `vision_demo.py` UI
+were removed because they reintroduced ownership coupling above otherwise
+separated domains.
+
+The retained rule is:
+
+```text
+Console process      owns Console only
+Player process       owns realtime Player behavior only
+Model process        owns learned inference/update/checkpoint state
+Trainer process      owns training semantics only
+Screen Server        owns operator screen slots only
+Management           may later compose processes through contracts
+```
+
+No viewer may own a Training run. No Training runtime may require a graphical
+viewer. Closing or failing a human Screen must never stop Console, Player,
+Model, or Trainer.
 
 The process architecture also protects independent timing domains: Player/model
 latency, training work, UI work, and rendering must not block the Engine's world
 clock.
 
 Every cross-domain dependency is documented in
-[doc/DEPENDENCY_RULES.md](doc/DEPENDENCY_RULES.md). Local subsystem details live
-under the owning domain's `doc/` directory.
+[doc/DEPENDENCY_RULES.md](doc/DEPENDENCY_RULES.md).

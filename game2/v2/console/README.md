@@ -1,8 +1,9 @@
 # Console
 
-The virtual game console and its owned processes. Console owns composition,
-lifecycle, Engine, World, Controller, Display, internal transport, private
-protocols, manifests, and configs.
+The virtual game console and its owned runtime subsystems. Console owns the
+authoritative World, Engine, Controller, internal transport, private protocols,
+and Player-facing peripheral production. It does not own Player, Model, Trainer,
+Management, or the operator Screen Server.
 
 Its internal gameplay decomposition is:
 
@@ -17,20 +18,20 @@ Console
 `WorldDefinition` is loaded before Engine starts. Engine materializes one shared
 physics/rules object and independent `ActorBody` values from that definition.
 Display loads the same immutable world resource independently and combines it
-with the latest multi-Actor Engine STATE for its `screen` or `vision`
-presentation. Physics remains an Engine hot-path component, not a separate
-process. World contains no runtime state and has no dependency on Engine or the
-physics implementation.
+with latest Engine STATE for read-only presentation. Physics remains an Engine
+hot-path component, not a separate process.
+
+The canonical runtime is the persistent zero-player server started by
+`game2/v2/boot.sh`. External Players attach later and receive narrow public
+Joystick/Vision capabilities.
+
+The old embedded graphical demo shell was removed. Human observation is not a
+Console lifecycle mode; it will be attached through the independent Screen
+Server composition path.
 
 The target MMO-like Console model is normative in
-[`doc/MMO_SERVER_MODEL.md`](doc/MMO_SERVER_MODEL.md). Console does not own
-Player, model, Trainer, or management UI. It may import public `contracts/*`;
-it must not import the other external domains.
-
-The temporary embedded demo runs Console with `enable_state: true` and
-`enable_display: false`. Console can write a private operator-only STATE
-capability for that host; it remains separate from the public Player
-`PeripheralManifest`.
+[`doc/MMO_SERVER_MODEL.md`](doc/MMO_SERVER_MODEL.md). Console may import public
+`contracts/*`; it must not import external runtime domains.
 
 Entrypoint: `main.py`. Normative contract: `SPEC.md`. Local documentation:
 `doc/`.
