@@ -15,7 +15,7 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
-from game2.v2.contracts.vision import META_GOAL, META_SELF
+from game2.v2.contracts.vision import META_GOAL, META_SELF, PHYSICS_HAZARD
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
@@ -127,6 +127,16 @@ class VisionGridRendererTests(unittest.TestCase):
         goal_index = 3
         self.assertEqual(grid.physics[goal_index], 0)
         self.assertEqual(grid.metadata[goal_index], META_SELF | META_GOAL)
+
+    def test_self_over_hazard_keeps_both_physics_and_metadata(self):
+        world = _tiny_world()
+        grid = VisionGridRenderer().render(
+            world,
+            _view(world, x=4, y=0),
+        )
+        hazard_index = 2
+        self.assertEqual(grid.physics[hazard_index], PHYSICS_HAZARD)
+        self.assertTrue(grid.metadata[hazard_index] & META_SELF)
 
     def test_actor_aabb_marks_every_intersected_cell_and_keeps_physics(self):
         world = _tiny_world()
