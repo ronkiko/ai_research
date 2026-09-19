@@ -354,7 +354,9 @@ class TrainingRun:
                 try:
                     screen_control.bind(self._wait_screen_source(screen_source_path))
                     screen_bound = True
-                    self._write(f"SCREEN {screen_control.screen}: {spec.map_id}")
+                    self._write(
+                        f"SCREEN {screen_control.screen}: {spec.map_id} ({view})"
+                    )
                 except (OSError, TimeoutError, ValueError, TrainingRunError) as exc:
                     self._write(f"SCREEN warning: {exc}; Training continues headless")
 

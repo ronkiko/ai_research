@@ -78,7 +78,8 @@ class ScreenSourceService:
                     continue
                 with self.condition:
                     if view.world_tick > self.accepted_tick:
-                        self._track_episode(view)
+                        if self.manifest.view == "screen":
+                            self._track_episode(view)
                         self.accepted_tick = view.world_tick
                         self.latest = view
                         self.condition.notify_all()
@@ -221,6 +222,7 @@ class ScreenSourceService:
         print("READY " + json.dumps({
             "session_id": self.manifest.session_id,
             "screen": self.manifest.screen.as_dict(),
+            "view": self.manifest.view,
         }, sort_keys=True), flush=True)
         period = 1 / SCREEN_HZ
         next_frame = time.monotonic()
