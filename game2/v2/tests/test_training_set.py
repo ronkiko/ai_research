@@ -109,6 +109,19 @@ class TrainingSetPhysicsTests(unittest.TestCase):
         _world, actor = self._run_actor(map_id, jump_tick, limit)
         return actor.result
 
+
+
+    def test_training_maps_have_no_visible_right_wall(self):
+        for map_id in ("flat_run", "short_gap", "long_gap"):
+            with self.subTest(map_id=map_id):
+                world = load_world(self.paths[map_id])
+                for row in range(7):
+                    self.assertEqual(world.tiles[row][-1], EMPTY)
+                self.assertTrue(any(
+                    rect.x == world.width and rect.width == world.tile_size
+                    for rect in world.collision_rects
+                ))
+
     def test_flat_run_is_passable_with_right_only(self):
         self.assertEqual(self._run("flat_run"), "success")
 
