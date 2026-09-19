@@ -15,6 +15,27 @@ from .learned.motion import self_center_x
 PLAYER_ACTION_HZ = 120
 
 
+def _apply_accepted_acks(joystick, pending: dict[int, int],
+                         actuated_ids: set[int], model: ModelClient) -> None:
+    """Tell Model only about states Engine actually accepted."""
+    drain = getattr(joystick, "drain_acknowledgements", None)
+    if not callable(drain):
+        return
+    for acknowledgement in drain():
+        if not isinstance(acknowledgement, dict):
+            continue
+        sequence = acknowledgement.get("sequence")
+        decision_id = pending.pop(sequence, None)
+        if (
+            decision_id is not None
+            and acknowledgement.get("status") == "accepted"
+            and decision_id not in actuated_ids
+        ):
+            model.actuated(decision_id)
+            actuated_ids.add(decision_id)
+
+
+
 def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int | None = None,
                action_hz: int = PLAYER_ACTION_HZ, vision_factory=VisionReceiver,
                joystick_factory=JoystickClient, lifecycle=None, clock=time.monotonic,
@@ -34,6 +55,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
     gameplay_started = False
     latest_decision = None
     actuated_ids: set[int] = set()
+    pending_actuation: dict[int, int] = {}
     saw_self_frame = False
     missing_self_after_seen = False
     try:
@@ -50,6 +72,9 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 raise ConnectionError("Console rejected START")
 
         while decisions is None or sent < decisions:
+            _apply_accepted_acks(
+                joystick, pending_actuation, actuated_ids, model
+            )
             if vision.failed:
                 raise ConnectionError("Vision receiver failed") from vision.error
             if joystick.failed:
@@ -95,12 +120,17 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
             if now < next_send:
                 sleeper(min(next_send - now, 0.005))
                 continue
-            state = joystick.send_state(latest_decision.action_decision.right,
-                                        latest_decision.action_decision.jump)
+            state = joystick.send_state(
+                latest_decision.action_decision.right,
+                latest_decision.action_decision.jump,
+            )
+            sequence = getattr(state, "sequence", None)
+            if type(sequence) is int:
+                pending_actuation[sequence] = latest_decision.decision_id
             sent += 1
-            if latest_decision.decision_id not in actuated_ids:
-                model.actuated(latest_decision.decision_id)
-                actuated_ids.add(latest_decision.decision_id)
+            _apply_accepted_acks(
+                joystick, pending_actuation, actuated_ids, model
+            )
             next_send += 1 / action_hz
             if missing_self_after_seen:
                 break

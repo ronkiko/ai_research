@@ -282,6 +282,74 @@ class LearnedJoystickTests(unittest.TestCase):
             ), 0)
         self.assertEqual(joystick.sent, [(True, True)])
 
+    def test_model_actuation_requires_engine_accepted_joystick_ack(self):
+        manifest = PlayerManifest(
+            "session", "player", "actor",
+            Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2),
+        )
+
+        class Vision:
+            failed = False
+            error = None
+            connected = True
+            frames_received = 1
+            latest = _frame(self_x=3, tick=1)
+
+            def connect(self):
+                return None
+
+            def close(self):
+                return None
+
+        class Joystick:
+            connected = True
+            failed = False
+            error = None
+            accepted_count = 1
+            rejected_count = 1
+            duplicate_count = 0
+
+            def __init__(self):
+                self.sequence = 0
+                self.acks = []
+
+            def connect(self):
+                return None
+
+            def send_state(self, right, jump):
+                self.sequence += 1
+                status = "rejected" if self.sequence == 1 else "accepted"
+                self.acks.append({
+                    "version": 1,
+                    "type": "joystick_ack",
+                    "sequence": self.sequence,
+                    "status": status,
+                })
+                return SimpleNamespace(sequence=self.sequence)
+
+            def drain_acknowledgements(self):
+                result, self.acks = self.acks, []
+                return result
+
+            def close(self):
+                return None
+
+        model = _RemoteModel()
+        with redirect_stdout(StringIO()):
+            self.assertEqual(
+                run_player(
+                    manifest,
+                    model,
+                    decisions=2,
+                    vision_factory=lambda _manifest: Vision(),
+                    joystick_factory=lambda _manifest: Joystick(),
+                    clock=lambda: 0.0,
+                    sleeper=lambda _duration: None,
+                ),
+                0,
+            )
+        self.assertEqual(model.actuated_ids, [1])
+
     def test_model_failure_is_not_replaced_with_a_neutral_action(self):
         manifest = PlayerManifest("session", "player", "actor", Endpoint("127.0.0.1", 1),
                                   Endpoint("127.0.0.1", 2))
