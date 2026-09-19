@@ -18,14 +18,18 @@ from game2.v2.player.peripherals import JoystickClient
 
 
 def _grid(*, width=12, height=5, self_x=None, tick=1):
-    physics = bytes(width * height)
+    coarse_physics = bytes(width * height)
     fine_width = width * 8
-    metadata = bytearray(fine_width * height * 8)
+    fine_height = height * 8
+    physics = bytes(fine_width * fine_height)
+    metadata = bytearray(fine_width * fine_height)
     if self_x is not None:
         fine_x = self_x * 8 + 4
         fine_y = 2 * 8 + 4
         metadata[fine_y * fine_width + fine_x] = META_SELF | META_SELF_CENTER
-    return VisionGrid(width, height, 64, physics, bytes(metadata), tick)
+    return VisionGrid(
+        width, height, 64, coarse_physics, physics, bytes(metadata), tick
+    )
 
 
 class MotionEstimatorTests(unittest.TestCase):

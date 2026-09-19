@@ -63,16 +63,20 @@ FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.j
 
 
 def _grid(tick: int = 1, self_x: int | None = 3, goal_x: int | None = 10) -> VisionGrid:
-    physics = bytes(12 * 5)
+    coarse_physics = bytes(12 * 5)
     fine_columns = 12 * 8
-    metadata = bytearray(fine_columns * 5 * 8)
+    fine_rows = 5 * 8
+    physics = bytes(fine_columns * fine_rows)
+    metadata = bytearray(fine_columns * fine_rows)
     if self_x is not None:
         index = (2 * 8 + 4) * fine_columns + (self_x * 8 + 4)
         metadata[index] |= META_SELF | META_SELF_CENTER
     if goal_x is not None:
         index = (2 * 8 + 4) * fine_columns + (goal_x * 8 + 4)
         metadata[index] |= META_GOAL
-    return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
+    return VisionGrid(
+        12, 5, 64, coarse_physics, physics, bytes(metadata), tick
+    )
 
 
 class TrainingContractTests(unittest.TestCase):
@@ -107,15 +111,19 @@ class VisionProgressTests(unittest.TestCase):
     @staticmethod
     def _grid(self_x: int, self_y: int, goal_x: int = 10, goal_y: int = 2,
               tick: int = 1, include_goal: bool = True) -> VisionGrid:
-        physics = bytes(16 * 8)
+        coarse_physics = bytes(16 * 8)
         fine_columns = 16 * 8
-        metadata = bytearray(fine_columns * 8 * 8)
+        fine_rows = 8 * 8
+        physics = bytes(fine_columns * fine_rows)
+        metadata = bytearray(fine_columns * fine_rows)
         self_index = (self_y * 8 + 4) * fine_columns + (self_x * 8 + 4)
         metadata[self_index] |= META_SELF | META_SELF_CENTER
         if include_goal:
             goal_index = (goal_y * 8 + 4) * fine_columns + (goal_x * 8 + 4)
             metadata[goal_index] |= META_GOAL
-        return VisionGrid(16, 8, 64, physics, bytes(metadata), tick)
+        return VisionGrid(
+            16, 8, 64, coarse_physics, physics, bytes(metadata), tick
+        )
 
     def test_starting_public_self_and_goal_have_zero_progress(self):
         tracker = VisionProgress()
@@ -168,7 +176,10 @@ class VisionProgressTests(unittest.TestCase):
         metadata[first_self] |= META_SELF | META_SELF_CENTER
         metadata[second_self] |= META_SELF
         metadata[goal] |= META_GOAL | META_SELF
-        grid = VisionGrid(16, 8, 64, bytes(16 * 8), bytes(metadata), 77)
+        grid = VisionGrid(
+            16, 8, 64, bytes(16 * 8), bytes(fine_columns * 8 * 8),
+            bytes(metadata), 77
+        )
         self.assertTrue(has_metadata(grid, META_SELF))
         self.assertTrue(has_metadata(grid, META_GOAL))
         self.assertIsNotNone(self_center(grid))
@@ -285,6 +296,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertIsInstance(record, TrainingRecord)
         self.assertEqual(record.world_tick, 1)
         self.assertEqual(record.vision_grid, sample.vision_grid)
+        self.assertEqual(record.coarse_physics, sample.vision_grid.coarse_physics)
         self.assertEqual(record.physics, sample.vision_grid.physics)
         self.assertEqual(record.metadata, sample.vision_grid.metadata)
         self.assertEqual(record.action_decision, sample.action_decision)

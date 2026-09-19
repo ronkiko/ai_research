@@ -17,16 +17,24 @@ class ScriptedVisionPolicyTests(unittest.TestCase):
     @staticmethod
     def _grid(*, self_x=2, self_y=2, floor=range(2, 16), floor_y=None,
               columns=16, rows=8):
-        physics = bytearray(columns * rows)
+        coarse_physics = bytearray(columns * rows)
         fine_columns = columns * 8
-        metadata = bytearray(fine_columns * rows * 8)
+        fine_rows = rows * 8
+        physics = bytearray(fine_columns * fine_rows)
+        metadata = bytearray(fine_columns * fine_rows)
         floor_y = self_y + 1 if floor_y is None else floor_y
         for x in floor:
-            physics[floor_y * columns + x] = PHYSICS_SOLID
+            coarse_physics[floor_y * columns + x] = PHYSICS_SOLID
+            for fine_y in range(floor_y * 8, (floor_y + 1) * 8):
+                start = fine_y * fine_columns + x * 8
+                physics[start:start + 8] = bytes([PHYSICS_SOLID]) * 8
         for fine_y in range(self_y * 8, (self_y + 1) * 8):
             for fine_x in range(self_x * 8, (self_x + 1) * 8):
                 metadata[fine_y * fine_columns + fine_x] = META_SELF
-        return VisionGrid(columns, rows, 64, bytes(physics), bytes(metadata), 1)
+        return VisionGrid(
+            columns, rows, 64, bytes(coarse_physics), bytes(physics),
+            bytes(metadata), 1
+        )
 
     def test_solid_floor_ahead_continues_right_without_jump(self):
         action = decide(self._grid())
@@ -43,12 +51,17 @@ class ScriptedVisionPolicyTests(unittest.TestCase):
     def test_player_sends_no_gameplay_before_self_is_visible(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
-        physics = b"\x00\x00\x01\x01"
+        coarse_physics = b"\x00\x00\x01\x01"
+        physics = bytes(2 * 8 * 2 * 8)
         empty_metadata = bytes(2 * 8 * 2 * 8)
         self_metadata = bytearray(empty_metadata)
         self_metadata[4 * (2 * 8) + 4] = META_SELF
-        empty = VisionGrid(2, 2, 64, physics, empty_metadata, 1)
-        self_grid = VisionGrid(2, 2, 64, physics, bytes(self_metadata), 2)
+        empty = VisionGrid(
+            2, 2, 64, coarse_physics, physics, empty_metadata, 1
+        )
+        self_grid = VisionGrid(
+            2, 2, 64, coarse_physics, physics, bytes(self_metadata), 2
+        )
 
         class FakeVision:
             def __init__(self, _manifest):

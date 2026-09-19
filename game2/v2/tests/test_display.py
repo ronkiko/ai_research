@@ -15,8 +15,12 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
-from game2.v2.contracts.vision import (META_GOAL, META_SELF, META_SELF_CENTER,\n                                         PHYSICS_HAZARD)
-from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
+from game2.v2.contracts.vision import (
+    META_GOAL, META_SELF, META_SELF_CENTER,
+    PHYSICS_EMPTY, PHYSICS_HAZARD, PHYSICS_SOLID,
+)
+from game2.v2.console.world import (CollisionRect, Rect, TileID,
+                                     WorldDefinition, load_world)
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
 
@@ -37,7 +41,11 @@ def _tiny_world() -> WorldDefinition:
         map_id="tiny", name="Tiny", tile_size=2, columns=4, rows=3,
         width=8, height=6, tiles=tiles,
         spawn=Rect(2, 2, 1, 1), goal=Rect(6, 0, 2, 2),
-        collision_rects=(), decorations=(),
+        collision_rects=(
+            CollisionRect(2, 0, 2, 2),
+            CollisionRect(4, 1, 2, 1, True),
+            CollisionRect(0, 4, 8, 2),
+        ), decorations=(),
     )
 
 
@@ -115,9 +123,13 @@ class VisionGridRendererTests(unittest.TestCase):
         self.assertEqual((grid.metadata_columns, grid.metadata_rows), (32, 24))
         self.assertEqual(grid.sensor_cell_size, 0.25)
         self.assertEqual(
-            grid.physics,
+            grid.coarse_physics,
             bytes((0, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1)),
         )
+        self.assertEqual(len(grid.physics), 32 * 24)
+        self.assertEqual(grid.physics[2 * grid.physics_columns + 10], PHYSICS_SOLID)
+        self.assertEqual(grid.physics[2 * grid.physics_columns + 18], PHYSICS_EMPTY)
+        self.assertEqual(grid.physics[5 * grid.physics_columns + 18], PHYSICS_HAZARD)
         goal_cell = 2 * grid.metadata_columns + 26
         self_cell = 10 * grid.metadata_columns + 10
         self.assertTrue(grid.metadata[goal_cell] & META_GOAL)
@@ -126,14 +138,27 @@ class VisionGridRendererTests(unittest.TestCase):
             META_SELF | META_SELF_CENTER,
         )
 
+    def test_coarse_hazard_marks_tile_but_fine_hazard_marks_only_lower_band(self):
+        world = load_world(PIT)
+        grid = VisionGridRenderer(world).render(_view(world, x=world.spawn.x,
+                                                      y=world.spawn.y))
+        coarse_index = 10 * world.columns + 8
+        fine_x = 8 * 8 + 4
+        self.assertEqual(grid.coarse_physics[coarse_index], PHYSICS_HAZARD)
+        self.assertEqual(grid.physics[84 * grid.physics_columns + fine_x],
+                         PHYSICS_EMPTY)
+        for fine_y in (85, 86, 87):
+            self.assertEqual(grid.physics[fine_y * grid.physics_columns + fine_x],
+                             PHYSICS_HAZARD)
+
     def test_self_and_goal_overlap_without_overwriting_each_other(self):
         world = _tiny_world()
         grid = VisionGridRenderer().render(
             world, _view(world, x=world.goal.x, y=world.goal.y)
         )
-        goal_index = 3
+        goal_index = 2 * grid.physics_columns + 26
         center_index = 2 * grid.metadata_columns + 26
-        self.assertEqual(grid.physics[goal_index], 0)
+        self.assertEqual(grid.physics[goal_index], PHYSICS_EMPTY)
         self.assertEqual(
             grid.metadata[center_index] & (META_SELF | META_GOAL | META_SELF_CENTER),
             META_SELF | META_GOAL | META_SELF_CENTER,
@@ -143,10 +168,10 @@ class VisionGridRendererTests(unittest.TestCase):
         world = _tiny_world()
         grid = VisionGridRenderer().render(
             world,
-            _view(world, x=4, y=0),
+            _view(world, x=4, y=1),
         )
-        hazard_index = 2
-        self_index = 2 * grid.metadata_columns + 18
+        hazard_index = 5 * grid.physics_columns + 18
+        self_index = 5 * grid.metadata_columns + 18
         self.assertEqual(grid.physics[hazard_index], PHYSICS_HAZARD)
         self.assertTrue(grid.metadata[self_index] & META_SELF)
 
@@ -161,16 +186,17 @@ class VisionGridRendererTests(unittest.TestCase):
         right = row * grid.metadata_columns + 16
         self.assertTrue(grid.metadata[left] & META_SELF)
         self.assertTrue(grid.metadata[right] & META_SELF)
-        self.assertEqual(grid.physics[1 * grid.columns + 1], TileID.EMPTY)
-        self.assertEqual(grid.physics[1 * grid.columns + 2], TileID.EMPTY)
+        self.assertEqual(grid.physics[row * grid.physics_columns + 15], PHYSICS_EMPTY)
+        self.assertEqual(grid.physics[row * grid.physics_columns + 16], PHYSICS_EMPTY)
 
     def test_public_vision_is_immutable_and_does_not_leak_physics_metadata(self):
         grid = VisionGridRenderer().render(_tiny_world(), _view(_tiny_world()))
         self.assertEqual(
             {field.name for field in fields(grid)},
-            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick",
-             "subdivisions"},
+            {"columns", "rows", "tile_size", "coarse_physics", "physics",
+             "metadata", "world_tick", "subdivisions"},
         )
+        self.assertIs(type(grid.coarse_physics), bytes)
         self.assertIs(type(grid.physics), bytes)
         self.assertIs(type(grid.metadata), bytes)
         for name in (
