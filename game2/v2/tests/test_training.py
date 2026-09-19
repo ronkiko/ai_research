@@ -269,13 +269,29 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         record = player.training_records[0]
         self.assertIsInstance(record, TrainingRecord)
         self.assertEqual(record.world_tick, 1)
-        self.assertIs(record.vision_frame, sample.vision_frame)
+        self.assertEqual(record.vision_frame, sample.vision_frame)
+        self.assertLess(len(record.compressed_pixels), len(sample.vision_frame.pixels))
         self.assertEqual(record.action_decision, sample.action_decision)
 
         unsent_player = self._player()
         unsent_player.prepare_episode("train", 42)
         unsent_player.process_frame(_frame(1))
         self.assertEqual(unsent_player.training_records, ())
+
+
+    def test_large_sparse_training_record_is_lossless_and_compact(self):
+        width, height = 1280, 768
+        pixels = bytearray(width * height)
+        pixels[100 * width + 100] = 3
+        pixels[100 * width + 1100] = 4
+        frame = VisionFrame(width, height, bytes(pixels), 77)
+        sample = DecisionSample(
+            frame.world_tick, frame, MotorGoal(0.0, 0.0), 0.0,
+            ActionDecision(True, False), -0.5,
+        )
+        record = TrainingRecord.from_sample(sample)
+        self.assertEqual(record.vision_frame, frame)
+        self.assertLess(len(record.compressed_pixels), len(frame.pixels) // 20)
 
     def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
         player = self._player()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import zlib
 
 import torch
 
@@ -29,15 +30,31 @@ class DecisionSample:
 
 @dataclass(frozen=True)
 class TrainingRecord:
-    """Detached public replay data for one neural decision sent to Joystick."""
+    """Lossless compact replay data for one acknowledged neural decision."""
 
-    vision_frame: VisionFrame
+    width: int
+    height: int
+    world_tick: int
+    compressed_pixels: bytes
     motion_x: float
     action_decision: ActionDecision
 
+    @classmethod
+    def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
+        frame = sample.vision_frame
+        return cls(
+            frame.width,
+            frame.height,
+            frame.world_tick,
+            zlib.compress(frame.pixels, level=1),
+            float(sample.motion_x),
+            sample.action_decision,
+        )
+
     @property
-    def world_tick(self) -> int:
-        return self.vision_frame.world_tick
+    def vision_frame(self) -> VisionFrame:
+        pixels = zlib.decompress(self.compressed_pixels)
+        return VisionFrame(self.width, self.height, pixels, self.world_tick)
 
 
 def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState:
@@ -204,8 +221,7 @@ class LearnedPlayer:
         if self._recorded_samples.get(sample_id) is sample:
             return
         self._recorded_samples[sample_id] = sample
-        self._training_records.append(TrainingRecord(
-            sample.vision_frame, float(sample.motion_x), sample.action_decision))
+        self._training_records.append(TrainingRecord.from_sample(sample))
         if sample.log_prob is not None:
             self._log_probabilities.append(float(sample.log_prob))
 

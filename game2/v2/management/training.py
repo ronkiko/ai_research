@@ -405,7 +405,10 @@ class TrainingRun:
                         break
                     if trainer_exited and trainer.output_done.is_set():
                         raise TrainingRunError(
-                            "Trainer exited without SUMMARY: " + trainer.diagnostic()
+                            "Trainer exited without SUMMARY; "
+                            "Player: " + player.diagnostic()
+                            + "; Trainer: " + trainer.diagnostic()
+                            + "; Model: " + model.diagnostic()
                         )
                     if time.monotonic() >= finalization_deadline:
                         raise TrainingRunError(

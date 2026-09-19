@@ -451,5 +451,23 @@ class TrainingAckBoundaryTests(unittest.TestCase):
         self.assertEqual(model.actuated_ids, [1])
 
 
+    def test_accepted_ack_actuates_before_episode_end(self):
+        from game2.v2.player.learned.process import _record_accepted_acks
+
+        class RecordingModel:
+            def __init__(self):
+                self.ids = []
+            def actuated(self, decision_id):
+                self.ids.append(decision_id)
+
+        model = RecordingModel()
+        statuses = {1: ["accepted"], 2: ["rejected"], 3: ["accepted"]}
+        mapping = {1: 10, 2: 20, 3: 10}
+        actuated = set()
+        _record_accepted_acks(model, mapping, statuses, actuated)
+        self.assertEqual(model.ids, [10])
+        self.assertEqual(actuated, {10})
+
+
 if __name__ == "__main__":
     unittest.main()
