@@ -222,11 +222,10 @@ class EngineManifest:
 
 @dataclass(frozen=True)
 class ControllerManifest:
-    """Controller capabilities: input ingress and its private scheduling feeds."""
+    """Controller capabilities: public Joystick ingress and private Engine CONTROL."""
 
     session_id: str
     engine_control: Endpoint
-    engine_telemetry: Endpoint
     joystick: Endpoint
     actor_id: str = COMPATIBILITY_ACTOR_ID
 
@@ -235,18 +234,24 @@ class ControllerManifest:
             raise ValueError("actor_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"session_id": self.session_id,
-                "engine_control": self.engine_control.as_dict(),
-                "engine_telemetry": self.engine_telemetry.as_dict(),
-                "joystick": self.joystick.as_dict(), "actor_id": self.actor_id}
+        return {
+            "session_id": self.session_id,
+            "engine_control": self.engine_control.as_dict(),
+            "joystick": self.joystick.as_dict(),
+            "actor_id": self.actor_id,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ControllerManifest":
-        session_id = _manifest_session(data, {"session_id", "engine_control",
-                                               "engine_telemetry", "joystick", "actor_id"})
-        return cls(session_id, cast(Endpoint, _manifest_endpoint(data["engine_control"])),
-                   cast(Endpoint, _manifest_endpoint(data["engine_telemetry"])),
-                   cast(Endpoint, _manifest_endpoint(data["joystick"])), data["actor_id"])
+        session_id = _manifest_session(
+            data, {"session_id", "engine_control", "joystick", "actor_id"}
+        )
+        return cls(
+            session_id,
+            cast(Endpoint, _manifest_endpoint(data["engine_control"])),
+            cast(Endpoint, _manifest_endpoint(data["joystick"])),
+            data["actor_id"],
+        )
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ControllerManifest":

@@ -19,6 +19,8 @@ class ActorState:
     grounded: bool
     alive: bool
     result: str | None = None
+    input_right: bool = False
+    input_jump: bool = False
 
     @property
     def owner_player_id(self) -> str:
@@ -35,6 +37,8 @@ class ActorState:
             "grounded": self.grounded,
             "alive": self.alive,
             "result": self.result,
+            "input_right": self.input_right,
+            "input_jump": self.input_jump,
         }
 
 
@@ -64,10 +68,11 @@ class ActorTelemetry:
     grounded: bool
     alive: bool
     result: str | None
-    accepted_actions: int
-    late_actions: int
-    rejected_actions: int
-    duplicate_actions: int
+    input_right: bool
+    input_jump: bool
+    accepted_inputs: int
+    rejected_inputs: int
+    duplicate_inputs: int
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -77,10 +82,11 @@ class ActorTelemetry:
             "grounded": self.grounded,
             "alive": self.alive,
             "result": self.result,
-            "accepted_actions": self.accepted_actions,
-            "late_actions": self.late_actions,
-            "rejected_actions": self.rejected_actions,
-            "duplicate_actions": self.duplicate_actions,
+            "input_right": self.input_right,
+            "input_jump": self.input_jump,
+            "accepted_inputs": self.accepted_inputs,
+            "rejected_inputs": self.rejected_inputs,
+            "duplicate_inputs": self.duplicate_inputs,
         }
 
 

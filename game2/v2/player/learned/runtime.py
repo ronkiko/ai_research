@@ -26,6 +26,8 @@ class DecisionSample:
     motion_x: float
     action_decision: ActionDecision
     log_prob: float | None = None
+    pad_right: bool = False
+    pad_jump: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,8 @@ class TrainingRecord:
     compressed_pixels: bytes
     motion_x: float
     action_decision: ActionDecision
+    pad_right: bool = False
+    pad_jump: bool = False
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
@@ -49,6 +53,8 @@ class TrainingRecord:
             zlib.compress(frame.pixels, level=1),
             float(sample.motion_x),
             sample.action_decision,
+            sample.pad_right,
+            sample.pad_jump,
         )
 
     @property
@@ -81,6 +87,7 @@ class LearnedPlayer:
         self.motion_estimator = motion_estimator or MotionEstimator()
         self.latest_goal: MotorGoal | None = None
         self.latest_decision = ActionDecision(False, False)
+        self.actuated_state = ActionDecision(False, False)
         self.latest_sample: DecisionSample | None = None
         if type(learning_rate) not in (int, float) or not math.isfinite(float(learning_rate)) \
                 or learning_rate <= 0:
@@ -116,6 +123,7 @@ class LearnedPlayer:
         self.motion_estimator.reset()
         self.latest_goal = None
         self.latest_decision = ActionDecision(False, False)
+        self.actuated_state = ActionDecision(False, False)
         self.latest_sample = None
         self._training_records.clear()
         self._recorded_samples.clear()
@@ -148,22 +156,33 @@ class LearnedPlayer:
             self.planner.eval()
             self.motor_controller.eval()
 
-    def _model_logits(self, vision: torch.Tensor, motion_x: float) -> tuple[torch.Tensor, torch.Tensor]:
+    def _model_logits(
+        self,
+        vision: torch.Tensor,
+        motion_x: float,
+        pad_right: bool,
+        pad_jump: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         planner_output = self.planner(vision)[0]
         if planner_output.ndim != 1 or planner_output.shape[0] != 2:
             raise ValueError("Planner must return two MotorGoal values")
-        logits = self.motor_controller.forward_goal(planner_output, motion_x) \
-            if hasattr(self.motor_controller, "forward_goal") \
-            else self.motor_controller(motor_input_tensor(planner_output, motion_x))
+        logits = self.motor_controller.forward_goal(
+            planner_output, motion_x, pad_right, pad_jump
+        ) if hasattr(self.motor_controller, "forward_goal") else self.motor_controller(
+            motor_input_tensor(planner_output, motion_x, pad_right, pad_jump)
+        )
         return planner_output, logits
 
     def _process_model_frame(self, frame: VisionFrame, motion_x: float) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
+        pad_state = self.actuated_state
         if self._episode_mode == "train":
             if self._episode_generator is None:
                 raise RuntimeError("train episode has no random generator")
             with torch.no_grad():
-                planner_output, logits = self._model_logits(vision, motion_x)
+                planner_output, logits = self._model_logits(
+                    vision, motion_x, pad_state.right, pad_state.jump
+                )
                 probabilities = torch.sigmoid(logits)
                 random_values = torch.rand(
                     probabilities.shape, generator=self._episode_generator,
@@ -174,15 +193,25 @@ class LearnedPlayer:
                     logits, action_tensor, reduction="none").mean())
         else:
             with torch.no_grad():
-                planner_output, logits = self._model_logits(vision, motion_x)
+                planner_output, logits = self._model_logits(
+                    vision, motion_x, pad_state.right, pad_state.jump
+                )
             action_tensor = logits >= 0.0
             log_prob = None
 
         goal = MotorGoal(float(planner_output[0].detach()),
                          float(planner_output[1].detach()))
         decision = ActionDecision(bool(action_tensor[0].item()), bool(action_tensor[1].item()))
-        return DecisionSample(frame.world_tick, frame, goal, motion_x, decision,
-                              log_prob)
+        return DecisionSample(
+            frame.world_tick,
+            frame,
+            goal,
+            motion_x,
+            decision,
+            log_prob,
+            pad_state.right,
+            pad_state.jump,
+        )
 
     def process_frame(self, frame: VisionFrame) -> DecisionSample | None:
         """Run one valid public Vision observation through the learned hierarchy.
@@ -203,10 +232,24 @@ class LearnedPlayer:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
                 raise TypeError("Planner returned an invalid MotorGoal")
-            decision = self.motor_controller.decide(goal, motion_x)
+            decision = self.motor_controller.decide(
+                goal,
+                motion_x,
+                self.actuated_state.right,
+                self.actuated_state.jump,
+            )
             if not isinstance(decision, ActionDecision):
                 raise TypeError("Motor Controller returned an invalid ActionDecision")
-            sample = DecisionSample(frame.world_tick, frame, goal, motion_x, decision)
+            sample = DecisionSample(
+                frame.world_tick,
+                frame,
+                goal,
+                motion_x,
+                decision,
+                None,
+                self.actuated_state.right,
+                self.actuated_state.jump,
+            )
         goal = sample.motor_goal
         decision = sample.action_decision
         self.latest_goal = goal
@@ -214,12 +257,13 @@ class LearnedPlayer:
         self.latest_sample = sample
         return sample
 
-    def record_sent_sample(self, sample: DecisionSample) -> None:
-        """Record a train sample only after its action reached Joystick."""
-        if self._episode_mode != "train":
-            raise ValueError("sent samples can be recorded only in train mode")
+    def record_actuated(self, sample: DecisionSample) -> None:
+        """Apply the Engine-accepted desired pad state to Model memory."""
         if not isinstance(sample, DecisionSample):
-            raise TypeError("record_sent_sample requires a DecisionSample")
+            raise TypeError("record_actuated requires a DecisionSample")
+        self.actuated_state = sample.action_decision
+        if self._episode_mode != "train":
+            return
         sample_id = id(sample)
         if self._recorded_samples.get(sample_id) is sample:
             return
@@ -227,6 +271,12 @@ class LearnedPlayer:
         self._training_records.append(TrainingRecord.from_sample(sample))
         if sample.log_prob is not None:
             self._log_probabilities.append(float(sample.log_prob))
+
+    def record_sent_sample(self, sample: DecisionSample) -> None:
+        """Compatibility method for train-path tests; an accepted sample is actuated."""
+        if self._episode_mode != "train":
+            raise ValueError("sent samples can be recorded only in train mode")
+        self.record_actuated(sample)
 
     def _backward_records(self, records: tuple[TrainingRecord, ...],
                           reward: float, record_count: int) -> float:
@@ -253,7 +303,12 @@ class LearnedPlayer:
                     dtype=planner_output.dtype,
                     device=planner_output.device,
                 ).unsqueeze(1)
-                motor_input = torch.cat((planner_output, motion), dim=1)
+                pad = torch.tensor(
+                    [[record.pad_right, record.pad_jump] for record in batch],
+                    dtype=planner_output.dtype,
+                    device=planner_output.device,
+                )
+                motor_input = torch.cat((planner_output, motion, pad), dim=1)
                 logits = self.motor_controller(motor_input)
                 actions = torch.tensor(
                     [[record.action_decision.right, record.action_decision.jump]

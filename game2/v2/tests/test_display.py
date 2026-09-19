@@ -117,8 +117,10 @@ class VisionRendererTests(unittest.TestCase):
         self.assertEqual({field.name for field in fields(frame)},
                          {"width", "height", "pixels", "world_tick"})
         self.assertIs(type(frame.pixels), bytes)
-        for name in ("vx", "vy", "grounded", "accepted_actions", "late_actions",
-                     "collision_rects"):
+        for name in (
+            "vx", "vy", "grounded", "accepted_inputs", "input_right",
+            "input_jump", "collision_rects",
+        ):
             self.assertFalse(hasattr(frame, name), name)
         with self.assertRaises(FrozenInstanceError):
             frame.pixels = b""
@@ -271,6 +273,7 @@ class ScreenTelemetryTests(unittest.TestCase):
         self.assertTrue(any(
             "first move +120 ticks (1.00s)" in line for line in moved_lines
         ))
+        self.assertTrue(any("PAD RIGHT=0 A=0" in line for line in moved_lines))
 
 
 class ScreenRendererTests(unittest.TestCase):

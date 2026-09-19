@@ -7,7 +7,7 @@ from typing import TypeVar
 
 import torch
 
-from .motor import MOTOR_CONTROLLER_CONFIGURATION, MotorController382
+from .motor import MOTOR_CONTROLLER_CONFIGURATION, MotorController582
 from .planner import PLANNER_CONFIGURATION, CNNPlanner
 
 
@@ -42,10 +42,10 @@ def save_planner(model: CNNPlanner, path: str | Path) -> None:
                         configuration=PLANNER_CONFIGURATION), Path(path))
 
 
-def save_motor_controller(model: MotorController382, path: str | Path) -> None:
+def save_motor_controller(model: MotorController582, path: str | Path) -> None:
     """Save a Motor Controller checkpoint without serializing the runtime object."""
-    if not isinstance(model, MotorController382):
-        raise TypeError("save_motor_controller requires a MotorController382")
+    if not isinstance(model, MotorController582):
+        raise TypeError("save_motor_controller requires a MotorController582")
     torch.save(_payload(model, role="motor_controller", implementation="mlp",
                         configuration=MOTOR_CONTROLLER_CONFIGURATION), Path(path))
 
@@ -93,11 +93,11 @@ def load_planner(path: str | Path) -> CNNPlanner:
     return _restore(CNNPlanner.fresh(payload["seed"]), payload)
 
 
-def load_motor_controller(path: str | Path) -> MotorController382:
-    """Load and validate a 3-8-2 Motor Controller checkpoint onto the CPU."""
+def load_motor_controller(path: str | Path) -> MotorController582:
+    """Load and validate a 5-8-2 Motor Controller checkpoint onto the CPU."""
     payload = _read(path, role="motor_controller", implementation="mlp",
                     configuration=MOTOR_CONTROLLER_CONFIGURATION)
-    return _restore(MotorController382.fresh(payload["seed"]), payload)
+    return _restore(MotorController582.fresh(payload["seed"]), payload)
 
 
 __all__ = [

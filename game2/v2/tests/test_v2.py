@@ -13,8 +13,11 @@ from game2.v2.console.config import (ControllerManifest, EngineManifest,
                                       allocate_endpoint)
 from game2.v2.console.controller.controller import ControllerService
 from game2.v2.console.engine.engine import Engine, EngineService
-from game2.v2.console.protocol import (ActionCommand, action_message,
-                                        decode_control_message)
+from game2.v2.console.protocol import (
+    InputStateCommand,
+    decode_control_message,
+    input_state_message,
+)
 from game2.v2.console.transport.control_server import ControlEnvelope, ControlServer
 from game2.v2.console.transport.publisher import LatestPublisher
 from game2.v2.console.world import load_world
@@ -84,62 +87,103 @@ class JoystickContractTests(unittest.TestCase):
         self.assertEqual(joystick_ack(42, "rejected")["status"], "rejected")
 
 
-class InternalSchedulingTests(unittest.TestCase):
+class InputLatchTests(unittest.TestCase):
     def _engine(self):
         engine = Engine(load_world(PIT))
         engine.spawn_actor("player-a", "actor-a")
         return engine
 
-    def test_action_executes_at_target_world_tick(self):
+    def test_input_state_is_latched_until_replaced(self):
         engine = self._engine()
         actor = engine.actors["actor-a"]
         self.assertEqual(
-            engine.submit_action(ActionCommand("actor-a", 1, 3, 2, True)), "accepted")
-        engine.tick()
-        engine.tick()
-        self.assertEqual(actor.body.vx, 0)
-        engine.tick()
-        self.assertGreater(actor.body.vx, 0)
+            engine.submit_input(InputStateCommand("actor-a", 1, True, False)),
+            "accepted",
+        )
+        for _ in range(8):
+            engine.tick()
+        self.assertGreater(actor.body.vx, 0.0)
+        moving_x = actor.body.x
 
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 2, False, False)),
+            "accepted",
+        )
+        for _ in range(8):
+            engine.tick()
+        self.assertGreater(actor.body.x, moving_x)
+        self.assertLess(actor.body.vx, engine.physics_config.max_speed)
 
-    def test_right_and_jump_apply_together_on_takeoff_tick(self):
+    def test_right_and_jump_apply_together_and_jump_is_edge_triggered(self):
         engine = self._engine()
         actor = engine.actors["actor-a"]
         self.assertTrue(actor.body.grounded)
         start_x = actor.body.x
         self.assertEqual(
-            engine.submit_action(
-                ActionCommand("actor-a", 1, 1, 1, True, True)
-            ),
+            engine.submit_input(InputStateCommand("actor-a", 1, True, True)),
             "accepted",
         )
         engine.tick()
+        first_vy = actor.body.vy
         self.assertGreater(actor.body.vx, 0.0)
-        self.assertLess(actor.body.vy, 0.0)
+        self.assertLess(first_vy, 0.0)
         self.assertGreater(actor.body.x, start_x)
-        self.assertFalse(actor.body.grounded)
 
-    def test_duplicate_and_late_actions_are_rejected_per_actor(self):
-        engine = self._engine()
-        command = ActionCommand("actor-a", 1, 3, 1)
-        self.assertEqual(engine.submit_action(command), "accepted")
-        self.assertEqual(engine.submit_action(command), "duplicate")
+        # Holding A does not retrigger another jump.
         for _ in range(3):
             engine.tick()
-        self.assertEqual(engine.submit_action(ActionCommand("actor-a", 2, 1, 1)), "late")
+        self.assertGreater(actor.body.vy, first_vy)
 
-    def test_action_command_has_actor_and_global_target_time(self):
-        command = ActionCommand(actor_id="actor-a", sequence=1,
-                                target_world_tick=7, hold_ticks=2,
-                                right=True, jump=False)
-        message = action_message(command)
+        # Release then press creates a new edge once the Actor is grounded again.
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 2, True, False)),
+            "accepted",
+        )
+        for _ in range(300):
+            engine.tick()
+            if actor.body.grounded:
+                break
+        self.assertTrue(actor.body.grounded)
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 3, True, True)),
+            "accepted",
+        )
+        engine.tick()
+        self.assertLess(actor.body.vy, 0.0)
+
+    def test_input_sequences_are_monotonic_and_actor_scoped(self):
+        engine = self._engine()
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 2, True, False)),
+            "accepted",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 2, False, False)),
+            "duplicate",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-a", 1, False, False)),
+            "rejected",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("unknown", 1, True, False)),
+            "rejected",
+        )
+
+    def test_private_input_state_has_no_future_schedule_fields(self):
+        command = InputStateCommand(
+            actor_id="actor-a", sequence=1, right=True, jump=False
+        )
+        message = input_state_message(command)
         self.assertEqual(set(message), {
-            "version", "type", "actor_id", "sequence", "target_world_tick",
-            "hold_ticks", "right", "jump",
+            "version", "type", "actor_id", "sequence", "right", "jump",
         })
         self.assertEqual(decode_control_message(message), command)
-        with self.assertRaises(ProtocolError):
-            decode_control_message({**message, "episode": 1})
+        for forbidden in ("target_world_tick", "hold_ticks"):
+            with self.subTest(forbidden=forbidden):
+                with self.assertRaises(ProtocolError):
+                    decode_control_message({**message, forbidden: 1})
+
 
     def test_state_and_telemetry_publish_one_canonical_world_timestamp(self):
         engine = Engine(load_world(PIT))
@@ -211,9 +255,12 @@ class ChannelTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_controller_ack_waits_for_engine_and_maps_late(self):
-        manifest = ControllerManifest("s", Endpoint("127.0.0.1", 12345),
-                                      Endpoint("127.0.0.1", 12346), Endpoint("127.0.0.1", 12347))
+    def test_controller_forwards_current_state_immediately_and_acks_engine_result(self):
+        manifest = ControllerManifest(
+            "s",
+            Endpoint("127.0.0.1", 12345),
+            Endpoint("127.0.0.1", 12347),
+        )
         service = ControllerService(manifest)
         responses = []
 
@@ -230,25 +277,76 @@ class BoundaryTests(unittest.TestCase):
 
         service.joystick = FakeJoystick()
         service.engine_control = FakeEngine()
-        service.latest = {"world_tick": 10,
-                          "actors": [{"actor_id": service.manifest.actor_id}]}
-        service._handle_joystick(ControlEnvelope(7, JoystickState(1, True, False)))
+        service._handle_joystick(
+            ControlEnvelope(7, JoystickState(1, True, False))
+        )
         self.assertEqual(responses, [])
         self.assertIn(1, service.pending)
         first_command = decode_frame(service.engine_control.sent[0][4:])
-        self.assertEqual(first_command["target_world_tick"], 14)
+        self.assertEqual(first_command["type"], "input_state")
         self.assertEqual(first_command["actor_id"], service.manifest.actor_id)
-        self.assertNotIn("episode", first_command)
-        service._handle_engine_ack({"type": "action_ack", "sequence": 1, "status": "accepted"})
+        self.assertEqual(
+            set(first_command),
+            {"version", "type", "actor_id", "sequence", "right", "jump"},
+        )
+        self.assertNotIn("target_world_tick", first_command)
+        self.assertNotIn("hold_ticks", first_command)
+
+        service._handle_engine_ack({
+            "type": "input_ack",
+            "sequence": 1,
+            "status": "accepted",
+        })
         self.assertEqual(responses[0][1]["status"], "accepted")
-        service._handle_joystick(ControlEnvelope(8, JoystickState(2, True, False)))
-        self.assertEqual(len(responses), 1)
-        service._handle_engine_ack({"type": "action_ack", "sequence": 2, "status": "late"})
+
+        service._handle_joystick(
+            ControlEnvelope(7, JoystickState(2, False, False))
+        )
+        service._handle_engine_ack({
+            "type": "input_ack",
+            "sequence": 2,
+            "status": "rejected",
+        })
         self.assertEqual(responses[1][1]["status"], "rejected")
 
+    def test_controller_neutralizes_pad_when_active_joystick_disconnects(self):
+        manifest = ControllerManifest(
+            "s",
+            Endpoint("127.0.0.1", 12345),
+            Endpoint("127.0.0.1", 12347),
+        )
+        service = ControllerService(manifest)
+
+        class FakeJoystick:
+            def __init__(self):
+                self.responses = []
+            def respond(self, client_id, payload):
+                self.responses.append((client_id, payload))
+
+        class FakeEngine:
+            def __init__(self):
+                self.sent = []
+            def sendall(self, payload):
+                self.sent.append(payload)
+
+        service.joystick = FakeJoystick()
+        service.engine_control = FakeEngine()
+        service._handle_joystick(
+            ControlEnvelope(7, JoystickState(1, True, True))
+        )
+        service._joystick_closed(7)
+        commands = [
+            decode_frame(payload[4:]) for payload in service.engine_control.sent
+        ]
+        self.assertEqual((commands[0]["right"], commands[0]["jump"]), (True, True))
+        self.assertEqual((commands[-1]["right"], commands[-1]["jump"]), (False, False))
+
     def test_controller_does_not_claim_ready_without_engine_control(self):
-        manifest = ControllerManifest("s", Endpoint("127.0.0.1", 1),
-                                      Endpoint("127.0.0.1", 2), Endpoint("127.0.0.1", 3))
+        manifest = ControllerManifest(
+            "s",
+            Endpoint("127.0.0.1", 1),
+            Endpoint("127.0.0.1", 3),
+        )
         service = ControllerService(manifest, connect_timeout=0.05)
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -256,7 +354,6 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertNotIn("READY ", stdout.getvalue())
         self.assertIn("startup failed", stderr.getvalue())
-
 
 if __name__ == "__main__":
     unittest.main()

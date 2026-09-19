@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import EngineManifest, SessionConfig
-from ..protocol import (PROTOCOL_VERSION, ActionCommand, DespawnCommand, RespawnCommand,
-                        SpawnCommand)
+from ..protocol import (PROTOCOL_VERSION, DespawnCommand, InputStateCommand,
+                        RespawnCommand, SpawnCommand)
 from ..transport.control_server import ControlServer
 from ..transport.publisher import EventPublisher, LatestPublisher
 from ..world import WorldDefinition, load_world
@@ -29,9 +29,8 @@ TERMINAL = "terminal"
 
 
 @dataclass
-class ActionStats:
+class InputStats:
     accepted: int = 0
-    late: int = 0
     rejected: int = 0
     duplicate: int = 0
 
@@ -100,21 +99,20 @@ class ActorRuntime:
     spawn_world_tick: int
     result: str | None = None
     lifecycle: str = ACTIVE
-    scheduled: dict[int, tuple[bool, bool]] = field(default_factory=dict)
-    seen_action_sequences: set[int] = field(default_factory=set)
-    stats: ActionStats = field(default_factory=ActionStats)
+    input_right: bool = False
+    input_jump: bool = False
+    sampled_jump: bool = False
+    last_input_sequence: int = 0
+    stats: InputStats = field(default_factory=InputStats)
 
     @property
     def player_id(self) -> str:
         return self.owner_player_id
 
-    @property
-    def scheduled_actions(self) -> dict[int, tuple[bool, bool]]:
-        return self.scheduled
-
-    @property
-    def seen_sequences(self) -> set[int]:
-        return self.seen_action_sequences
+    def neutralize_input(self) -> None:
+        self.input_right = False
+        self.input_jump = False
+        self.sampled_jump = False
 
 
 class Engine:
@@ -163,9 +161,9 @@ class Engine:
         return actor
 
     def despawn_actor(self, actor_id: str) -> ActorRuntime:
-        """Remove only one Actor and its private scheduled input."""
+        """Remove one Actor and clear its latched virtual gamepad."""
         actor = self.actors.pop(actor_id)
-        actor.scheduled.clear()
+        actor.neutralize_input()
         self.players.unregister(actor_id=actor_id)
         self._lifecycle_events.append({"event": "actor_despawned", "actor_id": actor_id,
                                        "world_tick": self.world_tick})
@@ -181,7 +179,7 @@ class Engine:
         actor.spawn_world_tick = self.world_tick
         actor.result = None
         actor.lifecycle = ACTIVE
-        actor.scheduled.clear()
+        actor.neutralize_input()
         self._lifecycle_events.append({"event": "actor_respawned", "actor_id": actor_id,
                                        "world_tick": self.world_tick})
         return actor
@@ -190,38 +188,30 @@ class Engine:
         events, self._lifecycle_events = self._lifecycle_events, []
         return events
 
-    def submit_action(self, command: ActionCommand) -> str:
-        """Validate and schedule one Actor's action against global world_tick."""
+    def submit_input(self, command: InputStateCommand) -> str:
+        """Latch one Actor's current virtual gamepad state immediately."""
         actor = self.actors.get(command.actor_id)
         if actor is None:
             return "rejected"
         if actor.lifecycle == TERMINAL:
             actor.stats.rejected += 1
             return "rejected"
-        if command.sequence in actor.seen_action_sequences:
+        if command.sequence == actor.last_input_sequence:
             actor.stats.duplicate += 1
             return "duplicate"
-        actor.seen_action_sequences.add(command.sequence)
-        if command.target_world_tick <= self.world_tick:
-            actor.stats.late += 1
-            return "late"
-        end_tick = command.target_world_tick + command.hold_ticks
-        if any(tick in actor.scheduled
-               for tick in range(command.target_world_tick, end_tick)):
+        if command.sequence < actor.last_input_sequence:
             actor.stats.rejected += 1
             return "rejected"
-        for tick in range(command.target_world_tick, end_tick):
-            actor.scheduled[tick] = (
-                command.right,
-                command.jump if tick == command.target_world_tick else False,
-            )
+        actor.last_input_sequence = command.sequence
+        actor.input_right = command.right
+        actor.input_jump = command.jump
         actor.stats.accepted += 1
         return "accepted"
 
     def _finish_actor(self, actor: ActorRuntime, result: str) -> None:
         actor.result = result
         actor.lifecycle = TERMINAL
-        actor.scheduled.clear()
+        actor.neutralize_input()
 
     def tick(self) -> list[dict]:
         """Execute one global fixed-step opportunity for every active Actor."""
@@ -233,12 +223,16 @@ class Engine:
             actor = self.actors.get(actor_id)
             if actor is None or actor.lifecycle != ACTIVE:
                 continue
-            right, jump = actor.scheduled.pop(self.world_tick, (False, False))
+            right = actor.input_right
+            jump_pressed = actor.input_jump and not actor.sampled_jump
+            actor.sampled_jump = actor.input_jump
             was_grounded = actor.body.grounded
-            raw_events = self.physics.step(actor.body, 1 if right else 0, jump)
+            raw_events = self.physics.step(
+                actor.body, 1 if right else 0, jump_pressed
+            )
             actor_events = [{**event, "actor_id": actor_id,
                              "world_tick": self.world_tick} for event in raw_events]
-            if was_grounded and jump:
+            if was_grounded and jump_pressed:
                 actor_events.insert(0, {"event": "jump_started", "actor_id": actor_id,
                                         "world_tick": self.world_tick})
             if (not was_grounded and actor.body.grounded and actor.body.alive):
@@ -267,8 +261,19 @@ class Engine:
     def actor_state(self, actor_id: str) -> ActorState:
         actor = self.actors[actor_id]
         body = actor.body
-        return ActorState(actor.actor_id, actor.owner_player_id, body.x, body.y,
-                          body.vx, body.vy, body.grounded, body.alive, actor.result)
+        return ActorState(
+            actor.actor_id,
+            actor.owner_player_id,
+            body.x,
+            body.y,
+            body.vx,
+            body.vy,
+            body.grounded,
+            body.alive,
+            actor.result,
+            actor.input_right,
+            actor.input_jump,
+        )
 
     def world_state(self) -> WorldState:
         return WorldState(
@@ -289,10 +294,11 @@ class Engine:
                 grounded=actor.body.grounded,
                 alive=actor.body.alive,
                 result=actor.result,
-                accepted_actions=actor.stats.accepted,
-                late_actions=actor.stats.late,
-                rejected_actions=actor.stats.rejected,
-                duplicate_actions=actor.stats.duplicate,
+                input_right=actor.input_right,
+                input_jump=actor.input_jump,
+                accepted_inputs=actor.stats.accepted,
+                rejected_inputs=actor.stats.rejected,
+                duplicate_inputs=actor.stats.duplicate,
             ))
         return TelemetrySnapshot(self.session_id, self.world_tick, simulation_speed,
                                  tuple(actors))
@@ -301,10 +307,9 @@ class Engine:
         return {
             "actors": [
                 {**self.actor_state(actor_id).to_payload(),
-                 "accepted_actions": self.actors[actor_id].stats.accepted,
-                 "late_actions": self.actors[actor_id].stats.late,
-                 "rejected_actions": self.actors[actor_id].stats.rejected,
-                 "duplicate_actions": self.actors[actor_id].stats.duplicate}
+                 "accepted_inputs": self.actors[actor_id].stats.accepted,
+                 "rejected_inputs": self.actors[actor_id].stats.rejected,
+                 "duplicate_inputs": self.actors[actor_id].stats.duplicate}
                 for actor_id in sorted(self.actors)
             ]
         }
@@ -359,11 +364,11 @@ class EngineService:
         events = []
         for envelope in self.control.drain():
             command = envelope.command
-            if isinstance(command, ActionCommand):
-                status = self.engine.submit_action(command)
+            if isinstance(command, InputStateCommand):
+                status = self.engine.submit_input(command)
                 self.control.respond(envelope.client_id, {
                     "version": PROTOCOL_VERSION,
-                    "type": "action_ack",
+                    "type": "input_ack",
                     "actor_id": command.actor_id,
                     "sequence": command.sequence,
                     "status": status,
@@ -457,6 +462,6 @@ class EngineService:
                 publisher.close()
 
 
-__all__ = ["ABSENT", "ACTIVE", "SPAWNED", "TERMINAL", "ActionStats",
+__all__ = ["ABSENT", "ACTIVE", "SPAWNED", "TERMINAL", "InputStats",
            "ActorRuntime", "Engine", "EngineService", "PlayerBinding",
            "PlayerRegistry"]

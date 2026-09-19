@@ -10,7 +10,7 @@ from torch import nn
 from .contracts import ActionDecision, MotorGoal
 
 
-MOTOR_CONTROLLER_CONFIGURATION = "3-8-2"
+MOTOR_CONTROLLER_CONFIGURATION = "5-8-2-dendy-latch-v1"
 
 
 def _normalized_motion(value: object) -> float:
@@ -24,38 +24,59 @@ def _normalized_motion(value: object) -> float:
     return value
 
 
-def motor_input(goal: MotorGoal, motion_x: float) -> torch.Tensor:
-    """Build the three Player-side Motor Controller inputs."""
+def _button(value: object, name: str) -> float:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be boolean")
+    return 1.0 if value else 0.0
+
+
+def motor_input(
+    goal: MotorGoal,
+    motion_x: float,
+    current_right: bool = False,
+    current_jump: bool = False,
+) -> torch.Tensor:
+    """Build Planner goal + motion + current virtual-pad state."""
     if not isinstance(goal, MotorGoal):
         raise TypeError("motor_input requires a MotorGoal")
     return torch.tensor([
         goal.target_dx,
         goal.target_dy,
         _normalized_motion(motion_x),
+        _button(current_right, "current_right"),
+        _button(current_jump, "current_jump"),
     ], dtype=torch.float32)
 
 
-def motor_input_tensor(goal: torch.Tensor, motion_x: float) -> torch.Tensor:
-    """Build Motor Controller inputs while preserving a Planner autograd graph."""
+def motor_input_tensor(
+    goal: torch.Tensor,
+    motion_x: float,
+    current_right: bool = False,
+    current_jump: bool = False,
+) -> torch.Tensor:
+    """Build differentiable Motor input while preserving the Planner graph."""
     if not isinstance(goal, torch.Tensor) or goal.ndim != 1 or goal.shape[0] != 2:
         raise ValueError("differentiable Motor Controller goal must have shape [2]")
-    motion = _normalized_motion(motion_x)
-    motion_tensor = torch.tensor([motion], dtype=goal.dtype, device=goal.device)
-    return torch.cat((goal, motion_tensor))
+    tail = torch.tensor([
+        _normalized_motion(motion_x),
+        _button(current_right, "current_right"),
+        _button(current_jump, "current_jump"),
+    ], dtype=goal.dtype, device=goal.device)
+    return torch.cat((goal, tail))
 
 
-class MotorController382(nn.Module):
-    """Produce raw RIGHT and JUMP logits from a 3-8-2 MLP."""
+class MotorController582(nn.Module):
+    """Produce desired RIGHT and JUMP button states from a 5-8-2 MLP."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.hidden = nn.Linear(3, 8)
+        self.hidden = nn.Linear(5, 8)
         self.activation = nn.ReLU()
         self.output = nn.Linear(8, 2)
         self.initialization_seed: int | None = None
 
     @classmethod
-    def fresh(cls, seed: int) -> "MotorController382":
+    def fresh(cls, seed: int) -> "MotorController582":
         if type(seed) is not int:
             raise TypeError("seed must be an int")
         with torch.random.fork_rng(devices=[]):
@@ -66,33 +87,54 @@ class MotorController382(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if not isinstance(inputs, torch.Tensor):
-            raise TypeError("MotorController382 input must be a torch.Tensor")
+            raise TypeError("MotorController582 input must be a torch.Tensor")
         if inputs.ndim == 1:
-            if inputs.shape[0] != 3:
-                raise ValueError("MotorController382 expects 3 inputs")
+            if inputs.shape[0] != 5:
+                raise ValueError("MotorController582 expects 5 inputs")
         elif inputs.ndim == 2:
-            if inputs.shape[1] != 3:
-                raise ValueError("MotorController382 expects inputs with shape [B,3]")
+            if inputs.shape[1] != 5:
+                raise ValueError("MotorController582 expects inputs with shape [B,5]")
         else:
-            raise ValueError("MotorController382 input must have shape [3] or [B,3]")
+            raise ValueError("MotorController582 input must have shape [5] or [B,5]")
         return self.output(self.activation(self.hidden(inputs)))
 
-    def forward_goal(self, goal: torch.Tensor, motion_x: float) -> torch.Tensor:
-        """Produce logits from the original differentiable Planner output."""
-        return self(motor_input_tensor(goal, motion_x))
+    def forward_goal(
+        self,
+        goal: torch.Tensor,
+        motion_x: float,
+        current_right: bool = False,
+        current_jump: bool = False,
+    ) -> torch.Tensor:
+        return self(motor_input_tensor(
+            goal, motion_x, current_right, current_jump
+        ))
 
-    def decide(self, goal: MotorGoal, motion_x: float) -> ActionDecision:
-        """Convert raw logits into a deterministic logical action decision."""
+    def decide(
+        self,
+        goal: MotorGoal,
+        motion_x: float,
+        current_right: bool = False,
+        current_jump: bool = False,
+    ) -> ActionDecision:
+        """Return the desired complete virtual-pad state."""
         was_training = self.training
         self.eval()
         try:
             with torch.no_grad():
-                logits = self(motor_input(goal, motion_x))
+                logits = self(motor_input(
+                    goal, motion_x, current_right, current_jump
+                ))
         finally:
             self.train(was_training)
-        return ActionDecision(right=bool(logits[0].item() >= 0.0),
-                              jump=bool(logits[1].item() >= 0.0))
+        return ActionDecision(
+            right=bool(logits[0].item() >= 0.0),
+            jump=bool(logits[1].item() >= 0.0),
+        )
 
 
-__all__ = ["MOTOR_CONTROLLER_CONFIGURATION", "MotorController382", "motor_input",
-           "motor_input_tensor"]
+__all__ = [
+    "MOTOR_CONTROLLER_CONFIGURATION",
+    "MotorController582",
+    "motor_input",
+    "motor_input_tensor",
+]

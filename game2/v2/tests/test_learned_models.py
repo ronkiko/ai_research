@@ -13,7 +13,7 @@ from game2.v2.player.learned.checkpoint import (load_motor_controller,
                                                  save_motor_controller,
                                                  save_planner)
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
-from game2.v2.player.learned.motor import MotorController382, motor_input
+from game2.v2.player.learned.motor import MotorController582, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
     DecisionSample,
@@ -97,14 +97,18 @@ class LearnedContractTests(unittest.TestCase):
             (6, compact.height, compact.width),
         )
 
-    def test_motion_input_is_player_side_and_strictly_normalized(self):
-        values = motor_input(MotorGoal(0.5, -0.5), 1)
-        self.assertEqual(tuple(values.shape), (3,))
+    def test_motion_input_includes_current_virtual_pad_state(self):
+        values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)
+        self.assertEqual(tuple(values.shape), (5,))
         self.assertEqual(values.dtype, torch.float32)
-        self.assertTrue(torch.equal(values, torch.tensor([0.5, -0.5, 1.0])))
+        self.assertTrue(torch.equal(
+            values, torch.tensor([0.5, -0.5, 1.0, 1.0, 0.0])
+        ))
         for invalid in (True, math.nan, math.inf, -1.01, 1.01):
             with self.assertRaises((TypeError, ValueError)):
                 motor_input(MotorGoal(0.0, 0.0), invalid)
+        with self.assertRaises(TypeError):
+            motor_input(MotorGoal(0.0, 0.0), 0.0, 1, False)
 
 
 class LearnedModelTests(unittest.TestCase):
@@ -117,13 +121,32 @@ class LearnedModelTests(unittest.TestCase):
 
     @staticmethod
     def _controlled_update(action: ActionDecision, reward: float) -> LearnedPlayer:
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         player._training_records.append(_record(_frame(6, 5), action))
         updated, _loss = player.apply_result(reward)
         if not updated:
             raise AssertionError("controlled regression record did not update")
         return player
+
+
+
+    def test_actuated_state_tracks_engine_accepted_virtual_pad(self):
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
+        player.prepare_episode("evaluate", 7)
+        frame = _frame(6, 5)
+        sample = DecisionSample(
+            frame.world_tick,
+            frame,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ActionDecision(True, True),
+        )
+        self.assertEqual(player.actuated_state, ActionDecision(False, False))
+        player.record_actuated(sample)
+        self.assertEqual(player.actuated_state, ActionDecision(True, True))
+        player.reset_episode()
+        self.assertEqual(player.actuated_state, ActionDecision(False, False))
 
     def test_cnn_planner_supports_variable_resolution_and_returns_goals(self):
         planner = CNNPlanner.fresh(11)
@@ -142,7 +165,7 @@ class LearnedModelTests(unittest.TestCase):
             self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
 
     def test_motor_controller_has_executable_3_8_2_shape_and_decides(self):
-        controller = MotorController382.fresh(12)
+        controller = MotorController582.fresh(12)
         self.assertEqual((controller.hidden.in_features, controller.hidden.out_features), (3, 8))
         self.assertEqual((controller.output.in_features, controller.output.out_features), (8, 2))
         logits = controller(torch.tensor([[0.1, -0.2, 0.3], [1.0, 0.0, -1.0]]))
@@ -167,9 +190,9 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(any(torch.count_nonzero(parameter) > 0
                             for parameter in planner_a.parameters()))
 
-        motor_a = MotorController382.fresh(31)
-        motor_b = MotorController382.fresh(31)
-        motor_c = MotorController382.fresh(32)
+        motor_a = MotorController582.fresh(31)
+        motor_b = MotorController582.fresh(31)
+        motor_c = MotorController582.fresh(32)
         self.assertTrue(all(torch.equal(left, right)
                             for left, right in zip(_parameters(motor_a),
                                                    _parameters(motor_b))))
@@ -181,7 +204,7 @@ class LearnedModelTests(unittest.TestCase):
 
     def test_positive_right_no_jump_reward_moves_both_policy_outputs_in_expected_direction(self):
         frame = _frame(6, 5)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.append(
@@ -196,7 +219,7 @@ class LearnedModelTests(unittest.TestCase):
 
     def test_replay_update_uses_bounded_batches_and_preserves_policy_direction(self):
         frame = _frame(40, 24)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.extend(
@@ -212,7 +235,7 @@ class LearnedModelTests(unittest.TestCase):
 
     def test_negative_reward_reduces_probability_of_the_selected_joint_action(self):
         frame = _frame(6, 5)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.append(
@@ -227,7 +250,7 @@ class LearnedModelTests(unittest.TestCase):
 
     def test_mixed_positive_right_trajectory_increases_right_probability(self):
         frame = _frame(6, 5)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.extend(
@@ -261,7 +284,7 @@ class LearnedCheckpointTests(unittest.TestCase):
                 load_motor_controller(path)
 
     def test_motor_checkpoint_roundtrip_and_configuration_validation(self):
-        controller = MotorController382.fresh(42)
+        controller = MotorController582.fresh(42)
         goal = MotorGoal(-0.4, 0.8)
         expected_logits = controller(motor_input(goal, -0.1))
         expected_decision = controller.decide(goal, -0.1)

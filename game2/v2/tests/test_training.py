@@ -14,7 +14,7 @@ from game2.v2.contracts.discovery import ConsoleDiscovery
 from game2.v2.contracts.framing import ProtocolError, recv_frame, send_frame
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.console.engine.engine import Engine
-from game2.v2.console.protocol import ActionCommand
+from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world.loader import load_world
 from game2.v2.contracts.training import (
     APPLY_RESULT,
@@ -42,7 +42,7 @@ from game2.v2.contracts.training import (
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.inference import InferenceWorker
-from game2.v2.player.learned.motor import MotorController382
+from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_semantic,
                                              self_center)
@@ -198,7 +198,7 @@ class TerminalQueueTests(unittest.TestCase):
 
 class LearnedPolicyTrainingTests(unittest.TestCase):
     def _player(self):
-        return LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        return LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
 
     def test_train_seed_reproduces_independent_bernoulli_actions(self):
         first = self._player()
@@ -311,9 +311,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
     def test_sequential_replay_matches_reference_reinforce_gradient_and_step(self):
         reference_planner = CNNPlanner.fresh(1)
-        reference_motor = MotorController382.fresh(2)
+        reference_motor = MotorController582.fresh(2)
         sequential_planner = CNNPlanner.fresh(99)
-        sequential_motor = MotorController382.fresh(100)
+        sequential_motor = MotorController582.fresh(100)
         sequential_planner.load_state_dict(reference_planner.state_dict())
         sequential_motor.load_state_dict(reference_motor.state_dict())
         reference = LearnedPlayer(reference_planner, reference_motor)
@@ -566,7 +566,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
                 self.apply_calls += 1
                 return super().apply_result(reward)
 
-        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -608,7 +608,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
                     raise AssertionError("inference worker was not joined before update")
                 return super().apply_result(reward)
 
-        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -637,7 +637,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         connection_factory = lambda _manifest: vision
         joystick = _FakeJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -690,7 +690,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = StaleVision(connection)
         joystick = StaleJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -739,7 +739,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = RaceVision(connection)
         joystick = RaceJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -791,7 +791,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
 
         vision = RaceVision()
         joystick = RaceJoystick(connection)
-        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         started = []
         finished, trainable, _lifecycle = _run_episode(
@@ -839,7 +839,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = StartRaceVision(connection)
         joystick = StartRaceJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -868,7 +868,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = _FakeVision(connection)
         joystick = _FakeJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -902,7 +902,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = _FakeVision(connection)
         joystick = LateAckJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1,
@@ -966,7 +966,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = TwoFrameVision(connection)
         joystick = _FakeJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             result = run_training_player(
                 connection, player, "trainer", 1, action_hz=1,
@@ -987,7 +987,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = _FakeVision(connection)
         joystick = _FakeJoystick(connection, reject=True)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             run_training_player(
                 connection, player, "trainer", 1,
@@ -1008,7 +1008,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         vision = _FakeVision(connection)
         joystick = _FakeJoystick(connection)
         peer = _FakePeer("trainer", 1, messages)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         with tempfile.TemporaryDirectory() as directory:
             return run_training_player(
                 connection, player, "trainer", 1,
@@ -1416,7 +1416,7 @@ class TrainingActuatorClockTests(unittest.TestCase):
         connection = _FakeConnection(manifest, None, ack_world_ticks=[0])
         vision = ProgressVision()
         joystick = TimeoutJoystick(connection, terminal_after=2)
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
         player.prepare_episode("train", 42)
         finished, trainable, _lifecycle = _run_episode(
             connection, player, 1, first_lifecycle=True, vision=vision,
@@ -1431,17 +1431,21 @@ class TrainingActuatorClockTests(unittest.TestCase):
         self.assertGreater(reward, reward_for_result("timeout", 0.0))
         self.assertTrue(updated)
 
-    def test_sustained_right_at_physics_cadence_accelerates_on_flat_ground(self):
+    def test_one_right_press_stays_held_across_physics_ticks(self):
         engine = Engine(load_world(FLAT_RUN), physics_hz=120)
         actor = engine.spawn_actor("training-player", "training-actor")
         start_x = actor.body.x
-        for sequence in range(1, 17):
-            self.assertEqual(engine.submit_action(ActionCommand(
-                "training-actor", sequence, engine.world_tick + 1, 1, True, False,
-            )), "accepted")
+        self.assertEqual(
+            engine.submit_input(
+                InputStateCommand("training-actor", 1, True, False)
+            ),
+            "accepted",
+        )
+        for _ in range(16):
             engine.tick()
         self.assertGreater(actor.body.vx, 0.0)
         self.assertGreater(actor.body.x, start_x)
+        self.assertTrue(actor.input_right)
 
 class TrainerRuntimeTests(unittest.TestCase):
     def test_reward_mapping_and_socket_handshake(self):

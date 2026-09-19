@@ -6,7 +6,7 @@ from pathlib import Path
 from game2.v2.console.display.view_state import DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionRenderer
 from game2.v2.console.engine.engine import Engine, PlayerRegistry, TERMINAL
-from game2.v2.console.protocol import ActionCommand
+from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import load_world
 
 
@@ -37,29 +37,39 @@ class SharedWorldRuntimeTests(unittest.TestCase):
         engine.spawn_actor("player-A", "actor-A")
         engine.spawn_actor("player-B", "actor-B")
         self.assertEqual(set(engine.actors), {"actor-A", "actor-B"})
-        self.assertEqual(engine.submit_action(ActionCommand("actor-A", 1, 1, 1, True)),
-                         "accepted")
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-A", 1, True, False)),
+            "accepted",
+        )
         engine.tick()
         self.assertGreater(engine.actors["actor-A"].body.vx, 0)
         self.assertEqual(engine.actors["actor-B"].body.vx, 0)
         self.assertEqual(engine.world_tick, 1)
 
-    def test_action_sequences_and_queues_are_actor_scoped(self):
+    def test_input_latches_and_sequences_are_actor_scoped(self):
         engine = Engine(load_world(PIT))
         engine.spawn_actor("player-A", "actor-A")
         engine.spawn_actor("player-B", "actor-B")
-        self.assertEqual(engine.submit_action(ActionCommand("actor-A", 1, 4, 2, True)),
-                         "accepted")
-        self.assertEqual(engine.submit_action(ActionCommand("actor-B", 1, 4, 2, False)),
-                         "accepted")
-        self.assertEqual(engine.submit_action(ActionCommand("unknown", 1, 4, 1)),
-                         "rejected")
-        self.assertEqual(engine.submit_action(ActionCommand("actor-A", 1, 5, 1)),
-                         "duplicate")
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-A", 1, True, False)),
+            "accepted",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-B", 1, False, False)),
+            "accepted",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("unknown", 1, True, False)),
+            "rejected",
+        )
+        self.assertEqual(
+            engine.submit_input(InputStateCommand("actor-A", 1, False, False)),
+            "duplicate",
+        )
         for _ in range(4):
             engine.tick()
-        self.assertEqual(engine.submit_action(ActionCommand("actor-A", 2, 1, 1)), "late")
-        self.assertEqual(engine.submit_action(ActionCommand("actor-B", 2, 1, 1)), "late")
+        self.assertGreater(engine.actors["actor-A"].body.vx, 0.0)
+        self.assertEqual(engine.actors["actor-B"].body.vx, 0.0)
 
     def test_terminal_actor_does_not_freeze_other_actor_or_world(self):
         engine = Engine(load_world(PIT))
@@ -69,10 +79,12 @@ class SharedWorldRuntimeTests(unittest.TestCase):
         actor_b = engine.actors["actor-B"]
         actor_a.body.x, actor_a.body.y, actor_a.body.vy = 512, 500, 30_000
         actor_a.body.grounded = False
-        engine.submit_action(ActionCommand("actor-B", 1, 1, 1, True))
+        engine.submit_input(InputStateCommand("actor-B", 1, True, False))
         engine.tick()
         self.assertEqual(actor_a.result, "dead")
         self.assertEqual(actor_a.lifecycle, TERMINAL)
+        self.assertFalse(actor_a.input_right)
+        self.assertFalse(actor_a.input_jump)
         x_after_death = actor_b.body.x
         engine.tick()
         self.assertEqual(actor_a.result, "dead")
@@ -93,6 +105,8 @@ class SharedWorldRuntimeTests(unittest.TestCase):
         self.assertEqual((actor_a.body.x, actor_a.body.y),
                          (engine.world.spawn.x, engine.world.spawn.y))
         self.assertIsNone(actor_a.result)
+        self.assertFalse(actor_a.input_right)
+        self.assertFalse(actor_a.input_jump)
         self.assertEqual(actor_b.body.x, engine.world.spawn.x + 123)
         self.assertEqual(actor_b.result, None)
 

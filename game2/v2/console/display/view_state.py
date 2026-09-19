@@ -34,6 +34,8 @@ class ActorView:
     grounded: bool
     alive: bool
     result: str | None = None
+    input_right: bool = False
+    input_jump: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,8 +101,11 @@ class DisplayState:
             return source.get(name, default) if isinstance(source, Mapping) else getattr(source, name, default)
 
         grounded, alive = get("grounded"), get("alive")
+        input_right, input_jump = get("input_right", False), get("input_jump", False)
         if type(grounded) is not bool or type(alive) is not bool:
             raise ValueError("STATE actor grounded and alive must be boolean")
+        if type(input_right) is not bool or type(input_jump) is not bool:
+            raise ValueError("STATE actor input buttons must be boolean")
         return ActorView(
             actor_id,
             owner_player_id,
@@ -111,6 +116,8 @@ class DisplayState:
             grounded,
             alive,
             _result(get("result")),
+            input_right,
+            input_jump,
         )
 
     @classmethod

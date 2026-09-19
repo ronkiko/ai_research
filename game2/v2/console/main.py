@@ -31,8 +31,6 @@ def _validate(config: SessionConfig, config_path: Path) -> None:
         raise ValueError(f"Unknown controller subsystem: {config.controller}")
     if config.enable_display and not config.enable_state:
         raise ValueError("Display requires the Engine STATE channel")
-    if not config.enable_telemetry:
-        raise ValueError("Controller requires the Engine TELEMETRY channel")
     load_world(config.map_path(config_path))
 
 
@@ -108,9 +106,12 @@ def run_session(config_path: str | Path,
                    internal.engine_telemetry, internal.engine_events,
                    internal.run_dir, COMPATIBILITY_PLAYER_ID,
                    COMPATIBILITY_ACTOR_ID).write(engine_manifest_path)
-    ControllerManifest(session_id, internal.engine_control, internal.engine_telemetry,
-                       peripheral.joystick, COMPATIBILITY_ACTOR_ID).write(
-                           controller_manifest_path)
+    ControllerManifest(
+        session_id,
+        internal.engine_control,
+        peripheral.joystick,
+        COMPATIBILITY_ACTOR_ID,
+    ).write(controller_manifest_path)
     if config.enable_display:
         world_file = str(config.map_path(config_path).resolve())
         DisplayManifest(session_id, internal.engine_state, world_file,

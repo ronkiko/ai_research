@@ -1,4 +1,4 @@
-"""Private Console control protocol for scheduled Engine commands."""
+"""Private Console control protocol for current input state and lifecycle."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,37 +6,41 @@ from typing import Any
 
 from ..contracts.framing import PROTOCOL_VERSION, ProtocolError
 
-MAX_HOLD_TICKS = 10_000
-
 
 @dataclass(frozen=True)
-class ActionCommand:
+class InputStateCommand:
+    """Current virtual gamepad state for one Actor.
+
+    This is deliberately not a scheduled or finite-duration command. The Engine
+    latches the state when it receives it and samples that state on each physics
+    tick until another InputStateCommand replaces it.
+    """
+
     actor_id: str
     sequence: int
-    target_world_tick: int
-    hold_ticks: int
     right: bool = False
     jump: bool = False
 
     def __post_init__(self):
         if type(self.actor_id) is not str or not self.actor_id:
             raise ProtocolError("actor_id must be a non-empty string")
-        for name in ("sequence", "target_world_tick", "hold_ticks"):
-            value = getattr(self, name)
-            if type(value) is not int or value < 0:
-                raise ProtocolError(f"{name} must be a non-negative integer")
-        if (self.sequence < 1 or self.target_world_tick < 1
-                or not 1 <= self.hold_ticks <= MAX_HOLD_TICKS):
-            raise ProtocolError("sequence, target_world_tick and hold_ticks must be positive")
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ProtocolError("sequence must be a positive integer")
         if type(self.right) is not bool or type(self.jump) is not bool:
             raise ProtocolError("right and jump must be booleans")
 
 
-def action_message(command: ActionCommand) -> dict[str, Any]:
-    return {"version": PROTOCOL_VERSION, "type": "action",
-            "actor_id": command.actor_id,
-            "sequence": command.sequence, "target_world_tick": command.target_world_tick,
-            "hold_ticks": command.hold_ticks, "right": command.right, "jump": command.jump}
+def input_state_message(command: InputStateCommand) -> dict[str, Any]:
+    if not isinstance(command, InputStateCommand):
+        raise TypeError("input_state_message requires InputStateCommand")
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": "input_state",
+        "actor_id": command.actor_id,
+        "sequence": command.sequence,
+        "right": command.right,
+        "jump": command.jump,
+    }
 
 
 @dataclass(frozen=True)
@@ -49,13 +53,11 @@ class RespawnCommand:
 
 
 def respawn_message(actor_id: str) -> dict[str, int | str]:
-    """Build the private actor-local lifecycle respawn command."""
     RespawnCommand(actor_id)
     return {"version": PROTOCOL_VERSION, "type": "respawn", "actor_id": actor_id}
 
 
 def reset_message(actor_id: str) -> dict[str, int | str]:
-    """Compatibility API name for the actor-scoped respawn command."""
     return respawn_message(actor_id)
 
 
@@ -73,8 +75,12 @@ class SpawnCommand:
 
 
 def spawn_message(player_id: str, actor_id: str) -> dict[str, Any]:
-    return {"version": PROTOCOL_VERSION, "type": "spawn", "player_id": player_id,
-            "actor_id": actor_id}
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": "spawn",
+        "player_id": player_id,
+        "actor_id": actor_id,
+    }
 
 
 @dataclass(frozen=True)
@@ -91,7 +97,9 @@ def despawn_message(actor_id: str) -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "type": "despawn", "actor_id": actor_id}
 
 
-def decode_control_message(message: dict[str, Any]) -> ActionCommand | DespawnCommand | RespawnCommand | SpawnCommand | str:
+def decode_control_message(
+    message: dict[str, Any],
+) -> InputStateCommand | DespawnCommand | RespawnCommand | SpawnCommand | str:
     if not isinstance(message, dict) or message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError("unsupported control protocol version")
     kind = message.get("type")
@@ -111,16 +119,28 @@ def decode_control_message(message: dict[str, Any]) -> ActionCommand | DespawnCo
         if set(message) != {"version", "type", "actor_id"}:
             raise ProtocolError("despawn fields are invalid")
         return DespawnCommand(message["actor_id"])
-    if kind != "action":
+    if kind != "input_state":
         raise ProtocolError("unknown control command")
-    expected = {"version", "type", "actor_id", "sequence", "target_world_tick", "hold_ticks",
-                "right", "jump"}
+    expected = {"version", "type", "actor_id", "sequence", "right", "jump"}
     if set(message) != expected:
-        raise ProtocolError("action fields are invalid")
-    return ActionCommand(message["actor_id"], message["sequence"], message["target_world_tick"],
-                          message["hold_ticks"], message["right"], message["jump"])
+        raise ProtocolError("input_state fields are invalid")
+    return InputStateCommand(
+        message["actor_id"],
+        message["sequence"],
+        message["right"],
+        message["jump"],
+    )
 
 
-__all__ = ["ActionCommand", "DespawnCommand", "MAX_HOLD_TICKS", "RespawnCommand",
-            "SpawnCommand", "action_message", "decode_control_message", "despawn_message",
-            "reset_message", "respawn_message", "spawn_message"]
+__all__ = [
+    "DespawnCommand",
+    "InputStateCommand",
+    "RespawnCommand",
+    "SpawnCommand",
+    "decode_control_message",
+    "despawn_message",
+    "input_state_message",
+    "reset_message",
+    "respawn_message",
+    "spawn_message",
+]

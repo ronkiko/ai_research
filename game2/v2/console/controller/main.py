@@ -10,11 +10,8 @@ from .controller import ControllerService
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Game2 V2 Controller subsystem")
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--hold-ticks", type=int, default=1)
-    parser.add_argument("--lead-ticks", type=int, default=4)
     args = parser.parse_args(argv)
-    service = ControllerService(ControllerManifest.from_file(args.manifest),
-                                args.hold_ticks, args.lead_ticks)
+    service = ControllerService(ControllerManifest.from_file(args.manifest))
     return service.run()
 
 

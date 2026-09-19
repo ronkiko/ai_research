@@ -187,8 +187,7 @@ class ConsoleServer:
 
     def __init__(self, session_id: str, world: WorldDefinition, world_file: Path, run_dir: Path,
                  engine: EngineLifecycleClient, controller_name: str,
-                 engine_state: Endpoint, engine_telemetry: Endpoint,
-                 engine_events: Endpoint):
+                 engine_state: Endpoint, engine_events: Endpoint):
         self.session_id = session_id
         self.world = world
         self.world_file = world_file
@@ -196,7 +195,6 @@ class ConsoleServer:
         self.engine = engine
         self.controller_name = controller_name
         self.engine_state = engine_state
-        self.engine_telemetry = engine_telemetry
         self.engine_events = engine_events
         self.attach = ControlServer("127.0.0.1", 0,
                                     decoder=decode_connection_message,
@@ -275,8 +273,11 @@ class ConsoleServer:
         try:
             directory.mkdir(parents=True, exist_ok=False)
             controller_manifest = ControllerManifest(
-                self.session_id, self.engine.endpoint, self.engine_telemetry,
-                allocate_endpoint(), actor_id)
+                self.session_id,
+                self.engine.endpoint,
+                allocate_endpoint(),
+                actor_id,
+            )
             vision_endpoint = allocate_endpoint()
             display_manifest = DisplayManifest(
                 self.session_id, self.engine_state, str(self.world_file), "vision",
@@ -568,11 +569,17 @@ def run_server(config_path: str | Path,
             screen_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")
             screen_log.flush()
         assert internal.engine_state is not None
-        assert internal.engine_telemetry is not None
         assert internal.engine_events is not None
-        server = ConsoleServer(session_id, world, config.map_path(config_path), run_dir, engine_control,
-                               config.controller, internal.engine_state,
-                               internal.engine_telemetry, internal.engine_events)
+        server = ConsoleServer(
+            session_id,
+            world,
+            config.map_path(config_path),
+            run_dir,
+            engine_control,
+            config.controller,
+            internal.engine_state,
+            internal.engine_events,
+        )
         server.start()
         own_discovery = ConsoleDiscovery(1, session_id, world.map_id, server.endpoint)
         publish_current_console(own_discovery, discovery_path)

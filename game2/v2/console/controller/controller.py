@@ -1,4 +1,4 @@
-"""Game-console input subsystem: Joystick decisions to private Engine commands."""
+"""Realtime Console input bridge: public Joystick state -> Engine input latch."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import time
 from ..config import ControllerManifest
 from ...contracts.framing import encode_frame, recv_frame
 from ...contracts.joystick import JoystickState, decode_joystick_message, joystick_ack
-from ..protocol import ActionCommand, action_message
+from ..protocol import InputStateCommand, input_state_message
 from ..transport.control_server import ControlEnvelope, ControlServer
 
 
@@ -28,71 +28,89 @@ def _connect(endpoint, timeout=5.0):
 
 
 class ControllerService:
-    """Owns the Joystick port and the only Engine CONTROL client."""
+    """Translate complete Joystick states without scheduling future input.
 
-    def __init__(self, manifest: ControllerManifest,
-                 hold_ticks: int = 1, lead_ticks: int = 4, connect_timeout: float = 5.0):
-        if hold_ticks < 1 or lead_ticks < 1:
-            raise ValueError("controller timing values must be positive")
+    The Controller never decides how long a button is held. A state accepted by
+    Engine stays latched there until the next accepted state replaces it.
+    """
+
+    def __init__(self, manifest: ControllerManifest, connect_timeout: float = 5.0):
         self.manifest = manifest
-        self.hold_ticks = hold_ticks
-        self.lead_ticks = lead_ticks
         self.connect_timeout = connect_timeout
         self.engine_control: socket.socket | None = None
-        self.telemetry: socket.socket | None = None
         self.joystick = ControlServer(
-            manifest.joystick.host, manifest.joystick.port,
+            manifest.joystick.host,
+            manifest.joystick.port,
             decoder=decode_joystick_message,
+            on_closed=self._joystick_closed,
         )
-        self.latest: dict | None = None
-        self.next_target = 0
-        self.last_sequence = 0
-        self.sequences: set[int] = set()
-        self.pending: dict[int, tuple[int, int]] = {}
-        self.lock = threading.Lock()
+        self.public_last_sequence = 0
+        self.private_sequence = 0
+        self.pending: dict[int, tuple[int, int] | None] = {}
+        self.active_client_id: int | None = None
+        self.lock = threading.RLock()
         self.engine_closed = threading.Event()
-        self.telemetry_ready = threading.Event()
-        self.telemetry_thread: threading.Thread | None = None
+        self.closing = threading.Event()
         self.ack_thread: threading.Thread | None = None
 
     def start(self) -> None:
         self.joystick.start()
         try:
-            self.engine_control = _connect(self.manifest.engine_control, self.connect_timeout)
-            self.telemetry = _connect(self.manifest.engine_telemetry, self.connect_timeout)
-            self.telemetry_thread = threading.Thread(
-                target=self._telemetry_loop, name="v2-controller-telemetry", daemon=True)
-            self.telemetry_thread.start()
+            self.engine_control = _connect(
+                self.manifest.engine_control, self.connect_timeout
+            )
             self.ack_thread = threading.Thread(
-                target=self._engine_ack_loop, name="v2-controller-engine-acks", daemon=True)
+                target=self._engine_ack_loop,
+                name="v2-controller-engine-acks",
+                daemon=True,
+            )
             self.ack_thread.start()
-            if not self.telemetry_ready.wait(timeout=5) or self.engine_closed.is_set():
-                raise RuntimeError("Engine TELEMETRY produced no scheduling snapshot")
-        except (OSError, RuntimeError):
+        except OSError:
             self.close()
             raise
 
-    def _telemetry_loop(self) -> None:
-        assert self.telemetry is not None
+    def _send_private_state(
+        self,
+        right: bool,
+        jump: bool,
+        pending: tuple[int, int] | None,
+    ) -> int:
+        if self.engine_control is None or self.engine_closed.is_set():
+            raise ConnectionError("Engine CONTROL is unavailable")
+        self.private_sequence += 1
+        command = InputStateCommand(
+            self.manifest.actor_id,
+            self.private_sequence,
+            right,
+            jump,
+        )
+        self.pending[command.sequence] = pending
         try:
-            while True:
-                try:
-                    message = recv_frame(self.telemetry)
-                except socket.timeout:
-                    continue
-                if message.get("type") != "telemetry":
-                    continue
-                actors = message.get("actors")
-                if not isinstance(actors, list):
-                    continue
-                with self.lock:
-                    self.latest = message
-                    self.telemetry_ready.set()
-        except (EOFError, OSError, ValueError):
+            self.engine_control.sendall(encode_frame(input_state_message(command)))
+        except OSError:
+            self.pending.pop(command.sequence, None)
             self.engine_closed.set()
-        finally:
-            if self.telemetry:
-                self.telemetry.close()
+            raise
+        return command.sequence
+
+    def _neutralize_active(self) -> None:
+        with self.lock:
+            if self.active_client_id is None:
+                return
+            try:
+                self._send_private_state(False, False, None)
+            except (ConnectionError, OSError):
+                pass
+            self.active_client_id = None
+            self.public_last_sequence = 0
+
+    def _joystick_closed(self, client_id: int) -> None:
+        if self.closing.is_set():
+            return
+        with self.lock:
+            if self.active_client_id != client_id:
+                return
+        self._neutralize_active()
 
     def _engine_ack_loop(self) -> None:
         assert self.engine_control is not None
@@ -102,7 +120,7 @@ class ControllerService:
                     message = recv_frame(self.engine_control)
                 except socket.timeout:
                     continue
-                if message.get("type") != "action_ack":
+                if message.get("type") != "input_ack":
                     continue
                 self._handle_engine_ack(message)
         except (EOFError, OSError, ValueError):
@@ -118,67 +136,83 @@ class ControllerService:
         if pending is None:
             return
         client_id, joystick_sequence = pending
-        joystick_status = {
-            "accepted": "accepted",
-            "duplicate": "duplicate",
-            "late": "rejected",
-            "rejected": "rejected",
-        }.get(str(message.get("status")), "rejected")
+        status = message.get("status")
+        joystick_status = status if status in {
+            "accepted", "duplicate", "rejected"
+        } else "rejected"
         self.joystick.respond(
-            client_id, joystick_ack(joystick_sequence, joystick_status))
+            client_id,
+            joystick_ack(joystick_sequence, joystick_status),
+        )
 
     def _reject_pending(self) -> None:
         with self.lock:
             pending, self.pending = self.pending, {}
-        for client_id, joystick_sequence in pending.values():
-            self.joystick.respond(client_id, joystick_ack(joystick_sequence, "rejected"))
+        for item in pending.values():
+            if item is None:
+                continue
+            client_id, joystick_sequence = item
+            self.joystick.respond(
+                client_id,
+                joystick_ack(joystick_sequence, "rejected"),
+            )
 
     def _handle_joystick(self, envelope: ControlEnvelope) -> None:
         state = envelope.command
         if not isinstance(state, JoystickState):
-            self.joystick.respond(envelope.client_id, joystick_ack(0, "rejected"))
+            self.joystick.respond(
+                envelope.client_id, joystick_ack(0, "rejected")
+            )
             return
 
+        response = None
         with self.lock:
-            if state.sequence <= self.last_sequence:
-                status = "duplicate" if state.sequence in self.sequences else "rejected"
+            if (
+                self.active_client_id is not None
+                and self.active_client_id != envelope.client_id
+            ):
+                response = joystick_ack(state.sequence, "rejected")
+            elif state.sequence <= self.public_last_sequence:
+                status = (
+                    "duplicate"
+                    if state.sequence == self.public_last_sequence
+                    else "rejected"
+                )
                 response = joystick_ack(state.sequence, status)
-            elif (self.latest is None or self.engine_closed.is_set() or
-                  not any(isinstance(actor, dict) and
-                          actor.get("actor_id") == self.manifest.actor_id
-                          for actor in self.latest.get("actors", []))):
-                self.last_sequence = state.sequence
-                self.sequences.add(state.sequence)
+            elif self.engine_closed.is_set():
                 response = joystick_ack(state.sequence, "rejected")
             else:
-                self.last_sequence = state.sequence
-                self.sequences.add(state.sequence)
-                current_world_tick = int(self.latest["world_tick"])
-                target_world_tick = max(current_world_tick + self.lead_ticks,
-                                        self.next_target + 1)
-                self.next_target = target_world_tick + self.hold_ticks - 1
-                command = ActionCommand(self.manifest.actor_id, state.sequence,
-                                        target_world_tick, self.hold_ticks,
-                                        state.right, state.jump)
+                self.active_client_id = envelope.client_id
+                self.public_last_sequence = state.sequence
                 try:
-                    assert self.engine_control is not None
-                    self.pending[command.sequence] = (envelope.client_id, state.sequence)
-                    self.engine_control.sendall(encode_frame(action_message(command)))
+                    self._send_private_state(
+                        state.right,
+                        state.jump,
+                        (envelope.client_id, state.sequence),
+                    )
                     return
-                except (AssertionError, OSError):
-                    self.pending.pop(command.sequence, None)
+                except (ConnectionError, OSError):
                     response = joystick_ack(state.sequence, "rejected")
-        self.joystick.respond(envelope.client_id, response)
+        if response is not None:
+            self.joystick.respond(envelope.client_id, response)
 
     def run(self) -> int:
         try:
             self.start()
-        except (OSError, RuntimeError) as exc:
-            print(f"ERROR Controller startup failed: {exc}", file=sys.stderr, flush=True)
+        except OSError as exc:
+            print(
+                f"ERROR Controller startup failed: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
             return 1
-        print("READY " + json.dumps({"session_id": self.manifest.session_id,
-                                     "joystick": self.manifest.joystick.as_dict()}, sort_keys=True),
-              flush=True)
+        print(
+            "READY " + json.dumps({
+                "session_id": self.manifest.session_id,
+                "joystick": self.manifest.joystick.as_dict(),
+            }, sort_keys=True),
+            flush=True,
+        )
         try:
             while not self.engine_closed.is_set():
                 for envelope in self.joystick.drain():
@@ -189,15 +223,23 @@ class ControllerService:
         return 0
 
     def close(self) -> None:
-        self.engine_closed.set()
+        if self.closing.is_set():
+            return
+        self._neutralize_active()
+        self.closing.set()
         self._reject_pending()
         self.joystick.close()
-        for sock in (self.telemetry, self.engine_control):
-            if sock:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-        for thread in (self.telemetry_thread, self.ack_thread):
-            if thread and thread is not threading.current_thread():
-                thread.join(timeout=1)
+        if self.engine_control is not None:
+            try:
+                self.engine_control.close()
+            except OSError:
+                pass
+            self.engine_control = None
+        if (
+            self.ack_thread
+            and self.ack_thread is not threading.current_thread()
+        ):
+            self.ack_thread.join(timeout=1)
+
+
+__all__ = ["ControllerService"]

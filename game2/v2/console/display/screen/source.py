@@ -153,6 +153,10 @@ class ScreenSourceService:
                 f"x {actor.x:.1f} y {actor.y:.1f} | "
                 f"vx {actor.vx:.2f} vy {actor.vy:.2f} | {state}"
             ),
+            (
+                f"PAD RIGHT={int(actor.input_right)} "
+                f"A={int(actor.input_jump)}"
+            ),
             first_move,
         )
 

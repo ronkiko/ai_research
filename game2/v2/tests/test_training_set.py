@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from game2.v2.console.engine.engine import Engine
-from game2.v2.console.protocol import ActionCommand
+from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import EMPTY, load_world
 from game2.v2.contracts.training_set import TrainingSetManifest
 
@@ -93,12 +93,30 @@ class TrainingSetPhysicsTests(unittest.TestCase):
         world = load_world(self.paths[map_id])
         engine = Engine(world)
         actor = engine.spawn_actor("training-player", "training-actor")
-        for sequence in range(1, limit + 1):
-            command = ActionCommand(
-                "training-actor", sequence, engine.world_tick + 1, 1,
-                True, jump_tick == sequence,
-            )
-            self.assertEqual(engine.submit_action(command), "accepted")
+        sequence = 1
+        self.assertEqual(
+            engine.submit_input(
+                InputStateCommand("training-actor", sequence, True, False)
+            ),
+            "accepted",
+        )
+        for step in range(1, limit + 1):
+            if jump_tick == step:
+                sequence += 1
+                self.assertEqual(
+                    engine.submit_input(
+                        InputStateCommand("training-actor", sequence, True, True)
+                    ),
+                    "accepted",
+                )
+            elif jump_tick is not None and step == jump_tick + 1:
+                sequence += 1
+                self.assertEqual(
+                    engine.submit_input(
+                        InputStateCommand("training-actor", sequence, True, False)
+                    ),
+                    "accepted",
+                )
             engine.tick()
             if actor.result is not None:
                 return world, actor

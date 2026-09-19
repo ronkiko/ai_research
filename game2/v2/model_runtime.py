@@ -29,7 +29,7 @@ from game2.v2.contracts.model import (
     update_result_message,
 )
 from game2.v2.player.learned.checkpoint import load_motor_controller, load_planner
-from game2.v2.player.learned.motor import MotorController382
+from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer
 
@@ -47,7 +47,7 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
         if any(checkpoints):
             raise ValueError("Fresh Model runtime cannot use checkpoints")
         planner = CNNPlanner.fresh(planner_seed)
-        motor = MotorController382.fresh(motor_seed)
+        motor = MotorController582.fresh(motor_seed)
     else:
         if checkpoints != (True, True):
             raise ValueError("Model resume requires both checkpoints")
@@ -163,8 +163,8 @@ class ModelRuntime:
             return observation_from_message(message, observation_pixels)
         if message_type == ACTUATED:
             sample = self._samples.pop(message["decision_id"], None)
-            if sample is not None and self.player.episode_mode == "train":
-                self.player.record_sent_sample(sample)
+            if sample is not None:
+                self.player.record_actuated(sample)
             return pending_observation
         if message_type == EPISODE_END:
             self._handle_episode_end(peer, message)
