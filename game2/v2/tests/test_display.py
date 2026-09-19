@@ -14,6 +14,9 @@ from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
 from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
+from game2.v2.console.display.vision.preview import (
+    MAJOR_GRID_COLOR, MINOR_GRID_COLOR, VisionPreviewRenderer,
+)
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
     META_GOAL, META_SELF, META_SELF_CENTER,
@@ -206,6 +209,63 @@ class VisionGridRendererTests(unittest.TestCase):
             self.assertFalse(hasattr(grid, name), name)
         with self.assertRaises(FrozenInstanceError):
             grid.metadata = b""
+
+
+class VisionPreviewRendererTests(unittest.TestCase):
+    def test_preview_renders_exact_grid_and_dynamic_metadata(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        preview = VisionPreviewRenderer(
+            world, target_surface=surface, pygame_module=pygame
+        )
+        grid_renderer = VisionGridRenderer(world)
+        try:
+            first_grid = grid_renderer.render(_view(world, x=128, y=384, world_tick=1))
+            second_grid = grid_renderer.render(_view(world, x=136, y=384, world_tick=2))
+            first = pygame.image.tostring(preview.render(first_grid), "RGB")
+            second = pygame.image.tostring(preview.render(second_grid), "RGB")
+            self.assertNotEqual(first, second)
+            self.assertEqual(surface.get_size(), (1280, 768))
+        finally:
+            preview.close()
+
+    def test_preview_draws_major_and_dashed_subdivision_grid(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        preview = VisionPreviewRenderer(
+            world, target_surface=surface, pygame_module=pygame
+        )
+        grid = VisionGridRenderer(world).render(
+            _view(world, x=128, y=384, world_tick=1)
+        )
+        try:
+            preview.render(grid)
+            self.assertEqual(tuple(surface.get_at((64, 300)))[:3], MAJOR_GRID_COLOR)
+            self.assertEqual(tuple(surface.get_at((8, 298)))[:3], MINOR_GRID_COLOR)
+            self.assertNotEqual(
+                tuple(surface.get_at((8, 300)))[:3], MINOR_GRID_COLOR
+            )
+        finally:
+            preview.close()
+
+    def test_preview_accepts_only_public_vision_grid(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        preview = VisionPreviewRenderer(
+            world,
+            target_surface=pygame.Surface((world.width, world.height)),
+            pygame_module=pygame,
+        )
+        try:
+            with self.assertRaises(TypeError):
+                preview.render(_view(world))
+        finally:
+            preview.close()
 
 
 class DisplayServiceTests(unittest.TestCase):

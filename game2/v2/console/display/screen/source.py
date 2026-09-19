@@ -12,6 +12,8 @@ from ....contracts.framing import recv_frame
 from ....contracts.screen import ScreenFrame
 from ...world import load_world
 from ..view_state import DisplayState
+from ..vision.preview import VisionPreviewRenderer
+from ..vision.renderer import VisionGridRenderer
 from .publisher import ScreenPublisher
 from .renderer import ScreenRenderer
 
@@ -54,6 +56,7 @@ class ScreenSourceService:
         self.state_socket: socket.socket | None = None
         self.reader: threading.Thread | None = None
         self.renderer = None
+        self.grid_renderer = None
         self.pygame = None
 
     def _read_loop(self) -> None:
@@ -195,9 +198,16 @@ class ScreenSourceService:
         import pygame
         self.pygame = pygame
         surface = pygame.Surface((self.world.width, self.world.height))
-        self.renderer = ScreenRenderer(
-            self.world, target_surface=surface, pygame_module=pygame, self_actor_id=None
-        )
+        if self.manifest.view == "vision":
+            self.grid_renderer = VisionGridRenderer(self.world)
+            self.renderer = VisionPreviewRenderer(
+                self.world, target_surface=surface, pygame_module=pygame
+            )
+        else:
+            self.renderer = ScreenRenderer(
+                self.world, target_surface=surface, pygame_module=pygame,
+                self_actor_id=None,
+            )
         self.reader = threading.Thread(
             target=self._read_loop, name="v2-screen-source-state", daemon=True
         )
@@ -226,8 +236,12 @@ class ScreenSourceService:
                     if self.reader_done.is_set():
                         return 0
                     continue
-                surface = self.renderer.render(view)
-                self._draw_hud(surface, view)
+                if self.manifest.view == "vision":
+                    grid = self.grid_renderer.render(view)
+                    surface = self.renderer.render(grid)
+                else:
+                    surface = self.renderer.render(view)
+                    self._draw_hud(surface, view)
                 pixels = self.pygame.image.tostring(surface, "RGB")
                 self.publisher.publish(ScreenFrame(
                     self.world.width, self.world.height, pixels, view.world_tick
@@ -251,6 +265,9 @@ class ScreenSourceService:
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
+        if self.grid_renderer is not None:
+            self.grid_renderer.close()
+            self.grid_renderer = None
 
 
 def main(argv=None) -> int:
