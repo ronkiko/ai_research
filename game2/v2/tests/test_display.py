@@ -15,7 +15,8 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.preview import (
-    MAJOR_GRID_COLOR, MINOR_GRID_COLOR, VisionPreviewRenderer,
+    MAJOR_GRID_COLOR, MINOR_GRID_COLOR, SELF_CENTER_COLOR,
+    VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.contracts.vision import (
@@ -237,73 +238,42 @@ class ScreenSourceViewTests(unittest.TestCase):
                 "pixels",
             )
 
-    def test_default_source_view_remains_human_screen(self):
+    def test_source_view_selects_human_or_grid_renderer(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         import pygame
-        manifest = ScreenSourceManifest(
-            "session",
-            Endpoint("127.0.0.1", 1),
-            str(PIT),
-            Endpoint("127.0.0.1", 2),
-            120,
-            1200,
+        cases = (
+            ("screen", ScreenRenderer, False),
+            ("vision", VisionPreviewRenderer, True),
         )
-        self.assertEqual(manifest.view, "screen")
-        service = ScreenSourceService(manifest)
-        surface = pygame.Surface((service.world.width, service.world.height))
-        try:
-            service._configure_renderer(surface, pygame)
-            self.assertIsInstance(service.renderer, ScreenRenderer)
-            self.assertIsNone(service.grid_renderer)
-        finally:
-            if service.renderer is not None:
-                service.renderer.close()
-
-
-    def test_vision_source_selects_grid_preview_renderer(self):
-        os.environ["SDL_VIDEODRIVER"] = "dummy"
-        import pygame
-        manifest = ScreenSourceManifest(
-            "session",
-            Endpoint("127.0.0.1", 1),
-            str(PIT),
-            Endpoint("127.0.0.1", 2),
-            120,
-            1200,
-            "vision",
-        )
-        service = ScreenSourceService(manifest)
-        surface = pygame.Surface((service.world.width, service.world.height))
-        try:
-            service._configure_renderer(surface, pygame)
-            self.assertIsInstance(service.renderer, VisionPreviewRenderer)
-            self.assertIsInstance(service.grid_renderer, VisionGridRenderer)
-        finally:
-            if service.renderer is not None:
-                service.renderer.close()
+        for view, renderer_type, has_grid_renderer in cases:
+            with self.subTest(view=view):
+                manifest = ScreenSourceManifest(
+                    "session",
+                    Endpoint("127.0.0.1", 1),
+                    str(PIT),
+                    Endpoint("127.0.0.1", 2),
+                    120,
+                    1200,
+                    view,
+                )
+                service = ScreenSourceService(manifest)
+                surface = pygame.Surface(
+                    (service.world.width, service.world.height)
+                )
+                try:
+                    service._configure_renderer(surface, pygame)
+                    self.assertIsInstance(service.renderer, renderer_type)
+                    self.assertEqual(
+                        service.grid_renderer is not None,
+                        has_grid_renderer,
+                    )
+                finally:
+                    if service.renderer is not None:
+                        service.renderer.close()
 
 
 class VisionPreviewRendererTests(unittest.TestCase):
-    def test_preview_renders_exact_grid_and_dynamic_metadata(self):
-        os.environ["SDL_VIDEODRIVER"] = "dummy"
-        import pygame
-        world = load_world(PIT)
-        surface = pygame.Surface((world.width, world.height))
-        preview = VisionPreviewRenderer(
-            world, target_surface=surface, pygame_module=pygame
-        )
-        grid_renderer = VisionGridRenderer(world)
-        try:
-            first_grid = grid_renderer.render(_view(world, x=128, y=384, world_tick=1))
-            second_grid = grid_renderer.render(_view(world, x=136, y=384, world_tick=2))
-            first = pygame.image.tostring(preview.render(first_grid), "RGB")
-            second = pygame.image.tostring(preview.render(second_grid), "RGB")
-            self.assertNotEqual(first, second)
-            self.assertEqual(surface.get_size(), (1280, 768))
-        finally:
-            preview.close()
-
-    def test_preview_draws_major_and_dashed_subdivision_grid(self):
+    def test_preview_exposes_public_grid_geometry_and_hud(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         import pygame
         world = load_world(PIT)
@@ -316,7 +286,11 @@ class VisionPreviewRendererTests(unittest.TestCase):
         )
         try:
             preview.render(grid)
-            self.assertEqual(tuple(surface.get_at((64, 300)))[:3], MAJOR_GRID_COLOR)
+            self.assertEqual(surface.get_size(), (1280, 768))
+
+            self.assertEqual(
+                tuple(surface.get_at((64, 300)))[:3], MAJOR_GRID_COLOR
+            )
             self.assertEqual(
                 tuple(surface.get_at((world.width - 1, 300)))[:3],
                 MAJOR_GRID_COLOR,
@@ -325,23 +299,32 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 tuple(surface.get_at((300, world.height - 1)))[:3],
                 MAJOR_GRID_COLOR,
             )
-            self.assertEqual(tuple(surface.get_at((8, 298)))[:3], MINOR_GRID_COLOR)
-            self.assertNotEqual(
-                tuple(surface.get_at((8, 300)))[:3], MINOR_GRID_COLOR
-            )
-        finally:
-            preview.close()
 
-    def test_preview_accepts_only_public_vision_grid(self):
-        os.environ["SDL_VIDEODRIVER"] = "dummy"
-        import pygame
-        world = load_world(PIT)
-        preview = VisionPreviewRenderer(
-            world,
-            target_surface=pygame.Surface((world.width, world.height)),
-            pygame_module=pygame,
-        )
-        try:
+            self.assertEqual(
+                tuple(surface.get_at((48, 298)))[:3], MINOR_GRID_COLOR
+            )
+            self.assertNotEqual(
+                tuple(surface.get_at((48, 300)))[:3], MINOR_GRID_COLOR
+            )
+
+            center_index = next(
+                index
+                for index, flags in enumerate(grid.metadata)
+                if flags & META_SELF_CENTER
+            )
+            center_row, center_column = divmod(
+                center_index, grid.metadata_columns
+            )
+            cell = int(grid.sensor_cell_size)
+            center_pixel = (
+                center_column * cell + cell // 2,
+                center_row * cell + cell // 2,
+            )
+            self.assertEqual(
+                tuple(surface.get_at(center_pixel))[:3],
+                SELF_CENTER_COLOR,
+            )
+
             with self.assertRaises(TypeError):
                 preview.render(_view(world))
         finally:

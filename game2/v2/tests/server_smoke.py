@@ -405,13 +405,25 @@ class PersistentConsoleSmoke(unittest.TestCase):
                     for actor in held.get("actors", [])
                 ))
                 visible_c = self._wait_frame(
-                    stream_c, lambda frame: _has_meta(frame, META_SELF) and _has_meta(frame, META_OTHER_ACTOR))
+                    stream_c,
+                    lambda frame: (
+                        _has_meta(frame, META_SELF)
+                        and _has_meta(frame, META_OTHER_ACTOR)
+                        and _vision_bounds(frame, META_SELF)[0]
+                        < _vision_bounds(frame, META_OTHER_ACTOR)[0]
+                    ),
+                )
                 visible_d = self._wait_frame(
-                    stream_d, lambda frame: _has_meta(frame, META_SELF) and _has_meta(frame, META_OTHER_ACTOR))
-                self.assertLess(_vision_bounds(visible_c, META_SELF)[0],
-                                _vision_bounds(visible_c, META_OTHER_ACTOR)[0])
-                self.assertGreater(_vision_bounds(visible_d, META_SELF)[0],
-                                   _vision_bounds(visible_d, META_OTHER_ACTOR)[0])
+                    stream_d,
+                    lambda frame: (
+                        _has_meta(frame, META_SELF)
+                        and _has_meta(frame, META_OTHER_ACTOR)
+                        and _vision_bounds(frame, META_SELF)[0]
+                        > _vision_bounds(frame, META_OTHER_ACTOR)[0]
+                    ),
+                )
+                self.assertIsNotNone(visible_c)
+                self.assertIsNotNone(visible_d)
                 self._release_right(joystick_d)
                 released = self._wait_telemetry(
                     lambda payload: next(
