@@ -51,6 +51,16 @@ class Rect:
         return self.contains_geometry(geometry.x, geometry.y, geometry.width,
                                       geometry.height)
 
+    def intersects_geometry(self, x: float, y: float, width: float,
+                            height: float) -> bool:
+        """Return true only when geometry actually overlaps this rectangle."""
+        return (
+            x < self.x + self.width
+            and x + width > self.x
+            and y < self.y + self.height
+            and y + height > self.y
+        )
+
 
 @dataclass(frozen=True)
 class CollisionRect:
@@ -126,5 +136,10 @@ class WorldDefinition:
 
     def completed(self, x: float, y: float, width: float, height: float,
                   grounded: bool, alive: bool) -> bool:
-        """Evaluate the pure goal rule using primitive avatar state."""
-        return alive and grounded and self.goal.contains_geometry(x, y, width, height)
+        """Win when a living Actor actually overlaps the authored goal cell.
+
+        Grounded is deliberately not required: the goal remains a non-solid
+        spatial trigger, so an Actor can touch it while airborne, or jump fully
+        over it without winning.
+        """
+        return alive and self.goal.intersects_geometry(x, y, width, height)

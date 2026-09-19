@@ -149,17 +149,42 @@ class TrainingSetPhysicsTests(unittest.TestCase):
         self.assertEqual(self._run("short_gap", jump_tick=90), "success")
         self.assertEqual(self._run("long_gap", jump_tick=115), "success")
 
-    def test_sustained_right_reaches_the_goal_stopper_without_braking(self):
+    def test_sustained_right_wins_on_goal_overlap_without_exact_alignment(self):
         for map_id, jump_tick in (("flat_run", None), ("short_gap", 90),
                                   ("long_gap", 115)):
             with self.subTest(map_id=map_id):
                 world, actor = self._run_actor(map_id, jump_tick)
                 self.assertEqual(actor.result, "success")
-                self.assertEqual(actor.body.x, world.goal.x)
+                self.assertLess(actor.body.x, world.goal.x + world.goal.width)
+                self.assertGreater(actor.body.x + actor.body.width, world.goal.x)
                 self.assertTrue(world.completed(
                     actor.body.x, actor.body.y, actor.body.width, actor.body.height,
                     actor.body.grounded, actor.body.alive,
                 ))
+
+    def test_goal_is_overlap_trigger_and_can_still_be_jumped_over(self):
+        world = load_world(self.paths["flat_run"])
+        width = world.spawn.width
+        height = world.spawn.height
+
+        # Merely touching the left boundary is not a collision.
+        self.assertFalse(world.completed(
+            world.goal.x - width, world.goal.y, width, height, True, True
+        ))
+        # Crossing even slightly into the goal cell is a win; exact x alignment
+        # is not required and grounded state is irrelevant to the trigger.
+        self.assertTrue(world.completed(
+            world.goal.x - width + 0.5, world.goal.y,
+            width, height, False, True,
+        ))
+        # Passing fully above the cell is still a valid way to miss the finish.
+        self.assertFalse(world.completed(
+            world.goal.x, world.goal.y - height - 1,
+            width, height, False, True,
+        ))
+        self.assertFalse(world.completed(
+            world.goal.x, world.goal.y, width, height, True, False
+        ))
 
     def test_long_gap_is_harder_for_the_same_run_jump_schedule(self):
         short = load_world(self.paths["short_gap"])
