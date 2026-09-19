@@ -108,7 +108,9 @@ class ModelRuntimeTests(unittest.TestCase):
             except BaseException as exc:
                 errors.append(exc)
 
-        worker = threading.Thread(target=run)
+        worker = threading.Thread(
+            target=run, name="game2-test-model-runtime", daemon=True
+        )
         worker.start()
         deadline = time.monotonic() + 2.0
         while runtime.bound_address is None and time.monotonic() < deadline:
