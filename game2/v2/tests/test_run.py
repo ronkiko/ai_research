@@ -44,6 +44,22 @@ SET_PATH = ROOT / "game2" / "v2" / "training" / "sets" / "level-1.json"
 
 
 class RunEventTests(unittest.TestCase):
+    def test_feedback_json_is_strict_jsonl_without_event_prefix(self):
+        output = io.StringIO()
+        runner = run.UnifiedRunner(output=output, feedback_json=True)
+        runner.emit("training_set_started", level=1, mode="realtime")
+        runner.emit(
+            "map_progress", level=1, map_id="flat_run", episode_id=1,
+            result="dead", trainable=False, updated=False, progress=0.25,
+            reward=0.0, attempts=1, successes=0, accepted_actions=3,
+            rejected_actions=1, loss=None,
+        )
+        runner.emit("run_failed", message="controlled failure")
+        lines = output.getvalue().splitlines()
+        self.assertTrue(lines)
+        self.assertTrue(all(not line.startswith("EVENT ") for line in lines))
+        self.assertTrue(all(validate_run_event(json.loads(line)) for line in lines))
+
     def test_events_are_strict_and_do_not_accept_private_extra_fields(self):
         event = make_event("map_progress", level=1, map_id="flat_run",
                            episode_id=1, result="success", trainable=True,
@@ -86,6 +102,32 @@ class RunEventTests(unittest.TestCase):
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
+        self.assertFalse(any(module == item or module.startswith(item + ".")
+                             for module in imported for item in forbidden))
+
+    def test_canonical_realtime_player_imports_no_model_implementation(self):
+        player_root = ROOT / "game2" / "v2" / "player"
+        sources = (
+            player_root / "learned" / "main.py",
+            player_root / "learned" / "process.py",
+            player_root / "realtime.py",
+            player_root / "model_client.py",
+            player_root / "learned" / "motion.py",
+        )
+        forbidden = {
+            "torch", "game2.v2.player.learned.planner",
+            "game2.v2.player.learned.motor", "game2.v2.player.learned.checkpoint",
+            "game2.v2.player.learned.vision",
+        }
+        imported = set()
+        for path in sources:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imported.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        imported.add(node.module if node.level == 0 else f".{node.module}")
         self.assertFalse(any(module == item or module.startswith(item + ".")
                              for module in imported for item in forbidden))
 
@@ -159,9 +201,12 @@ class LauncherContractTests(unittest.TestCase):
         exam = vision_demo.exam_command(entry)
         self.assertEqual(train[1:4], ["-m", "game2.v2.run", "train"])
         self.assertIn("--fresh", train)
-        self.assertIn("--clock-mode", train)
+        self.assertIn("--mode", train)
+        self.assertIn("realtime", train)
+        self.assertIn("--feedback-json", train)
         self.assertEqual(exam[1:4], ["-m", "game2.v2.run", "exam"])
-        self.assertNotIn("--clock-mode", exam)
+        self.assertNotIn("--mode", exam)
+        self.assertIn("--feedback-json", exam)
         self.assertNotIn("game2.v2.training.main", exam)
 
     def test_new_vision_session_clears_frame_baseline_and_accepts_tick_one(self):
@@ -319,6 +364,20 @@ class _FakeProcess:
         return self.returncode
 
 
+class LauncherJsonTests(unittest.TestCase):
+    def test_launcher_rejects_non_jsonl_output_and_stops(self):
+        launcher = vision_demo.LauncherProcess(
+            popen_factory=lambda _command, **_kwargs: _FakeProcess(["EVENT ignored\n"],
+                                                                      returncode=1))
+        launcher.start(["python", "-m", "game2.v2.run", "train"])
+        assert launcher._reader is not None
+        launcher._reader.join(timeout=1)
+        events = launcher.poll_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "run_failed")
+        validate_run_event(events[0])
+
+
 class _FakeLauncherProcesses:
     def __init__(self, *, exam_result=False, player_returncode=None,
                  trainer_updated=True, summary_mastered=None):
@@ -345,7 +404,9 @@ class _FakeLauncherProcesses:
                 'PROGRESS {"episode_id":1,"result":"success",'
                 f'"trainable":true,"updated":{str(self.trainer_updated).lower()},'
                 '"progress":1.0,"reward":1.0,'
-                '"attempts":1,"successes":1}\n',
+                '"attempts":1,"successes":1,"accepted_actions":1,'
+                '"rejected_actions":0,"loss":'
+                f'{"0.25" if self.trainer_updated else "null"}}}\n',
             ]
             if self.summary_mastered:
                 lines.append(
@@ -409,7 +470,8 @@ class _PlayerBeforeSummaryProcesses:
         if module == "game2.v2.training.main":
             progress = ('PROGRESS {"episode_id":1,"result":"success",'
                         '"trainable":true,"updated":true,"progress":1.0,'
-                        '"reward":1.0,"attempts":1,"successes":1}\n')
+                        '"reward":1.0,"attempts":1,"successes":1,'
+                        '"accepted_actions":1,"rejected_actions":0,"loss":0.25}\n')
             process = _FakeProcess(returncode=None)
             process.stdout = _GatedOutput(
                 ['READY {"host":"127.0.0.1","port":12346}\n', progress,
@@ -475,6 +537,31 @@ class _NoSummaryProcesses(_FakeLauncherProcesses):
 
 
 class UnifiedRunnerProcessTests(unittest.TestCase):
+    def test_feedback_json_unpaced_failure_has_no_child_process_or_checkpoint_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_dir = Path(directory) / "checkpoints"
+            checkpoint_dir.mkdir()
+            planner = checkpoint_dir / "planner.pt"
+            motor = checkpoint_dir / "motor.pt"
+            planner.write_bytes(b"planner")
+            motor.write_bytes(b"motor")
+            before = (planner.read_bytes(), motor.read_bytes())
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = run.main([
+                    "train", "--set", str(SET_PATH), "--checkpoint-dir",
+                    str(checkpoint_dir), "--mode", "unpaced", "--fresh",
+                    "--feedback-json",
+                ])
+            after = (planner.read_bytes(), motor.read_bytes())
+        self.assertEqual(result, 1)
+        self.assertEqual(before, after)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        event = json.loads(lines[0])
+        self.assertEqual(event["event"], "run_failed")
+        validate_run_event(event)
+
     def test_unpaced_learned_training_is_rejected_before_any_process_spawn(self):
         with tempfile.TemporaryDirectory() as directory:
             checkpoint_dir = Path(directory) / "checkpoints"
@@ -488,7 +575,7 @@ class UnifiedRunnerProcessTests(unittest.TestCase):
             runner = run.UnifiedRunner(popen_factory=factory, output=io.StringIO())
             try:
                 with self.assertRaisesRegex(run.RunError,
-                                            "unpaced learned Training is not supported yet"):
+                                            "unpaced Training is not implemented yet"):
                     runner.train(
                         set_path=SET_PATH, checkpoint_dir=checkpoint_dir,
                         max_episodes=1, clock_mode="unpaced", fresh=True,
@@ -522,7 +609,7 @@ class UnifiedRunnerProcessTests(unittest.TestCase):
                            if "game2.v2.player.learned.main" in command]
         self.assertEqual(len(console_commands), 3)
         self.assertEqual(len(player_commands), 3)
-        self.assertIn("--fresh", player_commands[0])
+        self.assertNotIn("--fresh", player_commands[0])
         self.assertNotIn("--fresh", player_commands[1])
         self.assertNotIn("--fresh", player_commands[2])
         self.assertEqual([config["clock_mode"] for config in factory.configs],
@@ -532,6 +619,31 @@ class UnifiedRunnerProcessTests(unittest.TestCase):
         self.assertEqual([event["event"] for event in events].count("map_passed"), 3)
         self.assertEqual(events[-1], {"event": "training_set_finished", "level": 1,
                                       "passed": True})
+
+    def test_feedback_json_training_hides_child_stdout_and_validates_every_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            runner = run.UnifiedRunner(
+                popen_factory=_FakeLauncherProcesses(),
+                sleeper=lambda _seconds: None,
+                output=output,
+                feedback_json=True,
+            )
+            try:
+                result = runner.train(
+                    set_path=SET_PATH,
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    max_episodes=1, mode="realtime", fresh=True, episode_limit=1200,
+                )
+            finally:
+                runner.close()
+        self.assertEqual(result, 0)
+        lines = output.getvalue().splitlines()
+        self.assertTrue(lines)
+        self.assertTrue(all(not line.startswith("EVENT ") for line in lines))
+        self.assertTrue(all(validate_run_event(json.loads(line)) for line in lines))
+        self.assertTrue(all("READY" not in line for line in lines))
+        self.assertEqual(json.loads(lines[0])["mode"], "realtime")
 
     def test_training_accepts_player_exit_before_delayed_trainer_summary(self):
         with tempfile.TemporaryDirectory() as directory:

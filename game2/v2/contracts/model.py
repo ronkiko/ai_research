@@ -7,7 +7,7 @@ from numbers import Real
 from typing import Any
 
 from .framing import PROTOCOL_VERSION, ProtocolError, decode_frame, encode_frame
-from .vision import VisionFrame
+from .vision import PIXEL_FORMAT, VISION_MAX_PIXELS, VisionFrame
 
 
 PREPARE = "prepare"
@@ -68,8 +68,16 @@ def observe_message(frame: VisionFrame) -> dict[str, Any]:
         observation_world_tick=frame.world_tick,
         width=frame.width,
         height=frame.height,
-        pixels=frame.pixels.hex(),
+        pixel_format=PIXEL_FORMAT,
+        byte_length=len(frame.pixels),
     )
+
+
+def observation_frame(frame: VisionFrame) -> bytes:
+    """Encode one OBSERVE header followed by its raw semantic raster."""
+    if not isinstance(frame, VisionFrame):
+        raise TypeError("observation_frame requires a VisionFrame")
+    return encode_frame(observe_message(frame)) + frame.pixels
 
 
 def actuated_message(decision_id: int) -> dict[str, Any]:
@@ -124,7 +132,7 @@ def saved_message() -> dict[str, Any]:
 _FIELDS = {
     PREPARE: frozenset(("version", "type", "episode_id", "mode", "seed")),
     OBSERVE: frozenset(("version", "type", "observation_world_tick", "width",
-                       "height", "pixels")),
+                       "height", "pixel_format", "byte_length")),
     ACTUATED: frozenset(("version", "type", "decision_id")),
     EPISODE_END: frozenset(("version", "type", "episode_id", "result", "reward",
                             "trainable")),
@@ -148,17 +156,7 @@ def decode_model_message(message: dict[str, Any]) -> dict[str, Any]:
     if message_type == PREPARE:
         prepare_message(message["episode_id"], message["mode"], message["seed"])
     elif message_type == OBSERVE:
-        if (type(message["pixels"]) is not str or
-                type(message["width"]) is not int or type(message["height"]) is not int):
-            raise ProtocolError("observation raster is invalid")
-        try:
-            pixels = bytes.fromhex(message["pixels"])
-        except ValueError as exc:
-            raise ProtocolError("observation raster is not hexadecimal") from exc
-        frame = VisionFrame(message["width"], message["height"], pixels,
-                            message["observation_world_tick"])
-        if frame.world_tick != message["observation_world_tick"]:
-            raise ProtocolError("observation tick is invalid")
+        _validate_observation_header(message)
     elif message_type == ACTUATED:
         actuated_message(message["decision_id"])
     elif message_type == EPISODE_END:
@@ -177,6 +175,8 @@ def message_frame(message: dict[str, Any]) -> bytes:
 
 
 def send_model_message(sock: socket.socket, message: dict[str, Any]) -> None:
+    if message.get("type") == OBSERVE:
+        raise ProtocolError("OBSERVE requires send_model_observation")
     sock.sendall(message_frame(message))
 
 
@@ -185,12 +185,37 @@ def recv_model_message(sock: socket.socket) -> dict[str, Any]:
     return decode_model_message(recv_frame(sock))
 
 
-def observation_from_message(message: dict[str, Any]) -> VisionFrame:
+def _validate_observation_header(message: dict[str, Any]) -> None:
+    if message.get("pixel_format") != PIXEL_FORMAT:
+        raise ProtocolError("unsupported observation pixel format")
+    width = message.get("width")
+    height = message.get("height")
+    byte_length = message.get("byte_length")
+    world_tick = message.get("observation_world_tick")
+    if type(width) is not int or width <= 0 or type(height) is not int or height <= 0:
+        raise ProtocolError("observation dimensions are invalid")
+    if type(world_tick) is not int or world_tick < 0:
+        raise ProtocolError("observation tick is invalid")
+    if type(byte_length) is not int or byte_length != width * height:
+        raise ProtocolError("observation byte_length does not match dimensions")
+    if byte_length > VISION_MAX_PIXELS:
+        raise ProtocolError("observation raster is too large")
+
+
+def observation_from_message(message: dict[str, Any],
+                             pixels: bytes | bytearray | None = None) -> VisionFrame:
     if decode_model_message(message)["type"] != OBSERVE:
         raise ProtocolError("message is not an observation")
-    return VisionFrame(message["width"], message["height"],
-                       bytes.fromhex(message["pixels"]),
+    if not isinstance(pixels, (bytes, bytearray)):
+        raise ProtocolError("observation raster bytes are required")
+    if len(pixels) != message["byte_length"]:
+        raise ProtocolError("observation raster length does not match header")
+    return VisionFrame(message["width"], message["height"], bytes(pixels),
                        message["observation_world_tick"])
+
+
+def send_model_observation(sock: socket.socket, frame: VisionFrame) -> None:
+    sock.sendall(observation_frame(frame))
 
 
 __all__ = [
@@ -198,6 +223,7 @@ __all__ = [
     "PREPARE", "READY", "RESULTS", "SAVE", "SAVED", "TRAIN", "UPDATE_RESULT",
     "actuated_message", "decode_model_message", "decision_message",
     "episode_end_message", "message_frame", "observe_message", "observation_from_message",
-    "prepare_message", "ready_message", "recv_model_message", "save_message",
-    "saved_message", "send_model_message", "update_result_message",
+    "observation_frame", "prepare_message", "ready_message", "recv_model_message",
+    "save_message", "saved_message", "send_model_message", "send_model_observation",
+    "update_result_message",
 ]

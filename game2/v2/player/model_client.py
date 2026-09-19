@@ -23,7 +23,7 @@ from game2.v2.contracts.model import (
     decode_model_message,
     episode_end_message,
     message_frame,
-    observe_message,
+    observation_frame,
     prepare_message,
     save_message,
 )
@@ -192,6 +192,10 @@ class ModelClient:
             sock = self._require_socket()
             select.select([], [sock], [], min(remaining, 0.05))
 
+    def _clear_observation_mailbox(self) -> None:
+        self._pending_observation = None
+        self._queued_observation = None
+
     def poll(self) -> None:
         sock = self._require_socket()
         self._flush()
@@ -215,13 +219,15 @@ class ModelClient:
                 raise ProtocolError(f"unexpected Model runtime message {message_type}")
 
     def prepare(self, episode_id: int, mode: str, seed: int) -> None:
+        self._clear_observation_mailbox()
         self._queue_control(prepare_message(episode_id, mode, seed))
         self._flush_until_empty()
+        self._clear_observation_mailbox()
         self._latest_decision = None
 
     def observe(self, frame: VisionFrame) -> None:
         self._require_socket()
-        encoded = message_frame(observe_message(frame))
+        encoded = observation_frame(frame)
         if self._pending_observation is None and self._current_out is None \
                 and not self._control_out:
             self._pending_observation = encoded
@@ -237,6 +243,7 @@ class ModelClient:
                     trainable: bool) -> dict:
         self._queue_control(episode_end_message(episode_id, result, reward, trainable))
         self._flush_until_empty()
+        self._clear_observation_mailbox()
         deadline = time.monotonic() + 5.0
         while episode_id not in self._updates:
             self.poll()
@@ -249,6 +256,7 @@ class ModelClient:
     def save(self) -> None:
         self._queue_control(save_message())
         self._flush_until_empty()
+        self._clear_observation_mailbox()
         deadline = time.monotonic() + 5.0
         while 0 not in self._updates:
             self.poll()

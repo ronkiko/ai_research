@@ -23,81 +23,32 @@ from .process import run_attached_training_player
 PLAYER_ACTION_HZ = 120
 
 
-def _is_remote_model(value) -> bool:
-    return isinstance(value, ModelClient) or all(
-        callable(getattr(value, name, None))
-        for name in ("observe", "poll", "actuated")
-    ) and hasattr(value, "latest_decision")
-
-
-def __getattr__(name: str):
-    if name == "build_player":
-        # Kept for direct unit-level callers. The executable path never loads
-        # this compatibility module or model weights.
-        from .legacy import build_player
-        return build_player
-    raise AttributeError(name)
-
-
-def run_player(manifest: PlayerManifest, player, *, decisions: int | None = None,
+def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int | None = None,
                action_hz: int = PLAYER_ACTION_HZ, vision_factory=None,
                joystick_factory=None, lifecycle=None, clock=time.monotonic,
-               sleeper=time.sleep, inference_factory=None) -> int:
-    if _is_remote_model(player):
-        kwargs = {"clock": clock, "sleeper": sleeper}
-        if vision_factory is not None:
-            kwargs["vision_factory"] = vision_factory
-        if joystick_factory is not None:
-            kwargs["joystick_factory"] = joystick_factory
-        return run_remote_player(manifest, player, decisions=decisions, action_hz=action_hz,
-                                 lifecycle=lifecycle, **kwargs)
-    from .legacy import run_player as legacy_run_player
-    kwargs = {
-        "decisions": decisions, "action_hz": action_hz,
-        "vision_factory": vision_factory or None,
-        "joystick_factory": joystick_factory or None,
-        "lifecycle": lifecycle, "clock": clock, "sleeper": sleeper,
-    }
-    if inference_factory is not None:
-        kwargs["inference_factory"] = inference_factory
-    if kwargs["vision_factory"] is None:
-        kwargs.pop("vision_factory")
-    if kwargs["joystick_factory"] is None:
-        kwargs.pop("joystick_factory")
-    return legacy_run_player(
-        manifest, player, **kwargs,
-    )
-
-
-def run_attached_player(connection: PlayerConnection, player, *,
-                        decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
-                        vision_factory=None, joystick_factory=None,
-                        clock=time.monotonic, sleeper=time.sleep,
-                        inference_factory=None) -> int:
-    if not isinstance(connection.manifest, PlayerManifest):
-        raise ValueError("Player connection has no attached PlayerManifest")
-    if _is_remote_model(player):
-        kwargs = {"clock": clock, "sleeper": sleeper}
-        if vision_factory is not None:
-            kwargs["vision_factory"] = vision_factory
-        if joystick_factory is not None:
-            kwargs["joystick_factory"] = joystick_factory
-        return run_remote_attached_player(
-            connection, player, decisions=decisions, action_hz=action_hz, **kwargs)
-    from .legacy import run_attached_player as legacy_run_attached_player
-    kwargs = {
-        "decisions": decisions, "action_hz": action_hz,
-        "clock": clock, "sleeper": sleeper,
-    }
+               sleeper=time.sleep) -> int:
+    kwargs = {"clock": clock, "sleeper": sleeper}
     if vision_factory is not None:
         kwargs["vision_factory"] = vision_factory
     if joystick_factory is not None:
         kwargs["joystick_factory"] = joystick_factory
-    if inference_factory is not None:
-        kwargs["inference_factory"] = inference_factory
-    return legacy_run_attached_player(
-        connection, player, **kwargs,
-    )
+    return run_remote_player(manifest, model, decisions=decisions, action_hz=action_hz,
+                             lifecycle=lifecycle, **kwargs)
+
+
+def run_attached_player(connection: PlayerConnection, model: ModelClient, *,
+                        decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
+                        vision_factory=None, joystick_factory=None,
+                        clock=time.monotonic, sleeper=time.sleep) -> int:
+    if not isinstance(connection.manifest, PlayerManifest):
+        raise ValueError("Player connection has no attached PlayerManifest")
+    kwargs = {"clock": clock, "sleeper": sleeper}
+    if vision_factory is not None:
+        kwargs["vision_factory"] = vision_factory
+    if joystick_factory is not None:
+        kwargs["joystick_factory"] = joystick_factory
+    return run_remote_attached_player(connection, model, decisions=decisions,
+                                      action_hz=action_hz, **kwargs)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -107,7 +58,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--action-hz", type=int, default=PLAYER_ACTION_HZ)
     parser.add_argument("--model-host", required=True)
     parser.add_argument("--model-port", type=int, required=True)
-    parser.add_argument("--fresh", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--trainer-host")
     parser.add_argument("--trainer-port", type=int)
     parser.add_argument("--episode-id", type=int, default=1)

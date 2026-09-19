@@ -62,7 +62,7 @@ class _FrameReader:
         self.buffer = bytearray()
         self.closed = False
 
-    def read_available(self, sock: socket.socket) -> list[dict]:
+    def read_available(self, sock: socket.socket) -> list[tuple[dict, bytes | None]]:
         messages = []
         while True:
             while True:
@@ -74,8 +74,15 @@ class _FrameReader:
                 if len(self.buffer) < size + 4:
                     break
                 payload = bytes(self.buffer[4:size + 4])
-                del self.buffer[:size + 4]
-                messages.append(decode_model_message(decode_frame(payload)))
+                message = decode_model_message(decode_frame(payload))
+                raster_length = message.get("byte_length", 0) if message["type"] == OBSERVE else 0
+                total = size + 4 + raster_length
+                if len(self.buffer) < total:
+                    break
+                raster = (bytes(self.buffer[size + 4:total])
+                          if message["type"] == OBSERVE else None)
+                del self.buffer[:total]
+                messages.append((message, raster))
             if self.closed:
                 if messages:
                     return messages
@@ -139,7 +146,8 @@ class ModelRuntime:
         self._send(peer, update_result_message(episode_id, updated, loss))
 
     def _handle(self, peer: socket.socket, message: dict,
-                pending_observation: object | None) -> object | None:
+                pending_observation: object | None,
+                observation_pixels: bytes | None = None) -> object | None:
         message_type = message["type"]
         if message_type == PREPARE:
             if self._active:
@@ -152,7 +160,7 @@ class ModelRuntime:
         if message_type == OBSERVE:
             if not self._active:
                 return pending_observation
-            return observation_from_message(message)
+            return observation_from_message(message, observation_pixels)
         if message_type == ACTUATED:
             sample = self._samples.get(message["decision_id"])
             if sample is not None and self.player.episode_mode == "train":
@@ -164,6 +172,24 @@ class ModelRuntime:
         if message_type == SAVE:
             raise ProtocolError("SAVE was not handled by the runtime loop")
         raise ProtocolError(f"unexpected Model runtime message {message_type}")
+
+    def _process_pending(self, peer: socket.socket,
+                         pending_observation: object | None) -> object | None:
+        if pending_observation is None or not self._active:
+            return pending_observation
+        frame = pending_observation
+        if self.inference_delay:
+            time.sleep(self.inference_delay)
+        sample = self.player.process_frame(frame)
+        if sample is not None:
+            self._decision_id += 1
+            self._samples[self._decision_id] = sample
+            self._send(peer, decision_message(
+                self._decision_id, sample.world_tick,
+                sample.action_decision.right,
+                sample.action_decision.jump,
+            ))
+        return None
 
     def run(self, planner_path: str | Path, motor_path: str | Path) -> int:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -192,7 +218,10 @@ class ModelRuntime:
                         if not readable:
                             continue
                         messages = reader.read_available(peer)
-                    for message in messages:
+                    for message, observation_pixels in messages:
+                        if message["type"] == EPISODE_END:
+                            pending_observation = self._process_pending(
+                                peer, pending_observation)
                         if message["type"] == SAVE:
                             if self._active:
                                 raise ProtocolError("SAVE arrived during an active episode")
@@ -210,21 +239,8 @@ class ModelRuntime:
                                 pass
                             return 0
                         pending_observation = self._handle(
-                            peer, message, pending_observation)
-                    if pending_observation is not None and self._active:
-                        frame = pending_observation
-                        pending_observation = None
-                        if self.inference_delay:
-                            time.sleep(self.inference_delay)
-                        sample = self.player.process_frame(frame)
-                        if sample is not None:
-                            self._decision_id += 1
-                            self._samples[self._decision_id] = sample
-                            self._send(peer, decision_message(
-                                self._decision_id, sample.world_tick,
-                                sample.action_decision.right,
-                                sample.action_decision.jump,
-                            ))
+                            peer, message, pending_observation, observation_pixels)
+                    pending_observation = self._process_pending(peer, pending_observation)
         finally:
             listener.close()
 

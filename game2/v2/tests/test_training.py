@@ -44,7 +44,8 @@ from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.motion import VisionProgress
+from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_semantic,
+                                             self_center)
 from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer, TrainingRecord
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.player.learned.vision import vision_to_tensor
@@ -144,6 +145,19 @@ class VisionProgressTests(unittest.TestCase):
         tracker.update(self._frame(6, 2, tick=2))
         tracker.update(self._frame(6, 2, tick=3, include_goal=False))
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
+
+    def test_large_raster_semantic_helpers_match_public_bbox_geometry(self):
+        width, height = 1280, 768
+        pixels = bytearray(width * height)
+        for x, y in ((3, 4), (19, 7), (8, 31)):
+            pixels[y * width + x] = 3
+        for x, y in ((100, 20), (120, 40)):
+            pixels[y * width + x] = 4
+        frame = VisionFrame(width, height, bytes(pixels), 77)
+        self.assertTrue(has_semantic(frame, 3))
+        self.assertEqual(self_center(frame), (11.0, 17.5))
+        self.assertEqual(goal_center(frame), (110.0, 30.0))
+        self.assertFalse(has_semantic(frame, 2))
 
 
 class TerminalQueueTests(unittest.TestCase):

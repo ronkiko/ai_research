@@ -144,18 +144,20 @@ class UnifiedRunner:
     """Own every subprocess in one Training or Exam operation."""
 
     def __init__(self, *, popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
-                 sleeper: Callable[[float], None] = time.sleep,
-                 output=None, root: Path = ROOT):
+                  sleeper: Callable[[float], None] = time.sleep,
+                  output=None, root: Path = ROOT, feedback_json: bool = False):
         self.popen_factory = popen_factory
         self.sleeper = sleeper
         self.output = output or sys.stdout
         self.root = Path(root)
+        self.feedback_json = feedback_json
         self.processes: list[ManagedProcess] = []
         self.stop_requested = threading.Event()
 
     def emit(self, event_type: str, **fields: Any) -> dict[str, Any]:
         event = make_event(event_type, **fields)
-        self.output.write("EVENT " + encode_event(event) + "\n")
+        prefix = "" if self.feedback_json else "EVENT "
+        self.output.write(prefix + encode_event(event) + "\n")
         self.output.flush()
         return event
 
@@ -212,10 +214,10 @@ class UnifiedRunner:
     def _drain(self, process: ManagedProcess) -> list[str]:
         return process.drain_lines()
 
-    def _console_config(self, map_path: Path, clock_mode: str, episode_limit: int) -> dict:
+    def _console_config(self, map_path: Path, mode: str, episode_limit: int) -> dict:
         return {
             "map": str(map_path),
-            "clock_mode": clock_mode,
+            "clock_mode": mode,
             "physics_hz": 120,
             "controller": "default",
             "enable_display": True,
@@ -228,12 +230,12 @@ class UnifiedRunner:
             "world_ticks": None,
         }
 
-    def _start_console(self, directory: Path, map_path: Path, clock_mode: str,
+    def _start_console(self, directory: Path, map_path: Path, mode: str,
                        episode_limit: int) -> tuple[ManagedProcess, Path, ConsoleDiscovery]:
         config_path = directory / "console.json"
         discovery_path = directory / "console-discovery.json"
         config_path.write_text(json.dumps(self._console_config(
-            map_path, clock_mode, episode_limit), sort_keys=True), encoding="utf-8")
+            map_path, mode, episode_limit), sort_keys=True), encoding="utf-8")
         console = self._spawn([
             sys.executable, "-m", "game2.v2.console.main", "--server",
             "--config", str(config_path), "--discovery", str(discovery_path),
@@ -291,7 +293,7 @@ class UnifiedRunner:
     def _progress(data: dict[str, Any]) -> dict[str, Any]:
         required = {
             "episode_id", "result", "trainable", "updated", "progress", "reward",
-            "attempts", "successes",
+            "attempts", "successes", "accepted_actions", "rejected_actions", "loss",
         }
         if set(data) != required:
             raise RunError("Trainer PROGRESS fields are invalid")
@@ -309,8 +311,19 @@ class UnifiedRunner:
                 or not -1.0 <= float(data["reward"]) <= 1.0 \
                 or type(data["attempts"]) is not int or data["attempts"] <= 0 \
                 or type(data["successes"]) is not int or data["successes"] < 0 \
-                or data["successes"] > data["attempts"]:
+                or data["successes"] > data["attempts"] \
+                or type(data["accepted_actions"]) is not int \
+                or data["accepted_actions"] < 0 \
+                or type(data["rejected_actions"]) is not int \
+                or data["rejected_actions"] < 0:
             raise RunError("Trainer PROGRESS values are invalid")
+        loss = data["loss"]
+        if data["updated"]:
+            if type(loss) is bool or not isinstance(loss, (int, float)) \
+                    or not math.isfinite(float(loss)):
+                raise RunError("Trainer PROGRESS loss is invalid")
+        elif loss is not None:
+            raise RunError("Trainer PROGRESS loss must be null without an update")
         return data
 
     @staticmethod
@@ -380,13 +393,13 @@ class UnifiedRunner:
 
     def _train_map(self, manifest_path: Path, manifest: TrainingSetManifest,
                    spec: TrainingMapSpec, checkpoint_dir: Path, fresh: bool,
-                   max_episodes: int, clock_mode: str, episode_limit: int,
+                   max_episodes: int, mode: str, episode_limit: int,
                    temp_root: Path) -> bool:
         self.emit("map_started", level=manifest.training_set_level, map_id=spec.map_id)
         processes: list[ManagedProcess] = []
         try:
             console, discovery_path, _discovery = self._start_console(
-                temp_root, _resolve_map(manifest_path, spec), clock_mode, episode_limit)
+                temp_root, _resolve_map(manifest_path, spec), mode, episode_limit)
             processes.append(console)
             trainer = self._spawn([
                 sys.executable, "-m", "game2.v2.training.main",
@@ -413,8 +426,6 @@ class UnifiedRunner:
                 "--model-host", model_host, "--model-port", str(model_port),
                 "--trainer-host", trainer_host, "--trainer-port", str(trainer_port),
             ]
-            if fresh:
-                player_command.append("--fresh")
             player = self._spawn(player_command)
             processes.append(player)
             player_manifest = self._attached(self._announcement(
@@ -475,10 +486,15 @@ class UnifiedRunner:
             self._stop_processes(processes)
 
     def train(self, *, set_path: str | Path, checkpoint_dir: str | Path,
-               max_episodes: int, clock_mode: str, fresh: bool,
-               episode_limit: int = DEFAULT_EPISODE_LIMIT) -> int:
-        if clock_mode == "unpaced":
-            raise RunError("unpaced learned Training is not supported yet")
+               max_episodes: int, fresh: bool, mode: str | None = None,
+               episode_limit: int = DEFAULT_EPISODE_LIMIT,
+               clock_mode: str | None = None) -> int:
+        if mode is None:
+            mode = clock_mode or "realtime"
+        elif clock_mode is not None and clock_mode != mode:
+            raise ValueError("mode and clock_mode disagree")
+        if mode == "unpaced":
+            raise RunError("unpaced Training is not implemented yet")
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
         manifest = TrainingSetManifest.from_file(manifest_path)
@@ -489,19 +505,19 @@ class UnifiedRunner:
             raise RunError("resume requires planner.pt and motor.pt")
         if type(max_episodes) is not int or max_episodes <= 0:
             raise ValueError("max_episodes must be positive")
-        if clock_mode not in {"realtime", "unpaced"}:
-            raise ValueError("clock_mode must be realtime or unpaced")
+        if mode not in {"realtime", "unpaced"}:
+            raise ValueError("mode must be realtime or unpaced")
         if type(episode_limit) is not int or episode_limit <= 0:
             raise ValueError("episode_limit must be positive")
 
-        self.emit("training_set_started", level=manifest.training_set_level)
+        self.emit("training_set_started", level=manifest.training_set_level, mode=mode)
         with tempfile.TemporaryDirectory(prefix="game2-v2-run-") as temporary:
             temp_root = Path(temporary)
             for index, spec in enumerate(manifest.training_maps):
                 if not self._train_map(
                         manifest_path, manifest, spec, checkpoint_path,
                         fresh=(fresh and index == 0), max_episodes=max_episodes,
-                        clock_mode=clock_mode, episode_limit=episode_limit,
+                        mode=mode, episode_limit=episode_limit,
                         temp_root=temp_root):
                     self.emit("training_set_finished", level=manifest.training_set_level,
                               passed=False)
@@ -602,7 +618,8 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--set", dest="set_path", required=True)
     train.add_argument("--checkpoint-dir", required=True)
     train.add_argument("--max-episodes-per-map", type=int, default=50)
-    train.add_argument("--clock-mode", choices=("realtime", "unpaced"), default="realtime")
+    train.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
+    train.add_argument("--feedback-json", action="store_true")
     train.add_argument("--episode-limit", type=int, default=DEFAULT_EPISODE_LIMIT)
     freshness = train.add_mutually_exclusive_group(required=True)
     freshness.add_argument("--fresh", action="store_true")
@@ -613,19 +630,20 @@ def _parser() -> argparse.ArgumentParser:
     exam.add_argument("--checkpoint-dir", required=True)
     exam.add_argument("--exam-root")
     exam.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+    exam.add_argument("--feedback-json", action="store_true")
     return parser
 
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
-    runner = UnifiedRunner()
+    runner = UnifiedRunner(feedback_json=getattr(args, "feedback_json", False))
     previous_int = signal.signal(signal.SIGINT, lambda _signum, _frame: runner.request_stop())
     previous_term = signal.signal(signal.SIGTERM, lambda _signum, _frame: runner.request_stop())
     try:
         if args.command == "train":
             return runner.train(
                 set_path=args.set_path, checkpoint_dir=args.checkpoint_dir,
-                max_episodes=args.max_episodes_per_map, clock_mode=args.clock_mode,
+                max_episodes=args.max_episodes_per_map, mode=args.mode,
                 fresh=args.fresh, episode_limit=args.episode_limit,
             )
         return runner.exam(
@@ -633,6 +651,10 @@ def main(argv=None) -> int:
             exam_root=args.exam_root, delay=args.delay,
         )
     except KeyboardInterrupt:
+        try:
+            runner.emit("run_failed", message="run interrupted")
+        except (OSError, ValueError):
+            pass
         return 130
     except (OSError, RuntimeError, TimeoutError, TypeError, ValueError, RunError) as exc:
         try:

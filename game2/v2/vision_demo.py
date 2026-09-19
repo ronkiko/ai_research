@@ -38,6 +38,24 @@ PALETTE = (
 )
 _OUTPUT_END = object()
 
+
+def _strict_json_object(line: str) -> dict[str, Any]:
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"duplicate launcher field: {key}")
+            result[key] = value
+        return result
+
+    def invalid(value):
+        raise ValueError(f"invalid launcher number: {value}")
+
+    value = json.loads(line, object_pairs_hook=pairs, parse_constant=invalid)
+    if not isinstance(value, dict):
+        raise ValueError("launcher event must be an object")
+    return value
+
 # Existing server smoke tooling used this name. It now deliberately delegates
 # to the shared public receiver instead of maintaining a second client.
 VisionStream = VisionReceiver
@@ -265,16 +283,18 @@ class LauncherProcess:
                 line = self.lines.get_nowait()
             except queue.Empty:
                 break
-            if line is _OUTPUT_END or not isinstance(line, str):
+            if line is _OUTPUT_END:
                 continue
-            if not line.startswith("EVENT "):
+            if not isinstance(line, str) or not line.strip():
                 continue
             try:
-                event = json.loads(line[6:])
+                event = _strict_json_object(line.strip())
                 validate_run_event(event)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                events.append({"event": "run_failed", "message": f"Malformed launcher event: {exc}"})
-                continue
+                events.append({"event": "run_failed",
+                               "message": f"Malformed launcher event: {exc}"})
+                self.stop()
+                break
             events.append(event)
         return events
 
@@ -312,8 +332,8 @@ def train_command(entry: TrainingSetEntry, *, checkpoint_root: Path = CHECKPOINT
     return [
         sys.executable, "-m", "game2.v2.run", "train", "--set", str(entry.path),
         "--checkpoint-dir", str(_checkpoint_dir(entry.level, checkpoint_root)),
-        "--max-episodes-per-map", str(max_episodes), "--clock-mode", "realtime",
-        "--episode-limit", str(episode_limit), "--fresh",
+        "--max-episodes-per-map", str(max_episodes), "--mode", "realtime",
+        "--feedback-json", "--episode-limit", str(episode_limit), "--fresh",
     ]
 
 
@@ -323,7 +343,7 @@ def exam_command(entry: TrainingSetEntry, *, checkpoint_root: Path = CHECKPOINT_
     command = [
         sys.executable, "-m", "game2.v2.run", "exam", "--set", str(entry.path),
         "--checkpoint-dir", str(_checkpoint_dir(entry.level, checkpoint_root)),
-        "--delay", str(delay),
+        "--delay", str(delay), "--feedback-json",
     ]
     if exam_root is not None:
         command.extend(("--exam-root", str(exam_root)))

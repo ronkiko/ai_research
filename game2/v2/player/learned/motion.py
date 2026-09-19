@@ -13,12 +13,33 @@ GOAL = 4
 
 
 def _semantic_center(frame: VisionFrame, semantic_class: int) -> tuple[float, float] | None:
-    indices = [index for index, value in enumerate(frame.pixels) if value == semantic_class]
-    if not indices:
+    marker = bytes((semantic_class,))
+    min_x, min_y = frame.width, frame.height
+    max_x = max_y = -1
+    for y in range(frame.height):
+        row_start = y * frame.width
+        row_end = row_start + frame.width
+        first = frame.pixels.find(marker, row_start, row_end)
+        if first < 0:
+            continue
+        last = frame.pixels.rfind(marker, row_start, row_end)
+        min_x = min(min_x, first - row_start)
+        max_x = max(max_x, last - row_start)
+        min_y = min(min_y, y)
+        max_y = y
+    if max_x < 0:
         return None
-    xs = [index % frame.width for index in indices]
-    ys = [index // frame.width for index in indices]
-    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    return (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
+
+
+def has_semantic(frame: VisionFrame, semantic_class: int) -> bool:
+    """Check semantic presence with the bytes implementation, not pixel objects."""
+    if not isinstance(frame, VisionFrame):
+        raise TypeError("has_semantic requires a VisionFrame")
+    if type(semantic_class) is not int or not 0 <= semantic_class <= 255:
+        raise ValueError("semantic_class must be an unsigned byte")
+    marker = bytes((semantic_class,))
+    return frame.pixels.find(marker) >= 0
 
 
 def self_center(frame: VisionFrame) -> tuple[float, float] | None:
@@ -158,5 +179,5 @@ class MotionEstimator:
 
 __all__ = [
     "GOAL", "MOTION_PIXELS_PER_TICK_SCALE", "SELF", "MotionEstimator", "VisionProgress",
-    "goal_center", "self_center", "self_center_x",
+    "goal_center", "has_semantic", "self_center", "self_center_x",
 ]

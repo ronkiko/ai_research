@@ -9,7 +9,7 @@ from .manifests import PlayerManifest
 
 
 EVENT_FIELDS = {
-    "training_set_started": frozenset(("event", "level")),
+    "training_set_started": frozenset(("event", "level", "mode")),
     "map_started": frozenset(("event", "level", "map_id")),
     "vision_ready": frozenset((
         "event", "mode", "level", "map_id", "player_manifest",
@@ -17,6 +17,7 @@ EVENT_FIELDS = {
     "map_progress": frozenset((
         "event", "level", "map_id", "episode_id", "result", "trainable",
         "updated", "progress", "reward", "attempts", "successes",
+        "accepted_actions", "rejected_actions", "loss",
     )),
     "map_evaluation": frozenset((
         "event", "level", "map_id", "episode_id", "result", "trainable",
@@ -33,6 +34,7 @@ EVENT_FIELDS = {
 
 RESULTS = frozenset(("success", "dead", "timeout"))
 MODES = frozenset(("train", "exam"))
+EXECUTION_MODES = frozenset(("realtime", "unpaced"))
 
 
 def _positive_int(name: str, value: object) -> None:
@@ -94,6 +96,18 @@ def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
         _non_negative_int("successes", event["successes"])
         if event["successes"] > event["attempts"]:
             raise ValueError("successes cannot exceed attempts")
+        _non_negative_int("accepted_actions", event["accepted_actions"])
+        _non_negative_int("rejected_actions", event["rejected_actions"])
+        loss = event["loss"]
+        if event["updated"]:
+            if type(loss) is bool or not isinstance(loss, (int, float)) \
+                    or not math.isfinite(float(loss)):
+                raise ValueError("loss must be finite when updated is true")
+        elif loss is not None:
+            raise ValueError("loss must be null when updated is false")
+    elif event_type == "training_set_started":
+        if event["mode"] not in EXECUTION_MODES:
+            raise ValueError("training execution mode is invalid")
     elif event_type == "map_evaluation":
         _positive_int("episode_id", event["episode_id"])
         if event["result"] not in RESULTS:
@@ -123,14 +137,21 @@ def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def make_event(event_type: str, **fields: Any) -> dict[str, Any]:
+    # Keep construction ergonomic while validation remains strict at the wire boundary.
+    if event_type == "training_set_started":
+        fields.setdefault("mode", "realtime")
+    elif event_type == "map_progress":
+        fields.setdefault("accepted_actions", 0)
+        fields.setdefault("rejected_actions", 0)
+        fields.setdefault("loss", 0.0 if fields.get("updated") else None)
     event = {"event": event_type, **fields}
     return validate_run_event(event)
 
 
 def encode_event(event: dict[str, Any]) -> str:
     validate_run_event(event)
-    return json.dumps(event, separators=(",", ":"), sort_keys=True)
+    return json.dumps(event, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
 
-__all__ = ["EVENT_FIELDS", "MODES", "RESULTS", "encode_event", "make_event",
+__all__ = ["EVENT_FIELDS", "EXECUTION_MODES", "MODES", "RESULTS", "encode_event", "make_event",
            "validate_run_event"]

@@ -13,6 +13,7 @@ from game2.v2.contracts.model import (
     OBSERVE,
     decode_model_message,
     observe_message,
+    observation_frame,
 )
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.vision import VisionFrame
@@ -36,6 +37,7 @@ class _StubModel:
         self.started = threading.Event()
         self.release = threading.Event()
         self.calls: list[int] = []
+        self.frames = []
         self.actuated: list[int] = []
         self._actuated_samples: set[int] = set()
         self.updated = False
@@ -46,6 +48,7 @@ class _StubModel:
 
     def process_frame(self, frame):
         self.calls.append(frame.world_tick)
+        self.frames.append(frame)
         if frame.world_tick == self.slow_tick:
             self.started.set()
             self.release.wait(2.0)
@@ -111,12 +114,41 @@ class ModelRuntimeTests(unittest.TestCase):
     def test_contract_carries_only_public_semantic_raster(self):
         message = observe_message(_frame(7))
         self.assertEqual(set(message), {
-            "version", "type", "observation_world_tick", "width", "height", "pixels",
+            "version", "type", "observation_world_tick", "width", "height",
+            "pixel_format", "byte_length",
         })
         decoded = decode_model_message(message)
         self.assertEqual(decoded["type"], OBSERVE)
         self.assertNotIn("engine", decoded)
         self.assertNotIn("joystick", decoded)
+
+    def test_full_size_observation_round_trip_uses_header_and_exact_raw_raster(self):
+        model = _StubModel()
+        _runtime, worker, client, errors = self._start(model)
+        pixels = bytearray(1280 * 768)
+        pixels[0] = 3
+        pixels[-1] = 5
+        frame = VisionFrame(1280, 768, bytes(pixels), 987654)
+        wire = observation_frame(frame)
+        header_size = int.from_bytes(wire[:4], "big")
+        header = wire[4:4 + header_size]
+        self.assertNotIn(b'"pixels"', header)
+        self.assertNotIn(b'"base64"', header)
+        self.assertNotIn(b'"raster"', header)
+        self.assertEqual(wire[4 + header_size:], frame.pixels)
+        try:
+            client.prepare(1, "evaluate", 1)
+            client.observe(frame)
+            decision = self._wait_decision(client, frame.world_tick)
+            self.assertEqual(decision.observation_world_tick, frame.world_tick)
+            self.assertEqual(model.frames[0], frame)
+            self.assertEqual(model.frames[0].width, 1280)
+            self.assertEqual(model.frames[0].height, 768)
+            self.assertEqual(model.frames[0].pixels, frame.pixels)
+        finally:
+            client.close()
+            worker.join(timeout=2)
+        self.assertTrue(errors and isinstance(errors[0], EOFError))
 
     def test_slow_model_keeps_latest_only_and_skips_intermediate_observations(self):
         model = _StubModel(slow_tick=100)

@@ -168,6 +168,7 @@ class Trainer:
             reward = reward_for_result(finished["result"], finished["progress"]) \
                 if finished["trainable"] else 0.0
             updated = False
+            update = None
             if finished["trainable"]:
                 send_training_message(peer, apply_result_message(episode_id, reward))
                 update = self._expect(peer, UPDATE_RESULT)
@@ -177,6 +178,7 @@ class Trainer:
                 if update["updated"]:
                     summary.actual_update_count += 1
                     summary.losses.append(update["loss"])
+            loss = update["loss"] if updated and update is not None else None
 
             print("PROGRESS " + json.dumps({
                 "episode_id": episode_id,
@@ -187,6 +189,9 @@ class Trainer:
                 "reward": reward,
                 "attempts": summary.attempts,
                 "successes": summary.successes,
+                "accepted_actions": finished["accepted_actions"],
+                "rejected_actions": finished["rejected_actions"],
+                "loss": loss,
             }, separators=(",", ":"), sort_keys=True), flush=True)
 
             if (self.stop_on_success and finished["result"] == "success"
