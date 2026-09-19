@@ -13,7 +13,7 @@ from game2.v2.contracts.vision import VisionFrame
 from .contracts import ActionDecision, MotorGoal
 from .motor import motor_input_tensor
 from .motion import MotionEstimator
-from .vision import vision_to_tensor
+from .vision import compact_vision_frame, vision_to_tensor
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class DecisionSample:
 
 @dataclass(frozen=True)
 class TrainingRecord:
-    """Lossless compact replay data for one acknowledged neural decision."""
+    """Compact semantic replay data for one acknowledged neural decision."""
 
     width: int
     height: int
@@ -41,7 +41,7 @@ class TrainingRecord:
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
-        frame = sample.vision_frame
+        frame = compact_vision_frame(sample.vision_frame)
         return cls(
             frame.width,
             frame.height,

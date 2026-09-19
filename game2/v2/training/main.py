@@ -6,6 +6,7 @@ import json
 import math
 import socket
 import sys
+import time
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import Any
@@ -170,8 +171,21 @@ class Trainer:
             updated = False
             update = None
             if finished["trainable"]:
+                update_started = time.monotonic()
+                print("LEARNING " + json.dumps({
+                    "episode_id": episode_id,
+                    "status": "start",
+                    "accepted_actions": finished["accepted_actions"],
+                }, separators=(",", ":"), sort_keys=True), flush=True)
                 send_training_message(peer, apply_result_message(episode_id, reward))
                 update = self._expect(peer, UPDATE_RESULT)
+                update_seconds = time.monotonic() - update_started
+                print("LEARNING " + json.dumps({
+                    "episode_id": episode_id,
+                    "status": "done",
+                    "seconds": round(update_seconds, 3),
+                    "updated": update["updated"],
+                }, separators=(",", ":"), sort_keys=True), flush=True)
                 if update["episode_id"] != episode_id:
                     raise ValueError("UPDATE_RESULT identity mismatch")
                 updated = update["updated"]

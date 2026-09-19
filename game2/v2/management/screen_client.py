@@ -22,6 +22,7 @@ from game2.v2.contracts.screen_server import (
 
 INITIAL_WIDTH = 1280
 INITIAL_HEIGHT = 768
+WAITING_REDRAW_MS = 250
 
 
 class ScreenReceiver:
@@ -203,6 +204,7 @@ class ScreenWindow:
         print(f"READY screen={self.screen_number}", flush=True)
 
         clock = pygame.time.Clock()
+        last_waiting_redraw = -WAITING_REDRAW_MS
         try:
             while not self.closed:
                 for event in pygame.event.get():
@@ -214,7 +216,12 @@ class ScreenWindow:
                     return 0
 
                 receiver = self.receiver
-                if receiver is not None:
+                if receiver is None:
+                    now_ms = pygame.time.get_ticks()
+                    if now_ms - last_waiting_redraw >= WAITING_REDRAW_MS:
+                        self._draw_status()
+                        last_waiting_redraw = now_ms
+                else:
                     with receiver.condition:
                         frame = receiver.latest
                     if frame is not None and frame.world_tick > self.last_tick:

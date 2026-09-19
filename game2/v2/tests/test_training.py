@@ -279,7 +279,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(unsent_player.training_records, ())
 
 
-    def test_large_sparse_training_record_is_lossless_and_compact(self):
+    def test_large_sparse_training_record_is_model_compact(self):
         width, height = 1280, 768
         pixels = bytearray(width * height)
         pixels[100 * width + 100] = 3
@@ -290,8 +290,9 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             ActionDecision(True, False), -0.5,
         )
         record = TrainingRecord.from_sample(sample)
-        self.assertEqual(record.vision_frame, frame)
-        self.assertLess(len(record.compressed_pixels), len(frame.pixels) // 20)
+        self.assertLess(record.width, frame.width)
+        self.assertLess(record.height, frame.height)
+        self.assertLess(len(record.compressed_pixels), len(frame.pixels) // 100)
 
     def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
         player = self._player()

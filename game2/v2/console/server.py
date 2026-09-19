@@ -523,8 +523,12 @@ def run_server(config_path: str | Path,
     screen_endpoint = allocate_endpoint()
     screen_manifest_path = run_dir / "screen-source-manifest.json"
     ScreenSourceManifest(
-        session_id, internal.engine_state, str(config.map_path(config_path).resolve()),
+        session_id,
+        internal.engine_state,
+        str(config.map_path(config_path).resolve()),
         screen_endpoint,
+        config.physics_hz,
+        config.episode_limit,
     ).write(screen_manifest_path)
     console_log = (run_dir / "console.log").open("w", encoding="utf-8")
     engine_log = (run_dir / "engine.log").open("w", encoding="utf-8")

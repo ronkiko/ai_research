@@ -17,6 +17,7 @@ from .renderer import ScreenRenderer
 
 
 SCREEN_HZ = 30
+HUD_FONT_SIZE = 24
 
 
 def _connect(endpoint, timeout: float = 5.0) -> socket.socket:
@@ -45,6 +46,11 @@ class ScreenSourceService:
         self.latest: DisplayState | None = None
         self.accepted_tick = -1
         self.presented_tick = -1
+        self.episode_actor_id: str | None = None
+        self.episode_start_tick: int | None = None
+        self.first_motion_tick: int | None = None
+        self.terminal_tick: int | None = None
+        self.previous_result: str | None = None
         self.state_socket: socket.socket | None = None
         self.reader: threading.Thread | None = None
         self.renderer = None
@@ -69,6 +75,7 @@ class ScreenSourceService:
                     continue
                 with self.condition:
                     if view.world_tick > self.accepted_tick:
+                        self._track_episode(view)
                         self.accepted_tick = view.world_tick
                         self.latest = view
                         self.condition.notify_all()
@@ -78,6 +85,97 @@ class ScreenSourceService:
             self.reader_done.set()
             with self.condition:
                 self.condition.notify_all()
+
+    def _track_episode(self, view: DisplayState) -> None:
+        actor = view.self_actor
+        if actor is None:
+            self.episode_actor_id = None
+            self.episode_start_tick = None
+            self.first_motion_tick = None
+            self.terminal_tick = None
+            self.previous_result = None
+            return
+        new_actor = actor.actor_id != self.episode_actor_id
+        respawned = (
+            not new_actor
+            and self.previous_result is not None
+            and actor.result is None
+        )
+        if new_actor or respawned or self.episode_start_tick is None:
+            self.episode_actor_id = actor.actor_id
+            self.episode_start_tick = view.world_tick
+            self.first_motion_tick = None
+            self.terminal_tick = None
+        if (
+            actor.result is None
+            and self.first_motion_tick is None
+            and (
+                abs(actor.x - self.world.spawn.x) > 0.5
+                or abs(actor.vx) > 1e-6
+            )
+        ):
+            self.first_motion_tick = view.world_tick
+        if actor.result is not None and self.terminal_tick is None:
+            self.terminal_tick = view.world_tick
+        self.previous_result = actor.result
+
+    def _hud_lines(self, view: DisplayState) -> tuple[str, ...]:
+        actor = view.self_actor
+        if actor is None:
+            return (f"{view.map_id} | world {view.world_tick}", "actor: waiting")
+        with self.condition:
+            start_tick = self.episode_start_tick
+            first_motion_tick = self.first_motion_tick
+            terminal_tick = self.terminal_tick
+        effective_tick = terminal_tick if terminal_tick is not None else view.world_tick
+        elapsed_ticks = max(0, effective_tick - start_tick) if start_tick is not None else 0
+        elapsed_seconds = elapsed_ticks / self.manifest.physics_hz
+        if self.manifest.episode_limit is None:
+            timer = f"elapsed {elapsed_seconds:.2f}s"
+        else:
+            left_ticks = max(0, self.manifest.episode_limit - elapsed_ticks)
+            timer = (
+                f"episode {elapsed_ticks}/{self.manifest.episode_limit} | "
+                f"left {left_ticks / self.manifest.physics_hz:.2f}s"
+            )
+        if first_motion_tick is None or start_tick is None:
+            first_move = "first move: waiting"
+        else:
+            delay_ticks = max(0, first_motion_tick - start_tick)
+            first_move = (
+                f"first move +{delay_ticks} ticks "
+                f"({delay_ticks / self.manifest.physics_hz:.2f}s)"
+            )
+        state = actor.result.upper() if actor.result is not None else "ACTIVE"
+        return (
+            f"{view.map_id} | world {view.world_tick} | {timer}",
+            (
+                f"x {actor.x:.1f} y {actor.y:.1f} | "
+                f"vx {actor.vx:.2f} vy {actor.vy:.2f} | {state}"
+            ),
+            first_move,
+        )
+
+    def _draw_hud(self, surface, view: DisplayState) -> None:
+        pygame = self.pygame
+        if pygame is None:
+            return
+        if not pygame.font.get_init():
+            pygame.font.init()
+        font = pygame.font.Font(None, HUD_FONT_SIZE)
+        rendered = [
+            font.render(line, True, (245, 245, 245))
+            for line in self._hud_lines(view)
+        ]
+        width = max(item.get_width() for item in rendered) + 20
+        height = sum(item.get_height() for item in rendered) + 16
+        panel = pygame.Surface((width, height), pygame.SRCALPHA)
+        panel.fill((8, 12, 18, 190))
+        y = 8
+        for item in rendered:
+            panel.blit(item, (10, y))
+            y += item.get_height()
+        surface.blit(panel, (10, 10))
 
     def _next_view(self) -> DisplayState | None:
         with self.condition:
@@ -125,6 +223,7 @@ class ScreenSourceService:
                         return 0
                     continue
                 surface = self.renderer.render(view)
+                self._draw_hud(surface, view)
                 pixels = self.pygame.image.tostring(surface, "RGB")
                 self.publisher.publish(ScreenFrame(
                     self.world.width, self.world.height, pixels, view.world_tick

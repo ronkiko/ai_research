@@ -395,6 +395,8 @@ class TrainingRun:
                 for line in trainer.drain():
                     if line.startswith("PROGRESS "):
                         self._write(line.rstrip())
+                    elif line.startswith("LEARNING "):
+                        self._write(line.rstrip())
                     elif line.startswith("EVALUATION "):
                         self._write(line.rstrip())
                     elif line.startswith("SUMMARY "):

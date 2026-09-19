@@ -312,12 +312,20 @@ class ScreenSourceManifest:
     engine_state: Endpoint
     world_file: str
     screen: Endpoint
+    physics_hz: int
+    episode_limit: int | None
 
     def __post_init__(self) -> None:
         if type(self.session_id) is not str or not self.session_id:
             raise ValueError("session_id must be non-empty")
         if type(self.world_file) is not str or not self.world_file:
             raise ValueError("world_file must be non-empty")
+        if type(self.physics_hz) is not int or self.physics_hz <= 0:
+            raise ValueError("physics_hz must be a positive integer")
+        if self.episode_limit is not None and (
+            type(self.episode_limit) is not int or self.episode_limit <= 0
+        ):
+            raise ValueError("episode_limit must be a positive integer or null")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -325,18 +333,25 @@ class ScreenSourceManifest:
             "engine_state": self.engine_state.as_dict(),
             "world_file": self.world_file,
             "screen": self.screen.as_dict(),
+            "physics_hz": self.physics_hz,
+            "episode_limit": self.episode_limit,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScreenSourceManifest":
         session_id = _manifest_session(
-            data, {"session_id", "engine_state", "world_file", "screen"}
+            data, {
+                "session_id", "engine_state", "world_file", "screen",
+                "physics_hz", "episode_limit",
+            }
         )
         return cls(
             session_id,
             cast(Endpoint, _manifest_endpoint(data["engine_state"])),
             data["world_file"],
             cast(Endpoint, _manifest_endpoint(data["screen"])),
+            data["physics_hz"],
+            data["episode_limit"],
         )
 
     @classmethod

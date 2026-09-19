@@ -12,6 +12,7 @@ from game2.v2.console.config import DisplayManifest
 from game2.v2.console.display.display import DisplayService
 from game2.v2.console.display.screen.autotile import AutoTiler, NeighborMask
 from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_label
+from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionClass, VisionRenderer
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
@@ -227,6 +228,49 @@ class DisplayServiceTests(unittest.TestCase):
                 client.close()
             runner.join(2)
             listener.close()
+
+
+class ScreenTelemetryTests(unittest.TestCase):
+    def test_hud_exposes_episode_budget_and_first_motion_delay(self):
+        from game2.v2.console.config import ScreenSourceManifest
+
+        world = _tiny_world()
+        manifest = ScreenSourceManifest(
+            "session",
+            Endpoint("127.0.0.1", 1),
+            "unused-map",
+            Endpoint("127.0.0.1", 2),
+            120,
+            1200,
+        )
+        service = ScreenSourceService(manifest)
+        service.world = world
+
+        waiting = _view(world, x=world.spawn.x, y=world.spawn.y, world_tick=100)
+        moved = DisplayState(
+            "session",
+            220,
+            world.map_id,
+            (
+                ActorView(
+                    "actor-a", "player-a",
+                    world.spawn.x + 4, world.spawn.y,
+                    1.0, 0.0, True, True, None,
+                ),
+            ),
+            "actor-a",
+        )
+        with service.condition:
+            service._track_episode(waiting)
+            first_lines = service._hud_lines(waiting)
+            service._track_episode(moved)
+            moved_lines = service._hud_lines(moved)
+
+        self.assertTrue(any("episode 0/1200" in line for line in first_lines))
+        self.assertTrue(any("left 10.00s" in line for line in first_lines))
+        self.assertTrue(any(
+            "first move +120 ticks (1.00s)" in line for line in moved_lines
+        ))
 
 
 class ScreenRendererTests(unittest.TestCase):

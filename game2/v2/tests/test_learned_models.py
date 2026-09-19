@@ -15,8 +15,17 @@ from game2.v2.player.learned.checkpoint import (load_motor_controller,
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.motor import MotorController382, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import LearnedPlayer, TrainingRecord
-from game2.v2.player.learned.vision import vision_to_tensor
+from game2.v2.player.learned.runtime import (
+    DecisionSample,
+    LearnedPlayer,
+    TrainingRecord,
+)
+from game2.v2.player.learned.vision import (
+    MODEL_VISION_MAX_HEIGHT,
+    MODEL_VISION_MAX_WIDTH,
+    compact_vision_frame,
+    vision_to_tensor,
+)
 
 
 def _frame(width: int, height: int) -> VisionFrame:
@@ -26,6 +35,16 @@ def _frame(width: int, height: int) -> VisionFrame:
 
 def _parameters(model: torch.nn.Module) -> list[torch.Tensor]:
     return [parameter.detach().clone() for parameter in model.parameters()]
+
+
+def _record(frame: VisionFrame, action: ActionDecision) -> TrainingRecord:
+    return TrainingRecord.from_sample(DecisionSample(
+        frame.world_tick,
+        frame,
+        MotorGoal(0.0, 0.0),
+        0.0,
+        action,
+    ))
 
 
 class LearnedContractTests(unittest.TestCase):
@@ -53,6 +72,30 @@ class LearnedContractTests(unittest.TestCase):
             self.assertEqual(float(encoded[semantic_class, y, x]), 1.0)
             self.assertTrue(torch.count_nonzero(encoded[:, y, x]) == 1)
 
+
+
+    def test_large_public_vision_is_compacted_before_cnn(self):
+        width, height = 1280, 768
+        pixels = bytearray(width * height)
+        for y in range(320, 384):
+            for x in range(128, 192):
+                pixels[y * width + x] = 3
+        for y in range(320, 384):
+            for x in range(1152, 1216):
+                pixels[y * width + x] = 4
+        frame = VisionFrame(width, height, bytes(pixels), world_tick=9)
+        compact = compact_vision_frame(frame)
+        self.assertLessEqual(compact.width, MODEL_VISION_MAX_WIDTH)
+        self.assertLessEqual(compact.height, MODEL_VISION_MAX_HEIGHT)
+        self.assertLess(len(compact.pixels), len(frame.pixels) // 50)
+        self.assertIn(3, compact.pixels)
+        self.assertIn(4, compact.pixels)
+        encoded = vision_to_tensor(frame)
+        self.assertEqual(
+            tuple(encoded.shape),
+            (6, compact.height, compact.width),
+        )
+
     def test_motion_input_is_player_side_and_strictly_normalized(self):
         values = motor_input(MotorGoal(0.5, -0.5), 1)
         self.assertEqual(tuple(values.shape), (3,))
@@ -75,8 +118,7 @@ class LearnedModelTests(unittest.TestCase):
     def _controlled_update(action: ActionDecision, reward: float) -> LearnedPlayer:
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
         player.prepare_episode("train", 42)
-        player._training_records.append(TrainingRecord(
-            _frame(6, 5), 0.0, action))
+        player._training_records.append(_record(_frame(6, 5), action))
         updated, _loss = player.apply_result(reward)
         if not updated:
             raise AssertionError("controlled regression record did not update")
@@ -141,8 +183,8 @@ class LearnedModelTests(unittest.TestCase):
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
-        player._training_records.append(TrainingRecord(
-            frame, 0.0, ActionDecision(True, False)))
+        player._training_records.append(
+            _record(frame, ActionDecision(True, False)))
         updated, _loss = player.apply_result(1.0)
         after = self._action_probabilities(player, frame)
 
@@ -155,8 +197,8 @@ class LearnedModelTests(unittest.TestCase):
         player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
-        player._training_records.append(TrainingRecord(
-            frame, 0.0, ActionDecision(False, True)))
+        player._training_records.append(
+            _record(frame, ActionDecision(False, True)))
         updated, _loss = player.apply_result(-1.0)
         after = self._action_probabilities(player, frame)
         before_joint = (1 - before[0]) * before[1]
@@ -171,11 +213,11 @@ class LearnedModelTests(unittest.TestCase):
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.extend(
-            TrainingRecord(frame, 0.0, ActionDecision(True, False))
+            _record(frame, ActionDecision(True, False))
             for _ in range(8)
         )
         player._training_records.extend(
-            TrainingRecord(frame, 0.0, ActionDecision(True, True))
+            _record(frame, ActionDecision(True, True))
             for _ in range(2)
         )
         updated, _loss = player.apply_result(1.0)

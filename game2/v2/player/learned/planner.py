@@ -10,7 +10,7 @@ from .contracts import MotorGoal
 from .vision import SEMANTIC_CHANNELS, vision_to_tensor
 
 
-PLANNER_CONFIGURATION = "adaptive-spatial-4x4-v1"
+PLANNER_CONFIGURATION = "adaptive-spatial-compact-160x96-v2"
 
 
 class CNNPlanner(nn.Module):
