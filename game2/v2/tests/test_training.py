@@ -302,7 +302,10 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             ActionDecision(True, False), -0.5,
         )
         record = TrainingRecord.from_sample(sample)
-        self.assertEqual((record.columns, record.rows, record.tile_size), (12, 5, 64))
+        self.assertEqual(
+            (record.columns, record.rows, record.tile_size, record.subdivisions),
+            (12, 5, 64, 8),
+        )
         self.assertEqual(record.physics, grid.physics)
         self.assertEqual(record.metadata, grid.metadata)
         self.assertEqual(record.vision_grid, grid)

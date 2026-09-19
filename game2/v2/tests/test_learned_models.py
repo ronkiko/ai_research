@@ -300,16 +300,23 @@ class LearnedCheckpointTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_motor_controller(path)
 
-    def test_legacy_raster_planner_checkpoint_is_rejected(self):
+    def test_pre_multiscale_planner_checkpoints_are_rejected(self):
         planner = CNNPlanner.fresh(41)
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "legacy-planner.pt"
-            save_planner(planner, path)
-            payload = torch.load(path, map_location="cpu", weights_only=True)
-            payload["configuration"] = "adaptive-spatial-compact-160x96-v2"
-            torch.save(payload, path)
-            with self.assertRaises(ValueError):
-                load_planner(path)
+            source = Path(directory) / "planner.pt"
+            save_planner(planner, source)
+            original = torch.load(source, map_location="cpu", weights_only=True)
+            for index, configuration in enumerate((
+                "adaptive-spatial-compact-160x96-v2",
+                "adaptive-spatial-grid-v3",
+            )):
+                path = Path(directory) / f"legacy-{index}.pt"
+                payload = dict(original)
+                payload["configuration"] = configuration
+                torch.save(payload, path)
+                with self.subTest(configuration=configuration):
+                    with self.assertRaises(ValueError):
+                        load_planner(path)
 
     def test_motor_checkpoint_roundtrip_and_configuration_validation(self):
         controller = MotorController582.fresh(42)

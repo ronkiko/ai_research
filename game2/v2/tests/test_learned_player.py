@@ -30,10 +30,13 @@ def _grid(*, width=12, height=5, self_x=None, tick=1):
 
 class MotionEstimatorTests(unittest.TestCase):
     def test_first_frame_is_neutral_and_horizontal_direction_is_signed(self):
-        estimator = MotionEstimator()
-        self.assertEqual(estimator.update(_grid(self_x=2, tick=10)), 0.0)
-        self.assertEqual(estimator.update(_grid(self_x=5, tick=11)), 1.0)
-        self.assertLess(estimator.update(_grid(self_x=2, tick=12)), 0.0)
+        forward = MotionEstimator()
+        self.assertEqual(forward.update(_grid(self_x=2, tick=10)), 0.0)
+        self.assertEqual(forward.update(_grid(self_x=5, tick=11)), 1.0)
+
+        backward = MotionEstimator()
+        self.assertEqual(backward.update(_grid(self_x=5, tick=10)), 0.0)
+        self.assertLess(backward.update(_grid(self_x=2, tick=11)), 0.0)
 
     def test_world_tick_delta_is_used_and_result_is_bounded(self):
         estimator = MotionEstimator(tiles_per_tick_scale=2.0)
