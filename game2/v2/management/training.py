@@ -390,6 +390,7 @@ class TrainingRun:
                 sys.executable, "-m", "game2.v2.training.model_runtime",
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
                 "--checkpoint-dir", str(checkpoint_dir),
+                "--trajectory-log", str(trajectory_log),
             ]
             if fresh:
                 model_command.append("--fresh")

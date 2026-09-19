@@ -140,7 +140,8 @@ class ModelRuntime:
     """One sequential model worker with an application-level latest mailbox."""
 
     def __init__(self, player: LearnedPlayer, *, listen_host: str = "127.0.0.1",
-                 listen_port: int = 0, inference_delay: float = 0.0):
+                 listen_port: int = 0, inference_delay: float = 0.0,
+                 trajectory_log: str | Path | None = None):
         if not isinstance(listen_host, str) or not listen_host:
             raise ValueError("listen_host must be non-empty")
         if type(listen_port) is not int or not 0 <= listen_port <= 65535:
@@ -151,11 +152,41 @@ class ModelRuntime:
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.inference_delay = float(inference_delay)
+        self.trajectory_log = (
+            Path(trajectory_log) if trajectory_log is not None else None
+        )
         self.bound_address: tuple[str, int] | None = None
         self._decision_id = 0
         self._samples: dict[int, object] = {}
         self._episode_id: int | None = None
         self._active = False
+
+    @staticmethod
+    def _compact_number(value: float) -> int | float:
+        rounded = round(float(value), 6)
+        if rounded == 0:
+            return 0
+        integer = round(rounded)
+        return integer if abs(rounded - integer) < 1e-9 else rounded
+
+    def _append_ppo_diagnostics(
+        self, episode_id: int, diagnostics: tuple[dict, ...]
+    ) -> None:
+        if self.trajectory_log is None or not diagnostics:
+            return
+        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.trajectory_log.open("a", encoding="utf-8") as handle:
+            for diagnostic in diagnostics:
+                payload = {"e": episode_id, "k": "a"}
+                for key, value in diagnostic.items():
+                    payload[key] = (
+                        self._compact_number(value)
+                        if isinstance(value, float) else value
+                    )
+                handle.write(
+                    json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                    + "\n"
+                )
 
     @staticmethod
     def _send(peer: socket.socket, message: dict) -> None:
@@ -174,10 +205,15 @@ class ModelRuntime:
         }
         if trainable and self.player.episode_mode == "train":
             updated, loss = self.player.apply_result(message["reward"])
+            diagnostics = tuple(
+                getattr(self.player, "last_update_diagnostics", ())
+            )
         else:
             self.player.reset_episode()
             updated, loss = False, 0.0
+            diagnostics = ()
         episode_id = self._episode_id
+        self._append_ppo_diagnostics(episode_id, diagnostics)
         self._samples.clear()
         self._episode_id = None
         self._active = False
@@ -301,6 +337,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--critic-checkpoint")
     parser.add_argument("--optimizer-checkpoint")
     parser.add_argument("--checkpoint-dir")
+    parser.add_argument("--trajectory-log")
     parser.add_argument("--inference-delay", type=float, default=0.0)
     return parser
 
@@ -352,6 +389,7 @@ def main(argv=None) -> int:
             listen_host=args.listen_host,
             listen_port=args.listen_port,
             inference_delay=args.inference_delay,
+            trajectory_log=args.trajectory_log,
         ).run(planner_path, motor_path, critic_path, optimizer_path)
     except (EOFError, OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:
         print(f"ERROR Model runtime failed: {exc}", file=sys.stderr, flush=True)

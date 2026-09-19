@@ -147,6 +147,7 @@ class LearnedPlayer:
         self._last_reward_distance: float | None = None
         self._last_observed_distance: float | None = None
         self.last_update_loss: float | None = None
+        self.last_update_diagnostics: tuple[dict, ...] = ()
 
     @property
     def episode_mode(self) -> str | None:
@@ -176,6 +177,7 @@ class LearnedPlayer:
         self._last_reward_distance = None
         self._last_observed_distance = None
         self.last_update_loss = None
+        self.last_update_diagnostics = ()
 
     def reset_episode(self) -> None:
         """Reset only attempt-local state; model weights and identity survive."""
@@ -495,6 +497,77 @@ class LearnedPlayer:
                 updates += 1
         return total_loss / max(updates, 1)
 
+    def _post_update_metrics(
+        self, records: tuple[TrainingRecord, ...]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        vision = torch.stack([
+            vision_to_tensor(record.vision_grid) for record in records
+        ])
+        with torch.no_grad():
+            planner_output = self.planner(vision)
+            motion = torch.tensor(
+                [record.motion_x for record in records],
+                dtype=planner_output.dtype,
+                device=planner_output.device,
+            ).unsqueeze(1)
+            pad = torch.tensor(
+                [[record.pad_right, record.pad_jump] for record in records],
+                dtype=planner_output.dtype,
+                device=planner_output.device,
+            )
+            logits = self.motor_controller(
+                torch.cat((planner_output, motion, pad), dim=1)
+            )
+            actions = torch.tensor(
+                [[record.action_decision.right, record.action_decision.jump]
+                 for record in records],
+                dtype=logits.dtype,
+                device=logits.device,
+            )
+            log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
+                logits, actions, reduction="none"
+            ).sum(dim=1)
+            values = self.critic(vision)
+        return log_prob.detach().cpu(), values.detach().cpu()
+
+    def _build_update_diagnostics(
+        self,
+        records: tuple[TrainingRecord, ...],
+        rewards: list[float],
+        advantages: torch.Tensor,
+        returns: torch.Tensor,
+    ) -> tuple[dict, ...]:
+        new_log_prob, new_values = self._post_update_metrics(records)
+        diagnostics = []
+        for index, record in enumerate(records):
+            center = self_center(record.vision_grid)
+            action = (
+                ("R" if record.action_decision.right else "")
+                + ("J" if record.action_decision.jump else "")
+            ) or "-"
+            old_log_prob = float(record.old_log_prob)
+            final_log_prob = float(new_log_prob[index])
+            raw_gae = float(returns[index]) - float(record.old_value)
+            ratio = math.exp(final_log_prob - old_log_prob)
+            item = {
+                "t": record.world_tick,
+                "a": action,
+                "rw": float(rewards[index]),
+                "v": float(record.old_value),
+                "nv": float(new_values[index]),
+                "gae": raw_gae,
+                "adv": float(advantages[index]),
+                "ret": float(returns[index]),
+                "lp": old_log_prob,
+                "nlp": final_log_prob,
+                "ratio": ratio,
+            }
+            if center is not None:
+                item["x"] = float(center[0])
+                item["y"] = float(center[1])
+            diagnostics.append(item)
+        return tuple(diagnostics)
+
     def apply_result(self, reward: float) -> tuple[bool, float]:
         """Apply one terminal result through chunk rewards, GAE, and PPO-Clip."""
         if self._episode_mode != "train":
@@ -505,6 +578,7 @@ class LearnedPlayer:
         records = tuple(self._training_records)
         if not records:
             self.last_update_loss = 0.0
+            self.last_update_diagnostics = ()
             self._recorded_samples.clear()
             self._log_probabilities.clear()
             self._reward_events.clear()
@@ -516,11 +590,15 @@ class LearnedPlayer:
             self._log_probabilities.clear()
             self._reward_events.clear()
             self.last_update_loss = 0.0
+            self.last_update_diagnostics = ()
             return False, 0.0
         advantages, returns = self._gae(records, rewards)
         loss_value = self._ppo_update(records, advantages, returns)
         if not math.isfinite(loss_value):
             raise RuntimeError("training loss is not finite")
+        self.last_update_diagnostics = self._build_update_diagnostics(
+            records, rewards, advantages, returns
+        )
         self._training_records.clear()
         self._recorded_samples.clear()
         self._log_probabilities.clear()

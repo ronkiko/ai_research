@@ -418,6 +418,19 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         updated, loss = player.apply_result(-1.0)
         self.assertTrue(updated)
         self.assertTrue(math.isfinite(loss))
+        diagnostics = player.last_update_diagnostics
+        self.assertEqual(len(diagnostics), len(records))
+        self.assertEqual(
+            [item["rw"] for item in diagnostics],
+            rewards,
+        )
+        for item in diagnostics:
+            self.assertIn(item["a"], {"-", "R", "J", "RJ"})
+            self.assertIn("x", item)
+            self.assertIn("y", item)
+            for key in ("v", "nv", "gae", "adv", "ret", "lp", "nlp", "ratio"):
+                self.assertTrue(math.isfinite(float(item[key])))
+            self.assertGreater(item["ratio"], 0.0)
         self.assertEqual(player.training_records, ())
 
     def test_zero_reward_does_not_backward_or_step(self):

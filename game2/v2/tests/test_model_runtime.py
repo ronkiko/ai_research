@@ -71,6 +71,49 @@ class VisionTrajectoryLogTests(unittest.TestCase):
             ])
 
 
+class PPOFlightRecorderTests(unittest.TestCase):
+    def test_runtime_appends_compact_per_action_ppo_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.jsonl"
+            runtime = ModelRuntime(SimpleNamespace(), trajectory_log=path)
+            runtime._append_ppo_diagnostics(7, ({
+                "t": 431,
+                "x": 388.0,
+                "y": 420.0,
+                "a": "RJ",
+                "rw": 0.031234567,
+                "v": -0.12,
+                "nv": -0.09,
+                "gae": 0.084,
+                "adv": 0.61,
+                "ret": -0.036,
+                "lp": -1.42,
+                "nlp": -1.10,
+                "ratio": 1.377127,
+            },))
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows, [{
+                "a": "RJ",
+                "adv": 0.61,
+                "e": 7,
+                "gae": 0.084,
+                "k": "a",
+                "lp": -1.42,
+                "nlp": -1.1,
+                "nv": -0.09,
+                "ratio": 1.377127,
+                "ret": -0.036,
+                "rw": 0.031235,
+                "t": 431,
+                "v": -0.12,
+                "x": 388,
+                "y": 420,
+            }])
+
+
 class _StubModel:
     episode_mode = None
 

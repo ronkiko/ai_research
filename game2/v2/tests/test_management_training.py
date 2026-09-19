@@ -247,6 +247,16 @@ class ManagementTrainingTests(unittest.TestCase):
                 if command[command.index("-m") + 1] == "game2.v2.training.model_runtime"
             ]
             self.assertIn("--fresh", model_commands[0])
+            self.assertTrue(all("--trajectory-log" in command for command in model_commands))
+            player_log_paths = [
+                command[command.index("--trajectory-log") + 1]
+                for command in player_commands
+            ]
+            model_log_paths = [
+                command[command.index("--trajectory-log") + 1]
+                for command in model_commands
+            ]
+            self.assertEqual(model_log_paths, player_log_paths)
 
     def test_vision_view_is_forwarded_only_to_console_screen_source(self):
         with tempfile.TemporaryDirectory() as directory:
