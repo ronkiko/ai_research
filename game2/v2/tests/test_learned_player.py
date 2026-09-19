@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.joystick import joystick_ack
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
-from game2.v2.contracts.vision import META_SELF, VisionGrid
+from game2.v2.contracts.vision import META_SELF, META_SELF_CENTER, VisionGrid
 from game2.v2.player.learned.main import run_attached_player, run_player
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.peripherals import JoystickClient
@@ -19,9 +19,12 @@ from game2.v2.player.peripherals import JoystickClient
 
 def _grid(*, width=12, height=5, self_x=None, tick=1):
     physics = bytes(width * height)
-    metadata = bytearray(width * height)
+    fine_width = width * 8
+    metadata = bytearray(fine_width * height * 8)
     if self_x is not None:
-        metadata[2 * width + self_x] = META_SELF
+        fine_x = self_x * 8 + 4
+        fine_y = 2 * 8 + 4
+        metadata[fine_y * fine_width + fine_x] = META_SELF | META_SELF_CENTER
     return VisionGrid(width, height, 64, physics, bytes(metadata), tick)
 
 
@@ -33,19 +36,17 @@ class MotionEstimatorTests(unittest.TestCase):
         self.assertLess(estimator.update(_grid(self_x=2, tick=12)), 0.0)
 
     def test_world_tick_delta_is_used_and_result_is_bounded(self):
-        estimator = MotionEstimator(cells_per_tick_scale=2.0)
+        estimator = MotionEstimator(tiles_per_tick_scale=2.0)
         estimator.update(_grid(self_x=1, tick=4))
         self.assertEqual(estimator.update(_grid(self_x=5, tick=6)), 1.0)
         estimator.update(_grid(self_x=5, tick=7))
         self.assertEqual(estimator.update(_grid(self_x=11, tick=8)), 1.0)
 
-    def test_grid_motion_direction_persists_between_cell_boundary_changes(self):
-        estimator = MotionEstimator(motion_memory_ticks=4)
+    def test_motion_uses_observed_center_without_artificial_memory(self):
+        estimator = MotionEstimator()
         self.assertEqual(estimator.update(_grid(self_x=2, tick=10)), 0.0)
         self.assertGreater(estimator.update(_grid(self_x=3, tick=11)), 0.0)
-        self.assertGreater(estimator.update(_grid(self_x=3, tick=12)), 0.0)
-        self.assertGreater(estimator.update(_grid(self_x=3, tick=15)), 0.0)
-        self.assertEqual(estimator.update(_grid(self_x=3, tick=16)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=3, tick=12)), 0.0)
 
     def test_missing_self_and_discontinuity_reset_the_temporal_state(self):
         estimator = MotionEstimator()

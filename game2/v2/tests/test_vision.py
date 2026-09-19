@@ -11,6 +11,8 @@ from game2.v2.contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
     META_SELF,
+    META_SELF_CENTER,
+    VISION_SUBDIVISIONS,
     PHYSICS_HAZARD,
     PHYSICS_SOLID,
     VisionGrid,
@@ -21,23 +23,31 @@ from game2.v2.contracts.vision import (
 
 class VisionContractTests(unittest.TestCase):
     def test_matrix_values_are_validated(self):
+        metadata = bytearray(2 * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS)
+        metadata[0] = META_SELF | META_GOAL | META_SELF_CENTER
+        metadata[-1] = META_OTHER_ACTOR
         grid = VisionGrid(
             2, 1, 64,
             bytes((PHYSICS_SOLID, PHYSICS_HAZARD)),
-            bytes((META_SELF | META_GOAL, META_OTHER_ACTOR)),
+            bytes(metadata),
             0,
         )
         self.assertEqual(grid.physics, bytes((1, 2)))
-        self.assertEqual(grid.metadata, bytes((3, 4)))
+        self.assertEqual(len(grid.metadata), 128)
         with self.assertRaises(ProtocolError):
-            VisionGrid(1, 1, 64, b"\x03", b"\x00", 0)
+            VisionGrid(1, 1, 64, b"\x03", bytes(64), 0)
+        invalid_metadata = bytearray(64)
+        invalid_metadata[0] = 0x20
         with self.assertRaises(ProtocolError):
-            VisionGrid(1, 1, 64, b"\x00", b"\x08", 0)
+            VisionGrid(1, 1, 64, b"\x00", bytes(invalid_metadata), 0)
 
     def test_grid_round_trip_has_only_public_observation_fields(self):
         left, right = socket.socketpair()
-        grid = VisionGrid(2, 2, 64, bytes((0, 1, 2, 0)),
-                          bytes((0, META_SELF, META_GOAL, META_OTHER_ACTOR)), 123)
+        metadata = bytearray(2 * 8 * 2 * 8)
+        metadata[0] = META_SELF | META_SELF_CENTER
+        metadata[17] = META_GOAL
+        metadata[-1] = META_OTHER_ACTOR
+        grid = VisionGrid(2, 2, 64, bytes((0, 1, 2, 0)), bytes(metadata), 123)
         try:
             send_vision_grid(left, "session", grid)
             received = recv_vision_grid(right, "session")
@@ -47,21 +57,23 @@ class VisionContractTests(unittest.TestCase):
         self.assertEqual(received, grid)
         self.assertEqual(
             {field.name for field in fields(received)},
-            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick"},
+            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick",
+             "subdivisions"},
         )
         for hidden in ("x", "y", "vx", "vy", "grounded", "reward", "telemetry"):
             self.assertFalse(hasattr(received, hidden), hidden)
 
     def test_header_is_json_but_matrices_are_raw_bytes(self):
         left, right = socket.socketpair()
-        grid = VisionGrid(2, 1, 64, b"\x00\x01", b"\x02\x01", 1)
+        metadata_bytes = bytes([META_SELF | META_SELF_CENTER]) + bytes(127)
+        grid = VisionGrid(2, 1, 64, b"\x00\x01", metadata_bytes, 1)
         try:
             send_vision_grid(left, "session", grid)
             prefix = right.recv(4)
             header_size = int.from_bytes(prefix, "big")
             header = recv_exact(right, header_size)
             physics = recv_exact(right, 2)
-            metadata = recv_exact(right, 2)
+            metadata = recv_exact(right, 128)
         finally:
             left.close()
             right.close()
@@ -69,6 +81,7 @@ class VisionContractTests(unittest.TestCase):
         self.assertIn(b'"columns":2', header)
         self.assertIn(b'"rows":1', header)
         self.assertIn(b'"tile_size":64', header)
+        self.assertIn(b'"subdivisions":8', header)
         self.assertNotIn(b'"pixels"', header)
         self.assertNotIn(b'"pixel_format"', header)
         self.assertEqual(physics, grid.physics)
@@ -78,13 +91,13 @@ class VisionContractTests(unittest.TestCase):
         valid = {
             "version": 1, "type": "vision_grid", "session_id": "session",
             "world_tick": 1, "columns": 1, "rows": 1, "tile_size": 64,
-            "physics_length": 1, "metadata_length": 1,
+            "subdivisions": 8, "physics_length": 1, "metadata_length": 64,
         }
         cases = (
-            (valid, "other", b"\x00\x00"),
-            ({**valid, "extra": True}, "session", b"\x00\x00"),
-            (valid, "session", b"\x03\x00"),
-            (valid, "session", b"\x00\x08"),
+            (valid, "other", b"\x00" + bytes(64)),
+            ({**valid, "extra": True}, "session", b"\x00" + bytes(64)),
+            (valid, "session", b"\x03" + bytes(64)),
+            (valid, "session", b"\x00" + b"\x20" + bytes(63)),
         )
         for header, expected, payload in cases:
             left, right = socket.socketpair()
@@ -115,7 +128,7 @@ class VisionPublisherTests(unittest.TestCase):
                 time.sleep(0.001)
             self.assertEqual(publisher.subscriber_count(), 2)
             physics = b"\x00" * (20 * 12)
-            metadata = b"\x00" * (20 * 12)
+            metadata = b"\x00" * (20 * 12 * 64)
             grids = [
                 VisionGrid(20, 12, 64, physics, metadata, tick)
                 for tick in range(8)

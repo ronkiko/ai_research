@@ -11,6 +11,8 @@ from game2.v2.contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
     META_SELF,
+    META_SELF_CENTER,
+    META_OTHER_CENTER,
     VisionGrid,
 )
 from game2.v2.player.learned.checkpoint import (load_motor_controller,
@@ -32,8 +34,12 @@ from game2.v2.player.learned.vision import vision_to_tensor
 def _grid(columns: int, rows: int) -> VisionGrid:
     cells = columns * rows
     physics = bytes(index % 3 for index in range(cells))
-    flags = (0, META_SELF, META_GOAL, META_OTHER_ACTOR)
-    metadata = bytes(flags[index % len(flags)] for index in range(cells))
+    fine_columns = columns * 8
+    fine_rows = rows * 8
+    flags = (0, META_SELF, META_GOAL, META_OTHER_ACTOR, META_SELF_CENTER, META_OTHER_CENTER)
+    metadata = bytes(
+        flags[index % len(flags)] for index in range(fine_columns * fine_rows)
+    )
     return VisionGrid(columns, rows, 64, physics, metadata, world_tick=1)
 
 
@@ -65,28 +71,37 @@ class LearnedContractTests(unittest.TestCase):
             ActionDecision(1, False)
         self.assertEqual(ActionDecision(True, False), ActionDecision(True, False))
 
-    def test_vision_grid_becomes_six_physics_and_metadata_channels(self):
+    def test_multiscale_grid_becomes_fine_logical_cnn_channels(self):
+        metadata = bytearray(24 * 16)
+        metadata[8 * 24 + 2] = META_SELF
+        metadata[8 * 24 + 10] = META_GOAL
+        metadata[8 * 24 + 18] = META_OTHER_ACTOR
+        metadata[9 * 24 + 2] = META_SELF_CENTER
+        metadata[9 * 24 + 18] = META_OTHER_CENTER
         grid = VisionGrid(
             3, 2, 64,
             bytes((0, 1, 2, 0, 1, 2)),
-            bytes((0, 0, 0, META_SELF, META_GOAL, META_OTHER_ACTOR)),
+            bytes(metadata),
             world_tick=7,
         )
         encoded = vision_to_tensor(grid)
-        self.assertEqual(tuple(encoded.shape), (6, 2, 3))
+        self.assertEqual(tuple(encoded.shape), (8, 16, 24))
         self.assertEqual(encoded.dtype, torch.float32)
-        for index, physics_class in enumerate(grid.physics):
-            y, x = divmod(index, grid.columns)
-            self.assertEqual(float(encoded[:3, y, x].sum()), 1.0)
-            self.assertEqual(float(encoded[physics_class, y, x]), 1.0)
-        self.assertEqual(float(encoded[3, 1, 0]), 1.0)
-        self.assertEqual(float(encoded[4, 1, 1]), 1.0)
-        self.assertEqual(float(encoded[5, 1, 2]), 1.0)
+        for tile_x, physics_class in enumerate((0, 1, 2)):
+            self.assertEqual(float(encoded[:3, 4, tile_x * 8 + 4].sum()), 1.0)
+            self.assertEqual(
+                float(encoded[physics_class, 4, tile_x * 8 + 4]), 1.0
+            )
+        self.assertEqual(float(encoded[3, 8, 2]), 1.0)
+        self.assertEqual(float(encoded[4, 8, 10]), 1.0)
+        self.assertEqual(float(encoded[5, 8, 18]), 1.0)
+        self.assertEqual(float(encoded[6, 9, 2]), 1.0)
+        self.assertEqual(float(encoded[7, 9, 18]), 1.0)
 
-    def test_public_grid_keeps_authored_resolution_before_cnn(self):
+    def test_public_grid_expands_to_exact_sensor_resolution_before_cnn(self):
         grid = _grid(20, 12)
         encoded = vision_to_tensor(grid)
-        self.assertEqual(tuple(encoded.shape), (6, 12, 20))
+        self.assertEqual(tuple(encoded.shape), (8, 96, 160))
 
     def test_motion_input_includes_current_virtual_pad_state(self):
         values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)
