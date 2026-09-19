@@ -72,6 +72,7 @@ class VisionPreviewRenderer:
         self._trajectory_offset = 0
         self._trajectory_file_id: tuple[int, int] | None = None
         self._trajectory_episode: int | None = None
+        self._rated_episode: int | None = None
         self._logged_ticks: dict[int, tuple[int, int]] = {}
         self._rated_ticks: dict[int, tuple[tuple[int, int], float]] = {}
 
@@ -194,6 +195,7 @@ class VisionPreviewRenderer:
 
     def _reset_trajectory_annotations(self) -> None:
         self._trajectory_episode = None
+        self._rated_episode = None
         self._logged_ticks.clear()
         self._rated_ticks.clear()
 
@@ -205,17 +207,11 @@ class VisionPreviewRenderer:
             changed = (
                 episode_id != self._trajectory_episode
                 or bool(self._logged_ticks)
-                or bool(self._rated_ticks)
             )
             if episode_id != self._trajectory_episode:
                 self._logged_ticks.clear()
-                self._rated_ticks.clear()
             self._trajectory_episode = episode_id
             return changed
-        if self._trajectory_episode is None:
-            self._trajectory_episode = episode_id
-        if episode_id != self._trajectory_episode:
-            return False
         point = self._trajectory_point(payload)
         if point is None:
             return False
@@ -224,10 +220,17 @@ class VisionPreviewRenderer:
             reward = payload.get("rw")
             if type(reward) not in (int, float) or not math.isfinite(float(reward)):
                 return False
+            if episode_id != self._rated_episode:
+                self._rated_episode = episode_id
+                self._rated_ticks.clear()
             item = (position, float(reward))
             changed = self._rated_ticks.get(tick) != item
             self._rated_ticks[tick] = item
             return changed
+        if self._trajectory_episode is None:
+            self._trajectory_episode = episode_id
+        if episode_id != self._trajectory_episode:
+            return False
         changed = self._logged_ticks.get(tick) != position
         self._logged_ticks[tick] = position
         return changed
@@ -282,7 +285,11 @@ class VisionPreviewRenderer:
     def _draw_trajectory_annotations(self, surface) -> None:
         pygame = self.pygame
         for tick, position in sorted(self._logged_ticks.items()):
-            if tick not in self._rated_ticks:
+            rated_here = (
+                self._rated_episode == self._trajectory_episode
+                and tick in self._rated_ticks
+            )
+            if not rated_here:
                 pygame.draw.circle(surface, LOGGED_TICK_COLOR, position, 2)
         font = self._font_for_reward()
         occupied = []

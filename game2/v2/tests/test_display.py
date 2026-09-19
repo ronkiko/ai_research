@@ -462,6 +462,8 @@ class VisionPreviewRendererTests(unittest.TestCase):
                     {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "rw": -0.25},
                     {"e": 1, "k": "a", "t": 30, "x": 256, "y": 384, "rw": 0.031},
                     {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "rw": 0.0},
+                    {"e": 2, "m": "train"},
+                    {"e": 2, "t": 50, "x": 128, "y": 448},
                 ]
                 with trajectory.open("a", encoding="utf-8") as handle:
                     for row in action_rows:
@@ -477,6 +479,11 @@ class VisionPreviewRendererTests(unittest.TestCase):
                 self.assertEqual(
                     tuple(surface.get_at((320, 448)))[:3], REWARD_ZERO_COLOR
                 )
+                self.assertEqual(
+                    tuple(surface.get_at((128, 448)))[:3], LOGGED_TICK_COLOR
+                )
+                self.assertEqual(preview._rated_episode, 1)
+                self.assertEqual(preview._trajectory_episode, 2)
                 self.assertEqual(preview._reward_visual(0.031)[0], "+0.031")
                 self.assertEqual(preview._reward_visual(-1.0)[0], "-1.000")
                 self.assertEqual(preview._reward_visual(0.0)[0], "0.000")

@@ -372,6 +372,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(record.vision_grid, grid)
         self.assertEqual(record.old_log_prob, -0.5)
         self.assertEqual(record.old_value, 0.25)
+        self.assertEqual((record.self_x, record.self_y), self_center(grid))
 
     def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
         player = self._player()
@@ -432,6 +433,24 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                 self.assertTrue(math.isfinite(float(item[key])))
             self.assertGreater(item["ratio"], 0.0)
         self.assertEqual(player.training_records, ())
+
+    def test_ppo_diagnostics_reuse_last_training_pass_without_extra_forward(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        for tick in (1, 101, 201):
+            player.record_sent_sample(player.process_grid(_grid(tick)))
+
+        with mock.patch.object(
+            player.planner, "forward", wraps=player.planner.forward
+        ) as planner_forward, mock.patch.object(
+            player.critic, "forward", wraps=player.critic.forward
+        ) as critic_forward:
+            updated, _loss = player.apply_result(-1.0)
+
+        self.assertTrue(updated)
+        self.assertEqual(planner_forward.call_count, 4)
+        self.assertEqual(critic_forward.call_count, 4)
+        self.assertEqual(len(player.last_update_diagnostics), 3)
 
     def test_zero_reward_does_not_backward_or_step(self):
         player = self._player()

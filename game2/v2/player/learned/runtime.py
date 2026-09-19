@@ -49,10 +49,13 @@ class TrainingRecord:
     pad_jump: bool = False
     old_log_prob: float = 0.0
     old_value: float = 0.0
+    self_x: float | None = None
+    self_y: float | None = None
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
         grid = sample.vision_grid
+        center = self_center(grid)
         return cls(
             grid.columns,
             grid.rows,
@@ -68,6 +71,8 @@ class TrainingRecord:
             sample.pad_jump,
             float(sample.log_prob if sample.log_prob is not None else 0.0),
             float(sample.value if sample.value is not None else 0.0),
+            float(center[0]) if center is not None else None,
+            float(center[1]) if center is not None else None,
         )
 
     @property
@@ -415,7 +420,7 @@ class LearnedPlayer:
         records: tuple[TrainingRecord, ...],
         advantages: torch.Tensor,
         returns: torch.Tensor,
-    ) -> float:
+    ) -> tuple[float, torch.Tensor, torch.Tensor]:
         if self.optimizer is None:
             raise RuntimeError("trainable models are required for updates")
         count = len(records)
@@ -429,6 +434,8 @@ class LearnedPlayer:
         )
         total_loss = 0.0
         updates = 0
+        final_log_prob = torch.empty(count, dtype=torch.float32)
+        final_values = torch.empty(count, dtype=torch.float32)
         parameters = (
             list(self.planner.parameters())
             + list(self.motor_controller.parameters())
@@ -473,6 +480,9 @@ class LearnedPlayer:
                 policy_loss = -torch.minimum(unclipped, clipped).mean()
 
                 values = self.critic(vision)
+                if _epoch == PPO_EPOCHS - 1:
+                    final_log_prob[indexes] = new_log_prob.detach().cpu()
+                    final_values[indexes] = values.detach().cpu()
                 value_loss = torch.nn.functional.mse_loss(
                     values, returns[indexes].to(values.device)
                 )
@@ -495,40 +505,11 @@ class LearnedPlayer:
                 self.optimizer.step()
                 total_loss += float(loss.detach())
                 updates += 1
-        return total_loss / max(updates, 1)
-
-    def _post_update_metrics(
-        self, records: tuple[TrainingRecord, ...]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        vision = torch.stack([
-            vision_to_tensor(record.vision_grid) for record in records
-        ])
-        with torch.no_grad():
-            planner_output = self.planner(vision)
-            motion = torch.tensor(
-                [record.motion_x for record in records],
-                dtype=planner_output.dtype,
-                device=planner_output.device,
-            ).unsqueeze(1)
-            pad = torch.tensor(
-                [[record.pad_right, record.pad_jump] for record in records],
-                dtype=planner_output.dtype,
-                device=planner_output.device,
-            )
-            logits = self.motor_controller(
-                torch.cat((planner_output, motion, pad), dim=1)
-            )
-            actions = torch.tensor(
-                [[record.action_decision.right, record.action_decision.jump]
-                 for record in records],
-                dtype=logits.dtype,
-                device=logits.device,
-            )
-            log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
-                logits, actions, reduction="none"
-            ).sum(dim=1)
-            values = self.critic(vision)
-        return log_prob.detach().cpu(), values.detach().cpu()
+        return (
+            total_loss / max(updates, 1),
+            final_log_prob,
+            final_values,
+        )
 
     def _build_update_diagnostics(
         self,
@@ -536,11 +517,11 @@ class LearnedPlayer:
         rewards: list[float],
         advantages: torch.Tensor,
         returns: torch.Tensor,
+        new_log_prob: torch.Tensor,
+        new_values: torch.Tensor,
     ) -> tuple[dict, ...]:
-        new_log_prob, new_values = self._post_update_metrics(records)
         diagnostics = []
         for index, record in enumerate(records):
-            center = self_center(record.vision_grid)
             action = (
                 ("R" if record.action_decision.right else "")
                 + ("J" if record.action_decision.jump else "")
@@ -562,9 +543,9 @@ class LearnedPlayer:
                 "nlp": final_log_prob,
                 "ratio": ratio,
             }
-            if center is not None:
-                item["x"] = float(center[0])
-                item["y"] = float(center[1])
+            if record.self_x is not None and record.self_y is not None:
+                item["x"] = record.self_x
+                item["y"] = record.self_y
             diagnostics.append(item)
         return tuple(diagnostics)
 
@@ -593,11 +574,13 @@ class LearnedPlayer:
             self.last_update_diagnostics = ()
             return False, 0.0
         advantages, returns = self._gae(records, rewards)
-        loss_value = self._ppo_update(records, advantages, returns)
+        loss_value, new_log_prob, new_values = self._ppo_update(
+            records, advantages, returns
+        )
         if not math.isfinite(loss_value):
             raise RuntimeError("training loss is not finite")
         self.last_update_diagnostics = self._build_update_diagnostics(
-            records, rewards, advantages, returns
+            records, rewards, advantages, returns, new_log_prob, new_values
         )
         self._training_records.clear()
         self._recorded_samples.clear()
