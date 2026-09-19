@@ -1427,7 +1427,8 @@ class TrainingActuatorClockTests(unittest.TestCase):
         updated, _loss = player.apply_result(reward)
         self.assertTrue(trainable)
         self.assertAlmostEqual(finished["progress"], 0.5, delta=0.05)
-        self.assertGreater(reward, 0.0)
+        self.assertLess(reward, 0.0)
+        self.assertGreater(reward, reward_for_result("timeout", 0.0))
         self.assertTrue(updated)
 
     def test_sustained_right_at_physics_cadence_accelerates_on_flat_ground(self):
@@ -1446,12 +1447,16 @@ class TrainerRuntimeTests(unittest.TestCase):
     def test_reward_mapping_and_socket_handshake(self):
         self.assertEqual(reward_for_result("success", 0.0), 1.0)
         self.assertEqual(reward_for_result("success", 0.8), 1.0)
-        self.assertEqual(reward_for_result("timeout", 0.0), 0.0)
-        self.assertEqual(reward_for_result("timeout", 0.4), 0.4)
-        self.assertEqual(reward_for_result("timeout", 1.0), 1.0)
+        self.assertEqual(reward_for_result("timeout", 0.0), -1.0)
+        self.assertEqual(reward_for_result("timeout", 0.4), -0.8)
+        self.assertEqual(reward_for_result("timeout", 1.0), -0.5)
         self.assertEqual(reward_for_result("dead", 0.0), -1.0)
-        self.assertEqual(reward_for_result("dead", 0.4), -0.6)
-        self.assertEqual(reward_for_result("dead", 1.0), 0.0)
+        self.assertEqual(reward_for_result("dead", 0.4), -0.8)
+        self.assertEqual(reward_for_result("dead", 1.0), -0.5)
+        self.assertLess(reward_for_result("timeout", 1.0), 0.0)
+        self.assertLess(reward_for_result("dead", 1.0), 0.0)
+        self.assertGreater(reward_for_result("timeout", 0.9),
+                           reward_for_result("timeout", 0.1))
         trainer = Trainer(listen_port=0, episodes=1, seed=100)
         server, client = socket.socketpair()
         summary = []

@@ -32,7 +32,7 @@ from game2.v2.contracts.training import (
 )
 
 
-def reward_for_result(result: str, progress: Real) -> float:
+FAILURE_PROGRESS_CREDIT = 0.5\n\n\ndef reward_for_result(result: str, progress: Real) -> float:
     if type(progress) is bool or not isinstance(progress, Real) \
             or not math.isfinite(float(progress)) or not 0.0 <= float(progress) <= 1.0:
         raise ValueError("progress must be finite and in [0.0, 1.0]")
