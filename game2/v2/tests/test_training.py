@@ -361,7 +361,12 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         for record in reference.training_records:
             vision = vision_to_tensor(record.vision_grid).unsqueeze(0)
             planner_output = reference.planner(vision)[0]
-            logits = reference.motor_controller.forward_goal(planner_output, record.motion_x)
+            logits = reference.motor_controller.forward_goal(
+                planner_output,
+                record.motion_x,
+                record.pad_right,
+                record.pad_jump,
+            )
             action = torch.tensor([record.action_decision.right, record.action_decision.jump],
                                   dtype=logits.dtype)
             reference_log_probs.append(
