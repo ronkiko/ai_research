@@ -66,10 +66,13 @@ WorldDefinition + WorldState
 
 `screen` is a human-facing visual renderer using V2-owned assets, decoration
 artwork, and presentation autotiling. `vision` is a deterministic model-oriented
-logical two-matrix grid derived from stable World tile IDs and dynamic entity occupancy.
+multi-scale logical grid with a coarse authored physics map plus aligned fine
+physics and metadata planes. Fine physics is derived from authoritative World
+collision geometry; fine metadata contains public dynamic/semantic occupancy.
 Neither presentation changes World or affects Physics. Vision is a representation
-of what exists in the game world, not raw Engine debug telemetry such as x/y or
-velocity metadata.
+of what exists in the game world, not raw Engine debug telemetry such as exact
+x/y or velocity metadata. The Grid Vision architecture and invariants are
+specified in [`display/vision/README.md`](display/vision/README.md).
 
 The current machine sensory peripheral is the public per-Player `VisionGrid`
 stream. Additional event/audio-like sensors, if added, remain separate

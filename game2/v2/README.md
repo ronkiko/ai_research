@@ -72,7 +72,7 @@ the Screen remains spectator-only and does not affect the learning topology.
 
 ## Boundaries
 
-`Vision` is a headless machine-facing Player peripheral.
+`Vision` is a headless machine-facing Player peripheral. Its multi-scale Grid Vision contract is documented in [`console/display/vision/README.md`](console/display/vision/README.md).
 
 `ScreenSource` is human-facing: Console converts private Engine STATE into
 rendered RGB frames before they cross the Console boundary.
