@@ -15,7 +15,7 @@ orchestration, Train versus Evaluate, update/save timing, and aggregate
 metrics. Research Strategist may decide what should be trained or evaluated,
 but it does not perform model-specific learning itself.
 
-The first `3-8-2` MLP is a collapsed direct-action baseline. It does not
+The first `5-8-2` MLP is a collapsed direct-action baseline. It does not
 redefine the future Motor Controller boundary: the target Motor Controller
 will consume `MotorGoal` and fast allowed sensory/motion information, while a
 Planner handles higher-level gameplay reasoning.

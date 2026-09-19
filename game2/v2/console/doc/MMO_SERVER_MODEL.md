@@ -41,7 +41,8 @@ remains only the technical identity of the current compatibility run; it is not
 a second time scale.
 
 Observations are stamped with `VisionFrame.world_tick`. Actions are planned with
-`target_world_tick`. Engine decides whether an action is late against its
+`InputStateCommand` has no future target tick. Engine immediately latches the
+current state when it handles the command; its autonomous clock continues against its
 current `world_tick`.
 
 ## Player / Connection / Actor

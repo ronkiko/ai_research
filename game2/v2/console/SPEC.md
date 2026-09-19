@@ -94,14 +94,16 @@ is closed, Console gameplay remains architecturally valid.
 Console starts and connects its own subsystems but never handles each gameplay
 message and never launches a Player. Engine owns all mutable physics state and
 fixed-step world timing. Controller is the only gameplay subsystem that knows
-Engine CONTROL. Controller translates Joystick decisions to internal
-`ActionCommand` values containing private `actor_id` and global
-`target_world_tick` scheduling details. Engine does not validate an action
-against a Training episode.
+Engine CONTROL. Controller translates complete Joystick states to private
+`InputStateCommand` values containing only `actor_id`, a monotonic private
+sequence, and the current RIGHT/A booleans. Controller does not schedule future
+input, choose hold durations, or depend on Engine TELEMETRY. Engine latches the
+latest accepted input state and samples it on every physics tick. Engine does
+not validate input against a Training episode.
 
 Player receives only `PeripheralManifest`. It never receives Engine CONTROL,
 STATE, TELEMETRY, EVENTS, `InternalManifest`, an Engine object, mutable world
-state, or an `ActionCommand`. A Player/model can only submit approved peripheral
+state, or a private `InputStateCommand`. A Player/model can only submit approved peripheral
 messages. Trainer is external and has no direct reset, tick, physics, or world
 access. Reset/reward contracts, if needed for training, will be specified
 separately later.
@@ -139,7 +141,6 @@ actor_id (compatibility binding, private)
 ```text
 session_id
 engine_control
-engine_telemetry
 joystick
 actor_id
 ```
@@ -180,27 +181,54 @@ Protocol version: 1
 Type: digital joystick
 Buttons: 2
 Button 0: RIGHT
-Button 1: JUMP
+Button 1: JUMP / A
 ```
 
-Each framed message is a complete Player input decision:
+Each framed message is a complete snapshot of the virtual controller state:
 
 ```json
 {"version":1,"type":"joystick","sequence":42,"right":true,"jump":false}
 ```
 
-`sequence` is a positive monotonic Player sequence. Button values must be JSON
-booleans, not numeric or string substitutes. The strict field set is required;
-unknown buttons/fields, wrong types, wrong message type, wrong version, and
-malformed frames are invalid. Valid button states are exactly:
+`sequence` is a positive monotonic Player sequence. Button values are strict
+JSON booleans. Valid states are exactly:
 
 ```text
-RIGHT JUMP
-0     0       nothing
-1     0       right
-0     1       jump
-1     1       right + jump simultaneously
+RIGHT A
+0     0       neutral
+1     0       hold right
+0     1       hold A
+1     1       hold right + A
 ```
+
+This is state, not a pulse and not a future program. When Engine accepts
+`RIGHT=1`, RIGHT remains held across subsequent physics ticks until a later
+accepted state changes it to `RIGHT=0`. The autonomous Engine clock never
+waits for another Joystick message.
+
+A follows physical-controller edge semantics. Engine stores the A button state
+but Physics receives a jump press only on the transition `A: 0 -> 1`.
+Keeping A held at 1 does not create repeated jumps. A later jump requires a
+release `A: 1 -> 0` followed by a new press `0 -> 1`.
+
+RIGHT and A are independent buttons. `RIGHT=1, A=1` means both are active on
+the take-off tick; jumping never cancels horizontal input.
+
+Controller forwards each new valid state immediately as private
+`InputStateCommand`:
+
+```text
+actor_id
+sequence
+right
+jump
+```
+
+The normal gameplay path has no `target_world_tick`, `hold_ticks`, lead
+ticks, future-action queue, macro schedule, or Controller timer. A program may
+of course choose to change the Joystick later, but that program must remain
+alive and send the change when it occurs; Console does not accept an advance
+script of future presses.
 
 The Controller acknowledges every valid decision:
 
@@ -208,33 +236,21 @@ The Controller acknowledges every valid decision:
 {"version":1,"type":"joystick_ack","sequence":42,"status":"accepted"}
 ```
 
-The current statuses are `accepted`, `duplicate`, and `rejected`. ACKs preserve
-the Joystick sequence and do not expose Engine target ticks. `accepted` means
-the private ActionCommand was accepted by Engine, not merely queued by
-Controller. Engine `late` and `rejected` decisions map to Joystick `rejected`;
-Engine `duplicate` maps to Joystick `duplicate`. Controller-level duplicate
-sequences are answered locally without resending an Engine command.
+Statuses are `accepted`, `duplicate`, and `rejected`. `accepted` means
+Engine accepted the new current state. Duplicate Player sequences are answered
+without changing the Engine state.
 
-Joystick timing/rate contract: **TBA**. Maximum update rate, sampling frequency,
-minimum pulse duration, and Controller lead ticks are not normative yet.
-
-A decision is finite. A missing next decision does not make Console hold a
-button forever and does not make Engine wait. After the configured finite
-internal hold, the next Engine opportunity is neutral. Engine timing remains
-independent and continues autonomously.
+At `RESPAWN`, `DESPAWN`, terminal Actor state, or loss of the active
+Joystick connection, the effective pad is neutralized to `RIGHT=0, A=0`.
+A newly active episode therefore never inherits a held button from the prior
+episode.
 
 Console Engine obeys the system-wide realtime invariants in
 [`../doc/REALTIME_SYSTEM.md`](../doc/REALTIME_SYSTEM.md).
 
 The Joystick contract has no physics concepts: no velocity, grounded state,
-gravity, map, collision, Engine, or episode scheduling. It also has no torch,
-sigmoid, threshold, Bernoulli, or model adapter logic. Model adapters own the
-research mapping of two model outputs to two boolean decisions:
-
-```text
-model output 0 -> RIGHT
-model output 1 -> JUMP
-```
+gravity, map, collision, Engine scheduling, or episode timing. Model adapters
+own the mapping from learned outputs to desired RIGHT/A states.
 
 ## Readiness
 
@@ -244,9 +260,10 @@ waits for Display READY when it is available. A Display startup failure is
 reported locally and does not stop Engine or prevent the Console from publishing
 the `PeripheralManifest`.
 
-Controller READY requires a listening Joystick, connected Engine CONTROL, and a
-connected TELEMETRY source with a current scheduling snapshot. If a mandatory
-connection fails, Controller must not print READY and must exit non-zero. Engine
+Controller READY requires a listening Joystick and connected Engine CONTROL.
+Controller has no TELEMETRY dependency and no scheduling snapshot. If the
+mandatory Engine CONTROL connection fails, Controller must not print READY and
+must exit non-zero. Engine
 does not wait for Console or Player readiness. In unpaced mode the world may
 advance before Player attachment; this is intentional. An explicit session
 preparation/start contract may be added for training later, but no hidden pause
@@ -315,7 +332,7 @@ API.
 
 1. Console, Controller, Joystick, and Display boundaries
 2. Real Display screen and vision renderers
-3. Player MLP `3-8-2` through Joystick
+3. Player MLP `5-8-2` through Joystick
 4. Sensory peripherals
 5. External Trainer REINFORCE
 6. Management UI

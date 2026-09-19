@@ -11,9 +11,10 @@ Engine does not own Controller, Display, Player, training, management, or model
 logic. It imports Console-private configuration/protocol and the World domain;
 World does not import Engine.
 
-Each Actor owns its result and scheduled actions. Once an Actor is `success`,
-`dead`, or `timeout`, that Actor's body stops changing, its actions are cleared,
-and new gameplay actions for it are rejected. Other Actors and the global
+Each Actor owns its result and one current virtual-pad latch. Once an Actor is
+`success`, `dead`, or `timeout`, that Actor's body stops changing, its input is
+neutralized, and new gameplay input for it is rejected. Respawn and despawn also
+neutralize the latch. Other Actors and the global
 `world_tick` continue independently. Actor-local respawn recreates one body and
 records its new start tick; it never resets global time.
 

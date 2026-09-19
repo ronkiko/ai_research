@@ -44,5 +44,5 @@ through executable contracts rather than runtime imports. The graphical Screen
 remains outside that ownership tree.
 
 Management must preserve domain dependency direction and must not expose private
-Engine state, physics coordinates, hidden collision geometry, `ActionCommand`,
-`target_world_tick`, or debug-only ground truth.
+Engine state, physics coordinates, hidden collision geometry, private
+`InputStateCommand`, or debug-only ground truth.

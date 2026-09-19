@@ -29,7 +29,7 @@ connection and uses only public Console-facing capabilities.
 The first laboratory baseline is a **collapsed first baseline** (also called a
 single-layer/direct-action baseline), not the final V2 AI hierarchy. It is a
 small feed-forward MLP with three inputs, a small hidden layer, and two outputs.
-The V1 `3-8-2` shape is allowed as the first V2 laboratory baseline.
+The V1 `5-8-2` shape is allowed as the first V2 laboratory baseline.
 
 In this first vertical:
 
@@ -45,7 +45,7 @@ receives a `MotorGoal` plus fast sensory/motion representation while Planner
 owns higher-level gameplay reasoning. The logical boundaries are defined in
 [../../doc/INTELLIGENCE_ARCHITECTURE.md](../../doc/INTELLIGENCE_ARCHITECTURE.md).
 
-`3-8-2 is not a permanent V2 architecture.` It may later be replaced by
+`5-8-2 is not a permanent V2 architecture.` It may later be replaced by
 another MLP, PPO, a Planner/Motor Controller hierarchy, an LLM executor, or
 another Player/model design without changing the Console boundary.
 
@@ -273,7 +273,7 @@ This patch does not add a UI, cockpit, or process orchestrator.
 ## Next Implementation Boundary
 
 The first full hierarchy is a small CNN Planner producing `MotorGoal` for an
-MLP `3-8-2` Motor Controller, which produces `ActionDecision` for the public
+MLP `5-8-2` Motor Controller, which produces `ActionDecision` for the public
 Joystick. The full training-set, trajectory, and exam semantics are defined in
 [TRAINING_SYSTEM.md](TRAINING_SYSTEM.md).
 

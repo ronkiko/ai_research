@@ -20,6 +20,6 @@ remain Console-private and are not public Player contracts:
 - Engine STATE;
 - Engine TELEMETRY;
 - private Engine EVENTS;
-- `ActionCommand`;
-- `target_world_tick`;
-- `hold_ticks`.
+- private `InputStateCommand`;
+- Engine input-latch state;
+- any future timing or macro mechanism.

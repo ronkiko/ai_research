@@ -27,3 +27,23 @@ replaceable intelligence component, not necessarily the whole Player. Its
 implementation, configuration, and checkpoint may be replaced independently
 at a safe boundary between Training Episodes. Model output adapters map
 `ActionDecision` to the public Joystick contract.
+
+
+## Virtual-pad awareness
+
+Motor Controller produces the **desired complete controller state**, not a
+one-tick pulse. Its current 5-8-2 input is:
+
+```text
+MotorGoal.x
+MotorGoal.y
+motion_x
+current RIGHT
+current A
+        -> hidden 8 -> desired RIGHT, desired A
+```
+
+The current-pad inputs are the last Engine-accepted state reported through the
+Player/Model actuation acknowledgement path. This lets Motor distinguish
+"press A" from "keep A held" and deliberately release a button before pressing
+it again. Planner remains independent of the Joystick mechanics.

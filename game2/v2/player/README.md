@@ -9,7 +9,7 @@ runtime. It may import only `contracts/*` and its own modules.
 
 Current implementations: `scripted/main.py` and `human/main.py`. The first
 learned model foundation is under `learned/` and contains a CNN Planner and a
-3-8-2 Motor Controller. The Human
+5-8-2 Motor Controller. The Human
 Keyboard Player is an external process that reads only `PeripheralManifest` and
 uses only the public Joystick. Scripted Player may additionally subscribe to
 public Vision:

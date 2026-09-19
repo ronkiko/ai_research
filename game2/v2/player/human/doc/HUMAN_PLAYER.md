@@ -17,4 +17,4 @@ episode, or pause the world; the Console Engine continues with its neutral
 fallback after the Player disconnects.
 
 The Player cannot access `Engine`, `Controller`, `Display`, `World`,
-`ActionCommand`, scheduling fields, telemetry, or private manifests.
+private `InputStateCommand`, Engine telemetry, or private manifests.

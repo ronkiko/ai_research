@@ -1,11 +1,29 @@
 # Controller
 
-The Console input subsystem. Controller owns the Joystick listener, the only
-Engine CONTROL client, input translation, finite hold behavior, lead scheduling,
-and Joystick ACK mapping. Its private manifest fixes one `actor_id`; telemetry
-and ActionCommand scheduling are scoped to that Actor while `target_world_tick`
-remains global.
+The Console input subsystem. Controller owns the public Joystick listener and is
+the only gameplay client of Engine CONTROL.
 
-It does not own the Player or the world. It imports the public Joystick contract
-and Console-private Engine protocol. Process entrypoint: `main.py`; runtime:
-`controller.py`. Local documentation: `doc/`.
+Its job is intentionally small:
+
+```text
+JoystickState {RIGHT, A}
+        |
+        v
+Controller
+        |
+        v
+InputStateCommand {RIGHT, A}
+        |
+        v
+Engine input latch
+```
+
+Controller does **not** schedule future input, choose a duration, or invent a
+release time. It forwards the newest complete button state immediately and maps
+the Engine acknowledgement back to the public Joystick acknowledgement.
+
+A held button remains held because Engine stores the current virtual-pad state,
+not because Controller repeatedly schedules finite commands.
+
+Controller has no TELEMETRY dependency. It does not own Player intelligence,
+World, Physics, Training, or rendering.

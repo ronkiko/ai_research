@@ -125,9 +125,8 @@ Allowed gameplay and research evidence is limited to:
 
 If the Strategist receives a JSON or other world representation, it must be
 derived from allowed/public observations or from explicitly declared experiment
-inputs. It must not receive private Engine state, private physics coordinates,
-`ActionCommand`, `target_world_tick`, hidden collision geometry, or debug-only
-ground truth. Management may have operator capabilities, but gameplay AI must
+inputs. It must not receive private Engine state, private physics coordinates, private
+`InputStateCommand`, hidden collision geometry, or debug-only ground truth. Management may have operator capabilities, but gameplay AI must
 not silently receive privileged world truth.
 
 The Strategist does not import Player or Trainer runtime internals. Future
@@ -248,11 +247,11 @@ trajectory data, and certification semantics are defined in the normative
 learned Player target is:
 
 ```text
-CNN Planner -> MotorGoal -> MLP 3-8-2 Motor Controller
+CNN Planner -> MotorGoal -> MLP 5-8-2 Motor Controller
              -> ActionDecision -> Joystick
 ```
 
-The collapsed direct-action `3-8-2` MLP remains the first minimal experiment,
+The collapsed direct-action `5-8-2` MLP remains the first minimal experiment,
 but it is not this hierarchy. Research Strategist chooses what should be
 trained and why; Trainer performs the learning mechanics for a selected
 Planner or Motor Controller candidate. Neither changes the Player hot path or
@@ -300,7 +299,7 @@ architecture role != model implementation != configuration != checkpoint
 ```
 
 For example, the role `Motor Controller` may have an `MLP` implementation,
-configuration `3-8-2`, and checkpoint `X`. The role `Planner` may have a
+configuration `5-8-2`, and checkpoint `X`. The role `Planner` may have a
 `CNN+RNN` implementation and checkpoint `Y`. Strategist may compare and select
 candidates without knowing their weight structure.
 

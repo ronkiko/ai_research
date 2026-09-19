@@ -50,7 +50,7 @@ same physics result as `realtime`. It preserves:
 
 - the same `dt`;
 - the same physics transitions;
-- the same action scheduling rules;
+- the same current-input latch semantics;
 - the same autonomous-world semantics.
 
 The same 20 ms of inference latency in `realtime` and `unpaced` is not

@@ -231,7 +231,7 @@ no files are moved by this documentation patch.
 
 ## First Full Hierarchical Stack
 
-The collapsed `3-8-2` direct-action MLP remains the historical first minimal
+The collapsed `5-8-2` direct-action MLP remains the historical first minimal
 experiment. It directly consumed the three Player-side Vision features and
 produced `RIGHT` / `JUMP`; it did not have a separate Planner or Motor
 Controller boundary.
@@ -247,7 +247,7 @@ CNN Planner
    MotorGoal
       |
       v
-MLP 3-8-2 Motor Controller
+MLP 5-8-2 Motor Controller
       |
  ActionDecision
       |
@@ -270,7 +270,7 @@ may use CNN+RNN, SNN, or another policy implementation.
 
 ### MLP Motor Controller
 
-The first Motor Controller implementation is the MLP configuration `3-8-2`.
+The first Motor Controller implementation is the MLP configuration `5-8-2`.
 In this hierarchy it is not the collapsed direct-action baseline, even though
 the shape is the same. It receives `MotorGoal` plus fast allowed
 sensory/motion information and produces `ActionDecision`. The final
@@ -288,7 +288,7 @@ Fresh model does not mean zero weights. A Fresh candidate means:
 - no learned checkpoint or optimizer continuation state is loaded.
 
 Zero weights are not a semantic requirement. The first full stack may start
-Fresh with a CNN Planner candidate and a Fresh MLP `3-8-2` Motor Controller
+Fresh with a CNN Planner candidate and a Fresh MLP `5-8-2` Motor Controller
 candidate. Resume is a separate operation that explicitly loads a prior
 candidate/checkpoint.
 
@@ -410,8 +410,8 @@ Learning input must not contain:
 - private Engine STATE;
 - true physics coordinates unavailable to Player;
 - hidden collision geometry;
-- private `ActionCommand`;
-- `target_world_tick`;
+- private `InputStateCommand`;
+- `future input scheduling`;
 - debug-only ground truth.
 
 The dataset must not silently reconstruct privileged truth from an internal
