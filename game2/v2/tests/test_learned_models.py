@@ -31,16 +31,30 @@ from game2.v2.player.learned.runtime import (
 from game2.v2.player.learned.vision import vision_to_tensor
 
 
+def _expand_physics(coarse: bytes, columns: int, rows: int) -> bytes:
+    fine_columns = columns * 8
+    fine = bytearray(fine_columns * rows * 8)
+    for index, value in enumerate(coarse):
+        tile_y, tile_x = divmod(index, columns)
+        for fine_y in range(tile_y * 8, (tile_y + 1) * 8):
+            start = fine_y * fine_columns + tile_x * 8
+            fine[start:start + 8] = bytes([value]) * 8
+    return bytes(fine)
+
+
 def _grid(columns: int, rows: int) -> VisionGrid:
     cells = columns * rows
-    physics = bytes(index % 3 for index in range(cells))
+    coarse = bytes(index % 3 for index in range(cells))
+    physics = _expand_physics(coarse, columns, rows)
     fine_columns = columns * 8
     fine_rows = rows * 8
     flags = (0, META_SELF, META_GOAL, META_OTHER_ACTOR, META_SELF_CENTER, META_OTHER_CENTER)
     metadata = bytes(
         flags[index % len(flags)] for index in range(fine_columns * fine_rows)
     )
-    return VisionGrid(columns, rows, 64, physics, metadata, world_tick=1)
+    return VisionGrid(
+        columns, rows, 64, coarse, physics, metadata, world_tick=1
+    )
 
 
 def _parameters(model: torch.nn.Module) -> list[torch.Tensor]:
@@ -78,9 +92,11 @@ class LearnedContractTests(unittest.TestCase):
         metadata[8 * 24 + 18] = META_OTHER_ACTOR
         metadata[9 * 24 + 2] = META_SELF_CENTER
         metadata[9 * 24 + 18] = META_OTHER_CENTER
+        coarse = bytes((0, 1, 2, 0, 1, 2))
         grid = VisionGrid(
             3, 2, 64,
-            bytes((0, 1, 2, 0, 1, 2)),
+            coarse,
+            _expand_physics(coarse, 3, 2),
             bytes(metadata),
             world_tick=7,
         )

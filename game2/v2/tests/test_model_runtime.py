@@ -36,11 +36,14 @@ from game2.v2.player.learned.process import _run_episode
 
 
 def _grid(tick: int) -> VisionGrid:
-    physics = bytes(12 * 5)
+    coarse_physics = bytes(12 * 5)
+    physics = bytes(12 * 8 * 5 * 8)
     metadata = bytearray(12 * 8 * 5 * 8)
     center = (2 * 8 + 4) * (12 * 8) + (3 * 8 + 4)
     metadata[center] = META_SELF | META_SELF_CENTER
-    return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
+    return VisionGrid(
+        12, 5, 64, coarse_physics, physics, bytes(metadata), tick
+    )
 
 
 class _StubModel:
@@ -144,7 +147,8 @@ class ModelRuntimeTests(unittest.TestCase):
         message = observe_message(_grid(7))
         self.assertEqual(set(message), {
             "version", "type", "observation_world_tick", "columns", "rows",
-            "tile_size", "subdivisions", "physics_length", "metadata_length",
+            "tile_size", "subdivisions", "coarse_physics_length",
+            "physics_length", "metadata_length",
         })
         decoded = decode_model_message(message)
         self.assertEqual(decoded["type"], OBSERVE)
@@ -159,28 +163,35 @@ class ModelRuntimeTests(unittest.TestCase):
                 **valid,
                 "columns": columns,
                 "rows": rows,
-                "physics_length": columns * rows,
+                "coarse_physics_length": columns * rows,
+                "physics_length": columns * rows * 64,
                 "metadata_length": columns * rows * 64,
             }
             with self.subTest(columns=columns, rows=rows):
                 with self.assertRaises(ProtocolError):
                     decode_model_message(message)
 
-    def test_max_grid_observation_round_trip_uses_two_exact_raw_matrices(self):
+    def test_max_grid_observation_round_trip_uses_three_exact_raw_matrices(self):
         model = _StubModel()
         _runtime, worker, client, errors = self._start(model)
         cells = 64 * 64
-        physics = bytes(index % 3 for index in range(cells))
+        coarse_physics = bytes(index % 3 for index in range(cells))
+        physics = bytes(index % 3 for index in range(cells * 64))
         metadata = bytearray(cells * 64)
         metadata[0] = META_SELF | META_SELF_CENTER
         metadata[-1] = META_OTHER_ACTOR
-        grid = VisionGrid(64, 64, 64, physics, bytes(metadata), 987654)
+        grid = VisionGrid(
+            64, 64, 64, coarse_physics, physics, bytes(metadata), 987654
+        )
         wire = observation_packet(grid)
         header_size = int.from_bytes(wire[:4], "big")
         header = wire[4:4 + header_size]
         self.assertNotIn(b'"pixels"', header)
         self.assertNotIn(b'"pixel_format"', header)
-        self.assertEqual(wire[4 + header_size:], grid.physics + grid.metadata)
+        self.assertEqual(
+            wire[4 + header_size:],
+            grid.coarse_physics + grid.physics + grid.metadata,
+        )
         try:
             client.prepare(1, "evaluate", 1)
             client.observe(grid)
@@ -189,6 +200,7 @@ class ModelRuntimeTests(unittest.TestCase):
             self.assertEqual(model.frames[0], grid)
             self.assertEqual(model.frames[0].columns, 64)
             self.assertEqual(model.frames[0].rows, 64)
+            self.assertEqual(model.frames[0].coarse_physics, grid.coarse_physics)
             self.assertEqual(model.frames[0].physics, grid.physics)
             self.assertEqual(model.frames[0].metadata, grid.metadata)
         finally:
@@ -377,14 +389,18 @@ class ModelRuntimeTests(unittest.TestCase):
 class TrainingAckBoundaryTests(unittest.TestCase):
     @staticmethod
     def _vision_grid(tick: int) -> VisionGrid:
-        physics = bytes(12 * 5)
+        coarse_physics = bytes(12 * 5)
         fine_columns = 12 * 8
-        metadata = bytearray(fine_columns * 5 * 8)
+        fine_rows = 5 * 8
+        physics = bytes(fine_columns * fine_rows)
+        metadata = bytearray(fine_columns * fine_rows)
         metadata[(2 * 8 + 4) * fine_columns + (3 * 8 + 4)] = (
             META_SELF | META_SELF_CENTER
         )
         metadata[(2 * 8 + 4) * fine_columns + (10 * 8 + 4)] = META_GOAL
-        return VisionGrid(12, 5, 64, physics, bytes(metadata), tick)
+        return VisionGrid(
+            12, 5, 64, coarse_physics, physics, bytes(metadata), tick
+        )
 
     class Connection:
         failed = False
