@@ -287,6 +287,51 @@ class UnifiedRunner:
         return data
 
     @staticmethod
+    def _evaluation(data: dict[str, Any]) -> dict[str, Any]:
+        required = {"episode_id", "result", "trainable"}
+        if set(data) != required or type(data["episode_id"]) is not int \
+                or data["episode_id"] <= 0 \
+                or data["result"] not in {"success", "dead", "timeout"} \
+                or type(data["trainable"]) is not bool:
+            raise RunError("Trainer EVALUATION fields are invalid")
+        return data
+
+    @staticmethod
+    def _summary(data: dict[str, Any]) -> dict[str, Any]:
+        required = {
+            "attempts", "successes", "failures", "trainable_episodes",
+            "dirty_episodes", "actual_update_count", "success_rate_total",
+            "losses", "stopped_on_success", "mastered",
+        }
+        if set(data) != required:
+            raise RunError("Trainer SUMMARY fields are invalid")
+        integer_fields = (
+            "attempts", "successes", "failures", "trainable_episodes",
+            "dirty_episodes", "actual_update_count",
+        )
+        if any(type(data[field]) is not int or data[field] < 0 for field in integer_fields):
+            raise RunError("Trainer SUMMARY counters are invalid")
+        if data["successes"] > data["attempts"] \
+                or data["failures"] > data["attempts"] \
+                or data["trainable_episodes"] + data["dirty_episodes"] != data["attempts"] \
+                or data["actual_update_count"] > data["trainable_episodes"]:
+            raise RunError("Trainer SUMMARY counters are inconsistent")
+        if type(data["success_rate_total"]) is bool \
+                or not isinstance(data["success_rate_total"], (int, float)) \
+                or not math.isfinite(float(data["success_rate_total"])) \
+                or not 0.0 <= float(data["success_rate_total"]) <= 1.0:
+            raise RunError("Trainer SUMMARY success rate is invalid")
+        if type(data["losses"]) is not list or any(
+                type(loss) is bool or not isinstance(loss, (int, float))
+                or not math.isfinite(float(loss)) for loss in data["losses"]):
+            raise RunError("Trainer SUMMARY losses are invalid")
+        if len(data["losses"]) != data["actual_update_count"] \
+                or type(data["stopped_on_success"]) is not bool \
+                or type(data["mastered"]) is not bool:
+            raise RunError("Trainer SUMMARY values are invalid")
+        return data
+
+    @staticmethod
     def _result(data: dict[str, Any]) -> dict[str, Any]:
         required = {"session_id", "result", "start_world_tick", "finish_world_tick"}
         if set(data) != required or type(data["session_id"]) is not str \
@@ -342,7 +387,6 @@ class UnifiedRunner:
             self.emit("vision_ready", mode="train", level=manifest.training_set_level,
                       map_id=spec.map_id, player_manifest=player_manifest.to_dict())
 
-            passed = False
             summary = None
             finalization_deadline = None
             while summary is None:
@@ -352,10 +396,12 @@ class UnifiedRunner:
                         progress = self._progress(_strict_json(line[9:].strip()))
                         self.emit("map_progress", level=manifest.training_set_level,
                                   map_id=spec.map_id, **progress)
-                        passed = passed or (progress["result"] == "success" and
-                                            progress["trainable"] and progress["updated"])
+                    elif line.startswith("EVALUATION "):
+                        evaluation = self._evaluation(_strict_json(line[11:].strip()))
+                        self.emit("map_evaluation", level=manifest.training_set_level,
+                                  map_id=spec.map_id, **evaluation)
                     elif line.startswith("SUMMARY "):
-                        summary = _strict_json(line[8:].strip())
+                        summary = self._summary(_strict_json(line[8:].strip()))
                 for line in self._drain(player):
                     if line.startswith("ATTACHED "):
                         # The normal path consumes ATTACHED before this loop. A
@@ -381,17 +427,11 @@ class UnifiedRunner:
                     if remaining <= 0:
                         raise RunError("Trainer did not emit SUMMARY after Player exit")
                 self.sleeper(0.005)
-            if not isinstance(summary, dict):
-                raise RunError("Trainer SUMMARY is malformed")
-            if passed:
+            if summary["mastered"]:
                 self.emit("map_passed", level=manifest.training_set_level, map_id=spec.map_id)
                 return True
-            attempts = summary.get("attempts", 0)
-            successes = summary.get("successes", 0)
-            if type(attempts) is not int or type(successes) is not int:
-                raise RunError("Trainer SUMMARY counters are malformed")
             self.emit("map_failed", level=manifest.training_set_level, map_id=spec.map_id,
-                      attempts=attempts, successes=successes)
+                      attempts=summary["attempts"], successes=summary["successes"])
             return False
         finally:
             self._stop_processes(processes)

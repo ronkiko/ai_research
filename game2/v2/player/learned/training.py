@@ -348,8 +348,6 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
             if message_type == SAVE:
                 if awaiting_update is not None:
                     raise ProtocolError("SAVE arrived before APPLY_RESULT")
-                if awaiting_mode == EVALUATE:
-                    raise ProtocolError("SAVE is not valid after evaluation")
                 planner_path, motor_path = _checkpoint_paths(checkpoint_dir)
                 planner_path.parent.mkdir(parents=True, exist_ok=True)
                 save_planner(player.planner, planner_path)

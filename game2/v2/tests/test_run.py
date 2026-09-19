@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import socket
 import threading
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from game2.v2.contracts.run_events import make_event, validate_run_event
 from game2.v2.contracts.training import (
     APPLY_RESULT,
     BEGIN_EPISODE,
+    EVALUATE,
     EPISODE_FINISHED,
     EPISODE_STARTED,
     PREPARE,
@@ -28,7 +30,9 @@ from game2.v2.contracts.training import (
     episode_started_message,
     recv_training_message,
     ready_message,
+    saved_message,
     send_training_message,
+    update_result_message,
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
 from game2.v2.contracts.vision import VisionFrame
@@ -58,6 +62,16 @@ class RunEventTests(unittest.TestCase):
                        progress=0.4, reward=float("inf"), attempts=1, successes=0)
         with self.assertRaises(ValueError):
             make_event("exam_finished", level=1, resource_id="exam", result="success")
+
+    def test_evaluation_event_is_strict_and_separate_from_training_progress(self):
+        event = make_event("map_evaluation", level=1, map_id="flat_run",
+                           episode_id=2, result="success", trainable=True)
+        self.assertIs(validate_run_event(event), event)
+        with self.assertRaises(ValueError):
+            validate_run_event({**event, "updated": True})
+        with self.assertRaises(ValueError):
+            make_event("map_evaluation", level=1, map_id="flat_run",
+                       episode_id=2, result="success", trainable=1)
 
     def test_launcher_import_boundary_is_process_only(self):
         path = ROOT / "game2" / "v2" / "run.py"
@@ -107,6 +121,17 @@ class LauncherContractTests(unittest.TestCase):
         self.assertEqual(state._get(1).episode_id, 1)
         self.assertEqual(state._get(1).progress, 1.0)
         self.assertEqual(state._get(1).reward, 1.0)
+        self.assertEqual(state.map_state(1, "flat_run"), "verifying")
+        state.apply_event(make_event(
+            "map_evaluation", level=1, map_id="flat_run", episode_id=2,
+            result="timeout", trainable=True,
+        ))
+        self.assertEqual(state.map_state(1, "flat_run"), "current")
+        state.apply_event(make_event(
+            "map_evaluation", level=1, map_id="flat_run", episode_id=3,
+            result="success", trainable=True,
+        ))
+        self.assertEqual(state.map_state(1, "flat_run"), "verifying")
         state.apply_event(make_event("map_passed", level=1, map_id="flat_run"))
         self.assertEqual(state.map_state(1, "flat_run"), "passed")
         self.assertEqual(state._get(1).current_map, "short_gap")
@@ -295,12 +320,15 @@ class _FakeProcess:
 
 
 class _FakeLauncherProcesses:
-    def __init__(self, *, exam_result=False, player_returncode=None, trainer_updated=True):
+    def __init__(self, *, exam_result=False, player_returncode=None,
+                 trainer_updated=True, summary_mastered=None):
         self.commands = []
         self.configs = []
         self.exam_result = exam_result
         self.player_returncode = player_returncode
         self.trainer_updated = trainer_updated
+        self.summary_mastered = (trainer_updated if summary_mastered is None
+                                 else summary_mastered)
 
     def __call__(self, command, **kwargs):
         self.commands.append(list(command))
@@ -318,8 +346,19 @@ class _FakeLauncherProcesses:
                 f'"trainable":true,"updated":{str(self.trainer_updated).lower()},'
                 '"progress":1.0,"reward":1.0,'
                 '"attempts":1,"successes":1}\n',
-                'SUMMARY {"attempts":1,"successes":1}\n',
             ]
+            if self.summary_mastered:
+                lines.append(
+                    'EVALUATION {"episode_id":2,"result":"success",'
+                    '"trainable":true}\n')
+            lines.append(
+                'SUMMARY {"attempts":1,"successes":1,"failures":0,'
+                '"trainable_episodes":1,"dirty_episodes":0,'
+                f'"actual_update_count":{int(self.trainer_updated)},'
+                f'"success_rate_total":1.0,"losses":'
+                f'{"[0.25]" if self.trainer_updated else "[]"},'
+                f'"stopped_on_success":{str(self.summary_mastered).lower()},'
+                f'"mastered":{str(self.summary_mastered).lower()}}}\n')
         else:
             manifest = PlayerManifest(
                 "fake-session", "fake-player", "fake-actor",
@@ -374,7 +413,13 @@ class _PlayerBeforeSummaryProcesses:
             process = _FakeProcess(returncode=None)
             process.stdout = _GatedOutput(
                 ['READY {"host":"127.0.0.1","port":12346}\n', progress,
-                 'SUMMARY {"attempts":1,"successes":1}\n'],
+                 'EVALUATION {"episode_id":2,"result":"success",'
+                 '"trainable":true}\n',
+                 'SUMMARY {"attempts":1,"successes":1,"failures":0,'
+                 '"trainable_episodes":1,"dirty_episodes":0,'
+                 '"actual_update_count":1,"success_rate_total":1.0,'
+                 '"losses":[0.25],"stopped_on_success":true,'
+                 '"mastered":true}\n'],
                 gate=self.player_exited,
                 on_close=lambda: setattr(process, "returncode", 0),
             )
@@ -619,6 +664,30 @@ class UnifiedRunnerProcessTests(unittest.TestCase):
         self.assertEqual(events[-2]["event"], "map_failed")
         self.assertNotIn("map_passed", [event["event"] for event in events])
 
+    def test_runner_does_not_pass_on_training_progress_when_summary_is_not_mastered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            runner = run.UnifiedRunner(
+                popen_factory=_FakeLauncherProcesses(
+                    trainer_updated=True, summary_mastered=False),
+                sleeper=lambda _seconds: None,
+                output=output,
+            )
+            try:
+                result = runner.train(
+                    set_path=SET_PATH,
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    max_episodes=1, clock_mode="realtime", fresh=True, episode_limit=1200,
+                )
+            finally:
+                runner.close()
+        self.assertEqual(result, 1)
+        events = [json.loads(line[6:]) for line in output.getvalue().splitlines()
+                  if line.startswith("EVENT ")]
+        self.assertIn("map_progress", [event["event"] for event in events])
+        self.assertNotIn("map_passed", [event["event"] for event in events])
+        self.assertEqual(events[-2]["event"], "map_failed")
+
 
 class TrainerOutputTests(unittest.TestCase):
     def test_stop_on_success_updates_before_save_and_reports_progress(self):
@@ -648,13 +717,21 @@ class TrainerOutputTests(unittest.TestCase):
                 "version": 1, "type": UPDATE_RESULT, "episode_id": 1,
                 "updated": True, "loss": 0.25,
             })
+            evaluation_prepare = recv_training_message(right)
+            self.assertEqual(evaluation_prepare["type"], PREPARE)
+            self.assertEqual(evaluation_prepare["mode"], EVALUATE)
+            self.assertEqual(recv_training_message(right)["type"], BEGIN_EPISODE)
+            send_training_message(right, episode_started_message(2, 30))
+            send_training_message(right, episode_finished_message(
+                2, 30, 40, "success", True, 0.0, 2, 0))
             self.assertEqual(recv_training_message(right)["type"], SAVE)
             send_training_message(right, {"version": 1, "type": SAVED})
         finally:
             right.close()
             thread.join(timeout=2)
             left.close()
-        self.assertEqual(result[0].stopped_on_success, True)
+        self.assertTrue(result[0].stopped_on_success)
+        self.assertTrue(result[0].mastered)
         self.assertIn('"episode_id":1', output.getvalue())
         self.assertIn('"updated":true', output.getvalue())
         self.assertIn('"progress":0.0', output.getvalue())
@@ -689,6 +766,14 @@ class TrainerOutputTests(unittest.TestCase):
                     "version": 1, "type": UPDATE_RESULT, "episode_id": episode,
                     "updated": updated, "loss": 0.25 if updated else 0.0,
                 })
+                if updated:
+                    evaluation_prepare = recv_training_message(right)
+                    self.assertEqual(evaluation_prepare["type"], PREPARE)
+                    self.assertEqual(evaluation_prepare["mode"], EVALUATE)
+                    self.assertEqual(recv_training_message(right)["type"], BEGIN_EPISODE)
+                    send_training_message(right, episode_started_message(3, 30))
+                    send_training_message(right, episode_finished_message(
+                        3, 30, 40, "success", True, 0.0, 2, 0))
             self.assertEqual(recv_training_message(right)["type"], SAVE)
             send_training_message(right, {"version": 1, "type": SAVED})
         finally:
@@ -697,6 +782,116 @@ class TrainerOutputTests(unittest.TestCase):
             left.close()
         self.assertEqual(result[0].attempts, 2)
         self.assertTrue(result[0].stopped_on_success)
+        self.assertTrue(result[0].mastered)
+
+
+class TrainerMasteryGateTests(unittest.TestCase):
+    def _run_script(self, train_results, evaluation_results=()):
+        left, right = socket.socketpair()
+        trainer = Trainer(episodes=len(train_results), stop_on_success=True)
+        result = []
+        errors = []
+        output = io.StringIO()
+
+        def worker():
+            try:
+                with redirect_stdout(output):
+                    result.append(trainer._run_peer(left))
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        seen = []
+        train_index = evaluation_index = 0
+        try:
+            send_training_message(right, ready_message())
+            prepare = None
+            while True:
+                if prepare is None:
+                    prepare = recv_training_message(right)
+                seen.append(prepare)
+                self.assertEqual(prepare["type"], PREPARE)
+                begin = recv_training_message(right)
+                self.assertEqual(begin["type"], BEGIN_EPISODE)
+                episode_id = prepare["episode_id"]
+                if prepare["mode"] == "train":
+                    result_name, trainable, updated = train_results[train_index]
+                    train_index += 1
+                else:
+                    result_name, trainable = evaluation_results[evaluation_index]
+                    evaluation_index += 1
+                    updated = False
+                start_tick = episode_id * 10
+                send_training_message(right, episode_started_message(episode_id, start_tick))
+                send_training_message(right, episode_finished_message(
+                    episode_id, start_tick, start_tick + 1, result_name,
+                    trainable, 0.0, 1, 0))
+                if prepare["mode"] == "train" and trainable:
+                    apply = recv_training_message(right)
+                    self.assertEqual(apply["type"], APPLY_RESULT)
+                    send_training_message(right, update_result_message(
+                        episode_id, updated, 0.25 if updated else 0.0))
+                next_message = recv_training_message(right)
+                if next_message["type"] == SAVE:
+                    send_training_message(right, saved_message())
+                    break
+                self.assertEqual(next_message["type"], PREPARE)
+                prepare = next_message
+        finally:
+            right.close()
+            thread.join(timeout=2)
+            left.close()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(result), 1)
+        return result[0], output.getvalue(), seen
+
+    def test_train_update_and_evaluation_success_are_required_for_mastery(self):
+        summary, output, seen = self._run_script(
+            [("success", True, True)], [("success", True)])
+        self.assertTrue(summary.mastered)
+        self.assertTrue(summary.stopped_on_success)
+        self.assertEqual([message["mode"] for message in seen], ["train", EVALUATE])
+        self.assertIn("EVALUATION", output)
+
+    def test_evaluation_timeout_returns_to_training_without_mastery(self):
+        summary, _output, seen = self._run_script(
+            [("success", True, True), ("dead", False, False)],
+            [("timeout", True)],
+        )
+        self.assertFalse(summary.mastered)
+        self.assertEqual(summary.attempts, 2)
+        self.assertEqual([message["mode"] for message in seen], ["train", EVALUATE, "train"])
+
+    def test_evaluation_dead_returns_to_training_without_mastery(self):
+        summary, _output, seen = self._run_script(
+            [("success", True, True), ("dead", False, False)],
+            [("dead", True)],
+        )
+        self.assertFalse(summary.mastered)
+        self.assertEqual([message["mode"] for message in seen], ["train", EVALUATE, "train"])
+
+    def test_dirty_evaluation_returns_to_training_without_mastery(self):
+        summary, _output, seen = self._run_script(
+            [("success", True, True), ("dead", False, False)],
+            [("success", False)],
+        )
+        self.assertFalse(summary.mastered)
+        self.assertEqual([message["mode"] for message in seen], ["train", EVALUATE, "train"])
+
+    def test_unupdated_train_success_does_not_start_evaluation(self):
+        summary, output, seen = self._run_script(
+            [("success", True, False), ("dead", False, False)])
+        self.assertFalse(summary.mastered)
+        self.assertNotIn(EVALUATE, [message["mode"] for message in seen])
+        self.assertNotIn("EVALUATION", output)
+
+    def test_training_attempt_budget_excludes_evaluation_episodes(self):
+        summary, _output, seen = self._run_script(
+            [("dead", False, False), ("dead", False, False)])
+        self.assertFalse(summary.mastered)
+        self.assertEqual(summary.attempts, 2)
+        self.assertEqual(len([message for message in seen if message["mode"] == "train"]), 2)
 
 
 if __name__ == "__main__":

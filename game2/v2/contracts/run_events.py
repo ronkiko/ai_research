@@ -18,6 +18,9 @@ EVENT_FIELDS = {
         "event", "level", "map_id", "episode_id", "result", "trainable",
         "updated", "progress", "reward", "attempts", "successes",
     )),
+    "map_evaluation": frozenset((
+        "event", "level", "map_id", "episode_id", "result", "trainable",
+    )),
     "map_passed": frozenset(("event", "level", "map_id")),
     "map_failed": frozenset(("event", "level", "map_id", "attempts", "successes")),
     "training_set_finished": frozenset(("event", "level", "passed")),
@@ -65,7 +68,8 @@ def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
 
     if event_type != "run_failed":
         _positive_int("level", event["level"])
-    if event_type in {"map_started", "map_passed", "map_failed", "map_progress"}:
+    if event_type in {"map_started", "map_passed", "map_failed", "map_progress",
+                      "map_evaluation"}:
         _non_empty_string("map_id", event["map_id"])
     if event_type in {"training_set_started", "map_started", "map_passed",
                       "map_failed", "training_set_finished", "vision_ready",
@@ -90,6 +94,12 @@ def validate_run_event(event: dict[str, Any]) -> dict[str, Any]:
         _non_negative_int("successes", event["successes"])
         if event["successes"] > event["attempts"]:
             raise ValueError("successes cannot exceed attempts")
+    elif event_type == "map_evaluation":
+        _positive_int("episode_id", event["episode_id"])
+        if event["result"] not in RESULTS:
+            raise ValueError("map_evaluation result is invalid")
+        if type(event["trainable"]) is not bool:
+            raise ValueError("map_evaluation trainable must be boolean")
     elif event_type == "map_failed":
         _non_negative_int("attempts", event["attempts"])
         _non_negative_int("successes", event["successes"])

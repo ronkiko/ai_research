@@ -13,6 +13,7 @@ from typing import Any
 from game2.v2.contracts.training import (
     APPLY_RESULT,
     BEGIN_EPISODE,
+    EVALUATE,
     EPISODE_FINISHED,
     EPISODE_STARTED,
     PREPARE,
@@ -54,6 +55,7 @@ class TrainerSummary:
     actual_update_count: int = 0
     losses: list[float] = field(default_factory=list)
     stopped_on_success: bool = False
+    mastered: bool = False
 
     @property
     def success_rate_total(self) -> float:
@@ -70,6 +72,7 @@ class TrainerSummary:
             "success_rate_total": self.success_rate_total,
             "losses": list(self.losses),
             "stopped_on_success": self.stopped_on_success,
+            "mastered": self.mastered,
         }
 
 
@@ -109,33 +112,48 @@ class Trainer:
             raise ValueError(f"expected {expected}, received {message['type']}")
         return message
 
+    def _receive_episode(self, peer: socket.socket, episode_id: int, mode: str,
+                         seed: int) -> dict[str, Any]:
+        send_training_message(peer, prepare_message(episode_id, mode, seed))
+        send_training_message(peer, begin_episode_message(episode_id))
+        first_result = recv_training_message(peer)
+        if first_result["type"] == EPISODE_STARTED:
+            if first_result["episode_id"] != episode_id:
+                raise ValueError("EPISODE_STARTED identity mismatch")
+            finished = self._expect(peer, EPISODE_FINISHED)
+            if (finished["episode_id"] != episode_id or
+                    finished["start_world_tick"] != first_result["start_world_tick"]):
+                raise ValueError("EPISODE_FINISHED identity or start tick mismatch")
+        elif first_result["type"] == EPISODE_FINISHED:
+            # A lifecycle or public-peripheral failure can make an attempt
+            # dirty before a valid SELF frame exists, so no start event is
+            # emitted for that attempt.
+            finished = first_result
+            if finished["episode_id"] != episode_id:
+                raise ValueError("EPISODE_FINISHED identity mismatch")
+        else:
+            raise ValueError(f"expected {EPISODE_STARTED}, received {first_result['type']}")
+        return finished
+
     def _run_peer(self, peer: socket.socket) -> TrainerSummary:
         peer.settimeout(self.accept_timeout)
         self._expect(peer, READY)
         peer.settimeout(None)
         summary = TrainerSummary()
-        for index in range(self.episodes):
-            episode_id = index + 1
-            send_training_message(
-                peer, prepare_message(episode_id, self.mode, self.seed + index))
-            send_training_message(peer, begin_episode_message(episode_id))
-            first_result = recv_training_message(peer)
-            if first_result["type"] == EPISODE_STARTED:
-                if first_result["episode_id"] != episode_id:
-                    raise ValueError("EPISODE_STARTED identity mismatch")
-                finished = self._expect(peer, EPISODE_FINISHED)
-                if (finished["episode_id"] != episode_id or
-                        finished["start_world_tick"] != first_result["start_world_tick"]):
-                    raise ValueError("EPISODE_FINISHED identity or start tick mismatch")
-            elif first_result["type"] == EPISODE_FINISHED:
-                # A lifecycle or public-peripheral failure can make an attempt
-                # dirty before a valid SELF frame exists, so no start event is
-                # emitted for that attempt.
-                finished = first_result
-                if finished["episode_id"] != episode_id:
-                    raise ValueError("EPISODE_FINISHED identity mismatch")
-            else:
-                raise ValueError(f"expected {EPISODE_STARTED}, received {first_result['type']}")
+        next_episode_id = 1
+        for train_index in range(self.episodes):
+            episode_id = next_episode_id
+            next_episode_id += 1
+            finished = self._receive_episode(
+                peer, episode_id, self.mode, self.seed + train_index)
+
+            if self.mode == EVALUATE:
+                print("EVALUATION " + json.dumps({
+                    "episode_id": episode_id,
+                    "result": finished["result"],
+                    "trainable": finished["trainable"],
+                }, separators=(",", ":"), sort_keys=True), flush=True)
+                continue
 
             summary.attempts += 1
             if finished["result"] == "success":
@@ -150,9 +168,8 @@ class Trainer:
             reward = reward_for_result(finished["result"], finished["progress"]) \
                 if finished["trainable"] else 0.0
             updated = False
-            if self.mode == TRAIN and finished["trainable"]:
-                send_training_message(peer, apply_result_message(
-                    episode_id, reward))
+            if finished["trainable"]:
+                send_training_message(peer, apply_result_message(episode_id, reward))
                 update = self._expect(peer, UPDATE_RESULT)
                 if update["episode_id"] != episode_id:
                     raise ValueError("UPDATE_RESULT identity mismatch")
@@ -171,10 +188,22 @@ class Trainer:
                 "attempts": summary.attempts,
                 "successes": summary.successes,
             }, separators=(",", ":"), sort_keys=True), flush=True)
-            if (self.mode == TRAIN and self.stop_on_success and
-                    finished["result"] == "success" and finished["trainable"] and updated):
-                summary.stopped_on_success = True
-                break
+
+            if (self.stop_on_success and finished["result"] == "success"
+                    and finished["trainable"] and updated):
+                evaluation_id = next_episode_id
+                next_episode_id += 1
+                evaluation = self._receive_episode(
+                    peer, evaluation_id, EVALUATE, self.seed + evaluation_id)
+                print("EVALUATION " + json.dumps({
+                    "episode_id": evaluation_id,
+                    "result": evaluation["result"],
+                    "trainable": evaluation["trainable"],
+                }, separators=(",", ":"), sort_keys=True), flush=True)
+                if evaluation["result"] == "success" and evaluation["trainable"]:
+                    summary.mastered = True
+                    summary.stopped_on_success = True
+                    break
 
         if self.mode == TRAIN:
             send_training_message(peer, save_message())

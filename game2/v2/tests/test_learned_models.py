@@ -15,6 +15,7 @@ from game2.v2.player.learned.checkpoint import (load_motor_controller,
 from game2.v2.player.learned.contracts import ActionDecision, MotorGoal
 from game2.v2.player.learned.motor import MotorController382, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.runtime import LearnedPlayer, TrainingRecord
 from game2.v2.player.learned.vision import vision_to_tensor
 
 
@@ -63,6 +64,24 @@ class LearnedContractTests(unittest.TestCase):
 
 
 class LearnedModelTests(unittest.TestCase):
+    @staticmethod
+    def _action_probabilities(player: LearnedPlayer, frame: VisionFrame):
+        with torch.no_grad():
+            vision = vision_to_tensor(frame).unsqueeze(0)
+            goal = player.planner(vision)[0]
+            return torch.sigmoid(player.motor_controller.forward_goal(goal, 0.0))
+
+    @staticmethod
+    def _controlled_update(action: ActionDecision, reward: float) -> LearnedPlayer:
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        player._training_records.append(TrainingRecord(
+            _frame(6, 5), 0.0, action))
+        updated, _loss = player.apply_result(reward)
+        if not updated:
+            raise AssertionError("controlled regression record did not update")
+        return player
+
     def test_cnn_planner_supports_variable_resolution_and_returns_goals(self):
         planner = CNNPlanner.fresh(11)
         for frame in (_frame(5, 4), _frame(8, 3)):
@@ -116,6 +135,54 @@ class LearnedModelTests(unittest.TestCase):
                                                    _parameters(motor_c))))
         self.assertTrue(any(torch.count_nonzero(parameter) > 0
                             for parameter in motor_a.parameters()))
+
+    def test_positive_right_no_jump_reward_moves_both_policy_outputs_in_expected_direction(self):
+        frame = _frame(6, 5)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        before = self._action_probabilities(player, frame)
+        player._training_records.append(TrainingRecord(
+            frame, 0.0, ActionDecision(True, False)))
+        updated, _loss = player.apply_result(1.0)
+        after = self._action_probabilities(player, frame)
+
+        self.assertTrue(updated)
+        self.assertGreater(float(after[0]), float(before[0]))
+        self.assertLess(float(after[1]), float(before[1]))
+
+    def test_negative_reward_reduces_probability_of_the_selected_joint_action(self):
+        frame = _frame(6, 5)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        before = self._action_probabilities(player, frame)
+        player._training_records.append(TrainingRecord(
+            frame, 0.0, ActionDecision(False, True)))
+        updated, _loss = player.apply_result(-1.0)
+        after = self._action_probabilities(player, frame)
+        before_joint = (1 - before[0]) * before[1]
+        after_joint = (1 - after[0]) * after[1]
+
+        self.assertTrue(updated)
+        self.assertLess(float(after_joint), float(before_joint))
+
+    def test_mixed_positive_right_trajectory_increases_right_probability(self):
+        frame = _frame(6, 5)
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        before = self._action_probabilities(player, frame)
+        player._training_records.extend(
+            TrainingRecord(frame, 0.0, ActionDecision(True, False))
+            for _ in range(8)
+        )
+        player._training_records.extend(
+            TrainingRecord(frame, 0.0, ActionDecision(True, True))
+            for _ in range(2)
+        )
+        updated, _loss = player.apply_result(1.0)
+        after = self._action_probabilities(player, frame)
+
+        self.assertTrue(updated)
+        self.assertGreater(float(after[0]), float(before[0]))
 
 
 class LearnedCheckpointTests(unittest.TestCase):

@@ -88,9 +88,10 @@ class TrainingSetPhysicsTests(unittest.TestCase):
             for spec in cls.manifest.training_maps
         }
 
-    def _run(self, map_id: str, jump_tick: int | None = None,
-             limit: int = 500) -> str | None:
-        engine = Engine(load_world(self.paths[map_id]))
+    def _run_actor(self, map_id: str, jump_tick: int | None = None,
+                   limit: int = 500):
+        world = load_world(self.paths[map_id])
+        engine = Engine(world)
         actor = engine.spawn_actor("training-player", "training-actor")
         for sequence in range(1, limit + 1):
             command = ActionCommand(
@@ -100,7 +101,12 @@ class TrainingSetPhysicsTests(unittest.TestCase):
             self.assertEqual(engine.submit_action(command), "accepted")
             engine.tick()
             if actor.result is not None:
-                return actor.result
+                return world, actor
+        return world, actor
+
+    def _run(self, map_id: str, jump_tick: int | None = None,
+             limit: int = 500) -> str | None:
+        _world, actor = self._run_actor(map_id, jump_tick, limit)
         return actor.result
 
     def test_flat_run_is_passable_with_right_only(self):
@@ -111,6 +117,18 @@ class TrainingSetPhysicsTests(unittest.TestCase):
         self.assertEqual(self._run("long_gap"), "dead")
         self.assertEqual(self._run("short_gap", jump_tick=90), "success")
         self.assertEqual(self._run("long_gap", jump_tick=115), "success")
+
+    def test_sustained_right_reaches_the_goal_stopper_without_braking(self):
+        for map_id, jump_tick in (("flat_run", None), ("short_gap", 90),
+                                  ("long_gap", 115)):
+            with self.subTest(map_id=map_id):
+                world, actor = self._run_actor(map_id, jump_tick)
+                self.assertEqual(actor.result, "success")
+                self.assertEqual(actor.body.x, world.goal.x)
+                self.assertTrue(world.completed(
+                    actor.body.x, actor.body.y, actor.body.width, actor.body.height,
+                    actor.body.grounded, actor.body.alive,
+                ))
 
     def test_long_gap_is_harder_for_the_same_run_jump_schedule(self):
         short = load_world(self.paths["short_gap"])

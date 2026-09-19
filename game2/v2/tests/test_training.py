@@ -502,6 +502,54 @@ class _FakePeer:
 
 
 class TrainingPlayerFlowTests(unittest.TestCase):
+    def test_evaluation_does_not_record_or_mutate_the_updated_checkpoint(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        messages = [
+            prepare_message(1, "train", 100), begin_episode_message(1),
+            apply_result_message(1, -1),
+            prepare_message(2, EVALUATE, 101), begin_episode_message(2), save_message(),
+        ]
+        connection = _FakeConnection(manifest, None)
+        vision = _FakeVision(connection)
+        joystick = _FakeJoystick(connection)
+        peer = _FakePeer("trainer", 1, messages)
+
+        class RecordingPlayer(LearnedPlayer):
+            def __init__(self, planner, motor):
+                super().__init__(planner, motor)
+                self.apply_calls = 0
+                self.evaluate_before = None
+
+            def prepare_episode(self, mode, seed):
+                super().prepare_episode(mode, seed)
+                if mode == EVALUATE:
+                    self.evaluate_before = [parameter.detach().clone()
+                                            for parameter in list(self.planner.parameters()) +
+                                            list(self.motor_controller.parameters())]
+
+            def apply_result(self, reward):
+                self.apply_calls += 1
+                return super().apply_result(reward)
+
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_training_player(
+                connection, player, "trainer", 1,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                peer_factory=lambda _host, _port: peer,
+                checkpoint_dir=Path(directory), sleeper=lambda _duration: None,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(player.apply_calls, 1)
+        self.assertEqual(player.training_records, ())
+        self.assertIsNotNone(player.evaluate_before)
+        after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
+        self.assertTrue(all(torch.equal(before, current)
+                            for before, current in zip(player.evaluate_before, after)))
+
     def test_first_begin_starts_and_next_begin_respawns(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))

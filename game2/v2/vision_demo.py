@@ -161,10 +161,20 @@ class TrainingSetUIState:
         elif kind == "map_progress":
             item = self._get(event["level"])
             if event["map_id"] == item.current_map:
-                item.map_status[event["map_id"]] = "current"
+                item.map_status[event["map_id"]] = (
+                    "verifying" if event["result"] == "success"
+                    and event["trainable"] and event["updated"] else "current"
+                )
                 item.episode_id = event["episode_id"]
                 item.progress = event["progress"]
                 item.reward = event["reward"]
+        elif kind == "map_evaluation":
+            item = self._get(event["level"])
+            if event["map_id"] == item.current_map:
+                item.map_status[event["map_id"]] = (
+                    "verifying" if event["result"] == "success"
+                    and event["trainable"] else "current"
+                )
         elif kind == "map_passed":
             item = self._get(event["level"])
             item.map_status[event["map_id"]] = "passed"
@@ -333,6 +343,8 @@ def _draw_status_icon(pygame_module, surface, status: str, center: tuple[int, in
     elif status == "current":
         pygame_module.draw.polygon(surface, color, ((x - 4, y - 6),
                                                      (x - 4, y + 6), (x + 6, y)))
+    elif status == "verifying":
+        pygame_module.draw.circle(surface, color, center, 6, width=1)
     elif status == "passed":
         pygame_module.draw.line(surface, color, (x - 6, y), (x - 2, y + 4), width=2)
         pygame_module.draw.line(surface, color, (x - 2, y + 4), (x + 6, y - 6), width=2)
@@ -474,11 +486,17 @@ class VisionViewer:
                     color = failed
                 elif status == "current":
                     color = current
+                elif status == "verifying":
+                    color = current
                 else:
                     color = muted
                 _draw_status_icon(self.pygame, self.sidebar, status, (25, y + 9), color)
                 self._draw_text(map_id, self.body_font, y, color, x=38)
-                if (status == "current" and item.current_map == map_id and
+                if (status == "verifying" and item.current_map == map_id):
+                    self._draw_text("Evaluation: running", self.body_font, y + 16,
+                                    muted, x=38)
+                    y += 39
+                elif (status == "current" and item.current_map == map_id and
                         item.episode_id is not None and item.progress is not None):
                     self._draw_text(
                         f"attempt {item.episode_id} | progress {item.progress * 100:0.0f}%",
