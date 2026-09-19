@@ -176,12 +176,12 @@ class TerminalQueueTests(unittest.TestCase):
 
         def server_loop():
             try:
-                self.assertEqual(recv_grid(server)["type"], "attach")
-                send_grid(server, {"version": 1, "type": "player_manifest",
+                self.assertEqual(recv_frame(server)["type"], "attach")
+                send_frame(server, {"version": 1, "type": "player_manifest",
                                     **manifest.to_dict()})
-                send_grid(server, {"version": 1, "type": "player_event", "event": "terminal",
+                send_frame(server, {"version": 1, "type": "player_event", "event": "terminal",
                                     "world_tick": 7, "result": "dead"})
-                send_grid(server, {"version": 1, "type": "player_event", "event": "terminal",
+                send_frame(server, {"version": 1, "type": "player_event", "event": "terminal",
                                     "world_tick": 11, "result": "timeout"})
             except BaseException as exc:
                 errors.append(exc)

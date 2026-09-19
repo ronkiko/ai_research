@@ -445,8 +445,8 @@ class _AckServer:
         try:
             connection, _ = self.listener.accept()
             for sequence, status in enumerate(("accepted", "rejected", "duplicate"), 1):
-                recv_grid(connection)
-                send_grid(connection, joystick_ack(sequence, status))
+                recv_frame(connection)
+                send_frame(connection, joystick_ack(sequence, status))
             self.release.wait(2)
         except BaseException as exc:
             self.error = exc
