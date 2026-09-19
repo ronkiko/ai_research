@@ -4,7 +4,7 @@ from .contracts import ActionDecision, MotorGoal
 from .motor import MotorController382, motor_input
 from .motion import MOTION_PIXELS_PER_TICK_SCALE, MotionEstimator, SELF, self_center_x
 from .planner import CNNPlanner
-from .runtime import DecisionSample, LearnedPlayer, action_to_joystick
+from .runtime import DecisionSample, LearnedPlayer, TrainingRecord, action_to_joystick
 from .vision import vision_to_tensor
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "MotionEstimator",
     "MotorGoal",
     "SELF",
+    "TrainingRecord",
     "action_to_joystick",
     "motor_input",
     "self_center_x",

@@ -397,8 +397,10 @@ class UnifiedRunner:
             self._stop_processes(processes)
 
     def train(self, *, set_path: str | Path, checkpoint_dir: str | Path,
-              max_episodes: int, clock_mode: str, fresh: bool,
-              episode_limit: int = DEFAULT_EPISODE_LIMIT) -> int:
+               max_episodes: int, clock_mode: str, fresh: bool,
+               episode_limit: int = DEFAULT_EPISODE_LIMIT) -> int:
+        if clock_mode == "unpaced":
+            raise RunError("unpaced learned Training is not supported yet")
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
         manifest = TrainingSetManifest.from_file(manifest_path)

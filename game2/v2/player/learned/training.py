@@ -189,8 +189,9 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
 
     assert isinstance(lifecycle_ack, dict)
     lifecycle_world_tick = lifecycle_ack["world_tick"]
+    vision_floor_tick = max(pre_lifecycle_world_tick, lifecycle_world_tick)
     started_tick: int | None = None
-    latest_frame_tick = pre_lifecycle_world_tick
+    latest_frame_tick = vision_floor_tick
     latest_terminal: dict | None = None
     next_send = clock()
     send_period = 1 / action_hz
@@ -216,7 +217,8 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
         if latest_terminal is not None:
             break
         frame = vision.latest
-        if frame is not None and frame.world_tick > latest_frame_tick:
+        if frame is not None and frame.world_tick > latest_frame_tick \
+                and frame.world_tick > vision_floor_tick:
             latest_frame_tick = frame.world_tick
             progress_tracker.update(frame)
             has_self = self_center_x(frame) is not None

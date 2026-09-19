@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import torch
 
@@ -41,8 +42,9 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.learned.motor import MotorController382
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.motion import VisionProgress
-from game2.v2.player.learned.runtime import LearnedPlayer
+from game2.v2.player.learned.runtime import LearnedPlayer, TrainingRecord
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
+from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.contracts.vision import VisionFrame
 from game2.v2.training.main import Trainer, reward_for_result
 
@@ -219,6 +221,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                            list(player.motor_controller.parameters())]
         sample = player.process_frame(_frame(2))
         self.assertIsNone(sample.log_prob)
+        self.assertEqual(player.training_records, ())
         evaluate_after = list(player.planner.parameters()) + list(player.motor_controller.parameters())
         self.assertTrue(all(torch.equal(before, after)
                             for before, after in zip(evaluate_before, evaluate_after)))
@@ -237,6 +240,104 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(loss, 0.0)
         self.assertEqual(player.log_probabilities, ())
         self.assertTrue(all(torch.equal(old, new) for old, new in zip(before, after)))
+
+    def test_repeated_sent_decision_has_one_detached_training_record(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        sample = player.process_frame(_frame(1))
+        for _ in range(4):
+            player.record_sent_sample(sample)
+
+        self.assertEqual(len(player.training_records), 1)
+        record = player.training_records[0]
+        self.assertIsInstance(record, TrainingRecord)
+        self.assertEqual(record.world_tick, 1)
+        self.assertIs(record.vision_frame, sample.vision_frame)
+        self.assertEqual(record.action_decision, sample.action_decision)
+
+        unsent_player = self._player()
+        unsent_player.prepare_episode("train", 42)
+        unsent_player.process_frame(_frame(1))
+        self.assertEqual(unsent_player.training_records, ())
+
+    def test_rollout_records_and_samples_do_not_retain_autograd_graph(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        for tick in (1, 2, 3):
+            sample = player.process_frame(_frame(tick))
+            player.record_sent_sample(sample)
+
+        self.assertIsNotNone(player.latest_sample)
+        self.assertTrue(all(not isinstance(value, torch.Tensor)
+                            for value in player.latest_sample.__dict__.values()))
+        self.assertTrue(all(not isinstance(value, torch.Tensor)
+                            for record in player.training_records
+                            for value in record.__dict__.values()))
+        self.assertTrue(all(isinstance(value, float) for value in player.log_probabilities))
+
+    def test_sequential_replay_matches_reference_reinforce_gradient_and_step(self):
+        reference_planner = CNNPlanner.fresh(1)
+        reference_motor = MotorController382.fresh(2)
+        sequential_planner = CNNPlanner.fresh(99)
+        sequential_motor = MotorController382.fresh(100)
+        sequential_planner.load_state_dict(reference_planner.state_dict())
+        sequential_motor.load_state_dict(reference_motor.state_dict())
+        reference = LearnedPlayer(reference_planner, reference_motor)
+        sequential = LearnedPlayer(sequential_planner, sequential_motor)
+        frames = [_frame(1), _frame(2, self_x=5), _frame(3, self_x=7)]
+        for player in (reference, sequential):
+            player.prepare_episode("train", 42)
+            for frame in frames:
+                player.record_sent_sample(player.process_frame(frame))
+        self.assertEqual(reference.training_records, sequential.training_records)
+
+        reward = 0.0001
+        reference_parameters = list(reference.planner.parameters()) + \
+            list(reference.motor_controller.parameters())
+        reference.optimizer.zero_grad(set_to_none=True)
+        reference_log_probs = []
+        for record in reference.training_records:
+            vision = vision_to_tensor(record.vision_frame).unsqueeze(0)
+            planner_output = reference.planner(vision)[0]
+            logits = reference.motor_controller.forward_goal(planner_output, record.motion_x)
+            action = torch.tensor([record.action_decision.right, record.action_decision.jump],
+                                  dtype=logits.dtype)
+            reference_log_probs.append(
+                -torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, action, reduction="none").mean())
+        reference_loss = -reward * torch.stack(reference_log_probs).mean()
+        reference_loss.backward()
+        reference_gradients = [parameter.grad.detach().clone()
+                               for parameter in reference_parameters]
+        self.assertLess(float(torch.linalg.vector_norm(torch.cat([
+            gradient.reshape(-1) for gradient in reference_gradients]))), 1.0)
+        torch.nn.utils.clip_grad_norm_(reference_parameters, max_norm=1.0)
+        reference.optimizer.step()
+
+        updated, sequential_loss = sequential.apply_result(reward)
+        self.assertTrue(updated)
+        self.assertAlmostEqual(sequential_loss, float(reference_loss.detach()), places=10)
+        sequential_parameters = list(sequential.planner.parameters()) + \
+            list(sequential.motor_controller.parameters())
+        for expected, actual in zip(reference_gradients, sequential_parameters):
+            self.assertTrue(torch.allclose(expected, actual.grad, rtol=1e-6, atol=1e-7))
+        for expected, actual in zip(reference_parameters, sequential_parameters):
+            self.assertTrue(torch.allclose(expected, actual, rtol=1e-6, atol=1e-7))
+
+    def test_zero_reward_does_not_backward_or_step(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        player.record_sent_sample(player.process_frame(_frame(1)))
+        with mock.patch.object(player.optimizer, "zero_grad",
+                               side_effect=AssertionError("zero_grad called")), \
+                mock.patch.object(player.optimizer, "step",
+                                  side_effect=AssertionError("step called")), \
+                mock.patch.object(torch.Tensor, "backward",
+                                  side_effect=AssertionError("backward called")):
+            updated, loss = player.apply_result(0.0)
+        self.assertFalse(updated)
+        self.assertEqual(loss, 0.0)
+        self.assertEqual(player.training_records, ())
 
     def test_jump_in_place_timeout_has_zero_reward_and_no_update(self):
         tracker = VisionProgress()
@@ -295,7 +396,7 @@ class _FakeConnection:
         if self.ack_world_ticks:
             world_tick = self.ack_world_ticks.pop(0)
         else:
-            world_tick = self.episode * 10
+            world_tick = self.episode * 10 - 1
         return {"version": 1, "type": "lifecycle_ack", "event": event,
                 "status": "accepted" if accepted else "rejected",
                 "world_tick": world_tick}
@@ -532,6 +633,60 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         self.assertEqual([message["start_world_tick"] for message in started], [100, 106])
         self.assertEqual([message["finish_world_tick"] for message in finished], [102, 110])
 
+    def test_vision_race_frame_between_snapshot_and_ack_is_fully_fenced(self):
+        manifest = PlayerManifest("session", "player", "actor",
+                                  Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
+        connection = _FakeConnection(manifest, None, ack_world_ticks=[105])
+
+        class RaceVision:
+            failed = False
+
+            def __init__(self):
+                self.frames = [
+                    _frame(100, self_x=3, goal_x=10),
+                    _frame(103, self_x=0, goal_x=11),
+                    _frame(106, self_x=3, goal_x=10),
+                ]
+
+            @property
+            def latest(self):
+                if self.frames:
+                    return self.frames.pop(0)
+                return _frame(106, self_x=3, goal_x=10)
+
+        class RaceJoystick(_FakeJoystick):
+            def send_state(self, right, jump):
+                super().send_state(right, jump)
+                self.connection.terminal["world_tick"] = 110
+
+        class RecordingPlayer(LearnedPlayer):
+            def __init__(self, planner, motor):
+                super().__init__(planner, motor)
+                self.processed_ticks = []
+
+            def process_frame(self, frame):
+                self.processed_ticks.append(frame.world_tick)
+                return super().process_frame(frame)
+
+        vision = RaceVision()
+        joystick = RaceJoystick(connection)
+        player = RecordingPlayer(CNNPlanner.fresh(1), MotorController382.fresh(2))
+        player.prepare_episode("train", 42)
+        started = []
+        finished, trainable, _lifecycle = _run_episode(
+            connection, player, 1, first_lifecycle=False, vision=vision,
+            joystick=joystick, action_hz=120, sleeper=lambda _duration: None,
+            clock=lambda: 0.0, ack_settle_timeout=0.01, on_started=started.append,
+        )
+
+        self.assertTrue(trainable)
+        self.assertEqual(player.processed_ticks, [106])
+        self.assertEqual(joystick.sent, [1])
+        self.assertEqual(started[0]["start_world_tick"], 106)
+        self.assertGreater(started[0]["start_world_tick"], 105)
+        self.assertEqual(finished["progress"], 0.0)
+        self.assertEqual([record.world_tick for record in player.training_records], [106])
+
     def test_terminal_at_or_before_start_ack_is_fenced(self):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
@@ -552,7 +707,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         class StartRaceVision(_FakeVision):
             @property
             def latest(self):
-                return _frame(0 if self.connection.episode == 0 else 5)
+                return _frame(0 if self.connection.episode == 0 else 6)
 
         class StartRaceJoystick(_FakeJoystick):
             def send_state(self, right, jump):
@@ -575,7 +730,7 @@ class TrainingPlayerFlowTests(unittest.TestCase):
         self.assertEqual(result, 0)
         started = [message for message in peer.sent if message["type"] == EPISODE_STARTED]
         finished = [message for message in peer.sent if message["type"] == EPISODE_FINISHED]
-        self.assertEqual(started[0]["start_world_tick"], 5)
+        self.assertEqual(started[0]["start_world_tick"], 6)
         self.assertEqual(finished[0]["finish_world_tick"], 10)
 
     def test_rejected_initial_start_is_retried_before_respawn(self):

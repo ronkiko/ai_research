@@ -430,6 +430,32 @@ class _NoSummaryProcesses(_FakeLauncherProcesses):
 
 
 class UnifiedRunnerProcessTests(unittest.TestCase):
+    def test_unpaced_learned_training_is_rejected_before_any_process_spawn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_dir = Path(directory) / "checkpoints"
+            checkpoint_dir.mkdir()
+            planner = checkpoint_dir / "planner.pt"
+            motor = checkpoint_dir / "motor.pt"
+            planner.write_bytes(b"planner")
+            motor.write_bytes(b"motor")
+            before = (planner.read_bytes(), motor.read_bytes())
+            factory = _FakeLauncherProcesses()
+            runner = run.UnifiedRunner(popen_factory=factory, output=io.StringIO())
+            try:
+                with self.assertRaisesRegex(run.RunError,
+                                            "unpaced learned Training is not supported yet"):
+                    runner.train(
+                        set_path=SET_PATH, checkpoint_dir=checkpoint_dir,
+                        max_episodes=1, clock_mode="unpaced", fresh=True,
+                        episode_limit=1200,
+                    )
+            finally:
+                runner.close()
+            after = (planner.read_bytes(), motor.read_bytes())
+
+        self.assertEqual(factory.commands, [])
+        self.assertEqual(after, before)
+
     def test_train_restarts_console_and_resumes_checkpoint_after_each_map(self):
         with tempfile.TemporaryDirectory() as directory:
             factory = _FakeLauncherProcesses()

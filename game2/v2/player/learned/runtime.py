@@ -24,9 +24,20 @@ class DecisionSample:
     motor_goal: MotorGoal
     motion_x: float
     action_decision: ActionDecision
-    planner_output: torch.Tensor | None = None
-    action_logits: torch.Tensor | None = None
-    log_prob: torch.Tensor | None = None
+    log_prob: float | None = None
+
+
+@dataclass(frozen=True)
+class TrainingRecord:
+    """Detached public replay data for one neural decision sent to Joystick."""
+
+    vision_frame: VisionFrame
+    motion_x: float
+    action_decision: ActionDecision
+
+    @property
+    def world_tick(self) -> int:
+        return self.vision_frame.world_tick
 
 
 def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState:
@@ -64,7 +75,9 @@ class LearnedPlayer:
         self._episode_mode: str | None = None
         self._episode_seed: int | None = None
         self._episode_generator: torch.Generator | None = None
-        self._log_probabilities: list[torch.Tensor] = []
+        self._training_records: list[TrainingRecord] = []
+        self._recorded_samples: dict[int, DecisionSample] = {}
+        self._log_probabilities: list[float] = []
         self.last_update_loss: float | None = None
 
     @property
@@ -72,14 +85,20 @@ class LearnedPlayer:
         return self._episode_mode
 
     @property
-    def log_probabilities(self) -> tuple[torch.Tensor, ...]:
+    def log_probabilities(self) -> tuple[float, ...]:
         return tuple(self._log_probabilities)
+
+    @property
+    def training_records(self) -> tuple[TrainingRecord, ...]:
+        return tuple(self._training_records)
 
     def _reset_episode_local(self) -> None:
         self.motion_estimator.reset()
         self.latest_goal = None
         self.latest_decision = ActionDecision(False, False)
         self.latest_sample = None
+        self._training_records.clear()
+        self._recorded_samples.clear()
         self._log_probabilities.clear()
         self.last_update_loss = None
 
@@ -109,39 +128,41 @@ class LearnedPlayer:
             self.planner.eval()
             self.motor_controller.eval()
 
+    def _model_logits(self, vision: torch.Tensor, motion_x: float) -> tuple[torch.Tensor, torch.Tensor]:
+        planner_output = self.planner(vision)[0]
+        if planner_output.ndim != 1 or planner_output.shape[0] != 2:
+            raise ValueError("Planner must return two MotorGoal values")
+        logits = self.motor_controller.forward_goal(planner_output, motion_x) \
+            if hasattr(self.motor_controller, "forward_goal") \
+            else self.motor_controller(motor_input_tensor(planner_output, motion_x))
+        return planner_output, logits
+
     def _process_model_frame(self, frame: VisionFrame, motion_x: float) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
         if self._episode_mode == "train":
-            planner_output = self.planner(vision)[0]
-            logits = self.motor_controller.forward_goal(planner_output, motion_x) \
-                if hasattr(self.motor_controller, "forward_goal") \
-                else self.motor_controller(motor_input_tensor(planner_output, motion_x))
             if self._episode_generator is None:
                 raise RuntimeError("train episode has no random generator")
-            probabilities = torch.sigmoid(logits)
-            random_values = torch.rand(
-                probabilities.shape, generator=self._episode_generator,
-                dtype=probabilities.dtype, device=probabilities.device,
-            )
-            action_tensor = (random_values < probabilities).to(dtype=logits.dtype)
-            log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
-                logits, action_tensor, reduction="none").mean()
+            with torch.no_grad():
+                planner_output, logits = self._model_logits(vision, motion_x)
+                probabilities = torch.sigmoid(logits)
+                random_values = torch.rand(
+                    probabilities.shape, generator=self._episode_generator,
+                    dtype=probabilities.dtype, device=probabilities.device,
+                )
+                action_tensor = (random_values < probabilities).to(dtype=logits.dtype)
+                log_prob = float(-torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, action_tensor, reduction="none").mean())
         else:
             with torch.no_grad():
-                planner_output = self.planner(vision)[0]
-                logits = self.motor_controller.forward_goal(planner_output, motion_x) \
-                    if hasattr(self.motor_controller, "forward_goal") \
-                    else self.motor_controller(motor_input_tensor(planner_output, motion_x))
+                planner_output, logits = self._model_logits(vision, motion_x)
             action_tensor = logits >= 0.0
             log_prob = None
 
-        if planner_output.ndim != 1 or planner_output.shape[0] != 2:
-            raise ValueError("Planner must return two MotorGoal values")
         goal = MotorGoal(float(planner_output[0].detach()),
                          float(planner_output[1].detach()))
         decision = ActionDecision(bool(action_tensor[0].item()), bool(action_tensor[1].item()))
         return DecisionSample(frame.world_tick, frame, goal, motion_x, decision,
-                              planner_output, logits, log_prob)
+                              log_prob)
 
     def process_frame(self, frame: VisionFrame) -> DecisionSample | None:
         """Run one valid public Vision observation through the learned hierarchy.
@@ -179,9 +200,30 @@ class LearnedPlayer:
             raise ValueError("sent samples can be recorded only in train mode")
         if not isinstance(sample, DecisionSample):
             raise TypeError("record_sent_sample requires a DecisionSample")
-        if sample.log_prob is None:
-            raise ValueError("train DecisionSample has no log probability")
-        self._log_probabilities.append(sample.log_prob)
+        sample_id = id(sample)
+        if self._recorded_samples.get(sample_id) is sample:
+            return
+        self._recorded_samples[sample_id] = sample
+        self._training_records.append(TrainingRecord(
+            sample.vision_frame, float(sample.motion_x), sample.action_decision))
+        if sample.log_prob is not None:
+            self._log_probabilities.append(float(sample.log_prob))
+
+    def _backward_record(self, record: TrainingRecord, reward: float,
+                         record_count: int) -> float:
+        """Backpropagate one replay record, releasing its graph on return."""
+        vision = vision_to_tensor(record.vision_frame).unsqueeze(0)
+        planner_output, logits = self._model_logits(vision, record.motion_x)
+        action_tensor = torch.tensor(
+            [record.action_decision.right, record.action_decision.jump],
+            dtype=logits.dtype, device=logits.device,
+        )
+        log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, action_tensor, reduction="none").mean()
+        sample_loss = -float(reward) * log_prob / record_count
+        loss_value = float(sample_loss.detach())
+        sample_loss.backward()
+        return loss_value
 
     def apply_result(self, reward: float) -> tuple[bool, float]:
         """Apply one terminal episodic REINFORCE reward in Train mode."""
@@ -191,23 +233,28 @@ class LearnedPlayer:
                 or not math.isfinite(float(reward)):
             raise ValueError("reward must be finite")
         if float(reward) == 0.0:
+            self._training_records.clear()
+            self._recorded_samples.clear()
             self._log_probabilities.clear()
             self.last_update_loss = 0.0
             return False, 0.0
         if self.optimizer is None:
             raise RuntimeError("trainable models are required for updates")
-        if not self._log_probabilities:
+        if not self._training_records:
             self.last_update_loss = 0.0
             return False, 0.0
-        loss = -float(reward) * torch.stack(self._log_probabilities).mean()
         self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        loss_value = 0.0
+        record_count = len(self._training_records)
+        for record in tuple(self._training_records):
+            loss_value += self._backward_record(record, float(reward), record_count)
         parameters = list(self.planner.parameters()) + list(self.motor_controller.parameters())
         torch.nn.utils.clip_grad_norm_(parameters, max_norm=1.0)
         self.optimizer.step()
-        loss_value = float(loss.detach())
         if not math.isfinite(loss_value):
             raise RuntimeError("training loss is not finite")
+        self._training_records.clear()
+        self._recorded_samples.clear()
         self.last_update_loss = loss_value
         self._log_probabilities.clear()
         return True, loss_value
@@ -217,4 +264,4 @@ class LearnedPlayer:
         return action_to_joystick(sequence, self.latest_decision)
 
 
-__all__ = ["DecisionSample", "LearnedPlayer", "action_to_joystick"]
+__all__ = ["DecisionSample", "LearnedPlayer", "TrainingRecord", "action_to_joystick"]
