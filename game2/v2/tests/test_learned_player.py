@@ -39,6 +39,14 @@ class MotionEstimatorTests(unittest.TestCase):
         estimator.update(_grid(self_x=5, tick=7))
         self.assertEqual(estimator.update(_grid(self_x=11, tick=8)), 1.0)
 
+    def test_grid_motion_direction_persists_between_cell_boundary_changes(self):
+        estimator = MotionEstimator(motion_memory_ticks=4)
+        self.assertEqual(estimator.update(_grid(self_x=2, tick=10)), 0.0)
+        self.assertGreater(estimator.update(_grid(self_x=3, tick=11)), 0.0)
+        self.assertGreater(estimator.update(_grid(self_x=3, tick=12)), 0.0)
+        self.assertGreater(estimator.update(_grid(self_x=3, tick=15)), 0.0)
+        self.assertEqual(estimator.update(_grid(self_x=3, tick=16)), 0.0)
+
     def test_missing_self_and_discontinuity_reset_the_temporal_state(self):
         estimator = MotionEstimator()
         estimator.update(_grid(self_x=2, tick=4))

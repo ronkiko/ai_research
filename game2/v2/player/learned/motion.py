@@ -12,6 +12,7 @@ from game2.v2.contracts.vision import (
 
 
 MOTION_CELLS_PER_TICK_SCALE = 0.05
+MOTION_MEMORY_TICKS = 32
 SELF = META_SELF
 GOAL = META_GOAL
 OTHER_ACTOR = META_OTHER_ACTOR
@@ -119,7 +120,9 @@ class MotionEstimator:
     """Estimate normalized horizontal motion from consecutive logical grids."""
 
     def __init__(
-        self, cells_per_tick_scale: float = MOTION_CELLS_PER_TICK_SCALE
+        self,
+        cells_per_tick_scale: float = MOTION_CELLS_PER_TICK_SCALE,
+        motion_memory_ticks: int = MOTION_MEMORY_TICKS,
     ):
         if (
             type(cells_per_tick_scale) not in (int, float)
@@ -127,10 +130,15 @@ class MotionEstimator:
             or cells_per_tick_scale <= 0
         ):
             raise ValueError("cells_per_tick_scale must be positive")
+        if type(motion_memory_ticks) is not int or motion_memory_ticks <= 0:
+            raise ValueError("motion_memory_ticks must be a positive integer")
         self.cells_per_tick_scale = float(cells_per_tick_scale)
+        self.motion_memory_ticks = motion_memory_ticks
         self._previous_center_x: float | None = None
         self._previous_world_tick: int | None = None
         self._previous_shape: tuple[int, int, int] | None = None
+        self._last_motion_x = 0.0
+        self._last_motion_tick: int | None = None
         self._last_observation_usable = False
 
     @property
@@ -145,6 +153,8 @@ class MotionEstimator:
         self._previous_center_x = None
         self._previous_world_tick = None
         self._previous_shape = None
+        self._last_motion_x = 0.0
+        self._last_motion_tick = None
         self._last_observation_usable = False
 
     def update(self, grid: VisionGrid) -> float:
@@ -174,10 +184,23 @@ class MotionEstimator:
 
         dt_ticks = grid.world_tick - self._previous_world_tick
         motion_x_raw = (center_x - self._previous_center_x) / dt_ticks
-        motion_x = max(
-            -1.0,
-            min(1.0, motion_x_raw / self.cells_per_tick_scale),
-        )
+        if motion_x_raw:
+            motion_x = max(
+                -1.0,
+                min(1.0, motion_x_raw / self.cells_per_tick_scale),
+            )
+            self._last_motion_x = motion_x
+            self._last_motion_tick = grid.world_tick
+        elif (
+            self._last_motion_tick is not None
+            and grid.world_tick - self._last_motion_tick <= self.motion_memory_ticks
+        ):
+            motion_x = self._last_motion_x
+        else:
+            motion_x = 0.0
+            self._last_motion_x = 0.0
+            self._last_motion_tick = None
+
         self._previous_center_x = center_x
         self._previous_world_tick = grid.world_tick
         self._previous_shape = shape
@@ -186,7 +209,7 @@ class MotionEstimator:
 
 
 __all__ = [
-    "GOAL", "MOTION_CELLS_PER_TICK_SCALE", "OTHER_ACTOR", "SELF",
+    "GOAL", "MOTION_CELLS_PER_TICK_SCALE", "MOTION_MEMORY_TICKS", "OTHER_ACTOR", "SELF",
     "MotionEstimator", "VisionProgress", "goal_center", "has_metadata",
     "self_center", "self_center_x",
 ]
