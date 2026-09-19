@@ -31,7 +31,7 @@ from game2.v2.contracts.training import (
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
-from .checkpoint import save_motor_controller, save_planner
+from .checkpoint import save_critic, save_motor_controller, save_planner
 from .inference import InferenceWorker
 from .motion import VisionProgress, self_center_x
 from .runtime import LearnedPlayer
@@ -140,9 +140,9 @@ def _settle_acks(joystick, sequences: set[int], statuses: dict[int, list[str]],
     return accepted, rejected, complete
 
 
-def _checkpoint_paths(checkpoint_dir: str | Path) -> tuple[Path, Path]:
+def _checkpoint_paths(checkpoint_dir: str | Path) -> tuple[Path, Path, Path]:
     directory = Path(checkpoint_dir)
-    return directory / "planner.pt", directory / "motor.pt"
+    return directory / "planner.pt", directory / "motor.pt", directory / "critic.pt"
 
 
 def _request_lifecycle_ack(connection: PlayerConnection, first_lifecycle: bool) -> dict | None:
@@ -375,10 +375,11 @@ def run_training_player(connection: PlayerConnection, player: LearnedPlayer, tra
             if message_type == SAVE:
                 if awaiting_update is not None:
                     raise ProtocolError("SAVE arrived before APPLY_RESULT")
-                planner_path, motor_path = _checkpoint_paths(checkpoint_dir)
+                planner_path, motor_path, critic_path = _checkpoint_paths(checkpoint_dir)
                 planner_path.parent.mkdir(parents=True, exist_ok=True)
                 save_planner(player.planner, planner_path)
                 save_motor_controller(player.motor_controller, motor_path)
+                save_critic(player.critic, critic_path)
                 peer.send(saved_message())
                 return 0
             if message_type in {READY, EPISODE_STARTED, EPISODE_FINISHED,

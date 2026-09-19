@@ -28,33 +28,48 @@ from game2.v2.contracts.model import (
     send_model_message,
     update_result_message,
 )
-from game2.v2.player.learned.checkpoint import load_motor_controller, load_planner
+from game2.v2.player.learned.checkpoint import (
+    load_critic,
+    load_motor_controller,
+    load_planner,
+)
+from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import LearnedPlayer
 
 
-def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path]:
+def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path]:
     root = Path(directory)
-    return root / "planner.pt", root / "motor.pt"
+    return root / "planner.pt", root / "motor.pt", root / "critic.pt"
 
 
 def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
+                critic_seed: int = 3,
                 planner_checkpoint: str | Path | None = None,
-                motor_checkpoint: str | Path | None = None) -> LearnedPlayer:
-    checkpoints = planner_checkpoint is not None, motor_checkpoint is not None
+                motor_checkpoint: str | Path | None = None,
+                critic_checkpoint: str | Path | None = None) -> LearnedPlayer:
+    checkpoints = (
+        planner_checkpoint is not None,
+        motor_checkpoint is not None,
+        critic_checkpoint is not None,
+    )
     if fresh:
         if any(checkpoints):
             raise ValueError("Fresh Model runtime cannot use checkpoints")
         planner = CNNPlanner.fresh(planner_seed)
         motor = MotorController582.fresh(motor_seed)
+        critic = CNNCritic.fresh(critic_seed)
     else:
-        if checkpoints != (True, True):
-            raise ValueError("Model resume requires both checkpoints")
-        assert planner_checkpoint is not None and motor_checkpoint is not None
+        if checkpoints != (True, True, True):
+            raise ValueError("Model resume requires planner, motor, and critic checkpoints")
+        assert planner_checkpoint is not None
+        assert motor_checkpoint is not None
+        assert critic_checkpoint is not None
         planner = load_planner(planner_checkpoint)
         motor = load_motor_controller(motor_checkpoint)
-    return LearnedPlayer(planner, motor)
+        critic = load_critic(critic_checkpoint)
+    return LearnedPlayer(planner, motor, critic)
 
 
 class _FrameReader:
@@ -198,7 +213,8 @@ class ModelRuntime:
             ))
         return None
 
-    def run(self, planner_path: str | Path, motor_path: str | Path) -> int:
+    def run(self, planner_path: str | Path, motor_path: str | Path,
+            critic_path: str | Path) -> int:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((self.listen_host, self.listen_port))
@@ -233,11 +249,12 @@ class ModelRuntime:
                             if self._active:
                                 raise ProtocolError("SAVE arrived during an active episode")
                             from game2.v2.player.learned.checkpoint import (
-                                save_motor_controller, save_planner,
+                                save_critic, save_motor_controller, save_planner,
                             )
                             Path(planner_path).parent.mkdir(parents=True, exist_ok=True)
                             save_planner(self.player.planner, planner_path)
                             save_motor_controller(self.player.motor_controller, motor_path)
+                            save_critic(self.player.critic, critic_path)
                             self._send(peer, saved_message())
                             # Keep the successful worker alive until Player has
                             # consumed SAVED and closed its side of the boundary.
@@ -259,8 +276,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--planner-seed", type=int, default=1)
     parser.add_argument("--motor-seed", type=int, default=2)
+    parser.add_argument("--critic-seed", type=int, default=3)
     parser.add_argument("--planner-checkpoint")
     parser.add_argument("--motor-checkpoint")
+    parser.add_argument("--critic-checkpoint")
     parser.add_argument("--checkpoint-dir")
     parser.add_argument("--inference-delay", type=float, default=0.0)
     return parser
@@ -270,24 +289,41 @@ def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.checkpoint_dir:
-            planner_path, motor_path = _checkpoint_paths(args.checkpoint_dir)
+            planner_path, motor_path, critic_path = _checkpoint_paths(args.checkpoint_dir)
             if not args.fresh and args.planner_checkpoint is None:
-                args.planner_checkpoint, args.motor_checkpoint = planner_path, motor_path
-        elif not args.fresh and (args.planner_checkpoint is None or
-                                 args.motor_checkpoint is None):
-            raise ValueError("Model resume requires checkpoints")
-        planner_path, motor_path = _checkpoint_paths(args.checkpoint_dir or "runtime/checkpoints")
+                args.planner_checkpoint = planner_path
+                args.motor_checkpoint = motor_path
+                args.critic_checkpoint = critic_path
+        elif not args.fresh and (
+            args.planner_checkpoint is None
+            or args.motor_checkpoint is None
+            or args.critic_checkpoint is None
+        ):
+            raise ValueError("Model resume requires planner, motor, and critic checkpoints")
+        planner_path, motor_path, critic_path = _checkpoint_paths(
+            args.checkpoint_dir or "runtime/checkpoints"
+        )
         if args.planner_checkpoint is not None:
             planner_path = Path(args.planner_checkpoint)
         if args.motor_checkpoint is not None:
             motor_path = Path(args.motor_checkpoint)
+        if args.critic_checkpoint is not None:
+            critic_path = Path(args.critic_checkpoint)
         player = build_model(
-            fresh=args.fresh, planner_seed=args.planner_seed, motor_seed=args.motor_seed,
+            fresh=args.fresh,
+            planner_seed=args.planner_seed,
+            motor_seed=args.motor_seed,
+            critic_seed=args.critic_seed,
             planner_checkpoint=args.planner_checkpoint,
             motor_checkpoint=args.motor_checkpoint,
+            critic_checkpoint=args.critic_checkpoint,
         )
-        return ModelRuntime(player, listen_host=args.listen_host, listen_port=args.listen_port,
-                            inference_delay=args.inference_delay).run(planner_path, motor_path)
+        return ModelRuntime(
+            player,
+            listen_host=args.listen_host,
+            listen_port=args.listen_port,
+            inference_delay=args.inference_delay,
+        ).run(planner_path, motor_path, critic_path)
     except (EOFError, OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:
         print(f"ERROR Model runtime failed: {exc}", file=sys.stderr, flush=True)
         return 1

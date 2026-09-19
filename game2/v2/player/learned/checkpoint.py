@@ -7,6 +7,7 @@ from typing import TypeVar
 
 import torch
 
+from .critic import CRITIC_CONFIGURATION, CNNCritic
 from .motor import MOTOR_CONTROLLER_CONFIGURATION, MotorController582
 from .planner import PLANNER_CONFIGURATION, CNNPlanner
 
@@ -40,6 +41,14 @@ def save_planner(model: CNNPlanner, path: str | Path) -> None:
         raise TypeError("save_planner requires a CNNPlanner")
     torch.save(_payload(model, role="planner", implementation="cnn",
                         configuration=PLANNER_CONFIGURATION), Path(path))
+
+
+def save_critic(model: CNNCritic, path: str | Path) -> None:
+    """Save the PPO Critic checkpoint."""
+    if not isinstance(model, CNNCritic):
+        raise TypeError("save_critic requires a CNNCritic")
+    torch.save(_payload(model, role="critic", implementation="cnn_value",
+                        configuration=CRITIC_CONFIGURATION), Path(path))
 
 
 def save_motor_controller(model: MotorController582, path: str | Path) -> None:
@@ -93,6 +102,13 @@ def load_planner(path: str | Path) -> CNNPlanner:
     return _restore(CNNPlanner.fresh(payload["seed"]), payload)
 
 
+def load_critic(path: str | Path) -> CNNCritic:
+    """Load and validate the PPO Critic checkpoint onto the CPU."""
+    payload = _read(path, role="critic", implementation="cnn_value",
+                    configuration=CRITIC_CONFIGURATION)
+    return _restore(CNNCritic.fresh(payload["seed"]), payload)
+
+
 def load_motor_controller(path: str | Path) -> MotorController582:
     """Load and validate a 5-8-2 Motor Controller checkpoint onto the CPU."""
     payload = _read(path, role="motor_controller", implementation="mlp",
@@ -102,8 +118,10 @@ def load_motor_controller(path: str | Path) -> MotorController582:
 
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
+    "load_critic",
     "load_motor_controller",
     "load_planner",
+    "save_critic",
     "save_motor_controller",
     "save_planner",
 ]
