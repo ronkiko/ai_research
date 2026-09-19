@@ -10,7 +10,7 @@ from .contracts import MotorGoal
 from .vision import VISION_CHANNELS, vision_to_tensor
 
 
-PLANNER_CONFIGURATION = "adaptive-spatial-multiscale-grid-v4"
+PLANNER_CONFIGURATION = "adaptive-spatial-fine-physics-v5"
 
 
 class CNNPlanner(nn.Module):

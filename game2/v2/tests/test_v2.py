@@ -151,6 +151,28 @@ class InputLatchTests(unittest.TestCase):
         engine.tick()
         self.assertLess(actor.body.vy, 0.0)
 
+    def test_partial_hazard_kills_only_when_actor_reaches_damage_band(self):
+        engine = self._engine()
+        actor = engine.actors["actor-a"]
+        hazard = next(rect for rect in engine.world.collision_rects if rect.damage)
+        self.assertEqual(hazard.height, 24)
+
+        actor.body.x = hazard.x
+        actor.body.y = hazard.y - actor.body.height - 1
+        actor.body.vx = actor.body.vy = 0.0
+        actor.body.grounded = False
+        engine.tick()
+        self.assertTrue(actor.body.alive)
+        self.assertIsNone(actor.result)
+
+        actor.body.y = hazard.y - actor.body.height
+        actor.body.vx = actor.body.vy = 0.0
+        actor.body.grounded = False
+        events = engine.tick()
+        self.assertFalse(actor.body.alive)
+        self.assertEqual(actor.result, "dead")
+        self.assertTrue(any(event["event"] == "hazard_contact" for event in events))
+
     def test_input_sequences_are_monotonic_and_actor_scoped(self):
         engine = self._engine()
         self.assertEqual(

@@ -325,6 +325,7 @@ class LearnedCheckpointTests(unittest.TestCase):
             for index, configuration in enumerate((
                 "adaptive-spatial-compact-160x96-v2",
                 "adaptive-spatial-grid-v3",
+                "adaptive-spatial-multiscale-grid-v4",
             )):
                 path = Path(directory) / f"legacy-{index}.pt"
                 payload = dict(original)

@@ -7,7 +7,13 @@ from numbers import Real
 from typing import Any
 
 from .framing import PROTOCOL_VERSION, ProtocolError, decode_frame, encode_frame
-from .vision import (VISION_MAX_CELLS, VISION_MAX_COLUMNS, VISION_MAX_ROWS,\n                     VISION_SUBDIVISIONS, VisionGrid)
+from .vision import (
+    VISION_MAX_CELLS,
+    VISION_MAX_COLUMNS,
+    VISION_MAX_ROWS,
+    VISION_SUBDIVISIONS,
+    VisionGrid,
+)
 
 
 PREPARE = "prepare"
