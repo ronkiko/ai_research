@@ -70,16 +70,22 @@ def observe_message(grid: VisionGrid) -> dict[str, Any]:
         rows=grid.rows,
         tile_size=grid.tile_size,
         subdivisions=grid.subdivisions,
+        coarse_physics_length=len(grid.coarse_physics),
         physics_length=len(grid.physics),
         metadata_length=len(grid.metadata),
     )
 
 
 def observation_packet(grid: VisionGrid) -> bytes:
-    """Encode one OBSERVE header followed by both logical matrices."""
+    """Encode one OBSERVE header followed by all three logical matrices."""
     if not isinstance(grid, VisionGrid):
         raise TypeError("observation_packet requires a VisionGrid")
-    return encode_frame(observe_message(grid)) + grid.physics + grid.metadata
+    return (
+        encode_frame(observe_message(grid))
+        + grid.coarse_physics
+        + grid.physics
+        + grid.metadata
+    )
 
 
 def actuated_message(decision_id: int) -> dict[str, Any]:
@@ -135,7 +141,8 @@ _FIELDS = {
     PREPARE: frozenset(("version", "type", "episode_id", "mode", "seed")),
     OBSERVE: frozenset((
         "version", "type", "observation_world_tick", "columns", "rows",
-        "tile_size", "subdivisions", "physics_length", "metadata_length",
+        "tile_size", "subdivisions", "coarse_physics_length",
+        "physics_length", "metadata_length",
     )),
     ACTUATED: frozenset(("version", "type", "decision_id")),
     EPISODE_END: frozenset(("version", "type", "episode_id", "result", "reward",
@@ -209,11 +216,13 @@ def _validate_observation_header(message: dict[str, Any]) -> None:
         raise ProtocolError("observation subdivisions are invalid")
     if type(world_tick) is not int or world_tick < 0:
         raise ProtocolError("observation tick is invalid")
-    metadata_cells = cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
-    if message.get("physics_length") != cells:
-        raise ProtocolError("observation physics length does not match dimensions")
-    if message.get("metadata_length") != metadata_cells:
-        raise ProtocolError("observation metadata length does not match dimensions")
+    fine_cells = cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
+    if message.get("coarse_physics_length") != cells:
+        raise ProtocolError("observation coarse physics length does not match dimensions")
+    if message.get("physics_length") != fine_cells:
+        raise ProtocolError("observation physics length does not match fine dimensions")
+    if message.get("metadata_length") != fine_cells:
+        raise ProtocolError("observation metadata length does not match fine dimensions")
 
 
 def observation_from_message(
@@ -223,17 +232,20 @@ def observation_from_message(
         raise ProtocolError("message is not an observation")
     if not isinstance(matrices, (bytes, bytearray)):
         raise ProtocolError("observation matrix bytes are required")
-    physics_cells = message["columns"] * message["rows"]
-    metadata_cells = physics_cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
-    if len(matrices) != physics_cells + metadata_cells:
+    coarse_cells = message["columns"] * message["rows"]
+    fine_cells = coarse_cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
+    if len(matrices) != coarse_cells + fine_cells * 2:
         raise ProtocolError("observation matrix payload length is invalid")
     raw = bytes(matrices)
+    coarse_end = coarse_cells
+    physics_end = coarse_end + fine_cells
     return VisionGrid(
         message["columns"],
         message["rows"],
         message["tile_size"],
-        raw[:physics_cells],
-        raw[physics_cells:],
+        raw[:coarse_end],
+        raw[coarse_end:physics_end],
+        raw[physics_end:],
         message["observation_world_tick"],
         message["subdivisions"],
     )

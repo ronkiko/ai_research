@@ -76,7 +76,9 @@ class _FrameReader:
                 payload = bytes(self.buffer[4:size + 4])
                 message = decode_model_message(decode_frame(payload))
                 matrix_length = (
-                    message.get("physics_length", 0) + message.get("metadata_length", 0)
+                    message.get("coarse_physics_length", 0)
+                    + message.get("physics_length", 0)
+                    + message.get("metadata_length", 0)
                     if message["type"] == OBSERVE else 0
                 )
                 total = size + 4 + matrix_length

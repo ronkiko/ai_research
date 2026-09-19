@@ -15,7 +15,8 @@ VISION_MAX_CELLS = VISION_MAX_COLUMNS * VISION_MAX_ROWS
 VISION_SUBDIVISIONS = 8
 VISION_FIELDS = frozenset({
     "version", "type", "session_id", "world_tick", "columns", "rows",
-    "tile_size", "subdivisions", "physics_length", "metadata_length",
+    "tile_size", "subdivisions", "coarse_physics_length",
+    "physics_length", "metadata_length",
 })
 
 PHYSICS_EMPTY = 0
@@ -35,11 +36,12 @@ META_MASK = (
 
 @dataclass(frozen=True)
 class VisionGrid:
-    """Coarse terrain plus fine dynamic metadata for one public observation."""
+    """Global coarse map plus aligned fine physics and dynamic metadata."""
 
     columns: int
     rows: int
     tile_size: int
+    coarse_physics: bytes
     physics: bytes
     metadata: bytes
     world_tick: int
@@ -60,37 +62,67 @@ class VisionGrid:
             )
         if type(self.world_tick) is not int or self.world_tick < 0:
             raise ProtocolError("VisionGrid world_tick must be non-negative")
-        if not isinstance(self.physics, (bytes, bytearray)):
-            raise ProtocolError("VisionGrid physics must be bytes")
-        if not isinstance(self.metadata, (bytes, bytearray)):
-            raise ProtocolError("VisionGrid metadata must be bytes")
+        for name, value in (
+            ("coarse_physics", self.coarse_physics),
+            ("physics", self.physics),
+            ("metadata", self.metadata),
+        ):
+            if not isinstance(value, (bytes, bytearray)):
+                raise ProtocolError(f"VisionGrid {name} must be bytes")
 
+        coarse_physics = bytes(self.coarse_physics)
         physics = bytes(self.physics)
         metadata = bytes(self.metadata)
-        physics_cells = self.columns * self.rows
-        metadata_cells = self.metadata_columns * self.metadata_rows
-        if len(physics) != physics_cells:
-            raise ProtocolError("VisionGrid physics length does not match tile dimensions")
-        if len(metadata) != metadata_cells:
-            raise ProtocolError("VisionGrid metadata length does not match sensor dimensions")
+        coarse_cells = self.columns * self.rows
+        fine_cells = self.fine_columns * self.fine_rows
+        if len(coarse_physics) != coarse_cells:
+            raise ProtocolError(
+                "VisionGrid coarse physics length does not match tile dimensions"
+            )
+        if len(physics) != fine_cells:
+            raise ProtocolError(
+                "VisionGrid physics length does not match fine sensor dimensions"
+            )
+        if len(metadata) != fine_cells:
+            raise ProtocolError(
+                "VisionGrid metadata length does not match fine sensor dimensions"
+            )
+        if coarse_physics and coarse_physics.translate(None, _ALLOWED_PHYSICS):
+            raise ProtocolError("VisionGrid contains an unknown coarse physics value")
         if physics and physics.translate(None, _ALLOWED_PHYSICS):
-            raise ProtocolError("VisionGrid contains an unknown physics value")
+            raise ProtocolError("VisionGrid contains an unknown fine physics value")
         if any(value & ~META_MASK for value in metadata):
             raise ProtocolError("VisionGrid contains an unknown metadata bit")
+        object.__setattr__(self, "coarse_physics", coarse_physics)
         object.__setattr__(self, "physics", physics)
         object.__setattr__(self, "metadata", metadata)
 
     @property
-    def metadata_columns(self) -> int:
+    def fine_columns(self) -> int:
         return self.columns * self.subdivisions
 
     @property
-    def metadata_rows(self) -> int:
+    def fine_rows(self) -> int:
         return self.rows * self.subdivisions
 
     @property
+    def metadata_columns(self) -> int:
+        return self.fine_columns
+
+    @property
+    def metadata_rows(self) -> int:
+        return self.fine_rows
+
+    @property
+    def physics_columns(self) -> int:
+        return self.fine_columns
+
+    @property
+    def physics_rows(self) -> int:
+        return self.fine_rows
+
+    @property
     def sensor_cell_size(self) -> float:
-        """Physical size of one fine metadata cell in world pixels."""
         return self.tile_size / self.subdivisions
 
 
@@ -123,25 +155,25 @@ def _validate_header(
         or type(rows) is not int or not 1 <= rows <= VISION_MAX_ROWS
     ):
         raise ProtocolError("Vision grid dimensions are outside the authored world limit")
-    if columns * rows > VISION_MAX_CELLS:
+    coarse_cells = columns * rows
+    if coarse_cells > VISION_MAX_CELLS:
         raise ProtocolError("Vision grid is too large")
     if type(tile_size) is not int or tile_size <= 0:
         raise ProtocolError("Vision tile_size must be a positive integer")
     if subdivisions != VISION_SUBDIVISIONS:
         raise ProtocolError(f"Vision subdivisions must be {VISION_SUBDIVISIONS}")
-    physics_cells = columns * rows
-    metadata_cells = (
-        columns * VISION_SUBDIVISIONS * rows * VISION_SUBDIVISIONS
-    )
-    if header.get("physics_length") != physics_cells:
-        raise ProtocolError("Vision physics length does not match tile dimensions")
-    if header.get("metadata_length") != metadata_cells:
-        raise ProtocolError("Vision metadata length does not match sensor dimensions")
+    fine_cells = coarse_cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
+    if header.get("coarse_physics_length") != coarse_cells:
+        raise ProtocolError("Vision coarse physics length does not match tile dimensions")
+    if header.get("physics_length") != fine_cells:
+        raise ProtocolError("Vision physics length does not match fine dimensions")
+    if header.get("metadata_length") != fine_cells:
+        raise ProtocolError("Vision metadata length does not match fine dimensions")
     return columns, rows, tile_size, subdivisions, world_tick
 
 
 def send_vision_grid(sock: socket.socket, session_id: str, grid: VisionGrid) -> None:
-    """Send one header, then coarse physics and fine metadata matrices."""
+    """Send coarse map, fine physics, and fine metadata after one strict header."""
     if not isinstance(grid, VisionGrid):
         raise TypeError("send_vision_grid requires a VisionGrid")
     session_id = _session_id(session_id)
@@ -154,10 +186,12 @@ def send_vision_grid(sock: socket.socket, session_id: str, grid: VisionGrid) -> 
         "rows": grid.rows,
         "tile_size": grid.tile_size,
         "subdivisions": grid.subdivisions,
+        "coarse_physics_length": len(grid.coarse_physics),
         "physics_length": len(grid.physics),
         "metadata_length": len(grid.metadata),
     }
     sock.sendall(encode_frame(header))
+    sock.sendall(grid.coarse_physics)
     sock.sendall(grid.physics)
     sock.sendall(grid.metadata)
 
@@ -168,10 +202,12 @@ def recv_vision_grid(sock: socket.socket, expected_session_id: str) -> VisionGri
     columns, rows, tile_size, subdivisions, world_tick = _validate_header(
         header, expected_session_id
     )
+    coarse_physics = recv_exact(sock, header["coarse_physics_length"])
     physics = recv_exact(sock, header["physics_length"])
     metadata = recv_exact(sock, header["metadata_length"])
     return VisionGrid(
-        columns, rows, tile_size, physics, metadata, world_tick, subdivisions
+        columns, rows, tile_size, coarse_physics, physics, metadata,
+        world_tick, subdivisions,
     )
 
 

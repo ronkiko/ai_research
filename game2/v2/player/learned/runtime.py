@@ -38,6 +38,7 @@ class TrainingRecord:
     tile_size: int
     subdivisions: int
     world_tick: int
+    coarse_physics: bytes
     physics: bytes
     metadata: bytes
     motion_x: float
@@ -54,6 +55,7 @@ class TrainingRecord:
             grid.tile_size,
             grid.subdivisions,
             grid.world_tick,
+            bytes(grid.coarse_physics),
             bytes(grid.physics),
             bytes(grid.metadata),
             float(sample.motion_x),
@@ -68,6 +70,7 @@ class TrainingRecord:
             self.columns,
             self.rows,
             self.tile_size,
+            self.coarse_physics,
             self.physics,
             self.metadata,
             self.world_tick,
