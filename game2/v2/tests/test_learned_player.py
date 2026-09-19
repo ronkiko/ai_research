@@ -75,7 +75,7 @@ class _Lifecycle:
 class _LifecycleVision:
     def __init__(self, frames):
         self.frames = list(frames)
-        self.frames_received = 0
+        self.grids_received = 0
         self.failed = False
         self.error = None
 
@@ -86,7 +86,7 @@ class _LifecycleVision:
     @property
     def latest(self):
         if len(self.frames) > 1:
-            self.frames_received += 1
+            self.grids_received += 1
             return self.frames.pop(0)
         return self.frames[0] if self.frames else None
 
@@ -229,7 +229,7 @@ class LearnedJoystickTests(unittest.TestCase):
         class FakeVision:
             failed = False
             error = None
-            frames_received = 0
+            grids_received = 0
 
             def __init__(self, _manifest):
                 self.frames = [_grid(tick=1), _grid(self_x=3, tick=2)]
@@ -293,7 +293,7 @@ class LearnedJoystickTests(unittest.TestCase):
             failed = False
             error = None
             connected = True
-            frames_received = 1
+            grids_received = 1
             latest = _grid(self_x=3, tick=1)
 
             def connect(self):
@@ -364,7 +364,7 @@ class LearnedJoystickTests(unittest.TestCase):
             failed = False
             error = None
             connected = True
-            frames_received = 0
+            grids_received = 0
             latest = _grid(self_x=3, tick=1)
 
             def __init__(self, _manifest):

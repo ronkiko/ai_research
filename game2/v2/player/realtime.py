@@ -142,7 +142,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
         print(f"DIAGNOSTICS accepted_actions={joystick.accepted_count} "
               f"rejected_actions={joystick.rejected_count} "
               f"duplicate_actions={joystick.duplicate_count} "
-              f"vision_frames={vision.frames_received}", flush=True)
+              f"vision_grids={vision.grids_received}", flush=True)
     return 0
 
 

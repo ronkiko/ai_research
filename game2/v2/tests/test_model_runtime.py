@@ -286,7 +286,7 @@ class ModelRuntimeTests(unittest.TestCase):
         class Vision:
             failed = False
             error = None
-            frames_received = 0
+            grids_received = 0
             connected = True
 
             def __init__(self, _manifest):

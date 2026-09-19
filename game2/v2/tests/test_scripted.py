@@ -48,7 +48,7 @@ class ScriptedVisionPolicyTests(unittest.TestCase):
             def __init__(self, _manifest):
                 self.latest_reads = 0
                 self.self_seen = False
-                self.frames_received = 0
+                self.grids_received = 0
 
             def connect(self):
                 return None

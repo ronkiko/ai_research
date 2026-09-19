@@ -184,7 +184,7 @@ def main(argv=None) -> int:
         if ack_thread is not None and ack_thread is not threading.current_thread():
             ack_thread.join(timeout=1)
         vision.close()
-    print(f"DIAGNOSTICS vision_grids={vision.frames_received}", flush=True)
+    print(f"DIAGNOSTICS vision_grids={vision.grids_received}", flush=True)
     return 0
 
 

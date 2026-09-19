@@ -47,7 +47,7 @@ class VisionReceiver:
         self._error: BaseException | None = None
         self._latest: VisionGrid | None = None
         self.latest_received_at: float | None = None
-        self.frames_received = 0
+        self.grids_received = 0
 
     @property
     def latest(self) -> VisionGrid | None:
@@ -98,7 +98,7 @@ class VisionReceiver:
                 with self._condition:
                     self._latest = frame
                     self.latest_received_at = time.monotonic()
-                    self.frames_received += 1
+                    self.grids_received += 1
                     self._condition.notify_all()
         except (EOFError, OSError, ValueError) as exc:
             if not self._closed.is_set():
