@@ -1,4 +1,4 @@
-"""Deterministic logical tile-grid Vision renderer."""
+"""Deterministic multi-scale logical Vision renderer."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -8,11 +8,21 @@ from typing import Any
 from ....contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
+    META_OTHER_CENTER,
     META_SELF,
+    META_SELF_CENTER,
+    VISION_SUBDIVISIONS,
     VisionGrid,
 )
 from ...world import WorldDefinition
 from ..view_state import DisplayState
+
+
+def _sensor_geometry(world: WorldDefinition) -> tuple[int, int, float]:
+    columns = world.columns * VISION_SUBDIVISIONS
+    rows = world.rows * VISION_SUBDIVISIONS
+    cell_size = world.tile_size / VISION_SUBDIVISIONS
+    return columns, rows, cell_size
 
 
 def _mark_rect(
@@ -24,22 +34,39 @@ def _mark_rect(
     height: float,
     flag: int,
 ) -> None:
-    """OR one metadata flag into every authored cell intersected by a rectangle."""
-    tile = world.tile_size
-    left = max(0, floor(x / tile))
-    top = max(0, floor(y / tile))
-    right = min(world.columns, ceil((x + width) / tile))
-    bottom = min(world.rows, ceil((y + height) / tile))
+    """OR one metadata flag into every fine sensor cell intersecting a rectangle."""
+    columns, rows, cell_size = _sensor_geometry(world)
+    left = max(0, floor(x / cell_size))
+    top = max(0, floor(y / cell_size))
+    right = min(columns, ceil((x + width) / cell_size))
+    bottom = min(rows, ceil((y + height) / cell_size))
     if right <= left or bottom <= top:
         return
     for row in range(top, bottom):
-        offset = row * world.columns
+        offset = row * columns
         for column in range(left, right):
             metadata[offset + column] |= flag
 
 
+def _mark_center(
+    metadata: bytearray,
+    world: WorldDefinition,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    flag: int,
+) -> None:
+    """Mark the fine sensor cell containing one rectangle center."""
+    columns, rows, cell_size = _sensor_geometry(world)
+    column = floor((x + width / 2.0) / cell_size)
+    row = floor((y + height / 2.0) / cell_size)
+    if 0 <= column < columns and 0 <= row < rows:
+        metadata[row * columns + column] |= flag
+
+
 class VisionGridRenderer:
-    """Build public logical Vision from WorldDefinition and validated DisplayState."""
+    """Build coarse terrain plus fine dynamic metadata from public-safe state."""
 
     def __init__(
         self,
@@ -105,7 +132,8 @@ class VisionGridRenderer:
             raise TypeError("VisionGridRenderer requires a WorldDefinition")
         perspective = self.self_actor_id if self_actor_id is None else self_actor_id
         display_state = self._state(world, candidate, perspective)
-        metadata = bytearray(world.columns * world.rows)
+        metadata_columns, metadata_rows, _cell_size = _sensor_geometry(world)
+        metadata = bytearray(metadata_columns * metadata_rows)
 
         _mark_rect(
             metadata,
@@ -118,24 +146,22 @@ class VisionGridRenderer:
         )
         for actor in display_state.other_actors:
             _mark_rect(
-                metadata,
-                world,
-                actor.x,
-                actor.y,
-                world.spawn.width,
-                world.spawn.height,
-                META_OTHER_ACTOR,
+                metadata, world, actor.x, actor.y,
+                world.spawn.width, world.spawn.height, META_OTHER_ACTOR,
+            )
+            _mark_center(
+                metadata, world, actor.x, actor.y,
+                world.spawn.width, world.spawn.height, META_OTHER_CENTER,
             )
         if display_state.self_actor is not None:
             actor = display_state.self_actor
             _mark_rect(
-                metadata,
-                world,
-                actor.x,
-                actor.y,
-                world.spawn.width,
-                world.spawn.height,
-                META_SELF,
+                metadata, world, actor.x, actor.y,
+                world.spawn.width, world.spawn.height, META_SELF,
+            )
+            _mark_center(
+                metadata, world, actor.x, actor.y,
+                world.spawn.width, world.spawn.height, META_SELF_CENTER,
             )
 
         return VisionGrid(

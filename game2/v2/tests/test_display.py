@@ -15,7 +15,7 @@ from game2.v2.console.display.screen.renderer import ScreenRenderer, terminal_la
 from game2.v2.console.display.screen.source import ScreenSourceService
 from game2.v2.console.display.view_state import ActorView, DisplayState
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
-from game2.v2.contracts.vision import META_GOAL, META_SELF, PHYSICS_HAZARD
+from game2.v2.contracts.vision import (META_GOAL, META_SELF, META_SELF_CENTER,\n                                         PHYSICS_HAZARD)
 from game2.v2.console.world import Rect, TileID, WorldDefinition, load_world
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
@@ -112,12 +112,19 @@ class VisionGridRendererTests(unittest.TestCase):
             (grid.columns, grid.rows, grid.tile_size, grid.world_tick),
             (4, 3, 2, 0),
         )
+        self.assertEqual((grid.metadata_columns, grid.metadata_rows), (32, 24))
+        self.assertEqual(grid.sensor_cell_size, 0.25)
         self.assertEqual(
             grid.physics,
             bytes((0, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1)),
         )
-        self.assertEqual(grid.metadata[3], META_GOAL)
-        self.assertEqual(grid.metadata[1 * grid.columns + 1], META_SELF)
+        goal_cell = 2 * grid.metadata_columns + 26
+        self_cell = 10 * grid.metadata_columns + 10
+        self.assertTrue(grid.metadata[goal_cell] & META_GOAL)
+        self.assertEqual(
+            grid.metadata[self_cell] & (META_SELF | META_SELF_CENTER),
+            META_SELF | META_SELF_CENTER,
+        )
 
     def test_self_and_goal_overlap_without_overwriting_each_other(self):
         world = _tiny_world()
@@ -125,8 +132,12 @@ class VisionGridRendererTests(unittest.TestCase):
             world, _view(world, x=world.goal.x, y=world.goal.y)
         )
         goal_index = 3
+        center_index = 2 * grid.metadata_columns + 26
         self.assertEqual(grid.physics[goal_index], 0)
-        self.assertEqual(grid.metadata[goal_index], META_SELF | META_GOAL)
+        self.assertEqual(
+            grid.metadata[center_index] & (META_SELF | META_GOAL | META_SELF_CENTER),
+            META_SELF | META_GOAL | META_SELF_CENTER,
+        )
 
     def test_self_over_hazard_keeps_both_physics_and_metadata(self):
         world = _tiny_world()
@@ -135,8 +146,9 @@ class VisionGridRendererTests(unittest.TestCase):
             _view(world, x=4, y=0),
         )
         hazard_index = 2
+        self_index = 2 * grid.metadata_columns + 18
         self.assertEqual(grid.physics[hazard_index], PHYSICS_HAZARD)
-        self.assertTrue(grid.metadata[hazard_index] & META_SELF)
+        self.assertTrue(grid.metadata[self_index] & META_SELF)
 
     def test_actor_aabb_marks_every_intersected_cell_and_keeps_physics(self):
         world = _tiny_world()
@@ -144,18 +156,20 @@ class VisionGridRendererTests(unittest.TestCase):
             world,
             _view(world, x=3.5, y=2),
         )
-        left = 1 * grid.columns + 1
-        right = 1 * grid.columns + 2
+        row = 9
+        left = row * grid.metadata_columns + 15
+        right = row * grid.metadata_columns + 16
         self.assertTrue(grid.metadata[left] & META_SELF)
         self.assertTrue(grid.metadata[right] & META_SELF)
-        self.assertEqual(grid.physics[left], TileID.EMPTY)
-        self.assertEqual(grid.physics[right], TileID.EMPTY)
+        self.assertEqual(grid.physics[1 * grid.columns + 1], TileID.EMPTY)
+        self.assertEqual(grid.physics[1 * grid.columns + 2], TileID.EMPTY)
 
     def test_public_vision_is_immutable_and_does_not_leak_physics_metadata(self):
         grid = VisionGridRenderer().render(_tiny_world(), _view(_tiny_world()))
         self.assertEqual(
             {field.name for field in fields(grid)},
-            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick"},
+            {"columns", "rows", "tile_size", "physics", "metadata", "world_tick",
+             "subdivisions"},
         )
         self.assertIs(type(grid.physics), bytes)
         self.assertIs(type(grid.metadata), bytes)
