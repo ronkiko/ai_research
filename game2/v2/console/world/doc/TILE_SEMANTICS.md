@@ -26,10 +26,11 @@ same WorldDefinition and WorldState
 ```
 
 `screen` uses tilesets, sprites, backgrounds, and presentation-owned autotiling.
-`vision` encodes semantic tiles and dynamic world entities in a deterministic
-world-resolution raster. The future Player transport/wire protocol is separate
-and intentionally not defined here. Vision is a representation of what exists in
-the game world, not privileged raw Engine telemetry such as x/y/vx/vy.
+`vision` exposes the authored tile grid directly as the `physics` matrix and
+places Goal/Actor occupancy in the independent `metadata` bit-mask matrix. The
+same `VisionGrid` is published through the current per-Player public Vision
+transport. Vision is a representation of what exists in the game world, not
+privileged raw Engine telemetry such as x/y/vx/vy.
 
 World never stores visual atlas IDs such as `GRASS_TOP` or `TILESET_INDEX_41`.
 Changing screen artwork cannot change semantic terrain or collision geometry.
