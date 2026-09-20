@@ -344,6 +344,30 @@ An online update may happen according to the selected training orchestration
 after valid experience is collected. It must not turn the Console into a
 request/response physics loop.
 
+## PPO Temporal Scale And Diagnostics
+
+The current PPO implementation defines discounting in **Planner-time**, not raw
+120 Hz physics ticks. `PPO_GAMMA` and `PPO_GAE_LAMBDA` apply per
+`PPO_DISCOUNT_TICKS`, initially equal to the current Planner cadence of 12
+world ticks. Elapsed time between observations is converted fractionally:
+
+```text
+elapsed = delta_world_ticks / PPO_DISCOUNT_TICKS
+gamma   = PPO_GAMMA ^ elapsed
+trace   = (PPO_GAMMA * PPO_GAE_LAMBDA) ^ elapsed
+```
+
+This keeps the credit horizon tied to meaningful control time. Changing physics
+or Motor frequency must not silently shorten or lengthen learning merely because
+more or fewer world ticks occurred.
+
+Training diagnostics must keep task performance separate from control economy.
+Current episode metrics include Controller request counts and cost, accepted
+button changes, RIGHT/JUMP hold fractions, progress reward, terminal reward,
+PPO approximate KL, clipping fraction, Critic explained variance, and Critic
+value error. A reduction in Controller requests is useful only when task
+performance is retained or improved.
+
 ## Offline Replay
 
 Offline learning reuses saved Training Map trajectories without requiring the

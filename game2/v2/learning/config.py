@@ -17,6 +17,9 @@ MAX_EPISODE_DATASETS = 5
 # Price of one actual Player -> Controller request. KEEP with no request is free.
 CONTROL_REQUEST_PENALTY = 0.005
 CONTROL_CHANGE_PENALTY = CONTROL_REQUEST_PENALTY
+# Gamma/lambda are defined per Planner-time unit, not per 120 Hz physics tick.
+# This keeps the learning horizon tied to meaningful motor-plan time.
+PPO_DISCOUNT_TICKS = PLANNER_STRIDE_TICKS
 PPO_GAMMA = 0.99
 PPO_GAE_LAMBDA = 0.95
 PPO_CLIP_EPS = 0.2

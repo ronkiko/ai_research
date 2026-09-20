@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 import unittest
 from unittest import mock
@@ -24,7 +25,10 @@ from game2.v2.training.work import (
     EpisodeStore,
     train_episode,
 )
-from game2.v2.training.work.ppo import select_ppo_indexes
+from game2.v2.training.work.ppo import (
+    _discount,
+    select_ppo_indexes,
+)
 
 
 def _grid(tick: int, self_x: int) -> VisionGrid:
@@ -132,6 +136,13 @@ class EpisodeDatasetTests(unittest.TestCase):
             )
             self.assertIsNotNone(dataset.steps()[2].advantage)
 
+    def test_discount_uses_planner_time_not_raw_physics_ticks(self):
+        from game2.v2.training.work import PPO_DISCOUNT_TICKS
+        self.assertEqual(PPO_DISCOUNT_TICKS, 12)
+        self.assertAlmostEqual(_discount(0.99, 12), 0.99)
+        self.assertAlmostEqual(_discount(0.99, 6), 0.99 ** 0.5)
+        self.assertGreater(_discount(0.99 * 0.95, 100), 0.1)
+
     def test_ppo_keeps_every_policy_decision_for_stateful_controls(self):
         ticks = list(range(0, 1200, POLICY_STRIDE_TICKS))
         self.assertEqual(
@@ -187,6 +198,28 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["metrics"]["controller_requests"], 1)
             self.assertAlmostEqual(
                 metadata["metrics"]["controller_penalty_sum"], -0.005
+            )
+            self.assertIn("progress_reward_sum", metadata["metrics"])
+            self.assertIn("terminal_reward_contribution", metadata["metrics"])
+            self.assertIn("approx_kl", metadata["metrics"])
+            self.assertIn("clip_fraction", metadata["metrics"])
+            self.assertIn("critic_explained_variance", metadata["metrics"])
+            self.assertIn("critic_value_mae", metadata["metrics"])
+            self.assertEqual(metadata["metrics"]["discount_ticks"], 12)
+            self.assertAlmostEqual(
+                metadata["metrics"]["reward_sum"],
+                metadata["metrics"]["progress_reward_sum"]
+                + metadata["metrics"]["controller_penalty_sum"]
+                + metadata["metrics"]["terminal_reward_contribution"],
+            )
+            self.assertGreaterEqual(metadata["metrics"]["approx_kl"], 0.0)
+            self.assertGreaterEqual(metadata["metrics"]["clip_fraction"], 0.0)
+            self.assertLessEqual(metadata["metrics"]["clip_fraction"], 1.0)
+            self.assertTrue(
+                math.isfinite(metadata["metrics"]["critic_explained_variance"])
+            )
+            self.assertTrue(
+                math.isfinite(metadata["metrics"]["critic_value_mae"])
             )
             self.assertEqual(
                 [step.action_right for step in dataset.steps()],

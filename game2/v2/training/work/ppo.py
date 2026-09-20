@@ -15,6 +15,7 @@ from .config import (
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_ENTROPY_COEF,
+    PPO_DISCOUNT_TICKS,
     PPO_EPOCHS,
     PPO_GAE_LAMBDA,
     PPO_GAMMA,
@@ -85,6 +86,23 @@ def _distance(step: EpisodeStep) -> float | None:
     )
 
 
+def _discount(base: float, elapsed_ticks: int) -> float:
+    if elapsed_ticks < 0:
+        raise ValueError("elapsed_ticks cannot be negative")
+    return float(base) ** (float(elapsed_ticks) / PPO_DISCOUNT_TICKS)
+
+
+def _terminal_contribution(
+    steps: tuple[EpisodeStep, ...],
+    terminal_reward: float,
+    finish_world_tick: int,
+) -> float:
+    if not steps:
+        return 0.0
+    delay = max(0, finish_world_tick - 1 - steps[-1].world_tick)
+    return float(terminal_reward) * _discount(PPO_GAMMA, delay)
+
+
 def _rewards(
     steps: tuple[EpisodeStep, ...],
     terminal_reward: float,
@@ -106,8 +124,9 @@ def _rewards(
             if before is not None and after is not None:
                 rewards[index] += (before - after) / start_distance
     if steps:
-        delay = max(0, finish_world_tick - 1 - steps[-1].world_tick)
-        rewards[-1] += float(terminal_reward) * (PPO_GAMMA ** delay)
+        rewards[-1] += _terminal_contribution(
+            steps, terminal_reward, finish_world_tick
+        )
     return rewards
 
 
@@ -123,8 +142,8 @@ def _gae(
             delta_ticks = steps[index + 1].world_tick - steps[index].world_tick
             if delta_ticks < 0:
                 raise ValueError("episode world ticks cannot move backwards")
-            gamma = PPO_GAMMA ** delta_ticks
-            trace = (PPO_GAMMA * PPO_GAE_LAMBDA) ** delta_ticks
+            gamma = _discount(PPO_GAMMA, delta_ticks)
+            trace = _discount(PPO_GAMMA * PPO_GAE_LAMBDA, delta_ticks)
             next_value = values[index + 1]
         else:
             gamma = 0.0
@@ -478,14 +497,68 @@ def train_episode(
 
     norm_after, hash_after = _parameter_stats(parameters)
     loss_value = total_loss / max(updates, 1)
+
+    final_log_ratio = final_log_prob - old_log_prob
+    diagnostic_log_ratio = final_log_ratio.clamp(-20.0, 20.0)
+    diagnostic_ratio = torch.exp(diagnostic_log_ratio)
+    approx_kl = max(
+        0.0,
+        float(
+            (
+                (diagnostic_ratio - 1.0)
+                - diagnostic_log_ratio
+            ).mean()
+        ),
+    )
+    lower_log_clip = math.log(1.0 - PPO_CLIP_EPS)
+    upper_log_clip = math.log(1.0 + PPO_CLIP_EPS)
+    clip_fraction = float(
+        (
+            (final_log_ratio < lower_log_clip)
+            | (final_log_ratio > upper_log_clip)
+        ).float().mean()
+    )
+    returns_cpu = returns.detach().cpu()
+    residual = returns_cpu - final_values
+    return_variance = float(returns_cpu.var(unbiased=False))
+    critic_explained_variance = (
+        1.0 - float(residual.var(unbiased=False)) / return_variance
+        if return_variance > 1e-8 else 0.0
+    )
+    critic_value_mae = float(residual.abs().mean())
+
     total_control_requests = sum(int(step.control_requested) for step in steps)
     total_control_penalty = CONTROL_REQUEST_PENALTY * total_control_requests
+    terminal_contribution = _terminal_contribution(
+        steps, terminal_reward, finish_tick
+    )
+    progress_reward_sum = (
+        float(sum(rewards))
+        + total_control_penalty
+        - terminal_contribution
+    )
+    accepted_button_changes = sum(
+        int(step.desired_right != step.pad_right)
+        + int(step.desired_jump != step.pad_jump)
+        for step in steps
+        if step.control_status == "accepted"
+    )
     total_duration = sum(max(1, int(step.duration_ticks)) for step in steps)
+
+    def effective_state(step: EpisodeStep, button: str) -> bool:
+        before = bool(getattr(step, f"pad_{button}"))
+        desired = bool(getattr(step, f"desired_{button}"))
+        if not step.control_requested:
+            return before
+        return desired if step.control_status == "accepted" else before
+
     right_hold_ticks = sum(
-        max(1, int(step.duration_ticks)) for step in steps if step.pad_right
+        max(1, int(step.duration_ticks))
+        for step in steps if effective_state(step, "right")
     )
     jump_hold_ticks = sum(
-        max(1, int(step.duration_ticks)) for step in steps if step.pad_jump
+        max(1, int(step.duration_ticks))
+        for step in steps if effective_state(step, "jump")
     )
     metrics: dict[str, object] = {
         "rollout_records": len(all_steps),
@@ -508,6 +581,10 @@ def train_episode(
             int(step.control_status == "duplicate") for step in steps
         ),
         "controller_penalty_sum": -float(total_control_penalty),
+        "progress_reward_sum": progress_reward_sum,
+        "terminal_reward_contribution": terminal_contribution,
+        "task_reward_sum": progress_reward_sum + terminal_contribution,
+        "accepted_button_changes": accepted_button_changes,
         "suppressed_button_commands": sum(
             len(tuple(filter(None, step.suppressed_buttons.split(","))))
             for step in steps
@@ -517,6 +594,11 @@ def train_episode(
         "policy_loss": total_policy_loss / max(updates, 1),
         "value_loss": total_value_loss / max(updates, 1),
         "entropy": total_entropy / max(updates, 1),
+        "approx_kl": approx_kl,
+        "clip_fraction": clip_fraction,
+        "critic_explained_variance": critic_explained_variance,
+        "critic_value_mae": critic_value_mae,
+        "discount_ticks": PPO_DISCOUNT_TICKS,
         "grad_norm": total_grad_norm / max(updates, 1),
         "mean_right_command_confidence": (
             total_right_confidence / max(total_examples, 1)
