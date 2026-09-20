@@ -27,9 +27,10 @@ from game2.v2.contracts.vision import (
     VisionGrid,
 )
 from game2.v2.model_runtime import build_model
-from game2.v2.player.learned.contracts import ActionDecision, apply_control_change
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange, apply_control_change
 from game2.v2.player.learned.motion import MotionEstimator, VisionProgress, goal_center, self_center
 from game2.v2.player.learned.runtime import CONTROL_CHANGE_PENALTY
+from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.training.unpaced import (
     ACTOR_ID,
     PLAYER_ID,
@@ -109,6 +110,26 @@ def _emit(kind: str, payload: dict[str, object], *, json_output: bool) -> None:
             f"  decisions        {int(payload['decisions']):>8} · "
             f"{float(payload['decision_seconds']):8.3f}s · "
             f"{float(payload['decision_ms_each']):7.3f} ms/decision",
+            flush=True,
+        )
+        print(
+            f"  tensor           {float(payload['tensor_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  Planner CNN      {float(payload['planner_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  Motor            {float(payload['motor_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  Critic CNN       {float(payload['critic_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  sampling         {float(payload['sampling_seconds']):8.3f}s",
             flush=True,
         )
         print(
@@ -192,6 +213,7 @@ def run_model_probe(
     seed: int = 1,
     threads: int = 1,
     json_output: bool = False,
+    progress_every: int = 25,
 ) -> dict[str, object]:
     if decisions <= 0 or threads <= 0:
         raise ValueError("decisions and threads must be positive")
@@ -203,18 +225,55 @@ def run_model_probe(
     pad = ActionDecision(False, False)
     steps: list[Step] = []
 
+    timers: dict[str, float] = defaultdict(float)
     started = time.perf_counter()
     decision_started = time.perf_counter()
+    if not json_output:
+        print(
+            f"Model probe start · {decisions} decisions · threads={threads}",
+            flush=True,
+        )
     for index in range(decisions):
         base_pad = pad
-        action, old_log_prob, old_value = _policy(
-            model,
-            grid,
-            0.0,
-            base_pad,
-            train=True,
-            generator=generator,
-        )
+
+        then = time.perf_counter()
+        vision = vision_to_tensor(grid).unsqueeze(0)
+        timers["tensor"] += time.perf_counter() - then
+
+        with torch.no_grad():
+            then = time.perf_counter()
+            planner_output = model.planner(vision)[0]
+            timers["planner"] += time.perf_counter() - then
+
+            then = time.perf_counter()
+            logits = model.motor_controller.forward_goal(
+                planner_output, 0.0, base_pad.right, base_pad.jump
+            )
+            timers["motor"] += time.perf_counter() - then
+
+            then = time.perf_counter()
+            old_value = float(model.critic(vision)[0])
+            timers["critic"] += time.perf_counter() - then
+
+            then = time.perf_counter()
+            probabilities = torch.sigmoid(logits)
+            random_values = torch.rand(
+                probabilities.shape,
+                generator=generator,
+                dtype=probabilities.dtype,
+                device=probabilities.device,
+            )
+            actions = (random_values < probabilities).to(dtype=logits.dtype)
+            old_log_prob = float(
+                -torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, actions, reduction="none"
+                ).sum()
+            )
+            action = ControlChange(
+                bool(actions[0].item()), bool(actions[1].item())
+            )
+            timers["sampling"] += time.perf_counter() - then
+
         pad = apply_control_change(base_pad, action)
         reward = 0.001 if pad.right else -0.001
         if index + 1 == decisions:
@@ -229,8 +288,43 @@ def run_model_probe(
             old_value,
             reward,
         ))
+
+        completed = index + 1
+        if (
+            progress_every > 0
+            and (completed % progress_every == 0 or completed == decisions)
+        ):
+            elapsed = time.perf_counter() - decision_started
+            payload = {
+                "completed": completed,
+                "decisions": decisions,
+                "elapsed_seconds": elapsed,
+                "ms_each": _duration_ms(elapsed) / completed,
+                "tensor_seconds": timers["tensor"],
+                "planner_seconds": timers["planner"],
+                "motor_seconds": timers["motor"],
+                "critic_seconds": timers["critic"],
+                "sampling_seconds": timers["sampling"],
+            }
+            if json_output:
+                print("MODEL_PROGRESS " + json.dumps(
+                    payload, separators=(",", ":"), sort_keys=True
+                ), flush=True)
+            else:
+                print(
+                    f"  {completed:4}/{decisions} · "
+                    f"{payload['ms_each']:.1f} ms/decision · "
+                    f"tensor {timers['tensor']:.1f}s · "
+                    f"planner {timers['planner']:.1f}s · "
+                    f"critic {timers['critic']:.1f}s · "
+                    f"motor {timers['motor']:.3f}s",
+                    flush=True,
+                )
+
     decision_seconds = time.perf_counter() - decision_started
 
+    if not json_output:
+        print("  PPO update starting...", flush=True)
     ppo_started = time.perf_counter()
     updated, loss = ppo_update(model, steps, seed=seed)
     ppo_seconds = time.perf_counter() - ppo_started
@@ -243,6 +337,11 @@ def run_model_probe(
         "decision_seconds": decision_seconds,
         "decision_ms_each": _duration_ms(decision_seconds) / decisions,
         "rollout_records": len(steps),
+        "tensor_seconds": timers["tensor"],
+        "planner_seconds": timers["planner"],
+        "motor_seconds": timers["motor"],
+        "critic_seconds": timers["critic"],
+        "sampling_seconds": timers["sampling"],
         "ppo_seconds": ppo_seconds,
         "loss": loss,
         "total_seconds": total_seconds,
@@ -312,6 +411,7 @@ def run_unpaced_profile(
     threads: int = 1,
     map_path: str | Path = DEFAULT_MAP,
     json_output: bool = False,
+    progress_every: int = 25,
 ) -> dict[str, object]:
     if ticks <= 0 or threads <= 0:
         raise ValueError("ticks and threads must be positive")
@@ -409,8 +509,40 @@ def run_unpaced_profile(
         ))
         timers["bookkeeping_after"] += time.perf_counter() - then
 
+        if (
+            progress_every > 0
+            and (sequence % progress_every == 0 or actor.result is not None)
+        ):
+            elapsed = time.perf_counter() - rollout_started
+            payload = {
+                "tick": sequence,
+                "ticks": ticks,
+                "elapsed_seconds": elapsed,
+                "ms_each": _duration_ms(elapsed) / max(sequence, 1),
+                "vision_seconds": (
+                    timers["vision_before"] + timers["vision_after"]
+                ),
+                "inference_seconds": timers["inference"],
+                "engine_seconds": timers["engine"],
+            }
+            if json_output:
+                print("UNPACED_PROGRESS " + json.dumps(
+                    payload, separators=(",", ":"), sort_keys=True
+                ), flush=True)
+            else:
+                print(
+                    f"  rollout {sequence:4}/{ticks} · "
+                    f"{payload['ms_each']:.1f} ms/tick · "
+                    f"vision {payload['vision_seconds']:.1f}s · "
+                    f"model {timers['inference']:.1f}s · "
+                    f"engine {timers['engine']:.3f}s",
+                    flush=True,
+                )
+
     rollout_seconds = time.perf_counter() - rollout_started
 
+    if not json_output:
+        print("  rollout done; PPO update starting...", flush=True)
     then = time.perf_counter()
     updated, loss = ppo_update(model, steps, seed=seed)
     timers["ppo"] = time.perf_counter() - then
@@ -458,6 +590,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--ticks", type=int, default=1200)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--progress-every", type=int, default=25)
     parser.add_argument("--map", dest="map_path", default=str(DEFAULT_MAP))
     parser.add_argument("--json", action="store_true")
     return parser
@@ -471,6 +604,7 @@ def main(argv=None) -> int:
             seed=args.seed,
             threads=args.threads,
             json_output=args.json,
+            progress_every=args.progress_every,
         )
     if args.probe in {"engine", "all"}:
         run_engine_probe(
@@ -485,6 +619,7 @@ def main(argv=None) -> int:
             threads=args.threads,
             map_path=args.map_path,
             json_output=args.json,
+            progress_every=args.progress_every,
         )
     return 0
 

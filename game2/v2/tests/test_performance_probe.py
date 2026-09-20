@@ -11,7 +11,9 @@ from game2.v2.performance_probe import (
 
 class PerformanceProbeTests(unittest.TestCase):
     def test_model_probe_runs_real_model_without_engine(self):
-        result = run_model_probe(decisions=4, seed=1, threads=1, json_output=True)
+        result = run_model_probe(
+            decisions=4, seed=1, threads=1, json_output=True, progress_every=0
+        )
         self.assertEqual(result["decisions"], 4)
         self.assertEqual(result["rollout_records"], 4)
         self.assertGreaterEqual(float(result["decision_seconds"]), 0.0)
@@ -24,7 +26,7 @@ class PerformanceProbeTests(unittest.TestCase):
 
     def test_unpaced_profile_accounts_for_major_stages(self):
         result = run_unpaced_profile(
-            ticks=4, seed=1, threads=1, json_output=True
+            ticks=4, seed=1, threads=1, json_output=True, progress_every=0
         )
         self.assertEqual(result["ticks"], 4)
         self.assertEqual(result["result"], "timeout")
