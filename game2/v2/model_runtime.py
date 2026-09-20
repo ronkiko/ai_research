@@ -81,7 +81,7 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
             raise ValueError("Fresh Model runtime cannot use checkpoints")
         planner = CNNPlanner.fresh(planner_seed)
         motor = MotorController582.fresh(motor_seed)
-        critic = CNNCritic.fresh(critic_seed)
+        critic = CNNCritic.fresh(critic_seed, planner.backbone)
     else:
         if checkpoints != (True, True, True, True):
             raise ValueError(
@@ -94,6 +94,16 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
         planner = load_planner(planner_checkpoint)
         motor = load_motor_controller(motor_checkpoint)
         critic = load_critic(critic_checkpoint)
+        planner_backbone = planner.backbone.state_dict()
+        critic_backbone = critic.backbone.state_dict()
+        if planner_backbone.keys() != critic_backbone.keys() or any(
+            not planner_backbone[key].equal(critic_backbone[key])
+            for key in planner_backbone
+        ):
+            raise ValueError(
+                "planner and critic checkpoints contain different shared backbones"
+            )
+        critic.backbone = planner.backbone
     player = LearnedPlayer(planner, motor, critic)
     if not fresh:
         assert optimizer_checkpoint is not None

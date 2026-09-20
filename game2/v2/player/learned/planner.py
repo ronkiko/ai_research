@@ -7,32 +7,32 @@ from torch import nn
 from game2.v2.contracts.vision import VisionGrid
 
 from .contracts import MotorGoal
-from .vision import VISION_CHANNELS, vision_to_tensor
+from .vision import vision_to_tensor
+from .vision_backbone import BACKBONE_CHANNELS, VisionBackbone
 
 
-PLANNER_CONFIGURATION = "adaptive-spatial-fine-physics-v5"
+PLANNER_CONFIGURATION = "shared-pool4-spatial-v6"
 
 
 class CNNPlanner(nn.Module):
     """Map public semantic Vision to a normalized relative MotorGoal."""
 
-    def __init__(self) -> None:
+    def __init__(self, backbone: VisionBackbone | None = None) -> None:
         super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(VISION_CHANNELS, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),
-        )
+        self.backbone = backbone if backbone is not None else VisionBackbone()
         self.head = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(32 * 4 * 4, 16),
+            nn.Linear(BACKBONE_CHANNELS * 4 * 4, 16),
             nn.ReLU(),
             nn.Linear(16, 2),
             nn.Tanh(),
         )
         self.initialization_seed: int | None = None
+
+    @property
+    def features(self) -> VisionBackbone:
+        """Compatibility view of the shared feature extractor."""
+        return self.backbone
 
     @classmethod
     def fresh(cls, seed: int) -> "CNNPlanner":
@@ -44,18 +44,19 @@ class CNNPlanner(nn.Module):
         model.initialization_seed = seed
         return model
 
+    def encode(self, vision: torch.Tensor) -> torch.Tensor:
+        return self.backbone(vision)
+
+    def encode_prepared(self, prepared: torch.Tensor) -> torch.Tensor:
+        return self.backbone.forward_prepared(prepared)
+
+    def forward_features(self, features: torch.Tensor) -> torch.Tensor:
+        if not isinstance(features, torch.Tensor) or features.ndim != 4:
+            raise ValueError("Planner features must have shape [B,C,H,W]")
+        return self.head(features)
+
     def forward(self, vision: torch.Tensor) -> torch.Tensor:
-        if not isinstance(vision, torch.Tensor):
-            raise TypeError("CNNPlanner input must be a torch.Tensor")
-        if vision.ndim == 3:
-            vision = vision.unsqueeze(0)
-        elif vision.ndim != 4:
-            raise ValueError("CNNPlanner input must have shape [C,H,W] or [B,C,H,W]")
-        if vision.shape[1] != VISION_CHANNELS:
-            raise ValueError(f"CNNPlanner expects {VISION_CHANNELS} semantic channels")
-        if vision.shape[2] <= 0 or vision.shape[3] <= 0:
-            raise ValueError("CNNPlanner input must have positive spatial dimensions")
-        return self.head(self.features(vision))
+        return self.forward_features(self.encode(vision))
 
     def decide(self, grid: VisionGrid) -> MotorGoal:
         """Infer one MotorGoal from a public VisionGrid without gradients."""

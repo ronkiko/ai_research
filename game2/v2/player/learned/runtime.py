@@ -133,6 +133,21 @@ PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
 
 
+def _unique_parameters(*modules) -> list[torch.nn.Parameter]:
+    seen: set[int] = set()
+    parameters: list[torch.nn.Parameter] = []
+    for module in modules:
+        if not isinstance(module, torch.nn.Module):
+            continue
+        for parameter in module.parameters():
+            identity = id(parameter)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            parameters.append(parameter)
+    return parameters
+
+
 class LearnedPlayer:
     """Own the Planner, Motor Controller, temporal representation, and latest values."""
 
@@ -145,9 +160,20 @@ class LearnedPlayer:
             raise TypeError("motor_controller must provide decide(goal, motion_x)")
         self.planner = planner
         self.motor_controller = motor_controller
-        self.critic = critic if critic is not None else CNNCritic.fresh(3)
+        planner_backbone = getattr(planner, "backbone", None)
+        self.critic = (
+            critic
+            if critic is not None
+            else CNNCritic.fresh(3, planner_backbone)
+        )
         if not isinstance(self.critic, torch.nn.Module):
             raise TypeError("critic must be a torch.nn.Module")
+        if (
+            planner_backbone is not None
+            and hasattr(self.critic, "backbone")
+            and self.critic.backbone is not planner_backbone
+        ):
+            self.critic.backbone = planner_backbone
         self.motion_estimator = motion_estimator or MotionEstimator()
         self.latest_goal: MotorGoal | None = None
         self.latest_decision = ActionDecision(False, False)
@@ -157,13 +183,13 @@ class LearnedPlayer:
                 or learning_rate <= 0:
             raise ValueError("learning_rate must be a positive finite number")
         self.learning_rate = float(learning_rate)
-        parameters = []
-        if isinstance(planner, torch.nn.Module):
-            parameters.extend(planner.parameters())
-        if isinstance(motor_controller, torch.nn.Module):
-            parameters.extend(motor_controller.parameters())
-        parameters.extend(self.critic.parameters())
-        self.optimizer = torch.optim.Adam(parameters, lr=self.learning_rate) if parameters else None
+        parameters = _unique_parameters(
+            self.planner, self.motor_controller, self.critic
+        )
+        self.optimizer = (
+            torch.optim.Adam(parameters, lr=self.learning_rate)
+            if parameters else None
+        )
         self._episode_mode: str | None = None
         self._episode_seed: int | None = None
         self._episode_generator: torch.Generator | None = None
@@ -332,10 +358,28 @@ class LearnedPlayer:
         vision = vision_to_tensor(frame).unsqueeze(0)
         pad_state = self.actuated_state
         with torch.no_grad():
-            planner_output, logits = self._model_logits(
-                vision, motion_x, pad_state.right, pad_state.jump
+            shared = (
+                hasattr(self.planner, "encode")
+                and hasattr(self.planner, "forward_features")
+                and hasattr(self.critic, "forward_features")
+                and getattr(self.planner, "backbone", None)
+                is getattr(self.critic, "backbone", None)
             )
-            value = float(self.critic(vision)[0])
+            if shared:
+                features = self.planner.encode(vision)
+                planner_output = self.planner.forward_features(features)[0]
+                logits = self.motor_controller.forward_goal(
+                    planner_output,
+                    motion_x,
+                    pad_state.right,
+                    pad_state.jump,
+                )
+                value = float(self.critic.forward_features(features)[0])
+            else:
+                planner_output, logits = self._model_logits(
+                    vision, motion_x, pad_state.right, pad_state.jump
+                )
+                value = float(self.critic(vision)[0])
         probabilities = torch.sigmoid(logits)
         if self._episode_mode == "train":
             if self._episode_generator is None:
@@ -593,29 +637,60 @@ class LearnedPlayer:
         updates = 0
         final_log_prob = torch.empty(count, dtype=torch.float32)
         final_values = torch.empty(count, dtype=torch.float32)
-        parameters = (
-            list(self.planner.parameters())
-            + list(self.motor_controller.parameters())
-            + list(self.critic.parameters())
+        parameters = _unique_parameters(
+            self.planner, self.motor_controller, self.critic
         )
         parameter_norm_before, parameter_hash_before = self._parameter_stats(parameters)
         generator = self._episode_generator
+        shared = (
+            hasattr(self.planner, "backbone")
+            and hasattr(self.planner, "encode_prepared")
+            and hasattr(self.planner, "forward_features")
+            and hasattr(self.critic, "forward_features")
+            and self.planner.backbone is getattr(self.critic, "backbone", None)
+        )
+        if shared:
+            prepared_vision = torch.stack([
+                self.planner.backbone.prepare(
+                    vision_to_tensor(record.vision_grid).unsqueeze(0)
+                )[0]
+                for record in records
+            ])
+            full_vision = None
+        else:
+            prepared_vision = None
+            full_vision = torch.stack([
+                vision_to_tensor(record.vision_grid) for record in records
+            ])
+        motion_all = torch.tensor(
+            [record.motion_x for record in records], dtype=torch.float32
+        ).unsqueeze(1)
+        pad_all = torch.tensor(
+            [[record.pad_right, record.pad_jump] for record in records],
+            dtype=torch.float32,
+        )
         for _epoch in range(PPO_EPOCHS):
             order = torch.randperm(count, generator=generator)
             for start in range(0, count, PPO_BATCH_SIZE):
                 indexes = order[start:start + PPO_BATCH_SIZE]
                 batch_records = [records[index] for index in indexes.tolist()]
-                vision = torch.stack([
-                    vision_to_tensor(record.vision_grid) for record in batch_records
-                ])
-                planner_output = self.planner(vision)
-                motion = torch.tensor(
-                    [record.motion_x for record in batch_records],
+                if shared:
+                    assert prepared_vision is not None
+                    features = self.planner.encode_prepared(
+                        prepared_vision[indexes]
+                    )
+                    planner_output = self.planner.forward_features(features)
+                    values = self.critic.forward_features(features)
+                else:
+                    assert full_vision is not None
+                    vision = full_vision[indexes]
+                    planner_output = self.planner(vision)
+                    values = self.critic(vision)
+                motion = motion_all[indexes].to(
                     dtype=planner_output.dtype,
                     device=planner_output.device,
-                ).unsqueeze(1)
-                pad = torch.tensor(
-                    [[record.pad_right, record.pad_jump] for record in batch_records],
+                )
+                pad = pad_all[indexes].to(
                     dtype=planner_output.dtype,
                     device=planner_output.device,
                 )
@@ -637,7 +712,6 @@ class LearnedPlayer:
                 ) * batch_advantages
                 policy_loss = -torch.minimum(unclipped, clipped).mean()
 
-                values = self.critic(vision)
                 if _epoch == PPO_EPOCHS - 1:
                     final_log_prob[indexes] = new_log_prob.detach().cpu()
                     final_values[indexes] = values.detach().cpu()

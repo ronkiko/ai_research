@@ -248,6 +248,7 @@ class UnpacedTrainingTests(unittest.TestCase):
             ):
                 self.assertTrue(torch.equal(left, right))
             self.assertIsNotNone(resumed.optimizer)
+            self.assertIs(resumed.planner.backbone, resumed.critic.backbone)
 
 
 if __name__ == "__main__":

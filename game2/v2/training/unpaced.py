@@ -45,6 +45,7 @@ from game2.v2.player.learned.runtime import (
     PPO_GAMMA,
     PPO_MAX_GRAD_NORM,
     PPO_VALUE_COEF,
+    _unique_parameters,
 )
 from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.training.main import reward_for_result
@@ -125,11 +126,23 @@ def _policy(model, grid, motion_x: float, pad: ActionDecision,
             *, train: bool, generator: torch.Generator | None):
     vision = vision_to_tensor(grid).unsqueeze(0)
     with torch.no_grad():
-        planner_output = model.planner(vision)[0]
+        shared = (
+            hasattr(model.planner, "encode")
+            and hasattr(model.planner, "forward_features")
+            and hasattr(model.critic, "forward_features")
+            and getattr(model.planner, "backbone", None)
+            is getattr(model.critic, "backbone", None)
+        )
+        if shared:
+            features = model.planner.encode(vision)
+            planner_output = model.planner.forward_features(features)[0]
+            value = float(model.critic.forward_features(features)[0])
+        else:
+            planner_output = model.planner(vision)[0]
+            value = float(model.critic(vision)[0])
         logits = model.motor_controller.forward_goal(
             planner_output, motion_x, pad.right, pad.jump
         )
-        value = float(model.critic(vision)[0])
         probabilities = torch.sigmoid(logits)
         if train:
             if generator is None:
@@ -191,10 +204,10 @@ def run_episode(
         model.motor_controller.eval()
         model.critic.eval()
 
+    grid = renderer.render(engine.world_state())
     while actor.result is None:
         if should_stop is not None and should_stop():
             raise KeyboardInterrupt
-        grid = renderer.render(engine.world_state())
         progress.update(grid)
         before_distance = _distance(grid)
         if start_distance is None and before_distance is not None:
@@ -254,6 +267,7 @@ def run_episode(
                 "y": state.y,
                 "grounded": state.grounded,
             })
+        grid = after_grid
 
     assert actor.result is not None
     return EpisodeResult(
@@ -306,10 +320,8 @@ def ppo_update(
         [[step.action.right, step.action.jump] for step in steps],
         dtype=torch.float32,
     )
-    parameters = (
-        list(model.planner.parameters())
-        + list(model.motor_controller.parameters())
-        + list(model.critic.parameters())
+    parameters = _unique_parameters(
+        model.planner, model.motor_controller, model.critic
     )
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
@@ -319,6 +331,33 @@ def ppo_update(
         len(steps) + PPO_BATCH_SIZE - 1
     ) // PPO_BATCH_SIZE
     total_updates = PPO_EPOCHS * batches_per_epoch
+    shared = (
+        hasattr(model.planner, "backbone")
+        and hasattr(model.planner, "encode_prepared")
+        and hasattr(model.planner, "forward_features")
+        and hasattr(model.critic, "forward_features")
+        and model.planner.backbone is getattr(model.critic, "backbone", None)
+    )
+    if shared:
+        prepared_vision = torch.stack([
+            model.planner.backbone.prepare(
+                vision_to_tensor(step.vision_grid).unsqueeze(0)
+            )[0]
+            for step in steps
+        ])
+        full_vision = None
+    else:
+        prepared_vision = None
+        full_vision = torch.stack([
+            vision_to_tensor(step.vision_grid) for step in steps
+        ])
+    motion_all = torch.tensor(
+        [step.motion_x for step in steps], dtype=torch.float32
+    ).unsqueeze(1)
+    pad_all = torch.tensor(
+        [[step.pad_right, step.pad_jump] for step in steps],
+        dtype=torch.float32,
+    )
 
     for _epoch in range(PPO_EPOCHS):
         if should_stop is not None and should_stop():
@@ -329,19 +368,23 @@ def ppo_update(
                 raise KeyboardInterrupt
             indexes = order[start:start + PPO_BATCH_SIZE]
             batch = [steps[index] for index in indexes.tolist()]
-            vision = torch.stack([
-                vision_to_tensor(step.vision_grid) for step in batch
-            ])
-            goals = model.planner(vision)
-            motion = torch.tensor(
-                [step.motion_x for step in batch],
-                dtype=goals.dtype,
-                device=goals.device,
-            ).unsqueeze(1)
-            pad = torch.tensor(
-                [[step.pad_right, step.pad_jump] for step in batch],
-                dtype=goals.dtype,
-                device=goals.device,
+            if shared:
+                assert prepared_vision is not None
+                features = model.planner.encode_prepared(
+                    prepared_vision[indexes]
+                )
+                goals = model.planner.forward_features(features)
+                values = model.critic.forward_features(features)
+            else:
+                assert full_vision is not None
+                vision = full_vision[indexes]
+                goals = model.planner(vision)
+                values = model.critic(vision)
+            motion = motion_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            pad = pad_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
             )
             logits = model.motor_controller(torch.cat((goals, motion, pad), dim=1))
             batch_actions = actions[indexes].to(logits.device)
@@ -358,7 +401,6 @@ def ppo_update(
             ) * batch_advantages
             policy_loss = -torch.minimum(unclipped, clipped).mean()
 
-            values = model.critic(vision)
             value_loss = torch.nn.functional.mse_loss(
                 values, returns[indexes].to(values.device)
             )

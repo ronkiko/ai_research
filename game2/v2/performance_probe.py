@@ -117,15 +117,19 @@ def _emit(kind: str, payload: dict[str, object], *, json_output: bool) -> None:
             flush=True,
         )
         print(
-            f"  Planner CNN      {float(payload['planner_seconds']):8.3f}s",
+            f"  shared backbone  {float(payload['backbone_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  Planner head     {float(payload['planner_head_seconds']):8.3f}s",
+            flush=True,
+        )
+        print(
+            f"  Critic head      {float(payload['critic_head_seconds']):8.3f}s",
             flush=True,
         )
         print(
             f"  Motor            {float(payload['motor_seconds']):8.3f}s",
-            flush=True,
-        )
-        print(
-            f"  Critic CNN       {float(payload['critic_seconds']):8.3f}s",
             flush=True,
         )
         print(
@@ -242,18 +246,23 @@ def run_model_probe(
 
         with torch.no_grad():
             then = time.perf_counter()
-            planner_output = model.planner(vision)[0]
-            timers["planner"] += time.perf_counter() - then
+            prepared = model.planner.backbone.prepare(vision)
+            features = model.planner.encode_prepared(prepared)
+            timers["backbone"] += time.perf_counter() - then
+
+            then = time.perf_counter()
+            planner_output = model.planner.forward_features(features)[0]
+            timers["planner_head"] += time.perf_counter() - then
+
+            then = time.perf_counter()
+            old_value = float(model.critic.forward_features(features)[0])
+            timers["critic_head"] += time.perf_counter() - then
 
             then = time.perf_counter()
             logits = model.motor_controller.forward_goal(
                 planner_output, 0.0, base_pad.right, base_pad.jump
             )
             timers["motor"] += time.perf_counter() - then
-
-            then = time.perf_counter()
-            old_value = float(model.critic(vision)[0])
-            timers["critic"] += time.perf_counter() - then
 
             then = time.perf_counter()
             probabilities = torch.sigmoid(logits)
@@ -301,9 +310,10 @@ def run_model_probe(
                 "elapsed_seconds": elapsed,
                 "ms_each": _duration_ms(elapsed) / completed,
                 "tensor_seconds": timers["tensor"],
-                "planner_seconds": timers["planner"],
+                "backbone_seconds": timers["backbone"],
+                "planner_head_seconds": timers["planner_head"],
                 "motor_seconds": timers["motor"],
-                "critic_seconds": timers["critic"],
+                "critic_head_seconds": timers["critic_head"],
                 "sampling_seconds": timers["sampling"],
             }
             if json_output:
@@ -315,8 +325,8 @@ def run_model_probe(
                     f"  {completed:4}/{decisions} · "
                     f"{payload['ms_each']:.1f} ms/decision · "
                     f"tensor {timers['tensor']:.1f}s · "
-                    f"planner {timers['planner']:.1f}s · "
-                    f"critic {timers['critic']:.1f}s · "
+                    f"backbone {timers['backbone']:.1f}s · "
+                    f"heads {timers['planner_head'] + timers['critic_head']:.3f}s · "
                     f"motor {timers['motor']:.3f}s",
                     flush=True,
                 )
@@ -338,9 +348,10 @@ def run_model_probe(
         "decision_ms_each": _duration_ms(decision_seconds) / decisions,
         "rollout_records": len(steps),
         "tensor_seconds": timers["tensor"],
-        "planner_seconds": timers["planner"],
+        "backbone_seconds": timers["backbone"],
+        "planner_head_seconds": timers["planner_head"],
         "motor_seconds": timers["motor"],
-        "critic_seconds": timers["critic"],
+        "critic_head_seconds": timers["critic_head"],
         "sampling_seconds": timers["sampling"],
         "ppo_seconds": ppo_seconds,
         "loss": loss,
@@ -437,11 +448,10 @@ def run_unpaced_profile(
 
     total_started = time.perf_counter()
     rollout_started = time.perf_counter()
+    then = time.perf_counter()
+    grid = renderer.render(engine.world_state())
+    timers["vision_before"] += time.perf_counter() - then
     while actor.result is None and sequence < ticks:
-        then = time.perf_counter()
-        grid = renderer.render(engine.world_state())
-        timers["vision_before"] += time.perf_counter() - then
-
         then = time.perf_counter()
         progress.update(grid)
         before_distance = _distance(grid)
@@ -508,6 +518,7 @@ def run_unpaced_profile(
             float(reward),
         ))
         timers["bookkeeping_after"] += time.perf_counter() - then
+        grid = after_grid
 
         if (
             progress_every > 0

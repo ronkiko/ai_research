@@ -20,6 +20,7 @@ from game2.v2.player.learned.checkpoint import (load_motor_controller,
                                                  save_motor_controller,
                                                  save_planner)
 from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
+from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
@@ -122,6 +123,28 @@ class LearnedContractTests(unittest.TestCase):
         grid = _grid(20, 12)
         encoded = vision_to_tensor(grid)
         self.assertEqual(tuple(encoded.shape), (8, 96, 160))
+
+    def test_actor_and_critic_share_downsampled_backbone(self):
+        planner = CNNPlanner.fresh(1)
+        critic = CNNCritic.fresh(3, planner.backbone)
+        player = LearnedPlayer(planner, MotorController582.fresh(2), critic)
+        self.assertIs(player.planner.backbone, player.critic.backbone)
+
+        encoded = vision_to_tensor(_grid(20, 12))
+        prepared = player.planner.backbone.prepare(encoded.unsqueeze(0))
+        self.assertEqual(tuple(prepared.shape), (1, 8, 24, 40))
+        features = player.planner.encode_prepared(prepared)
+        self.assertEqual(tuple(features.shape), (1, 32, 4, 4))
+
+        optimizer_parameters = [
+            parameter
+            for group in player.optimizer.param_groups
+            for parameter in group["params"]
+        ]
+        self.assertEqual(
+            len(optimizer_parameters),
+            len({id(parameter) for parameter in optimizer_parameters}),
+        )
 
     def test_motion_input_includes_current_virtual_pad_state(self):
         values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)

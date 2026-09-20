@@ -30,13 +30,15 @@ def vision_to_tensor(grid: VisionGrid) -> torch.Tensor:
     if not isinstance(grid, VisionGrid):
         raise TypeError("vision_to_tensor requires a VisionGrid")
 
-    physics = torch.tensor(list(grid.physics), dtype=torch.long)
+    physics = torch.frombuffer(bytearray(grid.physics), dtype=torch.uint8).to(
+        dtype=torch.long
+    )
     physics = physics.reshape(grid.physics_rows, grid.physics_columns)
     physics = F.one_hot(
         physics, num_classes=PHYSICS_CHANNELS
     ).permute(2, 0, 1).contiguous()
 
-    metadata = torch.tensor(list(grid.metadata), dtype=torch.uint8)
+    metadata = torch.frombuffer(bytearray(grid.metadata), dtype=torch.uint8)
     metadata = metadata.reshape(grid.metadata_rows, grid.metadata_columns)
     metadata_channels = torch.stack([
         metadata.bitwise_and(bit) != 0
