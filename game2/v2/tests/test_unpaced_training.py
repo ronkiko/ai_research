@@ -38,6 +38,22 @@ class _Critic(torch.nn.Module):
 
 
 class UnpacedTrainingTests(unittest.TestCase):
+    def test_unpaced_episode_honors_stop_callback_inside_rollout(self):
+        model = SimpleNamespace(
+            planner=_Planner(),
+            motor_controller=_Motor(),
+            critic=_Critic(),
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            run_episode(
+                model,
+                FLAT_RUN,
+                episode_limit=1200,
+                mode="evaluate",
+                seed=1,
+                should_stop=lambda: True,
+            )
+
     def test_unpaced_episode_advances_one_policy_decision_per_world_tick(self):
         model = SimpleNamespace(
             planner=_Planner(),

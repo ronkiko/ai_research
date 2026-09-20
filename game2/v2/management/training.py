@@ -494,6 +494,7 @@ class TrainingRun:
         screen_server: str | Path = DEFAULT_SCREEN_SERVER,
         view: str = "screen",
         mode: str = "realtime",
+        json_output: bool = False,
     ) -> int:
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
@@ -557,6 +558,7 @@ class TrainingRun:
                 fresh=fresh,
                 output=self.output,
                 should_stop=self.stop_requested.is_set,
+                json_output=json_output,
             )
 
         log_run = _next_log_run(log_root)
@@ -606,6 +608,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--screen", type=int)
     parser.add_argument("--view", choices=("screen", "vision"), default="screen")
     parser.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
+    parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="emit structured unpaced training events instead of human output",
+    )
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fresh", action="store_true")
@@ -629,6 +635,7 @@ def main(argv=None) -> int:
             screen_server=args.screen_server,
             view=args.view,
             mode=args.mode,
+            json_output=args.json_output,
         )
     except KeyboardInterrupt:
         print("Training interrupted", file=sys.stderr, flush=True)

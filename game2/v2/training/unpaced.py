@@ -163,6 +163,8 @@ def run_episode(
     episode_limit: int,
     mode: str,
     seed: int,
+    should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[EpisodeResult, list[Step]]:
     if mode not in {"train", "evaluate"}:
         raise ValueError("mode must be train or evaluate")
@@ -190,6 +192,8 @@ def run_episode(
         model.critic.eval()
 
     while actor.result is None:
+        if should_stop is not None and should_stop():
+            raise KeyboardInterrupt
         grid = renderer.render(engine.world_state())
         progress.update(grid)
         before_distance = _distance(grid)
@@ -239,6 +243,17 @@ def run_episode(
                 old_value=old_value,
                 reward=float(reward),
             ))
+        if on_progress is not None and sequence % 100 == 0:
+            state = engine.actor_state(ACTOR_ID)
+            on_progress({
+                "world_tick": engine.world_tick,
+                "decisions": sequence,
+                "episode_limit": episode_limit,
+                "progress": progress.progress,
+                "x": state.x,
+                "y": state.y,
+                "grounded": state.grounded,
+            })
 
     assert actor.result is not None
     return EpisodeResult(
@@ -270,7 +285,13 @@ def _gae(steps: list[Step]) -> tuple[torch.Tensor, torch.Tensor]:
     return advantage_tensor, returns
 
 
-def ppo_update(model, steps: list[Step], *, seed: int) -> tuple[bool, float]:
+def ppo_update(
+    model,
+    steps: list[Step],
+    *,
+    seed: int,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[bool, float]:
     if not steps:
         return False, 0.0
     if model.optimizer is None:
@@ -295,8 +316,12 @@ def ppo_update(model, steps: list[Step], *, seed: int) -> tuple[bool, float]:
     updates = 0
 
     for _epoch in range(PPO_EPOCHS):
+        if should_stop is not None and should_stop():
+            raise KeyboardInterrupt
         order = torch.randperm(len(steps), generator=generator)
         for start in range(0, len(steps), PPO_BATCH_SIZE):
+            if should_stop is not None and should_stop():
+                raise KeyboardInterrupt
             indexes = order[start:start + PPO_BATCH_SIZE]
             batch = [steps[index] for index in indexes.tolist()]
             vision = torch.stack([
@@ -362,6 +387,7 @@ def run_unpaced_training_set(
     fresh: bool,
     output: TextIO = sys.stdout,
     should_stop: Callable[[], bool] | None = None,
+    json_output: bool = False,
 ) -> int:
     if max_episodes <= 0 or episode_limit <= 0:
         raise ValueError("episode limits must be positive")
@@ -371,12 +397,68 @@ def run_unpaced_training_set(
     episode_id = 0
 
     def write(prefix: str, payload: dict) -> None:
-        output.write(
-            prefix + " " + json.dumps(
+        if json_output:
+            line = prefix + " " + json.dumps(
                 payload, separators=(",", ":"), sort_keys=True
-            ) + "\n"
-        )
+            )
+        elif prefix == "LEARNING":
+            episode_id = payload["episode_id"]
+            if payload["status"] == "start":
+                line = f"Episode {episode_id}: collecting rollout..."
+            else:
+                loss = payload.get("loss")
+                loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
+                line = (
+                    f"Episode {episode_id}: PPO update complete | "
+                    f"loss={loss_text} | "
+                    f"time={float(payload.get('seconds', 0.0)):.1f}s"
+                )
+        elif prefix == "ROLLOUT":
+            limit = int(payload["episode_limit"])
+            tick = int(payload["world_tick"])
+            rollout_percent = 100.0 * tick / max(limit, 1)
+            solution_percent = 100.0 * float(payload["progress"])
+            posture = "grounded" if payload["grounded"] else "airborne"
+            line = (
+                f"Episode {payload['episode_id']} | "
+                f"rollout {rollout_percent:5.1f}% ({tick}/{limit}) | "
+                f"solution {solution_percent:5.1f}% | "
+                f"x={float(payload['x']):.0f} y={float(payload['y']):.0f} | {posture}"
+            )
+        elif prefix == "PROGRESS":
+            attempts = int(payload["attempts"])
+            successes = int(payload["successes"])
+            success_percent = 100.0 * successes / max(attempts, 1)
+            solution_percent = 100.0 * float(payload["progress"])
+            loss = payload.get("loss")
+            loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
+            line = (
+                f"Episode {payload['episode_id']}: {str(payload['result']).upper()} | "
+                f"solution {solution_percent:.1f}% | "
+                f"success rate {successes}/{attempts} ({success_percent:.1f}%) | "
+                f"decisions={payload['decisions']} | PPO loss={loss_text}"
+            )
+        elif prefix == "EVALUATION":
+            solution_percent = 100.0 * float(payload["progress"])
+            line = (
+                f"Evaluation {payload['episode_id']}: "
+                f"{str(payload['result']).upper()} | "
+                f"solution {solution_percent:.1f}% | "
+                f"decisions={payload['decisions']}"
+            )
+        else:
+            line = prefix
+        output.write(line + "\n")
         output.flush()
+
+    def progress_writer(episode_id: int, mode: str):
+        def write_progress(snapshot: dict[str, object]) -> None:
+            write("ROLLOUT", {
+                "episode_id": episode_id,
+                "mode": mode,
+                **snapshot,
+            })
+        return write_progress
 
     for spec in manifest.training_maps:
         map_path = Path(spec.path)
@@ -392,16 +474,34 @@ def run_unpaced_training_set(
                 raise KeyboardInterrupt
             episode_id += 1
             started = time.monotonic()
+            write("LEARNING", {
+                "episode_id": episode_id,
+                "mode": "unpaced",
+                "status": "start",
+            })
             outcome, steps = run_episode(
                 model,
                 map_path,
                 episode_limit=episode_limit,
                 mode="train",
                 seed=episode_id,
+                should_stop=should_stop,
+                on_progress=progress_writer(episode_id, "train"),
             )
-            updated, loss = ppo_update(model, steps, seed=episode_id)
+            update_started = time.monotonic()
+            updated, loss = ppo_update(
+                model, steps, seed=episode_id, should_stop=should_stop
+            )
             if updated:
                 save_checkpoints(model, checkpoint_dir)
+            write("LEARNING", {
+                "episode_id": episode_id,
+                "mode": "unpaced",
+                "status": "done",
+                "seconds": round(time.monotonic() - update_started, 3),
+                "updated": updated,
+                "loss": loss if updated else None,
+            })
             if outcome.result == "success":
                 successes += 1
             write("PROGRESS", {
@@ -429,6 +529,8 @@ def run_unpaced_training_set(
                 episode_limit=episode_limit,
                 mode="evaluate",
                 seed=episode_id,
+                should_stop=should_stop,
+                on_progress=progress_writer(episode_id, "evaluate"),
             )
             write("EVALUATION", {
                 "mode": "unpaced",
