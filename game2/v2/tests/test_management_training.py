@@ -186,7 +186,10 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertTrue(kwargs["fresh"])
             self.assertEqual(kwargs["max_episodes"], 3)
             self.assertEqual(kwargs["episode_limit"], 100)
-            self.assertIn("mode=unpaced, headless", output.getvalue())
+            self.assertIn("FRESH reset logs", output.getvalue())
+            self.assertIn(
+                "Training set 1 · fresh · unpaced", output.getvalue()
+            )
 
     def test_unpaced_mode_rejects_screen_and_vision_view(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -378,6 +378,25 @@ def ppo_update(
     return True, total_loss / max(updates, 1)
 
 
+def _progress_bar(progress: float, width: int = 20) -> str:
+    progress = max(0.0, min(1.0, float(progress)))
+    filled = min(width, int(progress * width))
+    return "█" * filled + "-" * (width - filled)
+
+
+def _rollout_line(payload: dict[str, object]) -> str:
+    limit = int(payload["episode_limit"])
+    tick = int(payload["world_tick"])
+    fraction = min(1.0, max(0.0, tick / max(limit, 1)))
+    best = 100.0 * float(payload["progress"])
+    label = "Train" if payload.get("mode") == "train" else "Eval"
+    return (
+        f"{label:<5} {int(payload['episode_id']):<4} "
+        f"[{_progress_bar(fraction)}] {100.0 * fraction:3.0f}% · "
+        f"best {best:4.1f}% · tick {tick}/{limit}"
+    )
+
+
 def run_unpaced_training_set(
     *,
     set_path: str | Path,
@@ -396,60 +415,96 @@ def run_unpaced_training_set(
     model = load_model(fresh=fresh, checkpoint_dir=checkpoint_dir)
     episode_id = 0
 
-    def write(prefix: str, payload: dict) -> None:
-        if json_output:
-            line = prefix + " " + json.dumps(
-                payload, separators=(",", ":"), sort_keys=True
-            )
-        elif prefix == "LEARNING":
-            episode_id = payload["episode_id"]
-            if payload["status"] == "start":
-                line = f"Episode {episode_id}: collecting rollout..."
-            else:
-                loss = payload.get("loss")
-                loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
-                line = (
-                    f"Episode {episode_id}: PPO update complete | "
-                    f"loss={loss_text} | "
-                    f"time={float(payload.get('seconds', 0.0)):.1f}s"
-                )
-        elif prefix == "ROLLOUT":
-            limit = int(payload["episode_limit"])
-            tick = int(payload["world_tick"])
-            rollout_percent = 100.0 * tick / max(limit, 1)
-            solution_percent = 100.0 * float(payload["progress"])
-            posture = "grounded" if payload["grounded"] else "airborne"
-            line = (
-                f"Episode {payload['episode_id']} | "
-                f"rollout {rollout_percent:5.1f}% ({tick}/{limit}) | "
-                f"solution {solution_percent:5.1f}% | "
-                f"x={float(payload['x']):.0f} y={float(payload['y']):.0f} | {posture}"
-            )
-        elif prefix == "PROGRESS":
-            attempts = int(payload["attempts"])
-            successes = int(payload["successes"])
-            success_percent = 100.0 * successes / max(attempts, 1)
-            solution_percent = 100.0 * float(payload["progress"])
-            loss = payload.get("loss")
-            loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
-            line = (
-                f"Episode {payload['episode_id']}: {str(payload['result']).upper()} | "
-                f"solution {solution_percent:.1f}% | "
-                f"success rate {successes}/{attempts} ({success_percent:.1f}%) | "
-                f"decisions={payload['decisions']} | PPO loss={loss_text}"
-            )
-        elif prefix == "EVALUATION":
-            solution_percent = 100.0 * float(payload["progress"])
-            line = (
-                f"Evaluation {payload['episode_id']}: "
-                f"{str(payload['result']).upper()} | "
-                f"solution {solution_percent:.1f}% | "
-                f"decisions={payload['decisions']}"
-            )
-        else:
-            line = prefix
+    interactive = bool(
+        not json_output
+        and callable(getattr(output, "isatty", None))
+        and output.isatty()
+    )
+    live_active = False
+
+    def clear_live() -> None:
+        nonlocal live_active
+        if live_active:
+            output.write("\r\x1b[2K")
+            output.flush()
+            live_active = False
+
+    def write_line(line: str = "") -> None:
+        clear_live()
         output.write(line + "\n")
         output.flush()
+
+    def write(prefix: str, payload: dict) -> None:
+        nonlocal live_active
+        if json_output:
+            output.write(
+                prefix + " " + json.dumps(
+                    payload, separators=(",", ":"), sort_keys=True
+                ) + "\n"
+            )
+            output.flush()
+            return
+
+        if prefix == "ROLLOUT":
+            if interactive:
+                output.write("\r" + _rollout_line(payload) + "\x1b[K")
+                output.flush()
+                live_active = True
+            return
+
+        if prefix == "TRAIN_RESULT":
+            clear_live()
+            write_line(
+                f"Train {int(payload['episode_id']):<4} "
+                f"{str(payload['result']).upper()} · "
+                f"best {100.0 * float(payload['progress']):.1f}% · "
+                f"{int(payload['decisions'])} ticks"
+            )
+            return
+
+        if prefix == "LEARNING":
+            if payload["status"] == "start":
+                if interactive:
+                    initial = {
+                        "episode_id": payload["episode_id"],
+                        "mode": "train",
+                        "episode_limit": payload["episode_limit"],
+                        "world_tick": 0,
+                        "progress": 0.0,
+                    }
+                    output.write("\r" + _rollout_line(initial) + "\x1b[K")
+                    output.flush()
+                    live_active = True
+                return
+            clear_live()
+            loss = payload.get("loss")
+            loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
+            status = "updated" if payload.get("updated") else "skipped"
+            write_line(
+                f"PPO {int(payload['episode_id']):<6} {status} · "
+                f"loss {loss_text} · "
+                f"{float(payload.get('seconds', 0.0)):.1f}s"
+            )
+            return
+
+        if prefix == "PROGRESS":
+            return
+
+        if prefix == "EVALUATION":
+            clear_live()
+            result = str(payload["result"])
+            if result == "success":
+                suffix = f"PASS · {int(payload['decisions'])} ticks"
+            else:
+                suffix = (
+                    f"{result.upper()} · "
+                    f"best {100.0 * float(payload['progress']):.1f}% · "
+                    f"{int(payload['decisions'])} ticks"
+                )
+            write_line(f"Eval {int(payload['episode_id']):<6} {suffix}")
+            return
+
+        write_line(prefix)
 
     def progress_writer(episode_id: int, mode: str):
         def write_progress(snapshot: dict[str, object]) -> None:
@@ -460,12 +515,19 @@ def run_unpaced_training_set(
             })
         return write_progress
 
-    for spec in manifest.training_maps:
+    map_count = len(manifest.training_maps)
+    for map_index, spec in enumerate(manifest.training_maps, start=1):
         map_path = Path(spec.path)
         if not map_path.is_absolute():
             map_path = (manifest_path.parent / map_path).resolve()
-        output.write(f"MAP {spec.map_id}: starting (unpaced)\n")
-        output.flush()
+        if json_output:
+            output.write(f"MAP {spec.map_id}: starting (unpaced)\n")
+            output.flush()
+        else:
+            if map_index > 1:
+                write_line()
+            write_line(f"Map {map_index}/{map_count} · {spec.map_id}")
+            write_line()
         mastered = False
         successes = 0
 
@@ -478,6 +540,7 @@ def run_unpaced_training_set(
                 "episode_id": episode_id,
                 "mode": "unpaced",
                 "status": "start",
+                "episode_limit": episode_limit,
             })
             outcome, steps = run_episode(
                 model,
@@ -488,6 +551,13 @@ def run_unpaced_training_set(
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "train"),
             )
+            if not json_output:
+                write("TRAIN_RESULT", {
+                    "episode_id": episode_id,
+                    "result": outcome.result,
+                    "progress": outcome.progress,
+                    "decisions": outcome.decisions,
+                })
             update_started = time.monotonic()
             updated, loss = ppo_update(
                 model, steps, seed=episode_id, should_stop=should_stop
@@ -543,22 +613,39 @@ def run_unpaced_training_set(
                 mastered = True
                 break
 
-        output.write(f"MAP {spec.map_id}: {'PASS' if mastered else 'FAIL'}\n")
-        output.flush()
-        if not mastered:
-            output.write(
-                f"TRAINING SET {manifest.training_set_level}: FAIL\n"
-            )
+        if json_output:
+            output.write(f"MAP {spec.map_id}: {'PASS' if mastered else 'FAIL'}\n")
             output.flush()
+        else:
+            write_line()
+            write_line(
+                f"Map {map_index}/{map_count} · {spec.map_id} · "
+                f"{'PASS' if mastered else 'FAIL'}"
+            )
+        if not mastered:
+            if json_output:
+                output.write(
+                    f"TRAINING SET {manifest.training_set_level}: FAIL\n"
+                )
+                output.flush()
+            else:
+                write_line()
+                write_line(f"Training set {manifest.training_set_level} · FAIL")
             return 1
 
-    output.write(f"TRAINING SET {manifest.training_set_level}: PASS\n")
-    output.flush()
+    if json_output:
+        output.write(f"TRAINING SET {manifest.training_set_level}: PASS\n")
+        output.flush()
+    else:
+        write_line()
+        write_line(f"Training set {manifest.training_set_level} · PASS")
     return 0
 
 
 __all__ = [
     "EpisodeResult",
+    "_progress_bar",
+    "_rollout_line",
     "Step",
     "load_model",
     "ppo_update",

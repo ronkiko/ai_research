@@ -546,10 +546,16 @@ class TrainingRun:
         if mode == "unpaced":
             from game2.v2.training.unpaced import run_unpaced_training_set
 
-            self._write(
-                f"TRAINING SET {manifest.training_set_level}: "
-                f"{'fresh' if fresh else 'resume'}, mode=unpaced, headless"
-            )
+            if json_output:
+                self._write(
+                    f"TRAINING SET {manifest.training_set_level}: "
+                    f"{'fresh' if fresh else 'resume'}, mode=unpaced, headless"
+                )
+            else:
+                self._write(
+                    f"Training set {manifest.training_set_level} · "
+                    f"{'fresh' if fresh else 'resume'} · unpaced"
+                )
             return run_unpaced_training_set(
                 set_path=manifest_path,
                 checkpoint_dir=checkpoint_path,

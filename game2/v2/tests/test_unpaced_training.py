@@ -9,6 +9,8 @@ import torch
 
 from game2.v2.player.learned.contracts import ActionDecision
 from game2.v2.training.unpaced import (
+    _progress_bar,
+    _rollout_line,
     load_model,
     run_episode,
     save_checkpoints,
@@ -38,6 +40,22 @@ class _Critic(torch.nn.Module):
 
 
 class UnpacedTrainingTests(unittest.TestCase):
+    def test_human_rollout_line_is_compact_and_uses_best_progress(self):
+        self.assertEqual(_progress_bar(0.34), "██████--------------")
+        line = _rollout_line({
+            "episode_id": 7,
+            "mode": "train",
+            "episode_limit": 1200,
+            "world_tick": 400,
+            "progress": 0.055,
+        })
+        self.assertEqual(
+            line,
+            "Train 7    [██████--------------]  33% · best  5.5% · tick 400/1200",
+        )
+        self.assertNotIn("x=", line)
+        self.assertNotIn("airborne", line)
+
     def test_unpaced_episode_honors_stop_callback_inside_rollout(self):
         model = SimpleNamespace(
             planner=_Planner(),
