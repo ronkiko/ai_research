@@ -54,6 +54,9 @@ class DecisionSample:
     policy_sequence: int = 0
     prob_right: float | None = None
     prob_jump: float | None = None
+    motion_y: float = 0.0
+    right_probabilities: tuple[float, float, float] | None = None
+    jump_probabilities: tuple[float, float, float] | None = None
     self_x: float | None = None
     self_y: float | None = None
     goal_x: float | None = None
@@ -80,7 +83,7 @@ class LearnedPlayer:
         if not hasattr(planner, "decide"):
             raise TypeError("planner must provide decide(grid)")
         if not hasattr(motor_controller, "decide"):
-            raise TypeError("motor_controller must provide decide(goal, motion_x)")
+            raise TypeError("motor_controller must provide axis-feedback decide()")
         self.planner = planner
         self.motor_controller = motor_controller
         planner_backbone = getattr(planner, "backbone", None)
@@ -98,6 +101,7 @@ class LearnedPlayer:
             self.critic.backbone = planner_backbone
 
         self.motion_estimator = motion_estimator or MotionEstimator()
+        self.vertical_motion_estimator = MotionEstimator()
         self.latest_goal: MotorGoal | None = None
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
@@ -129,6 +133,7 @@ class LearnedPlayer:
 
     def _reset_episode_local(self) -> None:
         self.motion_estimator.reset()
+        self.vertical_motion_estimator.reset()
         self.latest_goal = None
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
@@ -161,25 +166,11 @@ class LearnedPlayer:
             self.motor_controller.eval()
             self.critic.eval()
 
-    def _model_logits(
-        self,
-        vision: torch.Tensor,
-        motion_x: float,
-        pad_right: bool,
-        pad_jump: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        planner_output = self.planner(vision)[0]
-        if planner_output.ndim != 1 or planner_output.shape[0] != 2:
-            raise ValueError("Planner must return two MotorGoal values")
-        logits = self.motor_controller.forward_goal(
-            planner_output, pad_right, pad_jump
-        )
-        return planner_output, logits
-
     def _process_model_grid(
         self,
         frame: VisionGrid,
         motion_x: float,
+        motion_y: float,
         self_position: tuple[float, float] | None,
     ) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
@@ -197,13 +188,20 @@ class LearnedPlayer:
                 planner_output = self.planner.forward_features(features)[0]
                 logits = self.motor_controller.forward_goal(
                     planner_output,
+                    motion_x,
+                    motion_y,
                     pad_state.right,
                     pad_state.jump,
                 )
                 value = float(self.critic.forward_features(features)[0])
             else:
-                planner_output, logits = self._model_logits(
-                    vision, motion_x, pad_state.right, pad_state.jump
+                planner_output = self.planner(vision)[0]
+                logits = self.motor_controller.forward_goal(
+                    planner_output,
+                    motion_x,
+                    motion_y,
+                    pad_state.right,
+                    pad_state.jump,
                 )
                 value = float(self.critic(vision)[0])
 
@@ -250,6 +248,13 @@ class LearnedPlayer:
             desired_state,
             prob_right=float(probabilities[0, action_tensor[0]]),
             prob_jump=float(probabilities[1, action_tensor[1]]),
+            motion_y=motion_y,
+            right_probabilities=tuple(
+                float(value) for value in probabilities[0]
+            ),
+            jump_probabilities=tuple(
+                float(value) for value in probabilities[1]
+            ),
             self_x=(
                 None if self_position is None else float(self_position[0])
             ),
@@ -266,12 +271,19 @@ class LearnedPlayer:
             frame,
             None if self_position is None else self_position[0],
         )
-        if not self.motion_estimator.last_observation_usable:
+        motion_y = self.vertical_motion_estimator.update_center(
+            frame,
+            None if self_position is None else self_position[1],
+        )
+        if (
+            not self.motion_estimator.last_observation_usable
+            or not self.vertical_motion_estimator.last_observation_usable
+        ):
             return None
 
         if self._episode_mode in {"train", "evaluate"}:
             sample = self._process_model_grid(
-                frame, motion_x, self_position
+                frame, motion_x, motion_y, self_position
             )
             self._policy_sequence += 1
             sample = replace(
@@ -283,6 +295,7 @@ class LearnedPlayer:
                 goal_y=(
                     None if goal_position is None else float(goal_position[1])
                 ),
+                motion_y=motion_y,
             )
         else:
             goal = self.planner.decide(frame)
@@ -290,6 +303,8 @@ class LearnedPlayer:
                 raise TypeError("Planner returned an invalid MotorGoal")
             command = self.motor_controller.decide(
                 goal,
+                motion_x,
+                motion_y,
                 self.actuated_state.right,
                 self.actuated_state.jump,
             )
@@ -319,6 +334,7 @@ class LearnedPlayer:
                 goal_y=(
                     None if goal_position is None else float(goal_position[1])
                 ),
+                motion_y=motion_y,
             )
 
         desired_state = sample.desired_state

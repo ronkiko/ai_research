@@ -133,14 +133,14 @@ class LearnedContractTests(unittest.TestCase):
             len({id(parameter) for parameter in optimizer_parameters}),
         )
 
-    def test_each_motor_input_contains_goal_and_only_its_own_button_state(self):
-        off = motor_input(MotorGoal(0.5, -0.5), False)
-        on = motor_input(MotorGoal(0.5, -0.5), True)
+    def test_each_motor_input_is_intent_motion_and_own_button_state(self):
+        right = motor_input(0.5, 0.25, False)
+        jump = motor_input(-0.5, -0.75, True)
         self.assertTrue(torch.equal(
-            off, torch.tensor([0.5, -0.5, 0.0])
+            right, torch.tensor([0.5, 0.25, 0.0])
         ))
         self.assertTrue(torch.equal(
-            on, torch.tensor([0.5, -0.5, 1.0])
+            jump, torch.tensor([-0.5, -0.75, 1.0])
         ))
 
 
@@ -176,6 +176,51 @@ class LearnedModelTests(unittest.TestCase):
             self.assertTrue(-1.0 <= goal.target_dx <= 1.0)
             self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
 
+    def test_axis_feedback_is_routed_only_to_its_matching_motor(self):
+        class CaptureMotor(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.last = None
+
+            def forward(self, inputs):
+                self.last = inputs.detach().clone()
+                return torch.zeros(3)
+
+        controller = DualMotorController.fresh(12)
+        right = CaptureMotor()
+        jump = CaptureMotor()
+        controller.right_motor = right
+        controller.jump_motor = jump
+        controller.forward_goal(
+            torch.tensor([0.25, -0.5]),
+            motion_x=0.75,
+            motion_y=-0.25,
+            current_right=True,
+            current_jump=False,
+        )
+        self.assertTrue(torch.equal(
+            right.last, torch.tensor([0.25, 0.75, 1.0])
+        ))
+        self.assertTrue(torch.equal(
+            jump.last, torch.tensor([-0.5, -0.25, 0.0])
+        ))
+
+    def test_vertical_motion_estimator_is_independent_from_horizontal_motion(self):
+        player = LearnedPlayer(CNNPlanner.fresh(1), DualMotorController.fresh(2))
+        player.prepare_episode("evaluate", 7)
+        first = _grid(6, 5, world_tick=1)
+        second = _grid(6, 5, world_tick=2)
+        # The general MotionEstimator instances are distinct state machines;
+        # vertical feedback must never reuse horizontal history.
+        player.process_grid(first)
+        self.assertIsNot(
+            player.motion_estimator,
+            player.vertical_motion_estimator,
+        )
+        player.process_grid(second)
+        self.assertTrue(player.motion_estimator.last_observation_usable)
+        self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
+
     def test_right_and_jump_are_independent_3_8_3_motors(self):
         controller = DualMotorController.fresh(12)
         self.assertIsInstance(controller.right_motor, ButtonMotor383)
@@ -194,7 +239,9 @@ class LearnedModelTests(unittest.TestCase):
                 (8, 3),
             )
         self.assertIsInstance(
-            controller.decide(MotorGoal(0.1, -0.2), True, False),
+            controller.decide(
+                MotorGoal(0.1, -0.2), 0.3, -0.4, True, False
+            ),
             ControlCommand,
         )
 

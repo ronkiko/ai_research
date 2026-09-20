@@ -20,7 +20,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parent / "episodes"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,7 @@ class EpisodeStep:
     physics: bytes
     metadata: bytes
     motion_x: float
+    motion_y: float
     pad_right: bool
     pad_jump: bool
     action_right: ButtonCommand
@@ -49,6 +50,12 @@ class EpisodeStep:
     motor_goal_dy: float | None
     prob_right: float | None
     prob_jump: float | None
+    prob_right_keep: float | None
+    prob_right_press: float | None
+    prob_right_release: float | None
+    prob_jump_keep: float | None
+    prob_jump_press: float | None
+    prob_jump_release: float | None
     self_x: float | None
     self_y: float | None
     goal_x: float | None
@@ -66,6 +73,12 @@ class EpisodeStep:
     new_log_prob: float | None
     new_value: float | None
     ratio: float | None
+    new_prob_right_keep: float | None
+    new_prob_right_press: float | None
+    new_prob_right_release: float | None
+    new_prob_jump_keep: float | None
+    new_prob_jump_press: float | None
+    new_prob_jump_release: float | None
 
     @property
     def action(self) -> ControlCommand:
@@ -118,7 +131,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=2;
+                PRAGMA user_version=3;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -150,6 +163,7 @@ class EpisodeDataset:
                     physics BLOB NOT NULL,
                     metadata BLOB NOT NULL,
                     motion_x REAL NOT NULL,
+                    motion_y REAL NOT NULL,
                     pad_right INTEGER NOT NULL,
                     pad_jump INTEGER NOT NULL,
                     action_right INTEGER NOT NULL,
@@ -162,6 +176,12 @@ class EpisodeDataset:
                     motor_goal_dy REAL,
                     prob_right REAL,
                     prob_jump REAL,
+                    prob_right_keep REAL,
+                    prob_right_press REAL,
+                    prob_right_release REAL,
+                    prob_jump_keep REAL,
+                    prob_jump_press REAL,
+                    prob_jump_release REAL,
                     self_x REAL,
                     self_y REAL,
                     goal_x REAL,
@@ -178,7 +198,13 @@ class EpisodeDataset:
                     ppo_selected INTEGER NOT NULL DEFAULT 0,
                     new_log_prob REAL,
                     new_value REAL,
-                    ratio REAL
+                    ratio REAL,
+                    new_prob_right_keep REAL,
+                    new_prob_right_press REAL,
+                    new_prob_right_release REAL,
+                    new_prob_jump_keep REAL,
+                    new_prob_jump_press REAL,
+                    new_prob_jump_release REAL
                 );
                 CREATE INDEX steps_world_tick ON steps(world_tick);
                 """
@@ -257,6 +283,12 @@ class EpisodeDataset:
         if not isinstance(action, ControlCommand):
             raise TypeError("episode sample requires a ControlCommand")
         goal = getattr(sample, "motor_goal", None)
+        right_probabilities = getattr(sample, "right_probabilities", None)
+        jump_probabilities = getattr(sample, "jump_probabilities", None)
+        if right_probabilities is None:
+            right_probabilities = (None, None, None)
+        if jump_probabilities is None:
+            jump_probabilities = (None, None, None)
 
         values = (
             sequence,
@@ -270,6 +302,7 @@ class EpisodeDataset:
             sqlite3.Binary(bytes(grid.physics)),
             sqlite3.Binary(bytes(grid.metadata)),
             float(getattr(sample, "motion_x", 0.0)),
+            float(getattr(sample, "motion_y", 0.0)),
             int(bool(getattr(sample, "pad_right", False))),
             int(bool(getattr(sample, "pad_jump", False))),
             int(action.right),
@@ -282,6 +315,8 @@ class EpisodeDataset:
             self._finite_or_none(getattr(goal, "target_dy", None)),
             self._finite_or_none(getattr(sample, "prob_right", None)),
             self._finite_or_none(getattr(sample, "prob_jump", None)),
+            *(self._finite_or_none(value) for value in right_probabilities),
+            *(self._finite_or_none(value) for value in jump_probabilities),
             self_x,
             self_y,
             goal_x,
@@ -299,14 +334,17 @@ class EpisodeDataset:
                     policy_sequence, world_tick, duration_ticks,
                     columns, rows, tile_size, subdivisions,
                     coarse_physics, physics, metadata,
-                    motion_x, pad_right, pad_jump,
+                    motion_x, motion_y, pad_right, pad_jump,
                     action_right, action_jump, desired_right, desired_jump,
                     old_log_prob, old_value, motor_goal_dx, motor_goal_dy,
-                    prob_right, prob_jump, self_x, self_y, goal_x, goal_y,
+                    prob_right, prob_jump,
+                    prob_right_keep, prob_right_press, prob_right_release,
+                    prob_jump_keep, prob_jump_press, prob_jump_release,
+                    self_x, self_y, goal_x, goal_y,
                     suppressed_buttons, actuated,
                     chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -319,6 +357,7 @@ class EpisodeDataset:
                     physics=excluded.physics,
                     metadata=excluded.metadata,
                     motion_x=excluded.motion_x,
+                    motion_y=excluded.motion_y,
                     pad_right=excluded.pad_right,
                     pad_jump=excluded.pad_jump,
                     action_right=excluded.action_right,
@@ -331,6 +370,12 @@ class EpisodeDataset:
                     motor_goal_dy=excluded.motor_goal_dy,
                     prob_right=excluded.prob_right,
                     prob_jump=excluded.prob_jump,
+                    prob_right_keep=excluded.prob_right_keep,
+                    prob_right_press=excluded.prob_right_press,
+                    prob_right_release=excluded.prob_right_release,
+                    prob_jump_keep=excluded.prob_jump_keep,
+                    prob_jump_press=excluded.prob_jump_press,
+                    prob_jump_release=excluded.prob_jump_release,
                     self_x=excluded.self_x,
                     self_y=excluded.self_y,
                     goal_x=excluded.goal_x,
@@ -361,6 +406,7 @@ class EpisodeDataset:
         motor_goal=None,
         prob_right: float | None = None,
         prob_jump: float | None = None,
+        motion_y: float = 0.0,
         actuated: bool = True,
     ) -> None:
         from types import SimpleNamespace
@@ -368,6 +414,7 @@ class EpisodeDataset:
             policy_sequence=policy_sequence,
             vision_grid=grid,
             motion_x=motion_x,
+            motion_y=motion_y,
             pad_right=pad_state.right,
             pad_jump=pad_state.jump,
             action_decision=action,
@@ -415,6 +462,7 @@ class EpisodeDataset:
             physics=bytes(row["physics"]),
             metadata=bytes(row["metadata"]),
             motion_x=float(row["motion_x"]),
+            motion_y=float(row["motion_y"]),
             pad_right=bool(row["pad_right"]),
             pad_jump=bool(row["pad_jump"]),
             action_right=ButtonCommand(int(row["action_right"])),
@@ -427,6 +475,12 @@ class EpisodeDataset:
             motor_goal_dy=row["motor_goal_dy"],
             prob_right=row["prob_right"],
             prob_jump=row["prob_jump"],
+            prob_right_keep=row["prob_right_keep"],
+            prob_right_press=row["prob_right_press"],
+            prob_right_release=row["prob_right_release"],
+            prob_jump_keep=row["prob_jump_keep"],
+            prob_jump_press=row["prob_jump_press"],
+            prob_jump_release=row["prob_jump_release"],
             self_x=row["self_x"],
             self_y=row["self_y"],
             goal_x=row["goal_x"],
@@ -444,6 +498,12 @@ class EpisodeDataset:
             new_log_prob=row["new_log_prob"],
             new_value=row["new_value"],
             ratio=row["ratio"],
+            new_prob_right_keep=row["new_prob_right_keep"],
+            new_prob_right_press=row["new_prob_right_press"],
+            new_prob_right_release=row["new_prob_right_release"],
+            new_prob_jump_keep=row["new_prob_jump_keep"],
+            new_prob_jump_press=row["new_prob_jump_press"],
+            new_prob_jump_release=row["new_prob_jump_release"],
         ) for row in rows)
 
     @staticmethod
@@ -563,7 +623,13 @@ class EpisodeDataset:
                 """
                 UPDATE steps SET
                     reward=NULL, gae=NULL, advantage=NULL, return_value=NULL,
-                    ppo_selected=0, new_log_prob=NULL, new_value=NULL, ratio=NULL
+                    ppo_selected=0, new_log_prob=NULL, new_value=NULL, ratio=NULL,
+                    new_prob_right_keep=NULL,
+                    new_prob_right_press=NULL,
+                    new_prob_right_release=NULL,
+                    new_prob_jump_keep=NULL,
+                    new_prob_jump_press=NULL,
+                    new_prob_jump_release=NULL
                 """
             )
             for item in annotations:
@@ -571,7 +637,10 @@ class EpisodeDataset:
                     """
                     UPDATE steps SET
                         reward=?, gae=?, advantage=?, return_value=?,
-                        ppo_selected=?, new_log_prob=?, new_value=?, ratio=?
+                        ppo_selected=?, new_log_prob=?, new_value=?, ratio=?,
+                        new_prob_right_keep=?, new_prob_right_press=?,
+                        new_prob_right_release=?, new_prob_jump_keep=?,
+                        new_prob_jump_press=?, new_prob_jump_release=?
                     WHERE id=?
                     """,
                     (
@@ -583,6 +652,12 @@ class EpisodeDataset:
                         item.get("new_log_prob"),
                         item.get("new_value"),
                         item.get("ratio"),
+                        item.get("new_prob_right_keep"),
+                        item.get("new_prob_right_press"),
+                        item.get("new_prob_right_release"),
+                        item.get("new_prob_jump_keep"),
+                        item.get("new_prob_jump_press"),
+                        item.get("new_prob_jump_release"),
                         int(item["id"]),
                     ),
                 )

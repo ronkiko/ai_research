@@ -50,6 +50,7 @@ def _sample(sequence: int, tick: int, self_x: int):
         vision_grid=grid,
         motor_goal=MotorGoal(1.0, 0.0),
         motion_x=0.0,
+        motion_y=-0.25 if sequence == 2 else 0.0,
         action_decision=ControlCommand(
             ButtonCommand.PRESS if sequence == 1 else ButtonCommand.KEEP,
             ButtonCommand.KEEP,
@@ -65,6 +66,8 @@ def _sample(sequence: int, tick: int, self_x: int):
         suppressed_buttons=(),
         prob_right=0.5,
         prob_jump=0.5,
+        right_probabilities=(0.5, 0.4, 0.1),
+        jump_probabilities=(0.6, 0.3, 0.1),
         self_x=float(self_x * 64 + 32),
         self_y=float(2 * 64 + 32),
         goal_x=float(10 * 64 + 32),
@@ -115,7 +118,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 2)
+            self.assertEqual(metadata["schema_version"], 3)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(
@@ -127,9 +130,19 @@ class EpisodeDatasetTests(unittest.TestCase):
                     ButtonCommand.KEEP,
                 ],
             )
+            steps = dataset.steps()
+            self.assertEqual(steps[1].motion_y, -0.25)
+            self.assertAlmostEqual(steps[0].prob_jump_keep, 0.6)
+            self.assertAlmostEqual(steps[0].prob_jump_press, 0.3)
+            self.assertAlmostEqual(steps[0].prob_jump_release, 0.1)
             self.assertTrue(any(
                 step.ppo_selected and step.advantage is not None
-                for step in dataset.steps()
+                for step in steps
+            ))
+            self.assertTrue(any(
+                step.ppo_selected
+                and step.new_prob_jump_press is not None
+                for step in steps
             ))
 
     def test_store_rotates_to_five_episode_files_and_fresh_reset_clears_them(self):

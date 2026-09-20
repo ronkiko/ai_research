@@ -235,6 +235,10 @@ def train_episode(
         full_vision = torch.stack([
             vision_to_tensor(step.vision_grid) for step in selected_steps
         ])
+    motion_all = torch.tensor(
+        [[step.motion_x, step.motion_y] for step in selected_steps],
+        dtype=torch.float32,
+    )
     pad_all = torch.tensor(
         [[step.pad_right, step.pad_jump] for step in selected_steps],
         dtype=torch.float32,
@@ -245,6 +249,7 @@ def train_episode(
     total_updates = PPO_EPOCHS * batches_per_epoch
     final_log_prob = torch.empty(count, dtype=torch.float32)
     final_values = torch.empty(count, dtype=torch.float32)
+    final_probabilities = torch.empty((count, 2, 3), dtype=torch.float32)
     total_loss = total_policy_loss = total_value_loss = 0.0
     total_entropy = total_grad_norm = 0.0
     total_right_confidence = total_jump_confidence = 0.0
@@ -270,8 +275,11 @@ def train_episode(
                 vision = full_vision[indexes]
                 goals = model.planner(vision)
                 values = model.critic(vision)
+            motion = motion_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
             pad = pad_all[indexes].to(dtype=goals.dtype, device=goals.device)
-            logits = model.motor_controller.forward_batch(goals, pad)
+            logits = model.motor_controller.forward_batch(goals, motion, pad)
             if logits.ndim != 2 or logits.shape[1] != 6:
                 raise ValueError("Motor Controller must return six command logits")
             command_logits = logits.reshape(-1, 2, 3)
@@ -307,9 +315,6 @@ def train_episode(
             )
             model.optimizer.step()
 
-            if epoch == PPO_EPOCHS - 1:
-                final_log_prob[indexes] = new_log_prob.detach().cpu()
-                final_values[indexes] = values.detach().cpu()
             batch_count = len(indexes)
             total_loss += float(loss.detach())
             total_policy_loss += float(policy_loss.detach())
@@ -336,6 +341,37 @@ def train_episode(
                     "rollout_records": len(steps),
                     "ppo_records": count,
                 })
+
+    # Re-evaluate once after every Adam step. These are true post-update
+    # diagnostics, not the pre-step values from the final PPO minibatch.
+    with torch.no_grad():
+        for start in range(0, count, PPO_BATCH_SIZE):
+            indexes = torch.arange(start, min(start + PPO_BATCH_SIZE, count))
+            if shared:
+                assert prepared_vision is not None
+                features = model.planner.encode_prepared(prepared_vision[indexes])
+                goals = model.planner.forward_features(features)
+                values = model.critic.forward_features(features)
+            else:
+                assert full_vision is not None
+                vision = full_vision[indexes]
+                goals = model.planner(vision)
+                values = model.critic(vision)
+            motion = motion_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            pad = pad_all[indexes].to(dtype=goals.dtype, device=goals.device)
+            logits = model.motor_controller.forward_batch(goals, motion, pad)
+            command_logits = logits.reshape(-1, 2, 3)
+            probabilities = torch.softmax(command_logits, dim=2)
+            log_probabilities = torch.log_softmax(command_logits, dim=2)
+            batch_actions = actions[indexes].to(device=logits.device)
+            final_lp = log_probabilities.gather(
+                2, batch_actions.unsqueeze(2)
+            ).squeeze(2).sum(dim=1)
+            final_log_prob[indexes] = final_lp.detach().cpu()
+            final_values[indexes] = values.detach().cpu()
+            final_probabilities[indexes] = probabilities.detach().cpu()
 
     norm_after, hash_after = _parameter_stats(parameters)
     loss_value = total_loss / max(updates, 1)
@@ -368,10 +404,17 @@ def train_episode(
     for index, step in enumerate(steps):
         local = selected_lookup.get(index)
         new_lp = new_value = ratio_value = None
+        new_right = new_jump = (None, None, None)
         if local is not None:
             new_lp = float(final_log_prob[local])
             new_value = float(final_values[local])
             ratio_value = math.exp(new_lp - step.old_log_prob)
+            new_right = tuple(
+                float(value) for value in final_probabilities[local, 0]
+            )
+            new_jump = tuple(
+                float(value) for value in final_probabilities[local, 1]
+            )
         annotations.append({
             "id": step.id,
             "reward": float(rewards[index]),
@@ -382,6 +425,12 @@ def train_episode(
             "new_log_prob": new_lp,
             "new_value": new_value,
             "ratio": ratio_value,
+            "new_prob_right_keep": new_right[0],
+            "new_prob_right_press": new_right[1],
+            "new_prob_right_release": new_right[2],
+            "new_prob_jump_keep": new_jump[0],
+            "new_prob_jump_press": new_jump[1],
+            "new_prob_jump_release": new_jump[2],
         })
 
     dataset.write_training_annotations(
