@@ -235,9 +235,6 @@ def train_episode(
         full_vision = torch.stack([
             vision_to_tensor(step.vision_grid) for step in selected_steps
         ])
-    motion_all = torch.tensor(
-        [step.motion_x for step in selected_steps], dtype=torch.float32
-    ).unsqueeze(1)
     pad_all = torch.tensor(
         [[step.pad_right, step.pad_jump] for step in selected_steps],
         dtype=torch.float32,
@@ -273,13 +270,8 @@ def train_episode(
                 vision = full_vision[indexes]
                 goals = model.planner(vision)
                 values = model.critic(vision)
-            motion = motion_all[indexes].to(
-                dtype=goals.dtype, device=goals.device
-            )
             pad = pad_all[indexes].to(dtype=goals.dtype, device=goals.device)
-            logits = model.motor_controller(
-                torch.cat((goals, motion, pad), dim=1)
-            )
+            logits = model.motor_controller.forward_batch(goals, pad)
             if logits.ndim != 2 or logits.shape[1] != 6:
                 raise ValueError("Motor Controller must return six command logits")
             command_logits = logits.reshape(-1, 2, 3)

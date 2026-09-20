@@ -48,7 +48,7 @@ from game2.v2.player.learned.checkpoint import (
     save_planner,
 )
 from game2.v2.player.learned.critic import CNNCritic
-from game2.v2.player.learned.motor import MotorController582
+from game2.v2.player.learned.motor import DualMotorController
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
     DecisionSample,
@@ -89,7 +89,7 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
         if any(checkpoints):
             raise ValueError("Fresh Model runtime cannot use checkpoints")
         planner = CNNPlanner.fresh(planner_seed)
-        motor = MotorController582.fresh(motor_seed)
+        motor = DualMotorController.fresh(motor_seed)
         critic = CNNCritic.fresh(critic_seed, planner.backbone)
     else:
         if checkpoints != (True, True, True, True):

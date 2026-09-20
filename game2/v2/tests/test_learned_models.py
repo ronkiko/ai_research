@@ -29,7 +29,11 @@ from game2.v2.player.learned.contracts import (
     apply_control_command,
 )
 from game2.v2.player.learned.critic import CNNCritic
-from game2.v2.player.learned.motor import MotorController582, motor_input
+from game2.v2.player.learned.motor import (
+    ButtonMotor383,
+    DualMotorController,
+    motor_input,
+)
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
 from game2.v2.player.learned.vision import vision_to_tensor
@@ -112,7 +116,7 @@ class LearnedContractTests(unittest.TestCase):
     def test_actor_and_critic_share_downsampled_backbone(self):
         planner = CNNPlanner.fresh(1)
         critic = CNNCritic.fresh(3, planner.backbone)
-        player = LearnedPlayer(planner, MotorController582.fresh(2), critic)
+        player = LearnedPlayer(planner, DualMotorController.fresh(2), critic)
         self.assertIs(player.planner.backbone, player.critic.backbone)
         encoded = vision_to_tensor(_grid(20, 12))
         prepared = player.planner.backbone.prepare(encoded.unsqueeze(0))
@@ -129,16 +133,20 @@ class LearnedContractTests(unittest.TestCase):
             len({id(parameter) for parameter in optimizer_parameters}),
         )
 
-    def test_motion_input_includes_current_virtual_pad_state(self):
-        values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)
+    def test_each_motor_input_contains_goal_and_only_its_own_button_state(self):
+        off = motor_input(MotorGoal(0.5, -0.5), False)
+        on = motor_input(MotorGoal(0.5, -0.5), True)
         self.assertTrue(torch.equal(
-            values, torch.tensor([0.5, -0.5, 1.0, 1.0, 0.0])
+            off, torch.tensor([0.5, -0.5, 0.0])
+        ))
+        self.assertTrue(torch.equal(
+            on, torch.tensor([0.5, -0.5, 1.0])
         ))
 
 
 class LearnedModelTests(unittest.TestCase):
     def test_actuated_state_tracks_engine_accepted_virtual_pad(self):
-        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
+        player = LearnedPlayer(CNNPlanner.fresh(1), DualMotorController.fresh(2))
         player.prepare_episode("evaluate", 7)
         frame = _grid(6, 5)
         sample = DecisionSample(
@@ -168,18 +176,25 @@ class LearnedModelTests(unittest.TestCase):
             self.assertTrue(-1.0 <= goal.target_dx <= 1.0)
             self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
 
-    def test_motor_controller_has_executable_5_8_2_shape_and_decides(self):
-        controller = MotorController582.fresh(12)
-        self.assertEqual(
-            (controller.hidden.in_features, controller.hidden.out_features),
-            (5, 8),
+    def test_right_and_jump_are_independent_3_8_3_motors(self):
+        controller = DualMotorController.fresh(12)
+        self.assertIsInstance(controller.right_motor, ButtonMotor383)
+        self.assertIsInstance(controller.jump_motor, ButtonMotor383)
+        self.assertIsNot(
+            controller.right_motor.hidden.weight,
+            controller.jump_motor.hidden.weight,
         )
-        self.assertEqual(
-            (controller.output.in_features, controller.output.out_features),
-            (8, 6),
-        )
+        for motor in (controller.right_motor, controller.jump_motor):
+            self.assertEqual(
+                (motor.hidden.in_features, motor.hidden.out_features),
+                (3, 8),
+            )
+            self.assertEqual(
+                (motor.output.in_features, motor.output.out_features),
+                (8, 3),
+            )
         self.assertIsInstance(
-            controller.decide(MotorGoal(0.1, -0.2), 0.3, True, False),
+            controller.decide(MotorGoal(0.1, -0.2), True, False),
             ControlCommand,
         )
 
@@ -213,7 +228,7 @@ class LearnedCheckpointTests(unittest.TestCase):
                 load_motor_controller(path)
 
     def test_motor_checkpoint_roundtrip_and_configuration_validation(self):
-        controller = MotorController582.fresh(42)
+        controller = DualMotorController.fresh(42)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "motor.pt"
             save_motor_controller(controller, path)

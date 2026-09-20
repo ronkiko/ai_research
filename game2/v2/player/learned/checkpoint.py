@@ -8,7 +8,7 @@ from typing import TypeVar
 import torch
 
 from .critic import CRITIC_CONFIGURATION, CNNCritic
-from .motor import MOTOR_CONTROLLER_CONFIGURATION, MotorController582
+from .motor import MOTOR_CONTROLLER_CONFIGURATION, DualMotorController
 from .planner import PLANNER_CONFIGURATION, CNNPlanner
 
 
@@ -63,10 +63,10 @@ def save_optimizer(optimizer: torch.optim.Optimizer, path: str | Path) -> None:
     }, Path(path))
 
 
-def save_motor_controller(model: MotorController582, path: str | Path) -> None:
+def save_motor_controller(model: DualMotorController, path: str | Path) -> None:
     """Save a Motor Controller checkpoint without serializing the runtime object."""
-    if not isinstance(model, MotorController582):
-        raise TypeError("save_motor_controller requires a MotorController582")
+    if not isinstance(model, DualMotorController):
+        raise TypeError("save_motor_controller requires a DualMotorController")
     torch.save(_payload(model, role="motor_controller", implementation="mlp",
                         configuration=MOTOR_CONTROLLER_CONFIGURATION), Path(path))
 
@@ -146,11 +146,11 @@ def load_optimizer(optimizer: torch.optim.Optimizer, path: str | Path) -> None:
         raise ValueError("optimizer checkpoint does not match PPO parameters") from exc
 
 
-def load_motor_controller(path: str | Path) -> MotorController582:
-    """Load and validate a 5-8-2 Motor Controller checkpoint onto the CPU."""
+def load_motor_controller(path: str | Path) -> DualMotorController:
+    """Load and validate the independent RIGHT/JUMP Motor checkpoint."""
     payload = _read(path, role="motor_controller", implementation="mlp",
                     configuration=MOTOR_CONTROLLER_CONFIGURATION)
-    return _restore(MotorController582.fresh(payload["seed"]), payload)
+    return _restore(DualMotorController.fresh(payload["seed"]), payload)
 
 
 __all__ = [

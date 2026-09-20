@@ -83,7 +83,7 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 # Force RIGHT=PRESS so the runtime emits a state change.
                 for parameter in player.motor_controller.parameters():
                     parameter.data.zero_()
-                player.motor_controller.output.bias.data[1] = 1.0
+                player.motor_controller.right_motor.output.bias.data[1] = 1.0
                 runtime._process_pending(left, _grid(10))
                 self.assertEqual(len(runtime._samples), 1)
                 decision_id = next(iter(runtime._samples))

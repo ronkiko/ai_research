@@ -17,7 +17,6 @@ from .contracts import (
     apply_control_command,
 )
 from .critic import CNNCritic
-from .motor import motor_input_tensor
 from .motion import MotionEstimator, vision_centers
 from .vision import vision_to_tensor
 
@@ -172,16 +171,8 @@ class LearnedPlayer:
         planner_output = self.planner(vision)[0]
         if planner_output.ndim != 1 or planner_output.shape[0] != 2:
             raise ValueError("Planner must return two MotorGoal values")
-        logits = (
-            self.motor_controller.forward_goal(
-                planner_output, motion_x, pad_right, pad_jump
-            )
-            if hasattr(self.motor_controller, "forward_goal")
-            else self.motor_controller(
-                motor_input_tensor(
-                    planner_output, motion_x, pad_right, pad_jump
-                )
-            )
+        logits = self.motor_controller.forward_goal(
+            planner_output, pad_right, pad_jump
         )
         return planner_output, logits
 
@@ -206,7 +197,6 @@ class LearnedPlayer:
                 planner_output = self.planner.forward_features(features)[0]
                 logits = self.motor_controller.forward_goal(
                     planner_output,
-                    motion_x,
                     pad_state.right,
                     pad_state.jump,
                 )
@@ -300,7 +290,6 @@ class LearnedPlayer:
                 raise TypeError("Planner returned an invalid MotorGoal")
             command = self.motor_controller.decide(
                 goal,
-                motion_x,
                 self.actuated_state.right,
                 self.actuated_state.jump,
             )
@@ -347,7 +336,7 @@ class LearnedPlayer:
             raise TypeError("record_actuated requires a DecisionSample")
         desired_state = sample.desired_state
         if desired_state is None:
-            desired_state = apply_control_change(
+            desired_state = apply_control_command(
                 self.actuated_state, sample.action_decision
             )
         self.actuated_state = desired_state
