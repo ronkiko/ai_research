@@ -228,8 +228,12 @@ class ModelRuntime:
         self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
         with self.trajectory_log.open("a", encoding="utf-8") as handle:
             for diagnostic in diagnostics:
+                if diagnostic.get("_log", True) is False:
+                    continue
                 payload = {"e": episode_id, "k": "a"}
                 for key, value in diagnostic.items():
+                    if key.startswith("_"):
+                        continue
                     payload[key] = (
                         self._compact_number(value)
                         if isinstance(value, float) else value

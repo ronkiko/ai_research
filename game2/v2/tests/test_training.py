@@ -342,7 +342,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         ))
         self.assertEqual(player._rewards_for_records((keep_record,), 0.0), [0.0])
 
-    def test_chunk_has_mandatory_first_decision_and_all_later_toggles(self):
+    def test_chunk_keeps_every_policy_step_and_all_toggle_events(self):
         player = self._player()
         player.prepare_episode("train", 42)
 
@@ -397,6 +397,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
              for record in player.training_records],
             [
                 (1, ControlChange(False, False)),
+                (20, ControlChange(False, False)),
                 (30, ControlChange(True, False)),
                 (40, ControlChange(False, True)),
                 (101, ControlChange(False, False)),
@@ -453,11 +454,16 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             player.training_records[2].suppressed_buttons, ("right",)
         )
 
-    def test_chunk_reward_credits_last_decision_before_boundary_then_gae(self):
+    def test_chunk_reward_is_placed_on_dense_preboundary_keep_then_gae(self):
         player = self._player()
         player.prepare_episode("train", 42)
 
-        def record(tick, change):
+        def record(tick):
+            change = (
+                ControlChange(True, False) if tick == 30
+                else ControlChange(False, True) if tick == 80
+                else ControlChange(False, False)
+            )
             grid = _grid(tick, self_x=2, goal_x=10)
             return TrainingRecord.from_sample(DecisionSample(
                 tick,
@@ -472,25 +478,17 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                 ActionDecision(False, False),
             ))
 
-        records = (
-            record(1, ControlChange(False, False)),
-            record(30, ControlChange(True, False)),
-            record(80, ControlChange(False, True)),
-            record(101, ControlChange(False, False)),
-        )
+        records = tuple(record(tick) for tick in range(1, 102))
         player._reward_events = [(101, 0.25)]
         rewards = player._rewards_for_records(records, 0.0)
-        self.assertEqual(
-            rewards,
-            [
-                0.0,
-                -CONTROL_CHANGE_PENALTY,
-                0.25 - CONTROL_CHANGE_PENALTY,
-                0.0,
-            ],
-        )
+
+        self.assertEqual(len(records), 101)
+        self.assertAlmostEqual(rewards[29], -CONTROL_CHANGE_PENALTY, delta=1e-12)
+        self.assertAlmostEqual(rewards[79], -CONTROL_CHANGE_PENALTY, delta=1e-12)
+        self.assertAlmostEqual(rewards[99], 0.25, delta=1e-12)
+        self.assertAlmostEqual(rewards[100], 0.0, delta=1e-12)
         advantages, _returns = player._gae(records, rewards)
-        self.assertEqual(tuple(advantages.shape), (4,))
+        self.assertEqual(tuple(advantages.shape), (101,))
         self.assertTrue(torch.isfinite(advantages).all())
 
     def test_timeout_with_only_keep_still_updates_and_rates_keep(self):
@@ -516,16 +514,20 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             player.process_grid(_grid(50, self_x=2, goal_x=10))
 
         self.assertEqual(
-            [record.world_tick for record in player.training_records], [1]
+            [record.world_tick for record in player.training_records], [1, 50]
         )
         updated, loss = player.apply_result(-1.0)
         self.assertTrue(updated)
         self.assertTrue(math.isfinite(loss))
-        self.assertEqual(len(player.last_update_diagnostics), 1)
-        diagnostic = player.last_update_diagnostics[0]
-        self.assertEqual(diagnostic["a"], "KEEP")
-        self.assertEqual((diagnostic["c"], diagnostic["o"]), (0, 0))
-        self.assertAlmostEqual(diagnostic["rw"], -1.0, delta=1e-8)
+        self.assertEqual(len(player.last_update_diagnostics), 2)
+        first, last = player.last_update_diagnostics
+        self.assertEqual(first["a"], "KEEP")
+        self.assertEqual((first["c"], first["o"]), (0, 0))
+        self.assertTrue(first["_log"])
+        self.assertFalse(last["_log"])
+        self.assertEqual((last["c"], last["o"]), (0, 49))
+        self.assertAlmostEqual(first["rw"], 0.0, delta=1e-8)
+        self.assertAlmostEqual(last["rw"], -1.0, delta=1e-8)
 
     def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
         player = self._player()

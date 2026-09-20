@@ -127,6 +127,21 @@ class PPOFlightRecorderTests(unittest.TestCase):
             path = Path(directory) / "trajectory.jsonl"
             runtime = ModelRuntime(SimpleNamespace(), trajectory_log=path)
             runtime._append_ppo_diagnostics(7, ({
+                "t": 399,
+                "x": 349.0,
+                "y": 420.0,
+                "a": "KEEP",
+                "rw": 0.0,
+                "v": -0.10,
+                "nv": -0.10,
+                "gae": -0.2,
+                "adv": -0.25,
+                "ret": -0.10,
+                "lp": -0.7,
+                "nlp": -0.7,
+                "ratio": 1.0,
+                "_log": False,
+            }, {
                 "t": 400,
                 "x": 350.0,
                 "y": 420.0,

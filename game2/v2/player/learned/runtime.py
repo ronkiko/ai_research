@@ -39,6 +39,7 @@ class DecisionSample:
     chunk_offset: int | None = None
     chunk_first: bool = False
     suppressed_buttons: tuple[str, ...] = ()
+    policy_sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,10 @@ class TrainingRecord:
     self_x: float | None = None
     self_y: float | None = None
     suppressed_buttons: tuple[str, ...] = ()
+    chunk_index: int | None = None
+    chunk_offset: int | None = None
+    chunk_first: bool = False
+    policy_sequence: int = 0
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
@@ -85,6 +90,10 @@ class TrainingRecord:
             float(center[0]) if center is not None else None,
             float(center[1]) if center is not None else None,
             tuple(sample.suppressed_buttons),
+            sample.chunk_index,
+            sample.chunk_offset,
+            sample.chunk_first,
+            sample.policy_sequence,
         )
 
     @property
@@ -156,7 +165,8 @@ class LearnedPlayer:
         self._episode_seed: int | None = None
         self._episode_generator: torch.Generator | None = None
         self._training_records: list[TrainingRecord] = []
-        self._recorded_samples: dict[int, DecisionSample] = {}
+        self._recorded_samples: dict[tuple[str, int], int] = {}
+        self._policy_sequence = 0
         self._chunk_origin_tick: int | None = None
         self._chunk_seen: set[int] = set()
         self._log_probabilities: list[float] = []
@@ -189,6 +199,7 @@ class LearnedPlayer:
         self.latest_sample = None
         self._training_records.clear()
         self._recorded_samples.clear()
+        self._policy_sequence = 0
         self._chunk_origin_tick = None
         self._chunk_seen.clear()
         self._log_probabilities.clear()
@@ -289,14 +300,26 @@ class LearnedPlayer:
             self._chunk_seen.add(chunk_index)
         return chunk_index, chunk_offset, chunk_first
 
-    def _record_training_sample(self, sample: DecisionSample) -> None:
+    @staticmethod
+    def _training_sample_key(sample: DecisionSample) -> tuple[str, int]:
+        if sample.policy_sequence > 0:
+            return ("policy", sample.policy_sequence)
+        return ("object", id(sample))
+
+    def _record_training_sample(
+        self, sample: DecisionSample, *, refresh: bool = False
+    ) -> None:
         if self._episode_mode != "train":
             return
-        sample_id = id(sample)
-        if self._recorded_samples.get(sample_id) is sample:
+        key = self._training_sample_key(sample)
+        record = TrainingRecord.from_sample(sample)
+        existing = self._recorded_samples.get(key)
+        if existing is not None:
+            if refresh:
+                self._training_records[existing] = record
             return
-        self._recorded_samples[sample_id] = sample
-        self._training_records.append(TrainingRecord.from_sample(sample))
+        self._recorded_samples[key] = len(self._training_records)
+        self._training_records.append(record)
         if sample.log_prob is not None:
             self._log_probabilities.append(float(sample.log_prob))
 
@@ -365,12 +388,16 @@ class LearnedPlayer:
 
         if self._episode_mode in {"train", "evaluate"}:
             sample = self._process_model_grid(frame, motion_x)
+            self._policy_sequence += 1
             sample = replace(
                 sample,
                 chunk_index=chunk_index,
                 chunk_offset=chunk_offset,
                 chunk_first=chunk_first,
+                policy_sequence=self._policy_sequence,
             )
+            if self._episode_mode == "train":
+                self._record_training_sample(sample)
         else:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
@@ -405,12 +432,6 @@ class LearnedPlayer:
         self.latest_goal = goal
         self.latest_decision = desired_state
         self.latest_sample = sample
-        if (
-            self._episode_mode == "train"
-            and sample.chunk_first
-            and not sample.action_decision.any
-        ):
-            self._record_training_sample(sample)
         return sample
 
     def record_control_request(self, sample: DecisionSample) -> None:
@@ -419,7 +440,7 @@ class LearnedPlayer:
             raise TypeError("record_control_request requires a DecisionSample")
         if not sample.action_decision.any:
             return
-        self._record_training_sample(sample)
+        self._record_training_sample(sample, refresh=True)
 
     def record_actuated(self, sample: DecisionSample) -> None:
         """Apply one Engine-accepted control change to persistent pad memory."""
@@ -431,7 +452,7 @@ class LearnedPlayer:
                 self.actuated_state, sample.action_decision
             )
         self.actuated_state = desired_state
-        self._record_training_sample(sample)
+        self._record_training_sample(sample, refresh=True)
 
     def record_sent_sample(self, sample: DecisionSample) -> None:
         """Compatibility method for train-path tests; an accepted sample is actuated."""
@@ -623,10 +644,18 @@ class LearnedPlayer:
                 "nlp": final_log_prob,
                 "ratio": ratio,
             }
-            if self._chunk_origin_tick is not None:
+            if record.chunk_index is not None and record.chunk_offset is not None:
+                item["c"] = record.chunk_index
+                item["o"] = record.chunk_offset
+            elif self._chunk_origin_tick is not None:
                 elapsed = record.world_tick - self._chunk_origin_tick
                 if elapsed >= 0:
                     item["c"], item["o"] = divmod(elapsed, PPO_CHUNK_TICKS)
+            item["_log"] = bool(
+                record.chunk_first
+                or record.action_decision.any
+                or record.suppressed_buttons
+            )
             if record.suppressed_buttons:
                 item["b"] = "".join(
                     "R" if button == "right" else "J"
