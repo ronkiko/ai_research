@@ -85,7 +85,9 @@ class PPOFlightRecorderTests(unittest.TestCase):
             sample = SimpleNamespace(
                 world_tick=431,
                 vision_grid=_grid(431),
-                action_decision=ActionDecision(True, True),
+                action_decision=ControlChange(True, True),
+                chunk_index=4,
+                chunk_offset=30,
             )
             runtime._samples[3] = sample
             self.assertFalse(path.exists())
@@ -103,8 +105,10 @@ class PPOFlightRecorderTests(unittest.TestCase):
             ]
             self.assertEqual(rows, [{
                 "a": "RJ",
+                "c": 4,
                 "e": 7,
                 "k": "a",
+                "o": 30,
                 "t": 431,
                 "x": 228,
                 "y": 164,
@@ -241,6 +245,52 @@ class _StubModel:
 
 
 class ModelRuntimeTests(unittest.TestCase):
+    def test_chunk_first_keep_is_logged_without_emitting_joystick_decision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.jsonl"
+
+            class Policy:
+                episode_mode = "train"
+
+                def process_grid(self, frame):
+                    return SimpleNamespace(
+                        world_tick=frame.world_tick,
+                        vision_grid=frame,
+                        action_decision=ControlChange(False, False),
+                        desired_state=ActionDecision(False, False),
+                        chunk_index=0,
+                        chunk_offset=0,
+                        chunk_first=True,
+                    )
+
+            runtime = ModelRuntime(Policy(), trajectory_log=path)
+            runtime._active = True
+            runtime._episode_id = 7
+            left, right = socket.socketpair()
+            try:
+                right.setblocking(False)
+                self.assertIsNone(runtime._process_pending(left, _grid(10)))
+                self.assertEqual(runtime._decision_id, 0)
+                self.assertEqual(runtime._samples, {})
+            finally:
+                left.close()
+                right.close()
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows, [{
+                "a": "KEEP",
+                "c": 0,
+                "e": 7,
+                "k": "a",
+                "o": 0,
+                "t": 10,
+                "x": 228,
+                "y": 164,
+            }])
+
     def test_keep_answer_emits_no_decision_but_change_emits_resolved_state(self):
         class Policy:
             episode_mode = "evaluate"

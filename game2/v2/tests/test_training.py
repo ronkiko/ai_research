@@ -324,6 +324,141 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         ))
         self.assertEqual(player._rewards_for_records((keep_record,), 0.0), [0.0])
 
+    def test_chunk_has_mandatory_first_decision_and_all_later_toggles(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+
+        def decide(frame, motion_x):
+            changes = {
+                1: ControlChange(False, False),
+                20: ControlChange(False, False),
+                30: ControlChange(True, False),
+                40: ControlChange(False, True),
+                101: ControlChange(False, False),
+            }
+            change = changes[frame.world_tick]
+            state = player.actuated_state
+            return DecisionSample(
+                frame.world_tick,
+                frame,
+                MotorGoal(0.0, 0.0),
+                motion_x,
+                change,
+                -0.5,
+                state.right,
+                state.jump,
+                0.0,
+                apply_control_change(state, change),
+            )
+
+        with mock.patch.object(player, "_process_model_grid", side_effect=decide):
+            first = player.process_grid(_grid(1))
+            ignored_keep = player.process_grid(_grid(20))
+            first_toggle = player.process_grid(_grid(30))
+            assert first_toggle is not None
+            player.record_actuated(first_toggle)
+            second_toggle = player.process_grid(_grid(40))
+            assert second_toggle is not None
+            player.record_actuated(second_toggle)
+            next_chunk = player.process_grid(_grid(101))
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(ignored_keep)
+        self.assertIsNotNone(next_chunk)
+        assert first is not None and ignored_keep is not None and next_chunk is not None
+        self.assertTrue(first.chunk_first)
+        self.assertEqual((first.chunk_index, first.chunk_offset), (0, 0))
+        self.assertFalse(ignored_keep.chunk_first)
+        self.assertEqual(
+            (ignored_keep.chunk_index, ignored_keep.chunk_offset), (0, 19)
+        )
+        self.assertTrue(next_chunk.chunk_first)
+        self.assertEqual((next_chunk.chunk_index, next_chunk.chunk_offset), (1, 0))
+        self.assertEqual(
+            [(record.world_tick, record.action_decision)
+             for record in player.training_records],
+            [
+                (1, ControlChange(False, False)),
+                (30, ControlChange(True, False)),
+                (40, ControlChange(False, True)),
+                (101, ControlChange(False, False)),
+            ],
+        )
+
+    def test_chunk_reward_credits_last_decision_before_boundary_then_gae(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+
+        def record(tick, change):
+            grid = _grid(tick, self_x=2, goal_x=10)
+            return TrainingRecord.from_sample(DecisionSample(
+                tick,
+                grid,
+                MotorGoal(0.0, 0.0),
+                0.0,
+                change,
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(False, False),
+            ))
+
+        records = (
+            record(1, ControlChange(False, False)),
+            record(30, ControlChange(True, False)),
+            record(80, ControlChange(False, True)),
+            record(101, ControlChange(False, False)),
+        )
+        player._reward_events = [(101, 0.25)]
+        rewards = player._rewards_for_records(records, 0.0)
+        self.assertEqual(
+            rewards,
+            [
+                0.0,
+                -CONTROL_CHANGE_PENALTY,
+                0.25 - CONTROL_CHANGE_PENALTY,
+                0.0,
+            ],
+        )
+        advantages, _returns = player._gae(records, rewards)
+        self.assertEqual(tuple(advantages.shape), (4,))
+        self.assertTrue(torch.isfinite(advantages).all())
+
+    def test_timeout_with_only_keep_still_updates_and_rates_keep(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+
+        def keep(frame, motion_x):
+            return DecisionSample(
+                frame.world_tick,
+                frame,
+                MotorGoal(0.0, 0.0),
+                motion_x,
+                ControlChange(False, False),
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(False, False),
+            )
+
+        with mock.patch.object(player, "_process_model_grid", side_effect=keep):
+            player.process_grid(_grid(1, self_x=2, goal_x=10))
+            player.process_grid(_grid(50, self_x=2, goal_x=10))
+
+        self.assertEqual(
+            [record.world_tick for record in player.training_records], [1]
+        )
+        updated, loss = player.apply_result(-1.0)
+        self.assertTrue(updated)
+        self.assertTrue(math.isfinite(loss))
+        self.assertEqual(len(player.last_update_diagnostics), 1)
+        diagnostic = player.last_update_diagnostics[0]
+        self.assertEqual(diagnostic["a"], "KEEP")
+        self.assertEqual((diagnostic["c"], diagnostic["o"]), (0, 0))
+        self.assertAlmostEqual(diagnostic["rw"], -1.0, delta=1e-8)
+
     def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
         player = self._player()
         player.prepare_episode("train", 42)
@@ -450,7 +585,19 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
 
         unsent_player = self._player()
         unsent_player.prepare_episode("train", 42)
-        unsent_player.process_grid(_grid(1))
+        unsent = DecisionSample(
+            1,
+            _grid(1),
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(True, False),
+            -0.5,
+            False,
+            False,
+            0.0,
+            ActionDecision(True, False),
+        )
+        self.assertTrue(unsent.action_decision.any)
         self.assertEqual(unsent_player.training_records, ())
 
 
@@ -459,7 +606,8 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         grid = _grid(77, self_x=2, goal_x=10)
         sample = DecisionSample(
             grid.world_tick, grid, MotorGoal(0.0, 0.0), 0.0,
-            ActionDecision(True, False), -0.5, False, False, 0.25,
+            ControlChange(True, False), -0.5, False, False, 0.25,
+            ActionDecision(True, False),
         )
         record = TrainingRecord.from_sample(sample)
         self.assertEqual(

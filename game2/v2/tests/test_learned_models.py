@@ -61,7 +61,7 @@ def _parameters(model: torch.nn.Module) -> list[torch.Tensor]:
     return [parameter.detach().clone() for parameter in model.parameters()]
 
 
-def _record(grid: VisionGrid, action: ActionDecision) -> TrainingRecord:
+def _record(grid: VisionGrid, action: ControlChange) -> TrainingRecord:
     return TrainingRecord.from_sample(DecisionSample(
         grid.world_tick,
         grid,
@@ -154,6 +154,11 @@ class LearnedModelTests(unittest.TestCase):
             frame,
             MotorGoal(0.0, 0.0),
             0.0,
+            ControlChange(True, True),
+            None,
+            False,
+            False,
+            None,
             ActionDecision(True, True),
         )
         self.assertEqual(player.actuated_state, ActionDecision(False, False))
@@ -234,7 +239,7 @@ class LearnedModelTests(unittest.TestCase):
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.extend(
-            _record(frame, ActionDecision(True, False))
+            _record(frame, ControlChange(True, False))
             for _ in range(REPLAY_BATCH_SIZE + 5)
         )
         updated, loss = player.apply_result(1.0)
@@ -250,7 +255,7 @@ class LearnedModelTests(unittest.TestCase):
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.append(
-            _record(frame, ActionDecision(False, True)))
+            _record(frame, ControlChange(False, True)))
         updated, _loss = player.apply_result(-1.0)
         after = self._action_probabilities(player, frame)
         before_joint = (1 - before[0]) * before[1]

@@ -1,7 +1,7 @@
 """Executable learned Player runtime over public Vision and Joystick data."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import torch
@@ -35,11 +35,14 @@ class DecisionSample:
     pad_jump: bool = False
     value: float | None = None
     desired_state: ActionDecision | None = None
+    chunk_index: int | None = None
+    chunk_offset: int | None = None
+    chunk_first: bool = False
 
 
 @dataclass(frozen=True)
 class TrainingRecord:
-    """Small logical-grid replay record for one acknowledged neural decision."""
+    """Small logical-grid replay record for one trainable policy decision."""
 
     columns: int
     rows: int
@@ -151,6 +154,8 @@ class LearnedPlayer:
         self._episode_generator: torch.Generator | None = None
         self._training_records: list[TrainingRecord] = []
         self._recorded_samples: dict[int, DecisionSample] = {}
+        self._chunk_origin_tick: int | None = None
+        self._chunk_seen: set[int] = set()
         self._log_probabilities: list[float] = []
         self._reward_events: list[tuple[int, float]] = []
         self._reward_origin_tick: int | None = None
@@ -181,6 +186,8 @@ class LearnedPlayer:
         self.latest_sample = None
         self._training_records.clear()
         self._recorded_samples.clear()
+        self._chunk_origin_tick = None
+        self._chunk_seen.clear()
         self._log_probabilities.clear()
         self._reward_events.clear()
         self._reward_origin_tick = None
@@ -267,6 +274,29 @@ class LearnedPlayer:
         self._next_reward_tick += crossed * PPO_CHUNK_TICKS
         self._last_reward_distance = distance
 
+    def _chunk_position(self, world_tick: int) -> tuple[int, int, bool]:
+        if self._chunk_origin_tick is None:
+            self._chunk_origin_tick = world_tick
+        if world_tick < self._chunk_origin_tick:
+            raise ValueError("chunk world_tick moved backwards")
+        elapsed = world_tick - self._chunk_origin_tick
+        chunk_index, chunk_offset = divmod(elapsed, PPO_CHUNK_TICKS)
+        chunk_first = chunk_index not in self._chunk_seen
+        if chunk_first:
+            self._chunk_seen.add(chunk_index)
+        return chunk_index, chunk_offset, chunk_first
+
+    def _record_training_sample(self, sample: DecisionSample) -> None:
+        if self._episode_mode != "train":
+            return
+        sample_id = id(sample)
+        if self._recorded_samples.get(sample_id) is sample:
+            return
+        self._recorded_samples[sample_id] = sample
+        self._training_records.append(TrainingRecord.from_sample(sample))
+        if sample.log_prob is not None:
+            self._log_probabilities.append(float(sample.log_prob))
+
     def _process_model_grid(self, frame: VisionGrid, motion_x: float) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
         pad_state = self.actuated_state
@@ -322,11 +352,22 @@ class LearnedPlayer:
         motion_x = self.motion_estimator.update(frame)
         if not self.motion_estimator.last_observation_usable:
             return None
+        chunk_index = chunk_offset = None
+        chunk_first = False
         if self._episode_mode in {"train", "evaluate"}:
+            chunk_index, chunk_offset, chunk_first = self._chunk_position(
+                frame.world_tick
+            )
             self._track_reward_observation(frame)
 
         if self._episode_mode in {"train", "evaluate"}:
             sample = self._process_model_grid(frame, motion_x)
+            sample = replace(
+                sample,
+                chunk_index=chunk_index,
+                chunk_offset=chunk_offset,
+                chunk_first=chunk_first,
+            )
         else:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
@@ -361,6 +402,12 @@ class LearnedPlayer:
         self.latest_goal = goal
         self.latest_decision = desired_state
         self.latest_sample = sample
+        if (
+            self._episode_mode == "train"
+            and sample.chunk_first
+            and not sample.action_decision.any
+        ):
+            self._record_training_sample(sample)
         return sample
 
     def record_actuated(self, sample: DecisionSample) -> None:
@@ -373,15 +420,7 @@ class LearnedPlayer:
                 self.actuated_state, sample.action_decision
             )
         self.actuated_state = desired_state
-        if self._episode_mode != "train":
-            return
-        sample_id = id(sample)
-        if self._recorded_samples.get(sample_id) is sample:
-            return
-        self._recorded_samples[sample_id] = sample
-        self._training_records.append(TrainingRecord.from_sample(sample))
-        if sample.log_prob is not None:
-            self._log_probabilities.append(float(sample.log_prob))
+        self._record_training_sample(sample)
 
     def record_sent_sample(self, sample: DecisionSample) -> None:
         """Compatibility method for train-path tests; an accepted sample is actuated."""
@@ -404,10 +443,10 @@ class LearnedPlayer:
         for event_tick, event_reward in self._reward_events:
             while (
                 record_index + 1 < len(records)
-                and records[record_index + 1].world_tick <= event_tick
+                and records[record_index + 1].world_tick < event_tick
             ):
                 record_index += 1
-            if records[record_index].world_tick <= event_tick:
+            if records[record_index].world_tick < event_tick:
                 rewards[record_index] += float(event_reward)
         partial = 0.0
         if (
@@ -572,6 +611,10 @@ class LearnedPlayer:
                 "nlp": final_log_prob,
                 "ratio": ratio,
             }
+            if self._chunk_origin_tick is not None:
+                elapsed = record.world_tick - self._chunk_origin_tick
+                if elapsed >= 0:
+                    item["c"], item["o"] = divmod(elapsed, PPO_CHUNK_TICKS)
             if record.self_x is not None and record.self_y is not None:
                 item["x"] = record.self_x
                 item["y"] = record.self_y
@@ -585,7 +628,9 @@ class LearnedPlayer:
         if type(reward) is bool or not isinstance(reward, (int, float)) \
                 or not math.isfinite(float(reward)):
             raise ValueError("reward must be finite")
-        records = tuple(self._training_records)
+        records = tuple(sorted(
+            self._training_records, key=lambda record: record.world_tick
+        ))
         if not records:
             self.last_update_loss = 0.0
             self.last_update_diagnostics = ()

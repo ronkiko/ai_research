@@ -179,7 +179,7 @@ class ModelRuntime:
             + ("J" if change.jump else "")
         ) or "KEEP"
 
-    def _append_actuated_action(self, episode_id: int, sample) -> None:
+    def _append_policy_action(self, episode_id: int, sample) -> None:
         if self.trajectory_log is None:
             return
         center = self_center(sample.vision_grid)
@@ -193,6 +193,11 @@ class ModelRuntime:
             "y": self._compact_number(center[1]),
             "a": self._action_label(sample),
         }
+        chunk_index = getattr(sample, "chunk_index", None)
+        chunk_offset = getattr(sample, "chunk_offset", None)
+        if type(chunk_index) is int and type(chunk_offset) is int:
+            payload["c"] = chunk_index
+            payload["o"] = chunk_offset
         self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
         with self.trajectory_log.open("a", encoding="utf-8") as handle:
             handle.write(
@@ -271,7 +276,7 @@ class ModelRuntime:
             if sample is not None:
                 self.player.record_actuated(sample)
                 if self._episode_id is not None:
-                    self._append_actuated_action(self._episode_id, sample)
+                    self._append_policy_action(self._episode_id, sample)
             return pending_observation
         if message_type == EPISODE_END:
             self._handle_episode_end(peer, message)
@@ -293,6 +298,11 @@ class ModelRuntime:
             if not isinstance(change, ControlChange):
                 raise TypeError("Model policy must return a ControlChange")
             if not change.any:
+                if (
+                    getattr(sample, "chunk_first", False)
+                    and self._episode_id is not None
+                ):
+                    self._append_policy_action(self._episode_id, sample)
                 return None
             desired_state = sample.desired_state
             if not isinstance(desired_state, ActionDecision):
