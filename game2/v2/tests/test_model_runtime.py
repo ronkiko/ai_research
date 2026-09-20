@@ -34,6 +34,7 @@ from game2.v2.player.model_client import (
     ModelClient,
 )
 from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
+from game2.v2.player.learned.runtime import DecisionSample
 from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import (
     PPO_RATING_DISPLAY_SECONDS,
@@ -290,6 +291,81 @@ class ModelRuntimeTests(unittest.TestCase):
                 "x": 228,
                 "y": 164,
             }])
+
+    def test_controller_charges_every_toggle_request_and_suppresses_reused_bit(self):
+        class Policy:
+            episode_mode = "train"
+
+            def __init__(self):
+                self.requests = []
+                self.index = 0
+                self.actions = (
+                    ControlChange(True, False),
+                    ControlChange(True, False),
+                    ControlChange(True, True),
+                    ControlChange(True, False),
+                )
+
+            def process_grid(self, frame):
+                change = self.actions[self.index]
+                self.index += 1
+                desired = ActionDecision(change.right, change.jump)
+                return DecisionSample(
+                    frame.world_tick,
+                    frame,
+                    MotorGoal(0.0, 0.0),
+                    0.0,
+                    change,
+                    -0.5,
+                    False,
+                    False,
+                    0.0,
+                    desired,
+                )
+
+            def record_control_request(self, sample):
+                self.requests.append(sample)
+
+        policy = Policy()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.jsonl"
+            runtime = ModelRuntime(policy, trajectory_log=path)
+            runtime._active = True
+            runtime._episode_id = 7
+            left, right = socket.socketpair()
+            try:
+                right.setblocking(False)
+                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(left, _grid(11))
+            finally:
+                left.close()
+                right.close()
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(runtime._decision_id, 3)
+        self.assertEqual(len(policy.requests), 4)
+        self.assertEqual(policy.requests[0].suppressed_buttons, ())
+        self.assertEqual(policy.requests[1].suppressed_buttons, ("right",))
+        self.assertEqual(policy.requests[2].suppressed_buttons, ("right",))
+        self.assertEqual(policy.requests[3].suppressed_buttons, ())
+        self.assertEqual(
+            runtime._samples[2].action_decision,
+            ControlChange(True, True),
+        )
+        self.assertEqual(
+            runtime._samples[2].desired_state,
+            ActionDecision(True, True),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["a"], "R")
+        self.assertEqual(rows[0]["b"], "R")
+        self.assertEqual(rows[0]["t"], 10)
 
     def test_keep_answer_emits_no_decision_but_change_emits_resolved_state(self):
         class Policy:

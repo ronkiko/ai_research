@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from copy import copy
+from dataclasses import replace
 import json
 import select
 import socket
@@ -28,7 +30,11 @@ from game2.v2.contracts.model import (
     send_model_message,
     update_result_message,
 )
-from game2.v2.player.learned.contracts import ActionDecision, ControlChange
+from game2.v2.player.learned.contracts import (
+    ActionDecision,
+    ControlChange,
+    apply_control_change,
+)
 from game2.v2.player.learned.checkpoint import (
     load_critic,
     load_motor_controller,
@@ -39,7 +45,7 @@ from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.motion import self_center
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import LearnedPlayer
+from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
 
 
 def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
@@ -162,6 +168,9 @@ class ModelRuntime:
         self._samples: dict[int, object] = {}
         self._episode_id: int | None = None
         self._active = False
+        self._control_tick: int | None = None
+        self._control_used_buttons: set[str] = set()
+        self._control_tick_state: ActionDecision | None = None
 
     @staticmethod
     def _compact_number(value: float) -> int | float:
@@ -198,6 +207,12 @@ class ModelRuntime:
         if type(chunk_index) is int and type(chunk_offset) is int:
             payload["c"] = chunk_index
             payload["o"] = chunk_offset
+        suppressed = tuple(getattr(sample, "suppressed_buttons", ()))
+        if suppressed:
+            payload["b"] = "".join(
+                "R" if button == "right" else "J"
+                for button in suppressed
+            )
         self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
         with self.trajectory_log.open("a", encoding="utf-8") as handle:
             handle.write(
@@ -223,6 +238,73 @@ class ModelRuntime:
                     json.dumps(payload, separators=(",", ":"), sort_keys=True)
                     + "\n"
                 )
+
+    @staticmethod
+    def _sample_pad_state(sample) -> ActionDecision:
+        pad_right = getattr(sample, "pad_right", None)
+        pad_jump = getattr(sample, "pad_jump", None)
+        if type(pad_right) is bool and type(pad_jump) is bool:
+            return ActionDecision(pad_right, pad_jump)
+        desired = getattr(sample, "desired_state", None)
+        change = getattr(sample, "action_decision", None)
+        if isinstance(desired, ActionDecision) and isinstance(change, ControlChange):
+            return ActionDecision(
+                desired.right ^ change.right,
+                desired.jump ^ change.jump,
+            )
+        raise TypeError("Model sample does not expose its controller base state")
+
+    @staticmethod
+    def _replace_control_result(
+        sample, desired_state: ActionDecision, suppressed_buttons: tuple[str, ...]
+    ):
+        if isinstance(sample, DecisionSample):
+            return replace(
+                sample,
+                desired_state=desired_state,
+                suppressed_buttons=suppressed_buttons,
+            )
+        updated = copy(sample)
+        updated.desired_state = desired_state
+        updated.suppressed_buttons = suppressed_buttons
+        return updated
+
+    def _gate_control_request(self, sample) -> tuple[object, ControlChange]:
+        tick = sample.world_tick
+        if type(tick) is not int or tick < 0:
+            raise ProtocolError("Model control request has invalid world_tick")
+        if self._control_tick is None or tick > self._control_tick:
+            self._control_tick = tick
+            self._control_used_buttons.clear()
+            self._control_tick_state = self._sample_pad_state(sample)
+        elif tick < self._control_tick:
+            raise ProtocolError("Model control request moved backwards in world_tick")
+        if self._control_tick_state is None:
+            self._control_tick_state = self._sample_pad_state(sample)
+
+        requested = sample.action_decision
+        allowed_right = requested.right and "right" not in self._control_used_buttons
+        allowed_jump = requested.jump and "jump" not in self._control_used_buttons
+        suppressed = []
+        if requested.right:
+            if allowed_right:
+                self._control_used_buttons.add("right")
+            else:
+                suppressed.append("right")
+        if requested.jump:
+            if allowed_jump:
+                self._control_used_buttons.add("jump")
+            else:
+                suppressed.append("jump")
+
+        applied = ControlChange(allowed_right, allowed_jump)
+        self._control_tick_state = apply_control_change(
+            self._control_tick_state, applied
+        )
+        sample = self._replace_control_result(
+            sample, self._control_tick_state, tuple(suppressed)
+        )
+        return sample, applied
 
     @staticmethod
     def _send(peer: socket.socket, message: dict) -> None:
@@ -253,6 +335,9 @@ class ModelRuntime:
         self._samples.clear()
         self._episode_id = None
         self._active = False
+        self._control_tick = None
+        self._control_used_buttons.clear()
+        self._control_tick_state = None
         self._send(peer, update_result_message(episode_id, updated, loss))
 
     def _handle(self, peer: socket.socket, message: dict,
@@ -266,6 +351,9 @@ class ModelRuntime:
             self._episode_id = message["episode_id"]
             self._active = True
             self._samples.clear()
+            self._control_tick = None
+            self._control_used_buttons.clear()
+            self._control_tick_state = None
             return None
         if message_type == OBSERVE:
             if not self._active:
@@ -302,6 +390,18 @@ class ModelRuntime:
                     getattr(sample, "chunk_first", False)
                     and self._episode_id is not None
                 ):
+                    self._append_policy_action(self._episode_id, sample)
+                return None
+            sample, applied_change = self._gate_control_request(sample)
+            if hasattr(self.player, "latest_sample"):
+                self.player.latest_sample = sample
+            if hasattr(self.player, "latest_decision"):
+                self.player.latest_decision = sample.desired_state
+            recorder = getattr(self.player, "record_control_request", None)
+            if callable(recorder):
+                recorder(sample)
+            if not applied_change.any:
+                if self._episode_id is not None:
                     self._append_policy_action(self._episode_id, sample)
                 return None
             desired_state = sample.desired_state

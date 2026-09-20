@@ -38,6 +38,7 @@ class DecisionSample:
     chunk_index: int | None = None
     chunk_offset: int | None = None
     chunk_first: bool = False
+    suppressed_buttons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class TrainingRecord:
     old_value: float = 0.0
     self_x: float | None = None
     self_y: float | None = None
+    suppressed_buttons: tuple[str, ...] = ()
 
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
@@ -82,6 +84,7 @@ class TrainingRecord:
             float(sample.value if sample.value is not None else 0.0),
             float(center[0]) if center is not None else None,
             float(center[1]) if center is not None else None,
+            tuple(sample.suppressed_buttons),
         )
 
     @property
@@ -410,6 +413,14 @@ class LearnedPlayer:
             self._record_training_sample(sample)
         return sample
 
+    def record_control_request(self, sample: DecisionSample) -> None:
+        """Charge and retain one non-KEEP policy request before physical actuation."""
+        if not isinstance(sample, DecisionSample):
+            raise TypeError("record_control_request requires a DecisionSample")
+        if not sample.action_decision.any:
+            return
+        self._record_training_sample(sample)
+
     def record_actuated(self, sample: DecisionSample) -> None:
         """Apply one Engine-accepted control change to persistent pad memory."""
         if not isinstance(sample, DecisionSample):
@@ -432,9 +443,10 @@ class LearnedPlayer:
         self, records: tuple[TrainingRecord, ...], terminal_reward: float
     ) -> list[float]:
         rewards = [
-            -CONTROL_CHANGE_PENALTY
-            if record.action_decision.right or record.action_decision.jump
-            else 0.0
+            -CONTROL_CHANGE_PENALTY * (
+                int(record.action_decision.right)
+                + int(record.action_decision.jump)
+            )
             for record in records
         ]
         if not records:
@@ -615,6 +627,11 @@ class LearnedPlayer:
                 elapsed = record.world_tick - self._chunk_origin_tick
                 if elapsed >= 0:
                     item["c"], item["o"] = divmod(elapsed, PPO_CHUNK_TICKS)
+            if record.suppressed_buttons:
+                item["b"] = "".join(
+                    "R" if button == "right" else "J"
+                    for button in record.suppressed_buttons
+                )
             if record.self_x is not None and record.self_y is not None:
                 item["x"] = record.self_x
                 item["y"] = record.self_y

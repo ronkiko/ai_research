@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import socket
 import threading
@@ -281,7 +282,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
             ControlChange(True, False),
         )
 
-    def test_each_real_control_change_pays_small_cost_but_hold_is_free(self):
+    def test_each_requested_button_change_pays_small_cost_but_hold_is_free(self):
         player = self._player()
         player.prepare_episode("train", 42)
         grid = _grid(1)
@@ -308,6 +309,23 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertAlmostEqual(rewards[1], -CONTROL_CHANGE_PENALTY, delta=1e-12)
         self.assertAlmostEqual(
             rewards[2], 1.0 - CONTROL_CHANGE_PENALTY, delta=1e-12
+        )
+
+        both_record = TrainingRecord.from_sample(DecisionSample(
+            4,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(True, True),
+            -0.5,
+            False,
+            False,
+            0.0,
+            ActionDecision(True, True),
+        ))
+        self.assertEqual(
+            player._rewards_for_records((both_record,), 0.0),
+            [-2 * CONTROL_CHANGE_PENALTY],
         )
 
         keep_record = TrainingRecord.from_sample(DecisionSample(
@@ -383,6 +401,56 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
                 (40, ControlChange(False, True)),
                 (101, ControlChange(False, False)),
             ],
+        )
+
+    def test_control_request_is_charged_once_even_when_suppressed(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        grid = _grid(10, self_x=2, goal_x=10)
+        first = DecisionSample(
+            10,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(True, False),
+            -0.5,
+            False,
+            False,
+            0.0,
+            ActionDecision(True, False),
+        )
+        suppressed = replace(
+            first,
+            suppressed_buttons=("right",),
+            desired_state=ActionDecision(True, False),
+        )
+        partial = replace(
+            first,
+            action_decision=ControlChange(True, True),
+            suppressed_buttons=("right",),
+            desired_state=ActionDecision(True, True),
+        )
+
+        player.record_control_request(first)
+        player.record_actuated(first)
+        player.record_control_request(suppressed)
+        player.record_control_request(partial)
+
+        self.assertEqual(len(player.training_records), 3)
+        rewards = player._rewards_for_records(player.training_records, 0.0)
+        self.assertEqual(
+            rewards,
+            [
+                -CONTROL_CHANGE_PENALTY,
+                -CONTROL_CHANGE_PENALTY,
+                -2 * CONTROL_CHANGE_PENALTY,
+            ],
+        )
+        self.assertEqual(
+            player.training_records[1].suppressed_buttons, ("right",)
+        )
+        self.assertEqual(
+            player.training_records[2].suppressed_buttons, ("right",)
         )
 
     def test_chunk_reward_credits_last_decision_before_boundary_then_gae(self):
@@ -653,9 +721,11 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertTrue(all(isinstance(record.old_log_prob, float) for record in records))
         self.assertTrue(all(isinstance(record.old_value, float) for record in records))
         rewards = player._rewards_for_records(records, -1.0)
-        self.assertAlmostEqual(
-            rewards[0], -CONTROL_CHANGE_PENALTY, delta=1e-8
+        first_cost = -CONTROL_CHANGE_PENALTY * (
+            int(records[0].action_decision.right)
+            + int(records[0].action_decision.jump)
         )
+        self.assertAlmostEqual(rewards[0], first_cost, delta=1e-8)
         self.assertGreater(rewards[1], 0.0)
         self.assertLess(rewards[2], 0.0)
 
