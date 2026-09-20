@@ -36,7 +36,11 @@ from game2.v2.player.learned.motor import (
     motor_input,
 )
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
+from game2.v2.player.learned.runtime import (
+    DecisionSample,
+    LearnedPlayer,
+    PLANNER_STRIDE_TICKS,
+)
 from game2.v2.player.learned.vision import vision_to_tensor
 
 
@@ -226,6 +230,32 @@ class LearnedModelTests(unittest.TestCase):
         player.process_grid(second)
         self.assertTrue(player.motion_estimator.last_observation_usable)
         self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
+
+    def test_planner_plan_is_latched_while_motors_keep_running(self):
+        player = LearnedPlayer(
+            CNNPlanner.fresh(1), DualMotorController.fresh(2)
+        )
+        player.prepare_episode("evaluate", 7)
+        ticks = [1, 3, 5, 7, 9, 11, 13]
+        samples = [
+            player.process_grid(_grid(6, 5, world_tick=tick))
+            for tick in ticks
+        ]
+        self.assertTrue(all(sample is not None for sample in samples))
+        samples = [sample for sample in samples if sample is not None]
+        self.assertEqual(
+            [sample.planner_decision for sample in samples],
+            [True, False, False, False, False, False, True],
+        )
+        self.assertEqual(
+            [sample.plan_policy_sequence for sample in samples],
+            [1, 1, 1, 1, 1, 1, 7],
+        )
+        self.assertEqual(
+            [sample.motor_goal for sample in samples[:6]],
+            [samples[0].motor_goal] * 6,
+        )
+        self.assertEqual(PLANNER_STRIDE_TICKS, 12)
 
     def test_inactive_skill_bypasses_reflex_and_releases_latched_button(self):
         controller = DualMotorController.fresh(12)

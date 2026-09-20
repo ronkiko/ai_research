@@ -22,7 +22,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,8 @@ class EpisodeStep:
     skill_jump_active: bool
     skill_right_probability: float | None
     skill_jump_probability: float | None
+    planner_decision: bool
+    plan_policy_sequence: int
     prob_right: float | None
     prob_jump: float | None
     prob_right_keep: float | None
@@ -180,7 +182,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=5;
+                PRAGMA user_version=6;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -227,6 +229,8 @@ class EpisodeDataset:
                     skill_jump_active INTEGER NOT NULL,
                     skill_right_probability REAL,
                     skill_jump_probability REAL,
+                    planner_decision INTEGER NOT NULL,
+                    plan_policy_sequence INTEGER NOT NULL,
                     prob_right REAL,
                     prob_jump REAL,
                     prob_right_keep REAL,
@@ -382,6 +386,8 @@ class EpisodeDataset:
             self._finite_or_none(
                 getattr(sample, "skill_jump_probability", None)
             ),
+            int(bool(getattr(sample, "planner_decision", True))),
+            int(getattr(sample, "plan_policy_sequence", sequence) or sequence),
             self._finite_or_none(getattr(sample, "prob_right", None)),
             self._finite_or_none(getattr(sample, "prob_jump", None)),
             *(self._finite_or_none(value) for value in right_probabilities),
@@ -410,6 +416,7 @@ class EpisodeDataset:
                     old_log_prob, old_value, motor_goal_dx, motor_goal_dy,
                     skill_right_active, skill_jump_active,
                     skill_right_probability, skill_jump_probability,
+                    planner_decision, plan_policy_sequence,
                     prob_right, prob_jump,
                     prob_right_keep, prob_right_press, prob_right_release,
                     prob_jump_keep, prob_jump_press, prob_jump_release,
@@ -417,7 +424,7 @@ class EpisodeDataset:
                     suppressed_buttons, control_requested, control_status,
                     actuated, chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -445,6 +452,8 @@ class EpisodeDataset:
                     skill_jump_active=excluded.skill_jump_active,
                     skill_right_probability=excluded.skill_right_probability,
                     skill_jump_probability=excluded.skill_jump_probability,
+                    planner_decision=excluded.planner_decision,
+                    plan_policy_sequence=excluded.plan_policy_sequence,
                     prob_right=excluded.prob_right,
                     prob_jump=excluded.prob_jump,
                     prob_right_keep=excluded.prob_right_keep,
@@ -578,6 +587,8 @@ class EpisodeDataset:
             skill_jump_active=bool(row["skill_jump_active"]),
             skill_right_probability=row["skill_right_probability"],
             skill_jump_probability=row["skill_jump_probability"],
+            planner_decision=bool(row["planner_decision"]),
+            plan_policy_sequence=int(row["plan_policy_sequence"]),
             prob_right=row["prob_right"],
             prob_jump=row["prob_jump"],
             prob_right_keep=row["prob_right_keep"],

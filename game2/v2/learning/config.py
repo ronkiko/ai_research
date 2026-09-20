@@ -1,6 +1,10 @@
 """Canonical training cadence and PPO configuration."""
 
+# Motor reflex decisions run at 60 Hz on the 120 Hz physics clock.
 POLICY_STRIDE_TICKS = 2
+# The spinal-cord Planner runs at 10 Hz and its MotorPlan stays latched between
+# Planner ticks. Motors continue closing the physical feedback loop meanwhile.
+PLANNER_STRIDE_TICKS = 12
 PPO_TAIL_TICKS = 200
 
 # Stateful button actions need dense credit assignment. Each Motor explicitly

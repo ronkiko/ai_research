@@ -88,10 +88,11 @@ world clock
 != UI clock
 ```
 
-The relative timing semantics are conceptual, not fixed frequencies: Strategist
-may take seconds or tens of seconds; Planner is medium-rate gameplay reasoning;
-Motor Controller performs high-rate correction; Console keeps its autonomous
-fixed-step clock. Independent processes and clocks prevent reasoning latency,
+The relative timing semantics are architectural; concrete frequencies remain
+experimental. The current platformer experiment uses a 120 Hz physics clock,
+a 60 Hz Motor reflex decision cadence (every 2 world ticks), and a 10 Hz
+Planner cadence (every 12 world ticks). Strategist may take seconds or tens of
+seconds. These values may change without collapsing the timing domains. Independent processes and clocks prevent reasoning latency,
 Player/model latency, training work, UI work, and rendering from becoming
 hidden Engine synchronization points. UI, Display, rendering, telemetry, and
 Training must not become hot-path blockers. Future sensory systems must also
@@ -125,8 +126,9 @@ target, the Jump Motor should continue correcting its button-level execution
 without needing CNN to choose KEEP/PRESS/RELEASE every policy tick.
 
 This is why `motor-controller clock` is a distinct timing domain rather than a
-renaming of the Planner clock. Exact frequencies are experimental, but the
-relative requirement is normative:
+renaming of the Planner clock. Exact frequencies are experimental, but the current first implementation
+deliberately runs Planner more slowly than Motor and latches the latest
+MotorPlan between Planner decisions. The relative requirement is normative:
 
 ```text
 Research Strategist: slowest / asynchronous

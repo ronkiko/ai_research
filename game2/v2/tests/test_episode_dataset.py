@@ -69,6 +69,8 @@ def _sample(sequence: int, tick: int, self_x: int):
         skill_jump_active=sequence % 2 == 0,
         skill_right_probability=0.8,
         skill_jump_probability=0.4,
+        planner_decision=True,
+        plan_policy_sequence=sequence,
         prob_right=0.5,
         prob_jump=0.5,
         right_probabilities=(0.5, 0.4, 0.1),
@@ -149,8 +151,11 @@ class EpisodeDatasetTests(unittest.TestCase):
             for sequence, (tick, self_x) in enumerate(
                 ((0, 2), (2, 3), (4, 4), (6, 5)), start=1
             ):
+                sample = _sample(sequence, tick, self_x)
+                sample.planner_decision = sequence == 1
+                sample.plan_policy_sequence = 1
                 dataset.upsert_sample(
-                    _sample(sequence, tick, self_x),
+                    sample,
                     duration_ticks=2,
                     actuated=(sequence == 1),
                     control_requested=(sequence == 1),
@@ -174,9 +179,11 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 5)
+            self.assertEqual(metadata["schema_version"], 6)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
+            self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
+            self.assertEqual(metadata["metrics"]["motor_decisions"], 4)
             self.assertEqual(metadata["metrics"]["controller_requests"], 1)
             self.assertAlmostEqual(
                 metadata["metrics"]["controller_penalty_sum"], -0.005
@@ -197,6 +204,8 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertAlmostEqual(steps[0].prob_jump_release, 0.1)
             self.assertTrue(steps[0].skill_right_active)
             self.assertAlmostEqual(steps[0].skill_right_probability, 0.8)
+            self.assertTrue(steps[0].planner_decision)
+            self.assertEqual(steps[1].plan_policy_sequence, 1)
             self.assertTrue(any(
                 step.ppo_selected and step.advantage is not None
                 for step in steps

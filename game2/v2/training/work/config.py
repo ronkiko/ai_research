@@ -1,10 +1,12 @@
 """Public imports for shared learning definitions."""
 from game2.v2.learning.config import (
+    PLANNER_STRIDE_TICKS,
     POLICY_STRIDE_TICKS,
     PPO_TAIL_TICKS,
     PPO_HISTORY_STRIDE_TICKS,
     MAX_EPISODE_DATASETS,
     CONTROL_CHANGE_PENALTY,
+    CONTROL_REQUEST_PENALTY,
     PPO_GAMMA,
     PPO_GAE_LAMBDA,
     PPO_CLIP_EPS,
@@ -17,11 +19,13 @@ from game2.v2.learning.config import (
 )
 
 __all__ = [
+    "PLANNER_STRIDE_TICKS",
     "POLICY_STRIDE_TICKS",
     "PPO_TAIL_TICKS",
     "PPO_HISTORY_STRIDE_TICKS",
     "MAX_EPISODE_DATASETS",
     "CONTROL_CHANGE_PENALTY",
+    "CONTROL_REQUEST_PENALTY",
     "PPO_GAMMA",
     "PPO_GAE_LAMBDA",
     "PPO_CLIP_EPS",

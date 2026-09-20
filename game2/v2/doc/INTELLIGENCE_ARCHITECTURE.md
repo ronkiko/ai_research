@@ -420,7 +420,13 @@ world clock
 != UI clock
 ```
 
-No concrete frequency is normative. The relative semantics are:
+No concrete frequency is normative. The current platformer experiment starts
+with 120 Hz Console physics, 60 Hz Motor decisions and 10 Hz Planner decisions.
+The active MotorPlan is latched between Planner decisions while Motors continue
+their high-rate feedback loop. These are tunable experiment values, not a new
+architectural dependency.
+
+The relative semantics are:
 
 - Strategist: slow, seconds/tens of seconds or longer;
 - Planner: medium-rate gameplay reasoning;

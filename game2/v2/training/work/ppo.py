@@ -239,6 +239,25 @@ def train_episode(
         ],
         dtype=torch.float32,
     )
+    planner_decision = torch.tensor(
+        [step.planner_decision for step in selected_steps],
+        dtype=torch.float32,
+    )
+    sequence_lookup = {
+        step.policy_sequence: index
+        for index, step in enumerate(selected_steps)
+    }
+    plan_source_indexes_list = []
+    for step in selected_steps:
+        source = sequence_lookup.get(step.plan_policy_sequence)
+        if source is None:
+            raise ValueError(
+                "PPO selection lost the Planner decision for a latched MotorPlan"
+            )
+        plan_source_indexes_list.append(source)
+    plan_source_indexes = torch.tensor(
+        plan_source_indexes_list, dtype=torch.long
+    )
     parameters = unique_parameters(
         model.planner, model.motor_controller, model.critic
     )
@@ -297,16 +316,21 @@ def train_episode(
             if should_stop is not None and should_stop():
                 raise KeyboardInterrupt
             indexes = order[start:start + PPO_BATCH_SIZE]
+            source_indexes = plan_source_indexes[indexes]
             if shared:
                 assert prepared_vision is not None
-                features = model.planner.encode_prepared(prepared_vision[indexes])
-                planner_output = model.planner.forward_features(features)
-                values = model.critic.forward_features(features)
+                current_features = model.planner.encode_prepared(
+                    prepared_vision[indexes]
+                )
+                plan_features = model.planner.encode_prepared(
+                    prepared_vision[source_indexes]
+                )
+                planner_output = model.planner.forward_features(plan_features)
+                values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                vision = full_vision[indexes]
-                planner_output = model.planner(vision)
-                values = model.critic(vision)
+                planner_output = model.planner(full_vision[source_indexes])
+                values = model.critic(full_vision[indexes])
             if planner_output.ndim != 2 or planner_output.shape[1] != 4:
                 raise ValueError(
                     "Planner must return goal[2] + skill_logits[2]"
@@ -327,13 +351,14 @@ def train_episode(
                 2, batch_actions.unsqueeze(2)
             ).squeeze(2)
             batch_skills = skill_active[indexes].to(device=logits.device)
+            batch_planner = planner_decision[indexes].to(device=logits.device)
             skill_log_probabilities = -torch.nn.functional.binary_cross_entropy_with_logits(
                 skill_logits,
                 batch_skills,
                 reduction="none",
             )
             new_log_prob = (
-                skill_log_probabilities.sum(dim=1)
+                skill_log_probabilities.sum(dim=1) * batch_planner
                 + (motor_selected_log_prob * batch_skills).sum(dim=1)
             )
             batch_old = old_log_prob[indexes].to(logits.device)
@@ -358,7 +383,7 @@ def train_episode(
                 * torch.log((1.0 - skill_probabilities).clamp_min(1e-8))
             )
             entropy = (
-                skill_entropy.sum(dim=1)
+                skill_entropy.sum(dim=1) * batch_planner
                 + (motor_entropy * batch_skills).sum(dim=1)
             ).mean()
             loss = (
@@ -404,16 +429,21 @@ def train_episode(
     with torch.no_grad():
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = torch.arange(start, min(start + PPO_BATCH_SIZE, count))
+            source_indexes = plan_source_indexes[indexes]
             if shared:
                 assert prepared_vision is not None
-                features = model.planner.encode_prepared(prepared_vision[indexes])
-                planner_output = model.planner.forward_features(features)
-                values = model.critic.forward_features(features)
+                current_features = model.planner.encode_prepared(
+                    prepared_vision[indexes]
+                )
+                plan_features = model.planner.encode_prepared(
+                    prepared_vision[source_indexes]
+                )
+                planner_output = model.planner.forward_features(plan_features)
+                values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                vision = full_vision[indexes]
-                planner_output = model.planner(vision)
-                values = model.critic(vision)
+                planner_output = model.planner(full_vision[source_indexes])
+                values = model.critic(full_vision[indexes])
             goals = planner_output[:, :2]
             skill_logits = planner_output[:, 2:]
             motion = motion_all[indexes].to(
@@ -426,6 +456,7 @@ def train_episode(
             motor_log_probabilities = torch.log_softmax(command_logits, dim=2)
             batch_actions = actions[indexes].to(device=logits.device)
             batch_skills = skill_active[indexes].to(device=logits.device)
+            batch_planner = planner_decision[indexes].to(device=logits.device)
             motor_selected_log_prob = motor_log_probabilities.gather(
                 2, batch_actions.unsqueeze(2)
             ).squeeze(2)
@@ -435,7 +466,7 @@ def train_episode(
                 reduction="none",
             )
             final_lp = (
-                skill_log_probabilities.sum(dim=1)
+                skill_log_probabilities.sum(dim=1) * batch_planner
                 + (motor_selected_log_prob * batch_skills).sum(dim=1)
             )
             final_log_prob[indexes] = final_lp.detach().cpu()
@@ -461,6 +492,10 @@ def train_episode(
         "discarded_records": discarded,
         "ppo_records": count,
         "optimizer_steps": updates,
+        "planner_decisions": sum(
+            int(step.planner_decision) for step in steps
+        ),
+        "motor_decisions": len(steps),
         "reward_sum": float(sum(rewards)),
         "controller_requests": total_control_requests,
         "controller_accepted": sum(

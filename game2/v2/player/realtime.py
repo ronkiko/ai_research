@@ -126,6 +126,8 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 continue
             if lifecycle is not None and lifecycle.latest_event is not None:
                 break
+            if missing_self_after_seen:
+                break
             if (
                 latest_decision is None
                 or latest_decision.decision_id == last_sent_decision_id

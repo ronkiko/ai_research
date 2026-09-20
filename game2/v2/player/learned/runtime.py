@@ -8,7 +8,11 @@ import torch
 
 from game2.v2.contracts.joystick import JoystickState
 from game2.v2.contracts.vision import VisionGrid
-from game2.v2.learning.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
+from game2.v2.learning.config import (
+    PLANNER_STRIDE_TICKS,
+    POLICY_STRIDE_TICKS,
+    PPO_LEARNING_RATE,
+)
 from .contracts import (
     ActionDecision,
     ButtonCommand,
@@ -67,6 +71,8 @@ class DecisionSample:
     skill_jump_active: bool = False
     skill_right_probability: float | None = None
     skill_jump_probability: float | None = None
+    planner_decision: bool = True
+    plan_policy_sequence: int = 0
 
 
 def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState:
@@ -132,6 +138,10 @@ class LearnedPlayer:
         self._episode_seed: int | None = None
         self._episode_generator: torch.Generator | None = None
         self._policy_sequence = 0
+        self._active_plan: MotorPlan | None = None
+        self._active_plan_tick: int | None = None
+        self._active_plan_policy_sequence = 0
+        self._active_skill_probabilities: tuple[float, float] | None = None
 
     @property
     def episode_mode(self) -> str | None:
@@ -145,6 +155,10 @@ class LearnedPlayer:
         self.actuated_state = ActionDecision(False, False)
         self.latest_sample = None
         self._policy_sequence = 0
+        self._active_plan = None
+        self._active_plan_tick = None
+        self._active_plan_policy_sequence = 0
+        self._active_skill_probabilities = None
 
     def reset_episode(self) -> None:
         self._reset_episode_local()
@@ -178,9 +192,21 @@ class LearnedPlayer:
         motion_x: float,
         motion_y: float,
         self_position: tuple[float, float] | None,
+        policy_sequence: int,
     ) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
         pad_state = self.actuated_state
+        planner_decision = (
+            self._active_plan is None
+            or self._active_plan_tick is None
+            or frame.world_tick - self._active_plan_tick >= PLANNER_STRIDE_TICKS
+        )
+        if (
+            self._active_plan_tick is not None
+            and frame.world_tick < self._active_plan_tick
+        ):
+            planner_decision = True
+
         with torch.no_grad():
             shared = (
                 hasattr(self.planner, "encode")
@@ -190,19 +216,86 @@ class LearnedPlayer:
                 is getattr(self.critic, "backbone", None)
             )
             if shared:
-                features = self.planner.encode(vision)
-                planner_output = self.planner.forward_features(features)[0]
-                value = float(self.critic.forward_features(features)[0])
+                current_features = self.planner.encode(vision)
+                value = float(self.critic.forward_features(current_features)[0])
             else:
-                planner_output = self.planner(vision)[0]
+                current_features = None
                 value = float(self.critic(vision)[0])
 
-            if planner_output.ndim != 1 or planner_output.shape[0] != 4:
-                raise ValueError(
-                    "Planner must return goal[2] + skill_logits[2]"
+            skill_log_prob = torch.tensor(0.0)
+            if planner_decision:
+                planner_output = (
+                    self.planner.forward_features(current_features)[0]
+                    if shared
+                    else self.planner(vision)[0]
                 )
-            goal_tensor = planner_output[:2]
-            skill_logits = planner_output[2:]
+                if planner_output.ndim != 1 or planner_output.shape[0] != 4:
+                    raise ValueError(
+                        "Planner must return goal[2] + skill_logits[2]"
+                    )
+                goal_tensor = planner_output[:2]
+                skill_logits = planner_output[2:]
+                skill_active_probability = torch.sigmoid(skill_logits)
+                if self._episode_mode == "train":
+                    if self._episode_generator is None:
+                        raise RuntimeError("train episode has no random generator")
+                    skill_choices = torch.multinomial(
+                        torch.stack(
+                            (
+                                1.0 - skill_active_probability,
+                                skill_active_probability,
+                            ),
+                            dim=1,
+                        ),
+                        1,
+                        replacement=True,
+                        generator=self._episode_generator,
+                    ).squeeze(1)
+                    skill_log_prob = torch.log(
+                        torch.stack(
+                            (
+                                1.0 - skill_active_probability,
+                                skill_active_probability,
+                            ),
+                            dim=1,
+                        ).gather(1, skill_choices.unsqueeze(1)).clamp_min(1e-8)
+                    ).sum()
+                else:
+                    skill_choices = (skill_logits >= 0.0).to(dtype=torch.long)
+
+                goal = MotorGoal(
+                    float(goal_tensor[0].detach()),
+                    float(goal_tensor[1].detach()),
+                )
+                self._active_plan = MotorPlan(
+                    goal,
+                    bool(skill_choices[0].item()),
+                    bool(skill_choices[1].item()),
+                )
+                self._active_plan_tick = frame.world_tick
+                self._active_plan_policy_sequence = policy_sequence
+                self._active_skill_probabilities = (
+                    float(skill_active_probability[0]),
+                    float(skill_active_probability[1]),
+                )
+            else:
+                assert self._active_plan is not None
+                goal = self._active_plan.goal
+                goal_tensor = torch.tensor(
+                    [goal.target_dx, goal.target_dy],
+                    dtype=vision.dtype,
+                    device=vision.device,
+                )
+                skill_choices = torch.tensor(
+                    [
+                        int(self._active_plan.right_active),
+                        int(self._active_plan.jump_active),
+                    ],
+                    dtype=torch.long,
+                )
+
+            assert self._active_plan is not None
+            assert self._active_skill_probabilities is not None
             motor_logits = self.motor_controller.forward_goal(
                 goal_tensor,
                 motion_x,
@@ -215,33 +308,15 @@ class LearnedPlayer:
             raise ValueError("Motor Controller must return six command logits")
         button_logits = motor_logits.reshape(2, 3)
         motor_probabilities = torch.softmax(button_logits, dim=1)
-        skill_active_probability = torch.sigmoid(skill_logits)
 
         if self._episode_mode == "train":
-            if self._episode_generator is None:
-                raise RuntimeError("train episode has no random generator")
-            skill_choices = torch.multinomial(
-                torch.stack(
-                    (1.0 - skill_active_probability, skill_active_probability),
-                    dim=1,
-                ),
-                1,
-                replacement=True,
-                generator=self._episode_generator,
-            ).squeeze(1)
+            assert self._episode_generator is not None
             motor_choices = torch.multinomial(
                 motor_probabilities,
                 1,
                 replacement=True,
                 generator=self._episode_generator,
             ).squeeze(1)
-
-            skill_log_prob = torch.log(
-                torch.stack(
-                    (1.0 - skill_active_probability, skill_active_probability),
-                    dim=1,
-                ).gather(1, skill_choices.unsqueeze(1)).clamp_min(1e-8)
-            ).sum()
             motor_selected_log_prob = torch.log_softmax(
                 button_logits, dim=1
             ).gather(1, motor_choices.unsqueeze(1)).squeeze(1)
@@ -253,12 +328,11 @@ class LearnedPlayer:
                 ).sum()
             )
         else:
-            skill_choices = (skill_logits >= 0.0).to(dtype=torch.long)
             motor_choices = button_logits.argmax(dim=1)
             log_prob = None
 
-        right_active = bool(skill_choices[0].item())
-        jump_active = bool(skill_choices[1].item())
+        right_active = self._active_plan.right_active
+        jump_active = self._active_plan.jump_active
         right_command = (
             ButtonCommand(int(motor_choices[0].item()))
             if right_active else inactive_command(pad_state.right)
@@ -267,16 +341,12 @@ class LearnedPlayer:
             ButtonCommand(int(motor_choices[1].item()))
             if jump_active else inactive_command(pad_state.jump)
         )
-        goal = MotorGoal(
-            float(goal_tensor[0].detach()),
-            float(goal_tensor[1].detach()),
-        )
         command = ControlCommand(right_command, jump_command)
         desired_state = apply_control_command(pad_state, command)
         return DecisionSample(
             frame.world_tick,
             frame,
-            goal,
+            self._active_plan.goal,
             motion_x,
             command,
             log_prob,
@@ -294,10 +364,10 @@ class LearnedPlayer:
             ),
             motion_y=motion_y,
             right_probabilities=tuple(
-                float(value) for value in motor_probabilities[0]
+                float(item) for item in motor_probabilities[0]
             ),
             jump_probabilities=tuple(
-                float(value) for value in motor_probabilities[1]
+                float(item) for item in motor_probabilities[1]
             ),
             self_x=(
                 None if self_position is None else float(self_position[0])
@@ -307,8 +377,10 @@ class LearnedPlayer:
             ),
             skill_right_active=right_active,
             skill_jump_active=jump_active,
-            skill_right_probability=float(skill_active_probability[0]),
-            skill_jump_probability=float(skill_active_probability[1]),
+            skill_right_probability=self._active_skill_probabilities[0],
+            skill_jump_probability=self._active_skill_probabilities[1],
+            planner_decision=planner_decision,
+            plan_policy_sequence=self._active_plan_policy_sequence,
         )
 
     def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
@@ -329,64 +401,25 @@ class LearnedPlayer:
         ):
             return None
 
-        if self._episode_mode in {"train", "evaluate"}:
-            sample = self._process_model_grid(
-                frame, motion_x, motion_y, self_position
-            )
-            self._policy_sequence += 1
-            sample = replace(
-                sample,
-                policy_sequence=self._policy_sequence,
-                goal_x=(
-                    None if goal_position is None else float(goal_position[0])
-                ),
-                goal_y=(
-                    None if goal_position is None else float(goal_position[1])
-                ),
-                motion_y=motion_y,
-            )
-        else:
-            plan = self.planner.decide(frame)
-            if not isinstance(plan, MotorPlan):
-                raise TypeError("Planner returned an invalid MotorPlan")
-            goal = plan.goal
-            command = self.motor_controller.decide(
-                plan,
-                motion_x,
-                motion_y,
-                self.actuated_state.right,
-                self.actuated_state.jump,
-            )
-            if not isinstance(command, ControlCommand):
-                raise TypeError("Motor Controller returned an invalid ControlCommand")
-            desired_state = apply_control_command(self.actuated_state, command)
-            sample = DecisionSample(
-                frame.world_tick,
-                frame,
-                goal,
-                motion_x,
-                command,
-                None,
-                self.actuated_state.right,
-                self.actuated_state.jump,
-                None,
-                desired_state,
-                self_x=(
-                    None if self_position is None else float(self_position[0])
-                ),
-                self_y=(
-                    None if self_position is None else float(self_position[1])
-                ),
-                goal_x=(
-                    None if goal_position is None else float(goal_position[0])
-                ),
-                goal_y=(
-                    None if goal_position is None else float(goal_position[1])
-                ),
-                motion_y=motion_y,
-                skill_right_active=plan.right_active,
-                skill_jump_active=plan.jump_active,
-            )
+        self._policy_sequence += 1
+        sample = self._process_model_grid(
+            frame,
+            motion_x,
+            motion_y,
+            self_position,
+            self._policy_sequence,
+        )
+        sample = replace(
+            sample,
+            policy_sequence=self._policy_sequence,
+            goal_x=(
+                None if goal_position is None else float(goal_position[0])
+            ),
+            goal_y=(
+                None if goal_position is None else float(goal_position[1])
+            ),
+            motion_y=motion_y,
+        )
 
         desired_state = sample.desired_state
         if desired_state is None:
@@ -415,6 +448,7 @@ class LearnedPlayer:
 __all__ = [
     "DecisionSample",
     "LearnedPlayer",
+    "PLANNER_STRIDE_TICKS",
     "POLICY_STRIDE_TICKS",
     "action_to_joystick",
 ]

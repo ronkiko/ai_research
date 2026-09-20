@@ -2,7 +2,9 @@
 
 from .config import (
     CONTROL_CHANGE_PENALTY,
+    CONTROL_REQUEST_PENALTY,
     MAX_EPISODE_DATASETS,
+    PLANNER_STRIDE_TICKS,
     POLICY_STRIDE_TICKS,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
@@ -26,12 +28,14 @@ from .ppo import EpisodeTrainingResult, train_episode
 
 __all__ = [
     "CONTROL_CHANGE_PENALTY",
+    "CONTROL_REQUEST_PENALTY",
     "DEFAULT_EPISODE_STORE",
     "EpisodeDataset",
     "EpisodeStep",
     "EpisodeStore",
     "EpisodeTrainingResult",
     "MAX_EPISODE_DATASETS",
+    "PLANNER_STRIDE_TICKS",
     "POLICY_STRIDE_TICKS",
     "PPO_BATCH_SIZE",
     "PPO_CLIP_EPS",
