@@ -78,6 +78,47 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertNotIn("· unpaced", output.getvalue())
             kwargs = unpaced.call_args.kwargs
             self.assertEqual(Path(kwargs["episode_store_dir"]), episode_root)
+            self.assertEqual(kwargs["profile"].bot_id, "player1")
+
+    def test_default_runtime_paths_are_isolated_by_player(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile_root = root / "profiles"
+            source = Path(__file__).resolve().parents[1] / "bots" / "player1.json"
+            profile_root.mkdir()
+            (profile_root / "player1.json").write_text(
+                source.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            output = io.StringIO()
+            run = TrainingRun(output=output, root=root)
+            with mock.patch(
+                "game2.v2.training.unpaced.run_unpaced_training_set",
+                return_value=0,
+            ) as unpaced:
+                status = run.train(
+                    set_path=DEFAULT_SET,
+                    checkpoint_dir=None,
+                    max_episodes=1,
+                    fresh=True,
+                    episode_limit=20,
+                    mode="unpaced",
+                    episode_store=None,
+                    player_id="player1",
+                    profile_dir=profile_root,
+                )
+            self.assertEqual(status, 0)
+            kwargs = unpaced.call_args.kwargs
+            expected = (
+                root / "game2" / "v2" / "runtime" / "bots"
+                / "player1" / "level-1"
+            )
+            self.assertEqual(
+                Path(kwargs["checkpoint_dir"]), expected / "checkpoints"
+            )
+            self.assertEqual(
+                Path(kwargs["episode_store_dir"]), expected / "episodes"
+            )
+            self.assertEqual(kwargs["profile"].bot_id, "player1")
 
     def test_unpaced_mode_rejects_screen_and_vision_view(self):
         run = TrainingRun(output=io.StringIO())

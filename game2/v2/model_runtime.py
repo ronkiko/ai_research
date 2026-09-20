@@ -537,6 +537,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--listen-host", default="127.0.0.1")
     parser.add_argument("--listen-port", type=int, default=0)
     parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--profile")
     parser.add_argument("--planner-seed", type=int, default=1)
     parser.add_argument("--motor-seed", type=int, default=2)
     parser.add_argument("--critic-seed", type=int, default=3)
@@ -582,8 +583,10 @@ def main(argv=None) -> int:
             critic_path = Path(args.critic_checkpoint)
         if args.optimizer_checkpoint is not None:
             optimizer_path = Path(args.optimizer_checkpoint)
+        profile = BotProfile.from_file(args.profile) if args.profile else None
         player = build_model(
             fresh=args.fresh,
+            profile=profile,
             planner_seed=args.planner_seed,
             motor_seed=args.motor_seed,
             critic_seed=args.critic_seed,

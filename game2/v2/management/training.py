@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from game2.v2.contracts.discovery import ConsoleDiscovery
+from game2.v2.management.bot_profiles import (
+    BotProfileStore,
+    DEFAULT_BOT_PROFILE_DIR,
+)
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.manifests import PlayerManifest
 from game2.v2.contracts.screen import ScreenSourceDiscovery
@@ -34,7 +38,10 @@ from game2.v2.training.work import DEFAULT_EPISODE_STORE, EpisodeStore
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SET = ROOT / "game2" / "v2" / "training" / "sets" / "level-1.json"
-DEFAULT_CHECKPOINT_DIR = ROOT / "game2" / "v2" / "runtime" / "checkpoints" / "level-1"
+DEFAULT_BOT_RUNTIME_ROOT = ROOT / "game2" / "v2" / "runtime" / "bots"
+DEFAULT_CHECKPOINT_DIR = (
+    DEFAULT_BOT_RUNTIME_ROOT / "player1" / "level-1" / "checkpoints"
+)
 DEFAULT_SCREEN_SERVER = ROOT / "game2" / "v2" / "runtime" / "screen-server.json"
 DEFAULT_EPISODE_LIMIT = 1200
 PROCESS_TIMEOUT = 30.0
@@ -349,6 +356,7 @@ class TrainingRun:
         screen_control: ScreenControl | None,
         view: str,
         episode_store: Path,
+        profile_path: Path,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
@@ -389,6 +397,7 @@ class TrainingRun:
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
                 "--checkpoint-dir", str(checkpoint_dir),
                 "--episode-store", str(episode_store),
+                "--profile", str(profile_path),
             ]
             if fresh:
                 model_command.append("--fresh")
@@ -473,7 +482,7 @@ class TrainingRun:
         self,
         *,
         set_path: str | Path,
-        checkpoint_dir: str | Path,
+        checkpoint_dir: str | Path | None,
         max_episodes: int,
         fresh: bool,
         episode_limit: int,
@@ -482,10 +491,14 @@ class TrainingRun:
         view: str = "screen",
         mode: str = "realtime",
         json_output: bool = False,
-        episode_store: str | Path = DEFAULT_EPISODE_STORE,
+        episode_store: str | Path | None = None,
+        player_id: str = "player1",
+        profile_dir: str | Path = DEFAULT_BOT_PROFILE_DIR,
     ) -> int:
         manifest_path = Path(set_path).expanduser().resolve()
-        checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
+        profile_store = BotProfileStore(profile_dir)
+        profile = profile_store.load(player_id)
+        profile_path = profile_store.path_for(profile.bot_id).resolve()
         if view not in {"screen", "vision"}:
             raise ValueError("view must be screen or vision")
         if mode not in {"realtime", "unpaced"}:
@@ -495,13 +508,26 @@ class TrainingRun:
         if mode == "realtime" and view != "screen" and screen is None:
             raise ValueError("--view vision requires --screen")
         manifest = TrainingSetManifest.from_file(manifest_path)
+        runtime_root = (
+            self.root / "game2" / "v2" / "runtime" / "bots"
+            / profile.bot_id / f"level-{manifest.training_set_level}"
+        )
+        checkpoint_path = (
+            Path(checkpoint_dir).expanduser().resolve()
+            if checkpoint_dir is not None
+            else runtime_root / "checkpoints"
+        )
+        episode_store_path = (
+            Path(episode_store).expanduser().resolve()
+            if episode_store is not None
+            else runtime_root / "episodes"
+        )
 
         screen_control = None
         if screen is not None:
             screen_control = self.screen_control_factory(screen, screen_server)
             screen_control.preflight()
 
-        episode_store_path = Path(episode_store).expanduser().resolve()
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
         critic = checkpoint_path / "critic.pt"
@@ -539,10 +565,12 @@ class TrainingRun:
 
             if json_output:
                 self._write(
+                    f"PLAYER {profile.bot_id}: "
                     f"TRAINING SET {manifest.training_set_level}: "
                     f"{'fresh' if fresh else 'resume'}, mode=unpaced, headless"
                 )
             else:
+                self._write(f"Player profile · {profile.bot_id}")
                 self._write(
                     f"Training set {manifest.training_set_level} · "
                     + (
@@ -561,8 +589,10 @@ class TrainingRun:
                 should_stop=self.stop_requested.is_set,
                 json_output=json_output,
                 episode_store_dir=episode_store_path,
+                profile=profile,
             )
 
+        self._write(f"PLAYER {profile.bot_id}")
         self._write(
             f"TRAINING SET {manifest.training_set_level}: "
             f"{'fresh' if fresh else 'resume'}"
@@ -587,6 +617,7 @@ class TrainingRun:
                     screen_control=screen_control,
                     view=view,
                     episode_store=episode_store_path,
+                    profile_path=profile_path,
                 )
                 if not passed:
                     self._write(f"TRAINING SET {manifest.training_set_level}: FAIL")
@@ -601,7 +632,9 @@ def _parser() -> argparse.ArgumentParser:
         description="Compose independent Game2 V2 Training processes"
     )
     parser.add_argument("--set", dest="set_path", default=str(DEFAULT_SET))
-    parser.add_argument("--checkpoint-dir", default=str(DEFAULT_CHECKPOINT_DIR))
+    parser.add_argument("--player", default="player1")
+    parser.add_argument("--profile-dir", default=str(DEFAULT_BOT_PROFILE_DIR))
+    parser.add_argument("--checkpoint-dir")
     parser.add_argument("--max-episodes-per-map", type=int, default=50)
     parser.add_argument("--episode-limit", type=int, default=DEFAULT_EPISODE_LIMIT)
     parser.add_argument("--screen", type=int)
@@ -612,7 +645,7 @@ def _parser() -> argparse.ArgumentParser:
         help="emit structured unpaced training events instead of human output",
     )
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
-    parser.add_argument("--episode-store", default=str(DEFAULT_EPISODE_STORE))
+    parser.add_argument("--episode-store")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fresh", action="store_true")
     mode.add_argument("--resume", action="store_true")
@@ -637,6 +670,8 @@ def main(argv=None) -> int:
             mode=args.mode,
             json_output=args.json_output,
             episode_store=args.episode_store,
+            player_id=args.player,
+            profile_dir=args.profile_dir,
         )
     except KeyboardInterrupt:
         print("Training interrupted", file=sys.stderr, flush=True)

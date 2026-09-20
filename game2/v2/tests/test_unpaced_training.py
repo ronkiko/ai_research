@@ -14,6 +14,7 @@ from game2.v2.training.unpaced import (
     run_episode,
     save_checkpoints,
 )
+from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.training.work import EpisodeStore
 
 
@@ -103,9 +104,16 @@ class UnpacedTrainingTests(unittest.TestCase):
     def test_unpaced_checkpoint_is_loadable_by_shared_model_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            model = load_model(fresh=True, checkpoint_dir=root)
+            profile = BotProfile.from_file(
+                ROOT / "game2" / "v2" / "bots" / "player1.json"
+            )
+            model = load_model(
+                fresh=True, checkpoint_dir=root, profile=profile
+            )
             save_checkpoints(model, root)
-            resumed = load_model(fresh=False, checkpoint_dir=root)
+            resumed = load_model(
+                fresh=False, checkpoint_dir=root, profile=profile
+            )
             self.assertIs(
                 resumed.planner.backbone,
                 resumed.critic.backbone,

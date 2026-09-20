@@ -17,6 +17,7 @@ from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.console.engine.engine import Engine
 from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import load_world
+from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.training_set import TrainingSetManifest
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.checkpoint import (
@@ -72,14 +73,17 @@ def save_checkpoints(model, directory: str | Path) -> None:
     save_optimizer(model.optimizer, optimizer_path)
 
 
-def load_model(*, fresh: bool, checkpoint_dir: str | Path):
+def load_model(
+    *, fresh: bool, checkpoint_dir: str | Path, profile: BotProfile | None = None
+):
     planner_path, motor_path, critic_path, optimizer_path = _checkpoint_paths(
         checkpoint_dir
     )
     if fresh:
-        return build_model(fresh=True)
+        return build_model(fresh=True, profile=profile)
     return build_model(
         fresh=False,
+        profile=profile,
         planner_checkpoint=planner_path,
         motor_checkpoint=motor_path,
         critic_checkpoint=critic_path,
@@ -97,13 +101,14 @@ def run_episode(
     dataset: EpisodeDataset,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[dict[str, object]], None] | None = None,
+    player_id: str = PLAYER_ID,
 ) -> EpisodeResult:
     if mode not in {"train", "evaluate"}:
         raise ValueError("mode must be train or evaluate")
 
     world = load_world(map_path)
     engine = Engine(world, session_id="unpaced", episode_limit=episode_limit)
-    actor = engine.spawn_actor(PLAYER_ID, ACTOR_ID)
+    actor = engine.spawn_actor(player_id, ACTOR_ID)
     renderer = VisionGridRenderer(world, self_actor_id=ACTOR_ID)
     progress = VisionProgress()
     sequence = 0
@@ -247,6 +252,7 @@ def run_unpaced_training_set(
     should_stop: Callable[[], bool] | None = None,
     json_output: bool = False,
     episode_store_dir: str | Path = DEFAULT_EPISODE_STORE,
+    profile: BotProfile | None = None,
 ) -> int:
     if max_episodes <= 0 or episode_limit <= 0:
         raise ValueError("episode limits must be positive")
@@ -256,7 +262,10 @@ def run_unpaced_training_set(
     episode_store = EpisodeStore(episode_store_dir)
     if fresh:
         episode_store.reset()
-    model = load_model(fresh=fresh, checkpoint_dir=checkpoint_dir)
+    model = load_model(
+        fresh=fresh, checkpoint_dir=checkpoint_dir, profile=profile
+    )
+    player_id = profile.player_id if profile is not None else PLAYER_ID
     episode_id = 0
 
     interactive = bool(
@@ -460,6 +469,7 @@ def run_unpaced_training_set(
                 dataset=dataset,
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "train", attempt),
+                player_id=player_id,
             )
             terminal_reward = reward_for_result(
                 outcome.result, outcome.progress
@@ -557,6 +567,7 @@ def run_unpaced_training_set(
                 dataset=evaluation_dataset,
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "evaluate", attempt),
+                player_id=player_id,
             )
             evaluation_dataset.finalize(
                 result=evaluation.result,
