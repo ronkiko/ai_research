@@ -38,8 +38,8 @@ from .checkpoint import (
     save_planner,
 )
 from .inference import InferenceWorker
-from .motion import VisionProgress, self_center_x
-from .runtime import LearnedPlayer
+from .motion import VisionProgress, vision_centers
+from .runtime import LearnedPlayer, POLICY_STRIDE_TICKS
 
 
 class TrainingPeer:
@@ -204,6 +204,7 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
     vision_floor_tick = max(pre_lifecycle_world_tick, lifecycle_world_tick)
     started_tick: int | None = None
     latest_frame_tick = vision_floor_tick
+    last_policy_tick: int | None = None
     latest_terminal: dict | None = None
     next_send = clock()
     send_period = 1 / action_hz
@@ -237,16 +238,23 @@ def _run_episode(connection: PlayerConnection, player: LearnedPlayer, episode_id
             if frame is not None and frame.world_tick > latest_frame_tick \
                     and frame.world_tick > vision_floor_tick:
                 latest_frame_tick = frame.world_tick
-                progress_tracker.update(frame)
-                has_self = self_center_x(frame) is not None
-                if not inference.failed:
-                    try:
-                        inference.submit(frame)
-                    except RuntimeError:
-                        dirty = True
-                if has_self and started_tick is None:
-                    started_tick = frame.world_tick
-                    on_started(episode_started_message(episode_id, started_tick))
+                should_observe = (
+                    last_policy_tick is None
+                    or frame.world_tick - last_policy_tick >= POLICY_STRIDE_TICKS
+                )
+                if should_observe:
+                    self_position, goal_position = vision_centers(frame)
+                    progress_tracker.update_centers(self_position, goal_position)
+                    has_self = self_position is not None
+                    if not inference.failed:
+                        try:
+                            inference.submit(frame)
+                        except RuntimeError:
+                            dirty = True
+                    last_policy_tick = frame.world_tick
+                    if has_self and started_tick is None:
+                        started_tick = frame.world_tick
+                        on_started(episode_started_message(episode_id, started_tick))
 
             snapshot = inference.snapshot()
             if snapshot.serial != observed_result_serial:

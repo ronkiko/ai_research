@@ -64,9 +64,12 @@ from game2.v2.player.learned.runtime import (
     CONTROL_CHANGE_PENALTY,
     PPO_GAE_LAMBDA,
     PPO_GAMMA,
+    PPO_HISTORY_STRIDE_TICKS,
+    PPO_TAIL_TICKS,
     DecisionSample,
     LearnedPlayer,
     TrainingRecord,
+    _select_ppo_indexes,
 )
 from game2.v2.player.learned.training import _run_episode, _settle_acks, run_training_player
 from game2.v2.player.learned.vision import vision_to_tensor
@@ -604,7 +607,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         player = self._player()
         player.prepare_episode("train", 42)
 
-        def keep(frame, motion_x):
+        def keep(frame, motion_x, _self_position=None):
             return DecisionSample(
                 frame.world_tick,
                 frame,
@@ -637,6 +640,22 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual((last["c"], last["o"]), (0, 49))
         self.assertAlmostEqual(first["rw"], 0.0, delta=1e-8)
         self.assertAlmostEqual(last["rw"], -1.0, delta=1e-8)
+
+    def test_realtime_ppo_selection_uses_dense_tail_and_sparse_history(self):
+        ticks = list(range(0, 1200, 2))
+        selected = _select_ppo_indexes(ticks, 1200)
+        selected_ticks = [ticks[index] for index in selected]
+        tail_start = 1200 - PPO_TAIL_TICKS
+
+        self.assertTrue(all(
+            tick in selected_ticks for tick in range(tail_start, 1200, 2)
+        ))
+        early_ticks = [tick for tick in selected_ticks if tick < tail_start]
+        self.assertLessEqual(
+            len(early_ticks),
+            tail_start // PPO_HISTORY_STRIDE_TICKS + 2,
+        )
+        self.assertLess(len(selected), len(ticks) // 2)
 
     def test_ppo_optimizer_checkpoint_preserves_adam_state(self):
         player = self._player()
@@ -820,7 +839,7 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         player = self._player()
         player.prepare_episode("train", 42)
 
-        def keep(frame, motion_x):
+        def keep(frame, motion_x, _self_position=None):
             return DecisionSample(
                 frame.world_tick,
                 frame,

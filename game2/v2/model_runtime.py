@@ -51,7 +51,11 @@ from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.motion import self_center
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
+from game2.v2.player.learned.runtime import (
+    DecisionSample,
+    LearnedPlayer,
+    POLICY_STRIDE_TICKS,
+)
 
 
 def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
@@ -212,7 +216,18 @@ class ModelRuntime:
     def _append_policy_action(self, episode_id: int, sample) -> None:
         if self.trajectory_log is None:
             return
-        center = self_center(sample.vision_grid)
+        sample_x = getattr(sample, "self_x", None)
+        sample_y = getattr(sample, "self_y", None)
+        center = (
+            (float(sample_x), float(sample_y))
+            if isinstance(sample_x, (int, float))
+            and not isinstance(sample_x, bool)
+            and isinstance(sample_y, (int, float))
+            and not isinstance(sample_y, bool)
+            and math.isfinite(float(sample_x))
+            and math.isfinite(float(sample_y))
+            else self_center(sample.vision_grid)
+        )
         if center is None:
             return
         payload = {
@@ -417,6 +432,7 @@ class ModelRuntime:
             self.player.reset_episode()
             updated, loss = False, 0.0
             diagnostics = ()
+        metrics["policy_stride_ticks"] = POLICY_STRIDE_TICKS
         metrics["decision_count"] = self._episode_decision_count
         metrics["actuated_count"] = self._episode_actuated_count
         metrics["model_observations_received"] = self._episode_observations_received

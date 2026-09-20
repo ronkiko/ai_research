@@ -36,7 +36,11 @@ from game2.v2.player.model_client import (
 from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
+from game2.v2.player.learned.runtime import (
+    DecisionSample,
+    LearnedPlayer,
+    POLICY_STRIDE_TICKS,
+)
 from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import (
     PPO_RATING_DISPLAY_SECONDS,
@@ -122,7 +126,7 @@ class PPOFlightRecorderTests(unittest.TestCase):
         _pause_after_ppo_ratings({"updated": True}, sleeps.append)
         _pause_after_ppo_ratings({"updated": False}, sleeps.append)
         self.assertEqual(sleeps, [PPO_RATING_DISPLAY_SECONDS])
-        self.assertEqual(PPO_RATING_DISPLAY_SECONDS, 2.0)
+        self.assertEqual(PPO_RATING_DISPLAY_SECONDS, 0.5)
 
     def test_runtime_appends_compact_per_action_ppo_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -620,7 +624,7 @@ class ModelRuntimeTests(unittest.TestCase):
         manifest = PlayerManifest("session", "player", "actor",
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
         first = _grid(1)
-        second = _grid(2)
+        second = _grid(1 + POLICY_STRIDE_TICKS)
 
         class Clock:
             value = 0.0
@@ -693,8 +697,10 @@ class ModelRuntimeTests(unittest.TestCase):
                 self.pending_second = False
                 self.polls_after_second = 0
                 self.actuated_ids = []
+                self.observed_ticks = []
 
             def observe(self, frame):
+                self.observed_ticks.append(frame.world_tick)
                 if frame.world_tick == 1:
                     self.latest_decision = SimpleNamespace(
                         decision_id=1, action_decision=ActionDecision(True, False),
@@ -726,6 +732,7 @@ class ModelRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(len(joystick.sent), 8)
         self.assertEqual(joystick.sent[:3], [(True, False)] * 3)
         self.assertIn((False, True), joystick.sent)
+        self.assertEqual(model.observed_ticks, [1, 1 + POLICY_STRIDE_TICKS])
         self.assertEqual(model.actuated_ids, [1, 2])
 
 

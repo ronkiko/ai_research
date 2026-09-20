@@ -10,6 +10,7 @@ from game2.v2.player.model_client import ModelClient
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
 from .learned.motion import self_center_x
+from .learned.runtime import POLICY_STRIDE_TICKS
 
 
 PLAYER_ACTION_HZ = 120
@@ -51,6 +52,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
     joystick = joystick_factory(manifest)
     sent = 0
     latest_world_tick: int | None = None
+    last_model_observation_tick: int | None = None
     next_send = clock()
     gameplay_started = False
     latest_decision = None
@@ -90,15 +92,22 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
             frame = vision.latest
             if frame is not None and frame.world_tick != latest_world_tick:
                 latest_world_tick = frame.world_tick
-                has_self = self_center_x(frame) is not None
-                if has_self:
-                    saw_self_frame = True
-                    missing_self_after_seen = False
-                elif gameplay_started:
-                    break
-                elif saw_self_frame:
-                    missing_self_after_seen = True
-                model.observe(frame)
+                should_observe = (
+                    last_model_observation_tick is None
+                    or frame.world_tick - last_model_observation_tick
+                    >= POLICY_STRIDE_TICKS
+                )
+                if should_observe:
+                    has_self = self_center_x(frame) is not None
+                    if has_self:
+                        saw_self_frame = True
+                        missing_self_after_seen = False
+                    elif gameplay_started:
+                        break
+                    elif saw_self_frame:
+                        missing_self_after_seen = True
+                    model.observe(frame)
+                    last_model_observation_tick = frame.world_tick
 
             model.poll()
             if model.latest_decision is not None:
@@ -181,4 +190,6 @@ def run_attached_player(connection: PlayerConnection, model: ModelClient, *,
         connection.close()
 
 
-__all__ = ["PLAYER_ACTION_HZ", "run_attached_player", "run_player"]
+__all__ = [
+    "PLAYER_ACTION_HZ", "POLICY_STRIDE_TICKS", "run_attached_player", "run_player"
+]

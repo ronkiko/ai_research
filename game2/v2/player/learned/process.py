@@ -33,10 +33,11 @@ from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.model_client import ModelClient
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
-from .motion import SELF, VisionProgress, has_metadata
+from .motion import VisionProgress, vision_centers
+from .runtime import POLICY_STRIDE_TICKS
 
 
-PPO_RATING_DISPLAY_SECONDS = 2.0
+PPO_RATING_DISPLAY_SECONDS = 0.5
 
 
 def _pause_after_ppo_ratings(update: dict, sleeper: Callable[[float], None]) -> None:
@@ -223,6 +224,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     vision_floor_tick = max(pre_lifecycle_world_tick, lifecycle_world_tick)
     started_tick: int | None = None
     latest_frame_tick = vision_floor_tick
+    last_policy_tick: int | None = None
     latest_terminal: dict | None = None
     next_send = clock()
     send_period = 1 / action_hz
@@ -252,18 +254,25 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
         if frame is not None and frame.world_tick > latest_frame_tick \
                 and frame.world_tick > vision_floor_tick:
             latest_frame_tick = frame.world_tick
-            progress_tracker.update(frame)
-            has_self = has_metadata(frame, SELF)
-            if has_self:
-                saw_self_frame = True
-                missing_self_after_seen = False
-            elif gameplay_started:
-                missing_self_after_seen = True
-            model.observe(frame)
-            if has_self and started_tick is None:
-                started_tick = frame.world_tick
-                on_started(episode_started_message(episode_id, started_tick))
-                saw_self_frame = True
+            should_observe = (
+                last_policy_tick is None
+                or frame.world_tick - last_policy_tick >= POLICY_STRIDE_TICKS
+            )
+            if should_observe:
+                self_position, goal_position = vision_centers(frame)
+                progress_tracker.update_centers(self_position, goal_position)
+                has_self = self_position is not None
+                if has_self:
+                    saw_self_frame = True
+                    missing_self_after_seen = False
+                elif gameplay_started:
+                    missing_self_after_seen = True
+                model.observe(frame)
+                last_policy_tick = frame.world_tick
+                if has_self and started_tick is None:
+                    started_tick = frame.world_tick
+                    on_started(episode_started_message(episode_id, started_tick))
+                    saw_self_frame = True
 
         model.poll()
         latest_decision = model.latest_decision or latest_decision

@@ -43,14 +43,18 @@ from game2.v2.player.learned.motion import (
 )
 from game2.v2.player.learned.runtime import (
     CONTROL_CHANGE_PENALTY,
+    POLICY_STRIDE_TICKS,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_ENTROPY_COEF,
     PPO_EPOCHS,
     PPO_GAE_LAMBDA,
     PPO_GAMMA,
+    PPO_HISTORY_STRIDE_TICKS,
     PPO_MAX_GRAD_NORM,
+    PPO_TAIL_TICKS,
     PPO_VALUE_COEF,
+    _select_ppo_indexes,
     _unique_parameters,
 )
 from game2.v2.player.learned.vision import vision_to_tensor
@@ -59,17 +63,6 @@ from game2.v2.training.main import reward_for_result
 
 PLAYER_ID = "unpaced-player"
 ACTOR_ID = "unpaced-actor"
-
-# Run the cheap physics clock at full 120 Hz, but only ask the neural policy
-# for a new control decision every two world ticks (~60 policy Hz).
-POLICY_STRIDE_TICKS = 2
-
-# PPO keeps the terminal context dense while retaining a sparse breadcrumb
-# trail from the earlier episode.  A 1200-tick timeout therefore trains on
-# about 200 states instead of all 600 policy decisions.
-PPO_TAIL_TICKS = 200
-PPO_HISTORY_STRIDE_TICKS = 10
-
 
 @dataclass(frozen=True)
 class Step:
@@ -342,31 +335,14 @@ def _gae(steps: list[Step]) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def _ppo_training_indexes(steps: list[Step]) -> list[int]:
-    """Keep a dense terminal tail plus sparse history for PPO optimization."""
+    """Use the shared realtime/unpaced PPO replay selection."""
     if not steps:
         return []
-
     finish_tick = steps[-1].world_tick + steps[-1].duration_ticks
-    tail_start = max(steps[0].world_tick, finish_tick - PPO_TAIL_TICKS)
-    history_by_bucket: dict[int, int] = {}
-    tail: list[int] = []
-    origin = steps[0].world_tick
-
-    for index, step in enumerate(steps):
-        if step.world_tick >= tail_start:
-            tail.append(index)
-            continue
-        bucket = (step.world_tick - origin) // PPO_HISTORY_STRIDE_TICKS
-        # Keep the latest state in each history bucket: it is temporally closer
-        # to whatever follows than the first state in the bucket.
-        history_by_bucket[bucket] = index
-
-    selected = sorted(set(history_by_bucket.values()) | set(tail))
-    if 0 not in selected:
-        selected.insert(0, 0)
-    if len(steps) - 1 not in selected:
-        selected.append(len(steps) - 1)
-    return selected
+    return _select_ppo_indexes(
+        [step.world_tick for step in steps],
+        finish_tick,
+    )
 
 
 def ppo_update(

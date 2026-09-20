@@ -127,6 +127,9 @@ def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState
 
 
 PPO_CHUNK_TICKS = 100
+POLICY_STRIDE_TICKS = 2
+PPO_TAIL_TICKS = 200
+PPO_HISTORY_STRIDE_TICKS = 10
 CONTROL_CHANGE_PENALTY = 0.005
 PPO_GAMMA = 0.99
 PPO_GAE_LAMBDA = 0.95
@@ -137,6 +140,45 @@ PPO_ENTROPY_COEF = 0.01
 PPO_VALUE_COEF = 0.5
 PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
+
+
+def _select_ppo_indexes(
+    world_ticks: list[int] | tuple[int, ...],
+    finish_world_tick: int,
+) -> list[int]:
+    """Dense terminal context plus sparse earlier history for PPO."""
+    if not world_ticks:
+        return []
+    if type(finish_world_tick) is not int or finish_world_tick < 0:
+        raise ValueError("finish_world_tick must be a non-negative integer")
+    previous = None
+    for tick in world_ticks:
+        if type(tick) is not int or tick < 0:
+            raise ValueError("PPO world ticks must be non-negative integers")
+        if previous is not None and tick < previous:
+            raise ValueError("PPO world ticks cannot move backwards")
+        previous = tick
+    if finish_world_tick < world_ticks[-1]:
+        raise ValueError("finish_world_tick cannot precede the last PPO record")
+
+    tail_start = max(world_ticks[0], finish_world_tick - PPO_TAIL_TICKS)
+    origin = world_ticks[0]
+    history_by_bucket: dict[int, int] = {}
+    tail: list[int] = []
+    for index, tick in enumerate(world_ticks):
+        if tick >= tail_start:
+            tail.append(index)
+            continue
+        bucket = (tick - origin) // PPO_HISTORY_STRIDE_TICKS
+        history_by_bucket[bucket] = index
+
+    selected = sorted(set(history_by_bucket.values()) | set(tail))
+    if 0 not in selected:
+        selected.insert(0, 0)
+    last = len(world_ticks) - 1
+    if last not in selected:
+        selected.append(last)
+    return selected
 
 
 def _unique_parameters(*modules) -> list[torch.nn.Parameter]:
@@ -779,6 +821,7 @@ class LearnedPlayer:
         parameter_norm_after, parameter_hash_after = self._parameter_stats(parameters)
         metrics: dict[str, object] = {
             "rollout_records": count,
+            "ppo_records": count,
             "optimizer_steps": updates,
             "policy_loss": total_policy_loss / max(updates, 1),
             "value_loss": total_value_loss / max(updates, 1),
@@ -870,6 +913,7 @@ class LearnedPlayer:
             self.last_update_diagnostics = ()
             self.last_update_metrics = {
                 "rollout_records": 0,
+                "ppo_records": 0,
                 "optimizer_steps": 0,
                 "reward_sum": 0.0,
             }
@@ -889,14 +933,31 @@ class LearnedPlayer:
             self.last_update_diagnostics = ()
             self.last_update_metrics = {
                 "rollout_records": len(records),
+                "ppo_records": 0,
                 "optimizer_steps": 0,
                 "reward_sum": float(sum(rewards)),
             }
             return False, 0.0
-        advantages, returns = self._gae(records, rewards)
-        loss_value, new_log_prob, new_values, metrics = self._ppo_update(
-            records, advantages, returns
+        advantages_all, returns_all = self._gae(records, rewards)
+        effective_finish_tick = (
+            finish_world_tick
+            if finish_world_tick is not None
+            else records[-1].world_tick + POLICY_STRIDE_TICKS
         )
+        selected_indexes = _select_ppo_indexes(
+            [record.world_tick for record in records],
+            effective_finish_tick,
+        )
+        selected_records = tuple(records[index] for index in selected_indexes)
+        selected_rewards = [rewards[index] for index in selected_indexes]
+        selected_tensor = torch.tensor(selected_indexes, dtype=torch.long)
+        selected_advantages = advantages_all[selected_tensor]
+        selected_returns = returns_all[selected_tensor]
+
+        loss_value, new_log_prob, new_values, metrics = self._ppo_update(
+            selected_records, selected_advantages, selected_returns
+        )
+        metrics["rollout_records"] = len(records)
         metrics["reward_sum"] = float(sum(rewards))
         if records:
             metrics["first_world_tick"] = records[0].world_tick
@@ -911,7 +972,12 @@ class LearnedPlayer:
         if not math.isfinite(loss_value):
             raise RuntimeError("training loss is not finite")
         self.last_update_diagnostics = self._build_update_diagnostics(
-            records, rewards, advantages, returns, new_log_prob, new_values
+            selected_records,
+            selected_rewards,
+            selected_advantages,
+            selected_returns,
+            new_log_prob,
+            new_values,
         )
         self._training_records.clear()
         self._recorded_samples.clear()
@@ -927,8 +993,9 @@ class LearnedPlayer:
 
 __all__ = [
     "CONTROL_CHANGE_PENALTY", "DecisionSample", "LearnedPlayer",
-    "PPO_BATCH_SIZE", "PPO_CHUNK_TICKS",
+    "PPO_BATCH_SIZE", "PPO_CHUNK_TICKS", "POLICY_STRIDE_TICKS",
+    "PPO_HISTORY_STRIDE_TICKS", "PPO_TAIL_TICKS",
     "PPO_CLIP_EPS", "PPO_ENTROPY_COEF", "PPO_EPOCHS", "PPO_GAE_LAMBDA",
     "PPO_GAMMA", "PPO_LEARNING_RATE", "PPO_MAX_GRAD_NORM", "PPO_VALUE_COEF",
-    "TrainingRecord", "action_to_joystick",
+    "TrainingRecord", "_select_ppo_indexes", "action_to_joystick",
 ]
