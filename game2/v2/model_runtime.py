@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from game2.v2.contracts.bot_profile import BotProfile
+from game2.v2.learning.checkpoints import pin_checkpoint_paths
 from game2.v2.contracts.framing import MAX_FRAME_SIZE, ProtocolError, decode_frame
 from game2.v2.contracts.model import (
     ACTUATED,
@@ -43,10 +44,7 @@ from game2.v2.player.learned.checkpoint import (
     load_motor_controller,
     load_optimizer,
     load_planner,
-    save_critic,
-    save_motor_controller,
-    save_optimizer,
-    save_planner,
+    save_checkpoint_set,
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import DualMotorController
@@ -112,6 +110,10 @@ def build_model(*, fresh: bool, profile: BotProfile | None = None,
         assert motor_checkpoint is not None
         assert critic_checkpoint is not None
         assert optimizer_checkpoint is not None
+        planner_checkpoint, motor_checkpoint, critic_checkpoint, optimizer_checkpoint = (
+            pin_checkpoint_paths((planner_checkpoint, motor_checkpoint,
+                                  critic_checkpoint, optimizer_checkpoint))
+        )
         planner = load_planner(planner_checkpoint)
         motor = load_motor_controller(motor_checkpoint)
         critic = load_critic(critic_checkpoint)
@@ -217,27 +219,7 @@ class ModelRuntime:
     def _save_checkpoints(self) -> str:
         if self._checkpoint_paths is None:
             raise RuntimeError("checkpoint paths are not configured")
-        planner_path, motor_path, critic_path, optimizer_path = self._checkpoint_paths
-        paths = (planner_path, motor_path, critic_path, optimizer_path)
-        for path in paths:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = tuple(
-            path.with_name(path.name + ".tmp") for path in paths
-        )
-        try:
-            save_planner(self.player.planner, temporary[0])
-            save_motor_controller(self.player.motor_controller, temporary[1])
-            save_critic(self.player.critic, temporary[2])
-            assert self.player.optimizer is not None
-            save_optimizer(self.player.optimizer, temporary[3])
-            for source, destination in zip(temporary, paths):
-                source.replace(destination)
-        finally:
-            for path in temporary:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+        paths = save_checkpoint_set(self.player, self._checkpoint_paths)
 
         digest = hashlib.sha256()
         for path in paths:
@@ -511,9 +493,6 @@ class ModelRuntime:
                             continue
                         messages = reader.read_available(peer)
                     for message, observation_matrices in messages:
-                        if message["type"] == EPISODE_END:
-                            pending_observation = self._process_pending(
-                                peer, pending_observation)
                         if message["type"] == SAVE:
                             if self._active:
                                 raise ProtocolError("SAVE arrived during an active episode")

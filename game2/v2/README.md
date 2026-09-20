@@ -52,7 +52,24 @@ Headless new Training Set Level 1:
 ./game2/v2/op/train.sh --fresh
 ```
 
-`--fresh` resets `planner.pt` and `motor.pt` before starting.
+`--fresh` clears the episode store and all four checkpoints before starting.
+
+For faster headless collection with live terminal progress:
+
+```bash
+./game2/v2/op/train.sh --fresh --mode unpaced
+./game2/v2/op/train.sh --resume --mode unpaced
+```
+
+The live bar shows elapsed world ticks within an attempt; `goal` shows the
+best progress toward the target in that attempt. PPO has a separate batch
+indicator. A successful stochastic attempt is followed by deterministic
+verification without learning. Before the set can pass, the final model must
+pass every training map again. This is a training-map check, not an Exam.
+
+Ctrl+C stops training and retains the last completed checkpoint. Use `--resume`
+to continue; `--max-episodes-per-map N` limits the attempts in a run. Redirected
+output retains periodic progress lines; `--json` exposes detailed events.
 
 Continue existing checkpoints:
 

@@ -146,6 +146,12 @@ class Trainer:
                 peer, episode_id, self.mode, self.seed + train_index)
 
             if self.mode == EVALUATE:
+                summary.attempts += 1
+                if finished["result"] == "success" and finished["trainable"]:
+                    summary.successes += 1
+                else:
+                    summary.failures += 1
+                summary.mastered = summary.successes == summary.attempts
                 print("EVALUATION " + json.dumps({
                     "episode_id": episode_id,
                     "result": finished["result"],

@@ -20,12 +20,7 @@ from game2.v2.console.world import load_world
 from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.training_set import TrainingSetManifest
 from game2.v2.model_runtime import build_model
-from game2.v2.player.learned.checkpoint import (
-    save_critic,
-    save_motor_controller,
-    save_optimizer,
-    save_planner,
-)
+from game2.v2.player.learned.checkpoint import save_checkpoint_set
 from game2.v2.player.learned.contracts import ActionDecision
 from game2.v2.player.learned.motion import VisionProgress, vision_centers
 from game2.v2.training.main import reward_for_result
@@ -61,16 +56,7 @@ def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
 
 
 def save_checkpoints(model, directory: str | Path) -> None:
-    planner_path, motor_path, critic_path, optimizer_path = _checkpoint_paths(
-        directory
-    )
-    planner_path.parent.mkdir(parents=True, exist_ok=True)
-    save_planner(model.planner, planner_path)
-    save_motor_controller(model.motor_controller, motor_path)
-    save_critic(model.critic, critic_path)
-    if model.optimizer is None:
-        raise RuntimeError("dataset PPO requires a trainable optimizer")
-    save_optimizer(model.optimizer, optimizer_path)
+    save_checkpoint_set(model, _checkpoint_paths(directory))
 
 
 def load_model(
@@ -103,6 +89,26 @@ def run_episode(
     on_progress: Callable[[dict[str, object]], None] | None = None,
     player_id: str = PLAYER_ID,
 ) -> EpisodeResult:
+    with dataset.buffered_writes():
+        return _run_episode(
+            model, map_path, episode_limit=episode_limit, mode=mode, seed=seed,
+            dataset=dataset, should_stop=should_stop, on_progress=on_progress,
+            player_id=player_id,
+        )
+
+
+def _run_episode(
+    model,
+    map_path: str | Path,
+    *,
+    episode_limit: int,
+    mode: str,
+    seed: int,
+    dataset: EpisodeDataset,
+    should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[dict[str, object]], None] | None = None,
+    player_id: str = PLAYER_ID,
+) -> EpisodeResult:
     if mode not in {"train", "evaluate"}:
         raise ValueError("mode must be train or evaluate")
 
@@ -116,6 +122,8 @@ def run_episode(
 
     grid = renderer.render(engine.world_state())
     next_progress_tick = 100
+    started = time.monotonic()
+    last_progress = started
 
     while actor.result is None:
         if should_stop is not None and should_stop():
@@ -170,7 +178,10 @@ def run_episode(
             terminal_self, terminal_goal = vision_centers(after_grid)
             progress.update_centers(terminal_self, terminal_goal)
 
-        if on_progress is not None and engine.world_tick >= next_progress_tick:
+        now = time.monotonic()
+        if on_progress is not None and (
+            engine.world_tick >= next_progress_tick or now - last_progress >= 0.5
+        ):
             state = engine.actor_state(ACTOR_ID)
             on_progress({
                 "world_tick": engine.world_tick,
@@ -180,7 +191,10 @@ def run_episode(
                 "x": state.x,
                 "y": state.y,
                 "grounded": state.grounded,
+                "seconds": now - started,
+                "ticks_per_second": engine.world_tick / max(now - started, 1e-6),
             })
+            last_progress = now
             while next_progress_tick <= engine.world_tick:
                 next_progress_tick += 100
 
@@ -481,20 +495,24 @@ def run_unpaced_training_set(
                 trainable=True,
                 progress=outcome.progress,
             )
-            if not json_output:
-                write("TRAIN_RESULT", {
-                    "episode_id": episode_id,
-                    "result": outcome.result,
-                    "progress": outcome.progress,
-                    "world_ticks": outcome.finish_world_tick,
-                    "decisions": outcome.decisions,
-                    "previous_result": previous_train_result,
-                    "previous_progress": previous_train_progress,
-                    "attempt": attempt,
-                    "max_attempts": max_episodes,
-                })
+            write("TRAIN_RESULT", {
+                "episode_id": episode_id,
+                "result": outcome.result,
+                "progress": outcome.progress,
+                "world_ticks": outcome.finish_world_tick,
+                "decisions": outcome.decisions,
+                "previous_result": previous_train_result,
+                "previous_progress": previous_train_progress,
+                "attempt": attempt,
+                "max_attempts": max_episodes,
+            })
 
             update_started = time.monotonic()
+            if json_output:
+                write("LEARNING", {
+                    "episode_id": episode_id, "status": "update",
+                    "attempt": attempt, "max_attempts": max_episodes,
+                })
             training = train_episode(
                 model,
                 dataset,
@@ -624,6 +642,47 @@ def run_unpaced_training_set(
                     "STOPPED · map not learned"
                 )
             return 1
+
+    write_line("FINAL CHECK · all training maps · frozen model")
+    final_passed = True
+    for spec in manifest.training_maps:
+        if should_stop is not None and should_stop():
+            raise KeyboardInterrupt
+        map_path = Path(spec.path)
+        if not map_path.is_absolute():
+            map_path = (manifest_path.parent / map_path).resolve()
+        episode_id += 1
+        dataset = episode_store.create(
+            episode_id=episode_id, mode="evaluate", source="unpaced",
+            seed=episode_id,
+        )
+        outcome = run_episode(
+            model, map_path, episode_limit=episode_limit,
+            mode="evaluate", seed=episode_id, dataset=dataset,
+            should_stop=should_stop,
+            on_progress=lambda snapshot: write("ROLLOUT", {
+                "episode_id": episode_id, "mode": "evaluate",
+                "attempt": 0, "max_attempts": max_episodes,
+                "final_check": True, "map_id": spec.map_id, **snapshot,
+            }),
+            player_id=player_id,
+        )
+        dataset.finalize(
+            result=outcome.result, finish_world_tick=outcome.finish_world_tick,
+            terminal_reward=0.0, trainable=False, progress=outcome.progress,
+        )
+        episode_store.rotate()
+        final_passed = final_passed and outcome.result == "success"
+        if json_output:
+            write("FINAL_EVALUATION", {
+                "episode_id": episode_id, "map_id": spec.map_id,
+                "result": outcome.result, "progress": outcome.progress,
+            })
+        else:
+            write_line(f"Final check {spec.map_id}: {outcome.result.upper()}")
+    if not final_passed:
+        write_line(f"TRAINING SET {manifest.training_set_level}: FAIL (final verification)")
+        return 1
 
     if json_output:
         output.write(

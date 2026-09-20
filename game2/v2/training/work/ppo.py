@@ -169,14 +169,25 @@ def train_episode(
     on_progress: Callable[[dict[str, object]], None] | None = None,
 ) -> EpisodeTrainingResult:
     meta = dataset.metadata()
-    steps = dataset.steps()
+    all_steps = dataset.steps()
+    # KEEP and redundant commands are real policy choices without a wire action.
+    # A state-changing realtime command is usable only after its actuation ACK.
+    steps = tuple(step for step in all_steps if (
+        step.world_tick < int(meta.get("finish_world_tick") or 0)
+        and (meta["source"] != "realtime" or step.actuated or (
+            step.desired_right == step.pad_right
+            and step.desired_jump == step.pad_jump
+        ))
+    ))
+    discarded = len(all_steps) - len(steps)
     if (
         meta["mode"] != "train"
         or not bool(meta.get("trainable"))
         or not steps
     ):
         metrics = {
-            "rollout_records": len(steps),
+            "rollout_records": len(all_steps),
+            "discarded_records": discarded,
             "ppo_records": 0,
             "optimizer_steps": 0,
             "reward_sum": 0.0,
@@ -424,7 +435,8 @@ def train_episode(
     norm_after, hash_after = _parameter_stats(parameters)
     loss_value = total_loss / max(updates, 1)
     metrics: dict[str, object] = {
-        "rollout_records": len(steps),
+        "rollout_records": len(all_steps),
+        "discarded_records": discarded,
         "ppo_records": count,
         "optimizer_steps": updates,
         "reward_sum": float(sum(rewards)),

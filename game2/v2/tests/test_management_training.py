@@ -14,9 +14,67 @@ from game2.v2.management.training import (
     _strict_object,
 )
 from game2.v2.training.work import EpisodeStore
+from game2.v2.management.training_output import TrainingDisplay
 
 
 class ManagementTrainingTests(unittest.TestCase):
+    def test_realtime_set_rechecks_final_model_and_propagates_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = TrainingRun(output=io.StringIO())
+            with mock.patch.object(run, "_run_map", side_effect=[True, True, True, False]) as maps:
+                status = run.train(
+                    set_path=DEFAULT_SET, checkpoint_dir=root / "checkpoints",
+                    max_episodes=1, episode_limit=20, fresh=True,
+                    episode_store=root / "episodes",
+                )
+            self.assertEqual(status, 1)
+            self.assertEqual(maps.call_count, 4)
+            final = maps.call_args.kwargs
+            self.assertTrue(final["evaluate_only"])
+            self.assertFalse(final["fresh"])
+            self.assertEqual(final["spec"].map_id, "flat_run")
+
+    def test_invalid_limits_preserve_saved_training_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "planner.pt"
+            checkpoint.write_bytes(b"saved weights")
+            episode = root / "episodes" / "episode-000001.sqlite3"
+            episode.parent.mkdir()
+            episode.write_bytes(b"saved experience")
+            for episodes, limit in ((0, 20), (1, 0)):
+                with self.assertRaises(ValueError):
+                    TrainingRun(output=io.StringIO()).train(
+                        set_path=DEFAULT_SET, checkpoint_dir=root,
+                        max_episodes=episodes, episode_limit=limit, fresh=True,
+                        mode="unpaced", episode_store=episode.parent,
+                    )
+                self.assertEqual(checkpoint.read_bytes(), b"saved weights")
+                self.assertEqual(episode.read_bytes(), b"saved experience")
+
+    def test_child_events_render_progress_for_terminal_and_redirected_output(self):
+        import json
+        for tty in (True, False):
+            output = io.StringIO()
+            output.isatty = lambda: tty
+            display = TrainingDisplay(output, clock=lambda: 1.0)
+            event = {"episode_id": 1, "mode": "train", "attempt": 1,
+                     "max_attempts": 50, "world_tick": 100, "episode_limit": 1200,
+                     "progress": 0.2, "ticks_per_second": 200}
+            display.consume("ROLLOUT " + json.dumps(event))
+            self.assertIn("100/1200", output.getvalue())
+            self.assertIn("20.0%", output.getvalue())
+            first = output.getvalue()
+            display.consume("ROLLOUT " + json.dumps(event))
+            self.assertEqual(first, output.getvalue())
+            display.consume('PPO {"episode_id":1,"attempt":1,"max_attempts":50,"step":1,"steps":4,"loss":0.1}')
+            self.assertIn("1/4 batches", output.getvalue())
+            display.close()
+            self.assertFalse(display.active)
+            if not tty:
+                self.assertNotIn("\x1b", output.getvalue())
+
     def test_unpaced_child_forwards_output_status_and_cleans_up_on_stop(self):
         for interrupted in (False, True):
             with self.subTest(interrupted=interrupted):

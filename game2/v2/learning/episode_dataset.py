@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import json
 import math
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any
 
 from game2.v2.contracts.vision import VisionGrid
@@ -109,12 +111,51 @@ class EpisodeDataset:
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
+        self._writer = None
+        self._pending_writes = 0
+        self._last_commit = 0.0
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         connection = sqlite3.connect(self.path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    @contextmanager
+    def buffered_writes(self):
+        """Commit bounded batches; flush partial experience even on interruption."""
+        if self._writer is not None:
+            raise RuntimeError("episode writer is already active")
+        with self._connect() as connection:
+            self._writer = connection
+            self._pending_writes = 0
+            self._last_commit = time.monotonic()
+            try:
+                yield self
+            finally:
+                try:
+                    connection.commit()
+                finally:
+                    self._writer = None
+
+    @contextmanager
+    def _sample_transaction(self):
+        if self._writer is None:
+            with self._connect() as connection:
+                yield connection
+            return
+        yield self._writer
+        self._pending_writes += 1
+        now = time.monotonic()
+        if self._pending_writes >= 32 or now - self._last_commit >= 0.5:
+            self._writer.commit()
+            self._pending_writes = 0
+            self._last_commit = now
 
     @classmethod
     def create(
@@ -347,7 +388,7 @@ class EpisodeDataset:
             getattr(sample, "chunk_offset", None),
             int(bool(getattr(sample, "chunk_first", False))),
         )
-        with self._connect() as connection:
+        with self._sample_transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO steps(

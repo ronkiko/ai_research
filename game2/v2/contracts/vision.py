@@ -32,6 +32,7 @@ META_OTHER_CENTER = 0x10
 META_MASK = (
     META_GOAL | META_SELF | META_OTHER_ACTOR | META_SELF_CENTER | META_OTHER_CENTER
 )
+_ALLOWED_METADATA = bytes(value for value in range(256) if not value & ~META_MASK)
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,7 @@ class VisionGrid:
             raise ProtocolError("VisionGrid contains an unknown coarse physics value")
         if physics and physics.translate(None, _ALLOWED_PHYSICS):
             raise ProtocolError("VisionGrid contains an unknown fine physics value")
-        if any(value & ~META_MASK for value in metadata):
+        if metadata.translate(None, _ALLOWED_METADATA):
             raise ProtocolError("VisionGrid contains an unknown metadata bit")
         object.__setattr__(self, "coarse_physics", coarse_physics)
         object.__setattr__(self, "physics", physics)

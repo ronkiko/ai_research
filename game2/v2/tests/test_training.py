@@ -188,6 +188,21 @@ class TerminalQueueTests(unittest.TestCase):
 
 
 class TrainerRuntimeTests(unittest.TestCase):
+    def test_evaluate_summary_requires_every_episode_to_succeed_without_save(self):
+        from unittest import mock
+        for results in (("success", "success"), ("success", "timeout")):
+            trainer = Trainer(mode="evaluate", episodes=2)
+            peer = mock.Mock()
+            outcomes = [{"result": result, "trainable": True} for result in results]
+            with mock.patch.object(trainer, "_expect"), \
+                    mock.patch.object(trainer, "_receive_episode", side_effect=outcomes), \
+                    mock.patch("game2.v2.training.main.send_training_message") as send:
+                summary = trainer._run_peer(peer)
+            self.assertEqual(summary.mastered, all(result == "success" for result in results))
+            self.assertEqual(summary.attempts, 2)
+            self.assertEqual(summary.actual_update_count, 0)
+            send.assert_not_called()
+
     def test_reward_mapping_and_socket_handshake(self):
         self.assertEqual(reward_for_result("success", 0.8), 1.0)
         self.assertEqual(reward_for_result("timeout", 0.4), -1.0)

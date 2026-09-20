@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import torch
+from game2.v2.learning.checkpoints import publish_checkpoints
 
 from .critic import CRITIC_CONFIGURATION, CNNCritic
 from .motor import MOTOR_CONTROLLER_CONFIGURATION, DualMotorController
@@ -14,6 +15,19 @@ from .planner import PLANNER_CONFIGURATION, CNNPlanner
 
 CHECKPOINT_SCHEMA_VERSION = 1
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
+
+
+def save_checkpoint_set(model, paths):
+    if model.optimizer is None:
+        raise RuntimeError("checkpoint requires a trainable optimizer")
+
+    def write(destinations):
+        save_planner(model.planner, destinations[0])
+        save_motor_controller(model.motor_controller, destinations[1])
+        save_critic(model.critic, destinations[2])
+        save_optimizer(model.optimizer, destinations[3])
+
+    return publish_checkpoints(paths, write)
 
 
 def _seed_for(model: torch.nn.Module) -> int:
@@ -160,6 +174,7 @@ __all__ = [
     "load_optimizer",
     "load_planner",
     "save_critic",
+    "save_checkpoint_set",
     "save_motor_controller",
     "save_optimizer",
     "save_planner",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -80,6 +81,45 @@ def _sample(sequence: int, tick: int, self_x: int):
 
 
 class EpisodeDatasetTests(unittest.TestCase):
+    def test_buffered_writer_publishes_batches_and_flushes_on_interrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="unpaced", seed=1
+            )
+            with mock.patch("game2.v2.learning.episode_dataset.time.monotonic", return_value=1):
+                with self.assertRaises(KeyboardInterrupt):
+                    with dataset.buffered_writes():
+                        for sequence in range(1, 32):
+                            dataset.upsert_sample(_sample(sequence, sequence * 2, 2))
+                        self.assertEqual(len(dataset.steps()), 0)
+                        dataset.upsert_sample(_sample(32, 64, 2))
+                        self.assertEqual(len(dataset.steps()), 32)
+                        dataset.upsert_sample(_sample(33, 66, 2))
+                        raise KeyboardInterrupt
+            self.assertEqual(len(dataset.steps()), 33)
+            dataset.finalize(result="timeout", finish_world_tick=68,
+                             terminal_reward=-1, trainable=False)
+
+    def test_ppo_excludes_unconfirmed_changes_but_retains_noop_decisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            dataset.upsert_sample(_sample(1, 0, 2), actuated=True)
+            noop = _sample(2, 2, 3)
+            dataset.upsert_sample(noop, actuated=False)
+            dropped = _sample(3, 4, 4)
+            dropped.action_decision = ControlCommand(ButtonCommand.RELEASE, ButtonCommand.KEEP)
+            dropped.desired_state = ActionDecision(False, False)
+            dataset.upsert_sample(dropped, actuated=False)
+            dataset.finalize(result="timeout", finish_world_tick=6,
+                             terminal_reward=-1, trainable=True)
+            result = train_episode(build_model(fresh=True), dataset)
+            self.assertTrue(result.updated)
+            self.assertEqual(result.metrics["discarded_records"], 1)
+            self.assertEqual([s.ppo_selected for s in dataset.steps()], [True, True, False])
+            self.assertIsNone(dataset.steps()[2].advantage)
+
     def test_ppo_keeps_every_policy_decision_for_stateful_controls(self):
         ticks = list(range(0, 1200, POLICY_STRIDE_TICKS))
         self.assertEqual(

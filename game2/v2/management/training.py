@@ -38,6 +38,8 @@ from game2.v2.contracts.screen_server import (
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
 from game2.v2.learning.episode_dataset import EpisodeStore
+from game2.v2.learning.checkpoints import CHECKPOINT_NAMES, checkpoint_paths, reset_checkpoints
+from game2.v2.management.training_output import TrainingDisplay
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -271,24 +273,32 @@ class TrainingRun:
             "--episode-limit", str(episode_limit),
             "--fresh" if fresh else "--resume",
         ]
-        if json_output:
-            command.append("--json")
+        command.append("--json")
+        display = None if json_output else TrainingDisplay(self.output)
+
+        def forward(line):
+            if display is None:
+                self.output.write(line)
+            else:
+                display.consume(line)
         process = self._spawn(command)
         try:
             while True:
                 self._check_stop()
                 for line in process.drain():
-                    self.output.write(line)
+                    forward(line)
                 self.output.flush()
                 status = process.process.poll()
                 if status is not None and process.output_done.is_set():
                     for line in process.drain():
-                        self.output.write(line)
+                        forward(line)
                     self.output.flush()
                     return status
                 self.sleeper(0.02)
         finally:
             self._stop([process])
+            if display is not None:
+                display.close()
 
     def _announcement(
         self, process: ManagedProcess, prefix: str, timeout: float = PROCESS_TIMEOUT
@@ -391,6 +401,7 @@ class TrainingRun:
         view: str,
         episode_store: Path,
         profile_path: Path,
+        evaluate_only: bool = False,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
@@ -415,12 +426,15 @@ class TrainingRun:
                 except (OSError, TimeoutError, ValueError, TrainingRunError) as exc:
                     self._write(f"SCREEN warning: {exc}; Training continues headless")
 
-            trainer = self._spawn([
+            trainer_command = [
                 sys.executable, "-m", "game2.v2.training.main",
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
-                "--mode", "train", "--episodes", str(max_episodes),
-                "--stop-on-success",
-            ])
+                "--mode", "evaluate" if evaluate_only else "train",
+                "--episodes", "1" if evaluate_only else str(max_episodes),
+            ]
+            if not evaluate_only:
+                trainer_command.append("--stop-on-success")
+            trainer = self._spawn(trainer_command)
             processes.append(trainer)
             trainer_host, trainer_port = _endpoint_ready(
                 self._announcement(trainer, "READY"), "Trainer"
@@ -471,7 +485,7 @@ class TrainingRun:
                 player_exited = player.process.poll() is not None
                 trainer_exited = trainer.process.poll() is not None
                 model_exited = model.process.poll() is not None
-                if model_exited and not player_exited:
+                if model_exited and not player_exited and not evaluate_only:
                     raise TrainingRunError(
                         "Model exited before Player finalization: " + model.diagnostic()
                     )
@@ -529,6 +543,10 @@ class TrainingRun:
         player_id: str = "player1",
         profile_dir: str | Path = DEFAULT_BOT_PROFILE_DIR,
     ) -> int:
+        if type(max_episodes) is not int or max_episodes <= 0:
+            raise ValueError("max_episodes must be positive")
+        if type(episode_limit) is not int or episode_limit <= 0:
+            raise ValueError("episode_limit must be positive")
         manifest_path = Path(set_path).expanduser().resolve()
         profile_store = BotProfileStore(profile_dir)
         profile = profile_store.load(player_id)
@@ -542,6 +560,9 @@ class TrainingRun:
         if mode == "realtime" and view != "screen" and screen is None:
             raise ValueError("--view vision requires --screen")
         manifest = TrainingSetManifest.from_file(manifest_path)
+        for spec in manifest.training_maps:
+            if not _resolve_map(manifest_path, spec).is_file():
+                raise ValueError(f"training map not found: {spec.map_id}")
         layout = BotRuntimeLayout.resolve(
             profile.bot_id,
             manifest.training_set_level,
@@ -563,10 +584,10 @@ class TrainingRun:
             screen_control = self.screen_control_factory(screen, screen_server)
             screen_control.preflight()
 
-        planner = checkpoint_path / "planner.pt"
-        motor = checkpoint_path / "motor.pt"
-        critic = checkpoint_path / "critic.pt"
-        optimizer = checkpoint_path / "optimizer.pt"
+        planner, motor, critic, optimizer = (
+            tuple(checkpoint_path / name for name in CHECKPOINT_NAMES)
+            if fresh else checkpoint_paths(checkpoint_path)
+        )
         log_root = checkpoint_path / "logs"
         if fresh:
             EpisodeStore(episode_store_path).reset()
@@ -577,8 +598,8 @@ class TrainingRun:
             removed = []
             for checkpoint in (planner, motor, critic, optimizer):
                 if checkpoint.exists():
-                    checkpoint.unlink()
                     removed.append(checkpoint.name)
+            reset_checkpoints(checkpoint_path)
             if removed:
                 self._write("FRESH reset checkpoints: " + ", ".join(removed))
         elif (
@@ -590,10 +611,6 @@ class TrainingRun:
             raise TrainingRunError(
                 "resume requires planner.pt, motor.pt, critic.pt, and optimizer.pt"
             )
-        if type(max_episodes) is not int or max_episodes <= 0:
-            raise ValueError("max_episodes must be positive")
-        if type(episode_limit) is not int or episode_limit <= 0:
-            raise ValueError("episode_limit must be positive")
 
         if mode == "unpaced":
             if json_output:
@@ -654,6 +671,21 @@ class TrainingRun:
                     self._write(f"TRAINING SET {manifest.training_set_level}: FAIL")
                     return 1
                 fresh = False
+            self._write("FINAL CHECK: all maps, frozen model")
+            for index, spec in enumerate(manifest.training_maps):
+                directory = root / f"verify-{index + 1:02d}-{spec.map_id}"
+                directory.mkdir()
+                passed = self._run_map(
+                    manifest_path=manifest_path, spec=spec,
+                    checkpoint_dir=checkpoint_path, fresh=False, max_episodes=1,
+                    episode_limit=episode_limit, directory=directory,
+                    screen_control=screen_control, view=view,
+                    episode_store=episode_store_path, profile_path=profile_path,
+                    evaluate_only=True,
+                )
+                if not passed:
+                    self._write(f"FINAL CHECK {spec.map_id}: FAIL; resume training")
+                    return 1
         self._write(f"TRAINING SET {manifest.training_set_level}: PASS")
         return 0
 
