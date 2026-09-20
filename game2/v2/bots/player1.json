@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "bot_id": "player1",
+  "display_name": "Player 1",
+  "cerebral_cortex": {
+    "enabled": false,
+    "role": "research_strategist",
+    "implementation": "none",
+    "configuration": "disabled",
+    "precision": "n/a",
+    "seed": null,
+    "topology": {
+      "kind": "none",
+      "inputs": null,
+      "hidden": [],
+      "outputs": null,
+      "summary": "Research Strategist / LLM not implemented yet"
+    }
+  },
+  "spinal_cord": {
+    "enabled": true,
+    "role": "planner",
+    "implementation": "cnn",
+    "configuration": "shared-pool4-motor-plan-v7",
+    "precision": "fp32",
+    "seed": 1,
+    "topology": {
+      "kind": "cnn",
+      "inputs": null,
+      "hidden": [
+        16
+      ],
+      "outputs": 4,
+      "summary": "VisionBackbone -> hidden 16 -> MotorGoal[2] + skill logits[2]"
+    }
+  },
+  "motors": [
+    {
+      "motor_id": "right",
+      "enabled": true,
+      "role": "motor",
+      "implementation": "mlp",
+      "configuration": "button-reflex-5-8-3-v1",
+      "precision": "fp32",
+      "seed": 2,
+      "topology": {
+        "kind": "mlp",
+        "inputs": 5,
+        "hidden": [
+          8
+        ],
+        "outputs": 3,
+        "summary": "MotorGoal[2] + motion[2] + actuator state -> KEEP/PRESS/RELEASE"
+      }
+    },
+    {
+      "motor_id": "jump",
+      "enabled": true,
+      "role": "motor",
+      "implementation": "mlp",
+      "configuration": "button-reflex-5-8-3-v1",
+      "precision": "fp32",
+      "seed": 3,
+      "topology": {
+        "kind": "mlp",
+        "inputs": 5,
+        "hidden": [
+          8
+        ],
+        "outputs": 3,
+        "summary": "MotorGoal[2] + motion[2] + actuator state -> KEEP/PRESS/RELEASE"
+      }
+    }
+  ]
+}
