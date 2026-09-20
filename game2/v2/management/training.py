@@ -545,7 +545,11 @@ class TrainingRun:
             else:
                 self._write(
                     f"Training set {manifest.training_set_level} · "
-                    f"{'fresh' if fresh else 'resume'} · unpaced"
+                    + (
+                        "new model · fast simulation"
+                        if fresh
+                        else "continuing saved model · fast simulation"
+                    )
                 )
             return run_unpaced_training_set(
                 set_path=manifest_path,

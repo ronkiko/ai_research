@@ -71,6 +71,11 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertIn("FRESH reset episode datasets", output.getvalue())
             self.assertFalse(log_root.exists())
             self.assertIn("FRESH reset logs", output.getvalue())
+            self.assertIn(
+                "Training set 1 · new model · fast simulation",
+                output.getvalue(),
+            )
+            self.assertNotIn("· unpaced", output.getvalue())
             kwargs = unpaced.call_args.kwargs
             self.assertEqual(Path(kwargs["episode_store_dir"]), episode_root)
 

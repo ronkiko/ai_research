@@ -7,6 +7,7 @@ from pathlib import Path
 
 from game2.v2.training.unpaced import (
     POLICY_STRIDE_TICKS,
+    _behavior_trend,
     _progress_bar,
     _rollout_line,
     load_model,
@@ -21,7 +22,7 @@ FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.j
 
 
 class UnpacedTrainingTests(unittest.TestCase):
-    def test_human_rollout_line_is_compact_and_uses_best_progress(self):
+    def test_human_rollout_line_shows_world_progress_not_internal_best(self):
         line = _rollout_line({
             "episode_id": 3,
             "mode": "train",
@@ -29,9 +30,29 @@ class UnpacedTrainingTests(unittest.TestCase):
             "world_tick": 600,
             "progress": 0.251,
         })
-        self.assertIn("Train", line)
-        self.assertIn("best 25.1%", line)
+        self.assertIn("Attempt", line)
+        self.assertIn("reached 25.1% toward goal", line)
+        self.assertIn("time 600/1200", line)
+        self.assertNotIn("best", line)
         self.assertEqual(len(_progress_bar(0.5)), 20)
+
+    def test_behavior_trend_describes_visible_improvement(self):
+        self.assertEqual(
+            _behavior_trend("timeout", 0.426, None, None),
+            "baseline",
+        )
+        self.assertEqual(
+            _behavior_trend("timeout", 0.550, "timeout", 0.426),
+            "↑ improved +12.4 pp",
+        )
+        self.assertEqual(
+            _behavior_trend("success", 0.931, "timeout", 0.426),
+            "↑ improved: reached goal",
+        )
+        self.assertEqual(
+            _behavior_trend("timeout", 0.600, "success", 0.931),
+            "↓ worse: previous attempt reached goal",
+        )
 
     def test_unpaced_episode_reuses_each_policy_decision_for_two_world_ticks(self):
         with tempfile.TemporaryDirectory() as directory:

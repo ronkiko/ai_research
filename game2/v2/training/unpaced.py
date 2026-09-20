@@ -199,14 +199,39 @@ def _progress_bar(progress: float, width: int = 20) -> str:
 def _rollout_line(payload: dict[str, object]) -> str:
     limit = int(payload["episode_limit"])
     tick = int(payload["world_tick"])
-    fraction = min(1.0, max(0.0, tick / max(limit, 1)))
-    best = 100.0 * float(payload["progress"])
-    label = "Train" if payload.get("mode") == "train" else "Eval"
+    progress = min(1.0, max(0.0, float(payload["progress"])))
+    label = "Attempt" if payload.get("mode") == "train" else "Check"
     return (
-        f"{label:<5} {int(payload['episode_id']):<4} "
-        f"[{_progress_bar(fraction)}] {100.0 * fraction:3.0f}% · "
-        f"best {best:4.1f}% · tick {tick}/{limit}"
+        f"{label:<7} {int(payload['episode_id']):<4} "
+        f"[{_progress_bar(progress)}] "
+        f"reached {100.0 * progress:4.1f}% toward goal · "
+        f"time {tick}/{limit}"
     )
+
+
+def _behavior_trend(
+    result: str,
+    progress: float,
+    previous_result: str | None,
+    previous_progress: float | None,
+) -> str:
+    if previous_result is None or previous_progress is None:
+        return "baseline"
+
+    if result == "success":
+        if previous_result == "success":
+            return "→ success repeated"
+        return "↑ improved: reached goal"
+
+    if previous_result == "success":
+        return "↓ worse: previous attempt reached goal"
+
+    delta = 100.0 * (float(progress) - float(previous_progress))
+    if delta >= 1.0:
+        return f"↑ improved +{delta:.1f} pp"
+    if delta <= -1.0:
+        return f"↓ worse {abs(delta):.1f} pp"
+    return "→ about the same"
 
 
 def run_unpaced_training_set(
@@ -277,12 +302,9 @@ def run_unpaced_training_set(
             output.write(
                 "\r"
                 + (
-                    f"PPO   {int(payload['episode_id']):<4} "
+                    f"Learning {int(payload['episode_id']):<3} "
                     f"[{_progress_bar(fraction)}] "
-                    f"{100.0 * fraction:3.0f}% · "
-                    f"epoch {int(payload['epoch'])}/{int(payload['epochs'])} · "
-                    f"batch {int(payload['batch'])}/{int(payload['batches'])} · "
-                    f"loss {float(payload['loss']):.4f}"
+                    f"{100.0 * fraction:3.0f}% · updating model"
                 )
                 + "\x1b[K"
             )
@@ -291,12 +313,22 @@ def run_unpaced_training_set(
             return
         if prefix == "TRAIN_RESULT":
             clear_live()
+            result = str(payload["result"])
+            progress = float(payload["progress"])
+            outcome_text = (
+                "reached goal"
+                if result == "success"
+                else f"reached {100.0 * progress:.1f}% toward goal"
+            )
+            trend = _behavior_trend(
+                result,
+                progress,
+                payload.get("previous_result"),
+                payload.get("previous_progress"),
+            )
             write_line(
-                f"Train {int(payload['episode_id']):<4} "
-                f"{str(payload['result']).upper()} · "
-                f"best {100.0 * float(payload['progress']):.1f}% · "
-                f"{int(payload['world_ticks'])} ticks · "
-                f"{int(payload['decisions'])} decisions"
+                f"Attempt {int(payload['episode_id']):<3} "
+                f"{result.upper()} · {outcome_text} · {trend}"
             )
             return
         if prefix == "LEARNING":
@@ -317,34 +349,35 @@ def run_unpaced_training_set(
                     live_active = True
                 return
             clear_live()
-            loss = payload.get("loss")
-            loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
-            status = "updated" if payload.get("updated") else "skipped"
-            write_line(
-                f"PPO {int(payload['episode_id']):<6} {status} · "
-                f"loss {loss_text} · "
-                f"{float(payload.get('seconds', 0.0)):.1f}s · "
-                f"records {int(payload['ppo_records'])}/"
-                f"{int(payload['rollout_records'])}"
-            )
+            if payload.get("updated"):
+                write_line(
+                    f"Learning {int(payload['episode_id']):<3} "
+                    f"model updated · "
+                    f"{float(payload.get('seconds', 0.0)):.1f}s"
+                )
+            else:
+                write_line(
+                    f"Learning {int(payload['episode_id']):<3} "
+                    "no model update"
+                )
             return
         if prefix == "PROGRESS":
             return
         if prefix == "EVALUATION":
             clear_live()
             result = str(payload["result"])
-            suffix = (
-                f"PASS · {int(payload['world_ticks'])} ticks · "
-                f"{int(payload['decisions'])} decisions"
-                if result == "success"
-                else (
-                    f"{result.upper()} · "
-                    f"best {100.0 * float(payload['progress']):.1f}% · "
-                    f"{int(payload['world_ticks'])} ticks · "
-                    f"{int(payload['decisions'])} decisions"
+            if result == "success":
+                write_line(
+                    f"Check {int(payload['episode_id']):<5} PASS · "
+                    "success reproduced after learning"
                 )
-            )
-            write_line(f"Eval {int(payload['episode_id']):<6} {suffix}")
+            else:
+                write_line(
+                    f"Check {int(payload['episode_id']):<5} FAIL "
+                    f"({result.upper()}) · "
+                    f"reached {100.0 * float(payload['progress']):.1f}% toward goal · "
+                    "success not stable yet"
+                )
             return
         write_line(prefix)
 
@@ -379,6 +412,8 @@ def run_unpaced_training_set(
 
         mastered = False
         successes = 0
+        previous_train_result: str | None = None
+        previous_train_progress: float | None = None
         for attempt in range(1, max_episodes + 1):
             if should_stop is not None and should_stop():
                 raise KeyboardInterrupt
@@ -424,6 +459,8 @@ def run_unpaced_training_set(
                     "progress": outcome.progress,
                     "world_ticks": outcome.finish_world_tick,
                     "decisions": outcome.decisions,
+                    "previous_result": previous_train_result,
+                    "previous_progress": previous_train_progress,
                 })
 
             update_started = time.monotonic()
@@ -468,6 +505,9 @@ def run_unpaced_training_set(
                 "loss": training.loss if training.updated else None,
                 "seconds": round(time.monotonic() - started, 3),
             })
+
+            previous_train_result = outcome.result
+            previous_train_progress = outcome.progress
 
             if outcome.result != "success" or not training.updated:
                 continue
@@ -520,7 +560,11 @@ def run_unpaced_training_set(
             write_line()
             write_line(
                 f"Map {map_index}/{map_count} · {spec.map_id} · "
-                f"{'PASS' if mastered else 'FAIL'}"
+                + (
+                    "LEARNED · validation PASS"
+                    if mastered
+                    else "NOT LEARNED · attempts exhausted"
+                )
             )
         if not mastered:
             if json_output:
@@ -531,7 +575,8 @@ def run_unpaced_training_set(
             else:
                 write_line()
                 write_line(
-                    f"Training set {manifest.training_set_level} · FAIL"
+                    f"Training set {manifest.training_set_level} · "
+                    "STOPPED · map not learned"
                 )
             return 1
 
@@ -542,7 +587,10 @@ def run_unpaced_training_set(
         output.flush()
     else:
         write_line()
-        write_line(f"Training set {manifest.training_set_level} · PASS")
+        write_line(
+            f"Training set {manifest.training_set_level} · "
+            "COMPLETE · all maps learned"
+        )
     return 0
 
 
@@ -551,6 +599,7 @@ __all__ = [
     "EpisodeResult",
     "PLAYER_ID",
     "POLICY_STRIDE_TICKS",
+    "_behavior_trend",
     "_progress_bar",
     "_rollout_line",
     "load_model",
