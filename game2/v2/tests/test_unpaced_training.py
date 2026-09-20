@@ -10,9 +10,15 @@ from unittest import mock
 
 import torch
 
-from game2.v2.player.learned.contracts import ActionDecision
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange
 from game2.v2.training.unpaced import (
     EpisodeResult,
+    POLICY_STRIDE_TICKS,
+    PPO_HISTORY_STRIDE_TICKS,
+    PPO_TAIL_TICKS,
+    Step,
+    _gae,
+    _ppo_training_indexes,
     _progress_bar,
     _rollout_line,
     load_model,
@@ -210,7 +216,7 @@ class UnpacedTrainingTests(unittest.TestCase):
                 should_stop=lambda: True,
             )
 
-    def test_unpaced_episode_advances_one_policy_decision_per_world_tick(self):
+    def test_unpaced_episode_reuses_each_policy_decision_for_two_world_ticks(self):
         model = SimpleNamespace(
             planner=_Planner(),
             motor_controller=_Motor(),
@@ -224,8 +230,82 @@ class UnpacedTrainingTests(unittest.TestCase):
             seed=1,
         )
         self.assertEqual(outcome.result, "success")
-        self.assertEqual(outcome.decisions, outcome.finish_world_tick)
+        self.assertEqual(
+            outcome.decisions,
+            (outcome.finish_world_tick + POLICY_STRIDE_TICKS - 1)
+            // POLICY_STRIDE_TICKS,
+        )
+        self.assertLess(outcome.decisions, outcome.finish_world_tick)
         self.assertEqual(steps, [])
+
+    def test_train_rollout_records_policy_stride_world_ticks(self):
+        model = SimpleNamespace(
+            planner=_Planner(),
+            motor_controller=_Motor(),
+            critic=_Critic(),
+        )
+        outcome, steps = run_episode(
+            model,
+            FLAT_RUN,
+            episode_limit=6,
+            mode="train",
+            seed=1,
+        )
+        self.assertEqual(outcome.result, "timeout")
+        self.assertEqual(outcome.finish_world_tick, 6)
+        self.assertEqual(outcome.decisions, 3)
+        self.assertEqual(
+            [step.world_tick for step in steps],
+            [0, 2, 4],
+        )
+        self.assertEqual(
+            [step.duration_ticks for step in steps],
+            [2, 2, 2],
+        )
+
+    def test_gae_uses_real_world_tick_gap_for_strided_policy(self):
+        change = ControlChange(False, False)
+        steps = [
+            Step(None, 10, 2, 0.0, False, False, change, 0.0, 0.0, 0.0),
+            Step(None, 12, 2, 0.0, False, False, change, 0.0, 0.0, 1.0),
+        ]
+        _advantages, returns = _gae(steps)
+        expected = (0.99 * 0.95) ** 2
+        self.assertAlmostEqual(float(returns[0]), expected, delta=1e-6)
+        self.assertAlmostEqual(float(returns[1]), 1.0, delta=1e-6)
+
+    def test_ppo_selection_keeps_dense_tail_and_sparse_history(self):
+        change = ControlChange(False, False)
+        steps = [
+            Step(
+                None,
+                tick,
+                POLICY_STRIDE_TICKS,
+                0.0,
+                False,
+                False,
+                change,
+                0.0,
+                0.0,
+                0.0,
+            )
+            for tick in range(0, 1200, POLICY_STRIDE_TICKS)
+        ]
+        selected = _ppo_training_indexes(steps)
+        selected_ticks = [steps[index].world_tick for index in selected]
+        tail_start = 1200 - PPO_TAIL_TICKS
+
+        self.assertEqual(selected_ticks[-1], 1198)
+        self.assertTrue(all(
+            tick in selected_ticks
+            for tick in range(tail_start, 1200, POLICY_STRIDE_TICKS)
+        ))
+        early_ticks = [tick for tick in selected_ticks if tick < tail_start]
+        self.assertLessEqual(
+            len(early_ticks),
+            tail_start // PPO_HISTORY_STRIDE_TICKS + 2,
+        )
+        self.assertLess(len(selected), len(steps) // 2)
 
     def test_unpaced_checkpoint_is_loadable_by_shared_model_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

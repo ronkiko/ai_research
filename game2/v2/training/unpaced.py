@@ -1,9 +1,11 @@
 """Minimal synchronous unpaced PPO training for Game2 V2.
 
-This path intentionally bypasses the realtime process graph.  One public
-VisionGrid is rendered, one policy decision is applied, and exactly one Engine
-world tick advances.  Checkpoints use the same Planner/Motor/Critic/Adam
-formats as realtime training so they can be resumed by the normal runtime.
+This path intentionally bypasses the realtime process graph.  Public Vision
+is sampled at policy cadence while the authoritative Engine keeps its full
+120 Hz physics clock.  Each policy decision is held for a short fixed stride,
+and PPO trains on a dense terminal tail plus sparse earlier history.
+Checkpoints use the same Planner/Motor/Critic/Adam formats as realtime
+training so they can be resumed by the normal runtime.
 """
 from __future__ import annotations
 
@@ -58,10 +60,22 @@ from game2.v2.training.main import reward_for_result
 PLAYER_ID = "unpaced-player"
 ACTOR_ID = "unpaced-actor"
 
+# Run the cheap physics clock at full 120 Hz, but only ask the neural policy
+# for a new control decision every two world ticks (~60 policy Hz).
+POLICY_STRIDE_TICKS = 2
+
+# PPO keeps the terminal context dense while retaining a sparse breadcrumb
+# trail from the earlier episode.  A 1200-tick timeout therefore trains on
+# about 200 states instead of all 600 policy decisions.
+PPO_TAIL_TICKS = 200
+PPO_HISTORY_STRIDE_TICKS = 10
+
 
 @dataclass(frozen=True)
 class Step:
     vision_grid: object
+    world_tick: int
+    duration_ticks: int
     motion_x: float
     pad_right: bool
     pad_jump: bool
@@ -203,6 +217,7 @@ def run_episode(
     before_distance = center_distance(self_position, goal_position)
     if before_distance is not None:
         start_distance = max(before_distance, 1e-9)
+    next_progress_tick = 100
 
     while actor.result is None:
         if should_stop is not None and should_stop():
@@ -217,6 +232,7 @@ def run_episode(
             raise RuntimeError("unpaced Vision observation is unusable")
 
         base_pad = pad
+        decision_world_tick = engine.world_tick
         action, old_log_prob, old_value = _policy(
             model, grid, motion_x, base_pad, train=train, generator=generator
         )
@@ -227,7 +243,13 @@ def run_episode(
         )
         if status != "accepted":
             raise RuntimeError(f"unpaced Engine rejected policy input: {status}")
-        engine.tick()
+
+        advanced = 0
+        for _ in range(POLICY_STRIDE_TICKS):
+            engine.tick()
+            advanced += 1
+            if actor.result is not None:
+                break
         pad = desired
 
         after_grid = renderer.render(engine.world_state())
@@ -251,6 +273,8 @@ def run_episode(
         if train:
             steps.append(Step(
                 grid,
+                decision_world_tick,
+                advanced,
                 motion_x,
                 pad_right=base_pad.right,
                 pad_jump=base_pad.jump,
@@ -259,7 +283,7 @@ def run_episode(
                 old_value=old_value,
                 reward=float(reward),
             ))
-        if on_progress is not None and sequence % 100 == 0:
+        if on_progress is not None and engine.world_tick >= next_progress_tick:
             state = engine.actor_state(ACTOR_ID)
             on_progress({
                 "world_tick": engine.world_tick,
@@ -270,6 +294,8 @@ def run_episode(
                 "y": state.y,
                 "grounded": state.grounded,
             })
+            while next_progress_tick <= engine.world_tick:
+                next_progress_tick += 100
         grid = after_grid
         self_position = after_self_position
         goal_position = after_goal_position
@@ -288,12 +314,22 @@ def _gae(steps: list[Step]) -> tuple[torch.Tensor, torch.Tensor]:
     values = [step.old_value for step in steps]
     advantages = [0.0] * len(steps)
     gae = 0.0
-    next_value = 0.0
     for index in range(len(steps) - 1, -1, -1):
-        delta = steps[index].reward + PPO_GAMMA * next_value - values[index]
-        gae = delta + PPO_GAMMA * PPO_GAE_LAMBDA * gae
+        if index + 1 < len(steps):
+            delta_ticks = steps[index + 1].world_tick - steps[index].world_tick
+            if delta_ticks <= 0:
+                raise ValueError("PPO Step world_tick must increase")
+            gamma = PPO_GAMMA ** delta_ticks
+            trace = (PPO_GAMMA * PPO_GAE_LAMBDA) ** delta_ticks
+            next_value = values[index + 1]
+        else:
+            gamma = 0.0
+            trace = 0.0
+            next_value = 0.0
+        delta = steps[index].reward + gamma * next_value - values[index]
+        gae = delta + trace * gae
         advantages[index] = gae
-        next_value = values[index]
+
     advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
     returns = advantage_tensor + torch.tensor(values, dtype=torch.float32)
     if len(steps) > 1:
@@ -303,6 +339,34 @@ def _gae(steps: list[Step]) -> tuple[torch.Tensor, torch.Tensor]:
                 advantage_tensor - advantage_tensor.mean()
             ) / (std + 1e-8)
     return advantage_tensor, returns
+
+
+def _ppo_training_indexes(steps: list[Step]) -> list[int]:
+    """Keep a dense terminal tail plus sparse history for PPO optimization."""
+    if not steps:
+        return []
+
+    finish_tick = steps[-1].world_tick + steps[-1].duration_ticks
+    tail_start = max(steps[0].world_tick, finish_tick - PPO_TAIL_TICKS)
+    history_by_bucket: dict[int, int] = {}
+    tail: list[int] = []
+    origin = steps[0].world_tick
+
+    for index, step in enumerate(steps):
+        if step.world_tick >= tail_start:
+            tail.append(index)
+            continue
+        bucket = (step.world_tick - origin) // PPO_HISTORY_STRIDE_TICKS
+        # Keep the latest state in each history bucket: it is temporally closer
+        # to whatever follows than the first state in the bucket.
+        history_by_bucket[bucket] = index
+
+    selected = sorted(set(history_by_bucket.values()) | set(tail))
+    if 0 not in selected:
+        selected.insert(0, 0)
+    if len(steps) - 1 not in selected:
+        selected.append(len(steps) - 1)
+    return selected
 
 
 def ppo_update(
@@ -318,12 +382,17 @@ def ppo_update(
     if model.optimizer is None:
         raise RuntimeError("unpaced PPO requires a trainable optimizer")
 
-    advantages, returns = _gae(steps)
+    advantages_all, returns_all = _gae(steps)
+    selected_indexes = _ppo_training_indexes(steps)
+    selected_steps = [steps[index] for index in selected_indexes]
+    selected_tensor = torch.tensor(selected_indexes, dtype=torch.long)
+    advantages = advantages_all[selected_tensor]
+    returns = returns_all[selected_tensor]
     old_log_prob = torch.tensor(
-        [step.old_log_prob for step in steps], dtype=torch.float32
+        [step.old_log_prob for step in selected_steps], dtype=torch.float32
     )
     actions = torch.tensor(
-        [[step.action.right, step.action.jump] for step in steps],
+        [[step.action.right, step.action.jump] for step in selected_steps],
         dtype=torch.float32,
     )
     parameters = _unique_parameters(
@@ -334,7 +403,7 @@ def ppo_update(
     total_loss = 0.0
     updates = 0
     batches_per_epoch = (
-        len(steps) + PPO_BATCH_SIZE - 1
+        len(selected_steps) + PPO_BATCH_SIZE - 1
     ) // PPO_BATCH_SIZE
     total_updates = PPO_EPOCHS * batches_per_epoch
     shared = (
@@ -349,31 +418,31 @@ def ppo_update(
             model.planner.backbone.prepare(
                 vision_to_tensor(step.vision_grid).unsqueeze(0)
             )[0]
-            for step in steps
+            for step in selected_steps
         ])
         full_vision = None
     else:
         prepared_vision = None
         full_vision = torch.stack([
-            vision_to_tensor(step.vision_grid) for step in steps
+            vision_to_tensor(step.vision_grid) for step in selected_steps
         ])
     motion_all = torch.tensor(
-        [step.motion_x for step in steps], dtype=torch.float32
+        [step.motion_x for step in selected_steps], dtype=torch.float32
     ).unsqueeze(1)
     pad_all = torch.tensor(
-        [[step.pad_right, step.pad_jump] for step in steps],
+        [[step.pad_right, step.pad_jump] for step in selected_steps],
         dtype=torch.float32,
     )
 
     for _epoch in range(PPO_EPOCHS):
         if should_stop is not None and should_stop():
             raise KeyboardInterrupt
-        order = torch.randperm(len(steps), generator=generator)
-        for start in range(0, len(steps), PPO_BATCH_SIZE):
+        order = torch.randperm(len(selected_steps), generator=generator)
+        for start in range(0, len(selected_steps), PPO_BATCH_SIZE):
             if should_stop is not None and should_stop():
                 raise KeyboardInterrupt
             indexes = order[start:start + PPO_BATCH_SIZE]
-            batch = [steps[index] for index in indexes.tolist()]
+            batch = [selected_steps[index] for index in indexes.tolist()]
             if shared:
                 assert prepared_vision is not None
                 features = model.planner.encode_prepared(
@@ -436,6 +505,8 @@ def ppo_update(
                     "step": updates,
                     "steps": total_updates,
                     "loss": float(loss.detach()),
+                    "rollout_records": len(steps),
+                    "ppo_records": len(selected_steps),
                 })
 
     return True, total_loss / max(updates, 1)
@@ -539,7 +610,8 @@ def run_unpaced_training_set(
                 f"Train {int(payload['episode_id']):<4} "
                 f"{str(payload['result']).upper()} · "
                 f"best {100.0 * float(payload['progress']):.1f}% · "
-                f"{int(payload['decisions'])} ticks"
+                f"{int(payload['world_ticks'])} ticks · "
+                f"{int(payload['decisions'])} decisions"
             )
             return
 
@@ -561,10 +633,17 @@ def run_unpaced_training_set(
             loss = payload.get("loss")
             loss_text = "n/a" if loss is None else f"{float(loss):.4f}"
             status = "updated" if payload.get("updated") else "skipped"
+            records = ""
+            if "ppo_records" in payload and "rollout_records" in payload:
+                records = (
+                    f" · records {int(payload['ppo_records'])}/"
+                    f"{int(payload['rollout_records'])}"
+                )
             write_line(
                 f"PPO {int(payload['episode_id']):<6} {status} · "
                 f"loss {loss_text} · "
                 f"{float(payload.get('seconds', 0.0)):.1f}s"
+                f"{records}"
             )
             return
 
@@ -575,12 +654,16 @@ def run_unpaced_training_set(
             clear_live()
             result = str(payload["result"])
             if result == "success":
-                suffix = f"PASS · {int(payload['decisions'])} ticks"
+                suffix = (
+                    f"PASS · {int(payload['world_ticks'])} ticks · "
+                    f"{int(payload['decisions'])} decisions"
+                )
             else:
                 suffix = (
                     f"{result.upper()} · "
                     f"best {100.0 * float(payload['progress']):.1f}% · "
-                    f"{int(payload['decisions'])} ticks"
+                    f"{int(payload['world_ticks'])} ticks · "
+                    f"{int(payload['decisions'])} decisions"
                 )
             write_line(f"Eval {int(payload['episode_id']):<6} {suffix}")
             return
@@ -642,6 +725,7 @@ def run_unpaced_training_set(
                     "episode_id": episode_id,
                     "result": outcome.result,
                     "progress": outcome.progress,
+                    "world_ticks": outcome.finish_world_tick,
                     "decisions": outcome.decisions,
                 })
             update_started = time.monotonic()
@@ -661,6 +745,8 @@ def run_unpaced_training_set(
                 "seconds": round(time.monotonic() - update_started, 3),
                 "updated": updated,
                 "loss": loss if updated else None,
+                "rollout_records": len(steps),
+                "ppo_records": len(_ppo_training_indexes(steps)),
             })
             if outcome.result == "success":
                 successes += 1
@@ -672,8 +758,10 @@ def run_unpaced_training_set(
                 "result": outcome.result,
                 "progress": outcome.progress,
                 "reward": reward_for_result(outcome.result, outcome.progress),
+                "world_ticks": outcome.finish_world_tick,
                 "decisions": outcome.decisions,
                 "rollout_records": len(steps),
+                "ppo_records": len(_ppo_training_indexes(steps)),
                 "updated": updated,
                 "loss": loss if updated else None,
                 "seconds": round(time.monotonic() - started, 3),
@@ -697,6 +785,7 @@ def run_unpaced_training_set(
                 "episode_id": episode_id,
                 "result": evaluation.result,
                 "progress": evaluation.progress,
+                "world_ticks": evaluation.finish_world_tick,
                 "decisions": evaluation.decisions,
             })
             if evaluation.result == "success":
@@ -734,6 +823,11 @@ def run_unpaced_training_set(
 
 __all__ = [
     "EpisodeResult",
+    "POLICY_STRIDE_TICKS",
+    "PPO_HISTORY_STRIDE_TICKS",
+    "PPO_TAIL_TICKS",
+    "_gae",
+    "_ppo_training_indexes",
     "_progress_bar",
     "_rollout_line",
     "Step",

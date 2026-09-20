@@ -38,8 +38,10 @@ from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.training.unpaced import (
     ACTOR_ID,
     PLAYER_ID,
+    POLICY_STRIDE_TICKS,
     Step,
     _policy,
+    _ppo_training_indexes,
     ppo_update,
     save_checkpoints,
 )
@@ -141,7 +143,8 @@ def _emit(kind: str, payload: dict[str, object], *, json_output: bool) -> None:
             flush=True,
         )
         print(
-            f"  PPO update       {int(payload['rollout_records']):>8} records · "
+            f"  PPO update       {int(payload['ppo_records']):>4}/"
+            f"{int(payload['rollout_records'])} records · "
             f"{float(payload['ppo_seconds']):8.3f}s",
             flush=True,
         )
@@ -174,6 +177,12 @@ def _emit(kind: str, payload: dict[str, object], *, json_output: bool) -> None:
 
     if kind == "UNPACED":
         print("Unpaced profile · one real training episode", flush=True)
+        print(
+            f"  policy           1 decision / {int(payload['policy_stride'])} ticks · "
+            f"{int(payload['decisions'])} decisions · "
+            f"{int(payload['ppo_records'])} PPO records",
+            flush=True,
+        )
         total = max(float(payload["total_seconds"]), 1e-12)
         ordered = (
             ("vision_before", "Vision render before"),
@@ -293,6 +302,8 @@ def run_model_probe(
             reward -= 1.0
         steps.append(Step(
             grid,
+            index * POLICY_STRIDE_TICKS,
+            POLICY_STRIDE_TICKS,
             0.0,
             base_pad.right,
             base_pad.jump,
@@ -351,6 +362,7 @@ def run_model_probe(
         "decision_seconds": decision_seconds,
         "decision_ms_each": _duration_ms(decision_seconds) / decisions,
         "rollout_records": len(steps),
+        "ppo_records": len(_ppo_training_indexes(steps)),
         "tensor_seconds": timers["tensor"],
         "backbone_seconds": timers["backbone"],
         "planner_head_seconds": timers["planner_head"],
@@ -453,7 +465,8 @@ def run_unpaced_profile(
         start_distance = max(before_distance, 1e-9)
     timers["bookkeeping_before"] += time.perf_counter() - then
 
-    while actor.result is None and sequence < ticks:
+    last_progress_bucket = 0
+    while actor.result is None and engine.world_tick < ticks:
         then = time.perf_counter()
         if start_distance is None and before_distance is not None:
             start_distance = max(before_distance, 1e-9)
@@ -464,6 +477,7 @@ def run_unpaced_profile(
         if not motion.last_observation_usable:
             raise RuntimeError("profile Vision observation is unusable")
         base_pad = pad
+        decision_world_tick = engine.world_tick
         timers["bookkeeping_before"] += time.perf_counter() - then
 
         then = time.perf_counter()
@@ -488,7 +502,12 @@ def run_unpaced_profile(
             raise RuntimeError(f"profile Engine rejected policy input: {status}")
 
         then = time.perf_counter()
-        engine.tick()
+        advanced = 0
+        for _ in range(POLICY_STRIDE_TICKS):
+            engine.tick()
+            advanced += 1
+            if actor.result is not None:
+                break
         timers["engine"] += time.perf_counter() - then
         pad = desired
 
@@ -515,6 +534,8 @@ def run_unpaced_profile(
             reward += reward_for_result(actor.result, progress.progress)
         steps.append(Step(
             grid,
+            decision_world_tick,
+            advanced,
             motion_x,
             base_pad.right,
             base_pad.jump,
@@ -529,16 +550,24 @@ def run_unpaced_profile(
         goal_position = after_goal_position
         before_distance = after_distance
 
+        progress_bucket = (
+            engine.world_tick // progress_every if progress_every > 0 else -1
+        )
         if (
             progress_every > 0
-            and (sequence % progress_every == 0 or actor.result is not None)
+            and (
+                progress_bucket != last_progress_bucket
+                or actor.result is not None
+            )
         ):
+            last_progress_bucket = progress_bucket
             elapsed = time.perf_counter() - rollout_started
             payload = {
-                "tick": sequence,
+                "tick": engine.world_tick,
                 "ticks": ticks,
+                "decisions": sequence,
                 "elapsed_seconds": elapsed,
-                "ms_each": _duration_ms(elapsed) / max(sequence, 1),
+                "ms_each": _duration_ms(elapsed) / max(engine.world_tick, 1),
                 "vision_seconds": (
                     timers["vision_before"] + timers["vision_after"]
                 ),
@@ -551,7 +580,8 @@ def run_unpaced_profile(
                 ), flush=True)
             else:
                 print(
-                    f"  rollout {sequence:4}/{ticks} · "
+                    f"  rollout {engine.world_tick:4}/{ticks} · "
+                    f"{sequence} decisions · "
                     f"{payload['ms_each']:.1f} ms/tick · "
                     f"vision {payload['vision_seconds']:.1f}s · "
                     f"model {timers['inference']:.1f}s · "
@@ -577,12 +607,15 @@ def run_unpaced_profile(
     total_seconds = time.perf_counter() - total_started
     result_name = actor.result if actor.result is not None else "stopped"
     result: dict[str, object] = {
-        "ticks": sequence,
+        "ticks": engine.world_tick,
+        "decisions": sequence,
+        "policy_stride": POLICY_STRIDE_TICKS,
+        "ppo_records": len(_ppo_training_indexes(steps)),
         "result": result_name,
         "progress": progress.progress,
         "loss": loss,
         "rollout_seconds": rollout_seconds,
-        "ms_per_tick": _duration_ms(rollout_seconds) / max(sequence, 1),
+        "ms_per_tick": _duration_ms(rollout_seconds) / max(engine.world_tick, 1),
         "total_seconds": total_seconds,
     }
     for key in (
