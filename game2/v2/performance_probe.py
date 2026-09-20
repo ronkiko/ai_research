@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import tempfile
 import time
 from collections import defaultdict
@@ -28,7 +27,12 @@ from game2.v2.contracts.vision import (
 )
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.contracts import ActionDecision, ControlChange, apply_control_change
-from game2.v2.player.learned.motion import MotionEstimator, VisionProgress, goal_center, self_center
+from game2.v2.player.learned.motion import (
+    MotionEstimator,
+    VisionProgress,
+    center_distance,
+    vision_centers,
+)
 from game2.v2.player.learned.runtime import CONTROL_CHANGE_PENALTY
 from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.training.unpaced import (
@@ -404,17 +408,6 @@ def run_engine_probe(
     return result
 
 
-def _distance(grid: VisionGrid) -> float | None:
-    self_position = self_center(grid)
-    goal_position = goal_center(grid)
-    if self_position is None or goal_position is None:
-        return None
-    return math.hypot(
-        self_position[0] - goal_position[0],
-        self_position[1] - goal_position[1],
-    )
-
-
 def run_unpaced_profile(
     *,
     ticks: int = 1200,
@@ -451,13 +444,23 @@ def run_unpaced_profile(
     then = time.perf_counter()
     grid = renderer.render(engine.world_state())
     timers["vision_before"] += time.perf_counter() - then
+
+    then = time.perf_counter()
+    self_position, goal_position = vision_centers(grid)
+    progress.update_centers(self_position, goal_position)
+    before_distance = center_distance(self_position, goal_position)
+    if before_distance is not None:
+        start_distance = max(before_distance, 1e-9)
+    timers["bookkeeping_before"] += time.perf_counter() - then
+
     while actor.result is None and sequence < ticks:
         then = time.perf_counter()
-        progress.update(grid)
-        before_distance = _distance(grid)
         if start_distance is None and before_distance is not None:
             start_distance = max(before_distance, 1e-9)
-        motion_x = motion.update(grid)
+        motion_x = motion.update_center(
+            grid,
+            None if self_position is None else self_position[0],
+        )
         if not motion.last_observation_usable:
             raise RuntimeError("profile Vision observation is unusable")
         base_pad = pad
@@ -494,8 +497,11 @@ def run_unpaced_profile(
         timers["vision_after"] += time.perf_counter() - then
 
         then = time.perf_counter()
-        progress.update(after_grid)
-        after_distance = _distance(after_grid)
+        after_self_position, after_goal_position = vision_centers(after_grid)
+        progress.update_centers(after_self_position, after_goal_position)
+        after_distance = center_distance(
+            after_self_position, after_goal_position
+        )
         reward = -CONTROL_CHANGE_PENALTY * (
             int(action.right) + int(action.jump)
         )
@@ -519,6 +525,9 @@ def run_unpaced_profile(
         ))
         timers["bookkeeping_after"] += time.perf_counter() - then
         grid = after_grid
+        self_position = after_self_position
+        goal_position = after_goal_position
+        before_distance = after_distance
 
         if (
             progress_every > 0

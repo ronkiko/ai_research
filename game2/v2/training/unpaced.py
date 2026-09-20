@@ -8,7 +8,6 @@ formats as realtime training so they can be resumed by the normal runtime.
 from __future__ import annotations
 
 import json
-import math
 import sys
 import time
 from dataclasses import dataclass
@@ -34,7 +33,12 @@ from game2.v2.player.learned.contracts import (
     ControlChange,
     apply_control_change,
 )
-from game2.v2.player.learned.motion import MotionEstimator, VisionProgress, goal_center, self_center
+from game2.v2.player.learned.motion import (
+    MotionEstimator,
+    VisionProgress,
+    center_distance,
+    vision_centers,
+)
 from game2.v2.player.learned.runtime import (
     CONTROL_CHANGE_PENALTY,
     PPO_BATCH_SIZE,
@@ -108,17 +112,6 @@ def load_model(*, fresh: bool, checkpoint_dir: str | Path):
         motor_checkpoint=motor_path,
         critic_checkpoint=critic_path,
         optimizer_checkpoint=optimizer_path,
-    )
-
-
-def _distance(grid) -> float | None:
-    self_position = self_center(grid)
-    goal_position = goal_center(grid)
-    if self_position is None or goal_position is None:
-        return None
-    return math.hypot(
-        self_position[0] - goal_position[0],
-        self_position[1] - goal_position[1],
     )
 
 
@@ -205,14 +198,21 @@ def run_episode(
         model.critic.eval()
 
     grid = renderer.render(engine.world_state())
+    self_position, goal_position = vision_centers(grid)
+    progress.update_centers(self_position, goal_position)
+    before_distance = center_distance(self_position, goal_position)
+    if before_distance is not None:
+        start_distance = max(before_distance, 1e-9)
+
     while actor.result is None:
         if should_stop is not None and should_stop():
             raise KeyboardInterrupt
-        progress.update(grid)
-        before_distance = _distance(grid)
         if start_distance is None and before_distance is not None:
             start_distance = max(before_distance, 1e-9)
-        motion_x = motion.update(grid)
+        motion_x = motion.update_center(
+            grid,
+            None if self_position is None else self_position[0],
+        )
         if not motion.last_observation_usable:
             raise RuntimeError("unpaced Vision observation is unusable")
 
@@ -231,8 +231,11 @@ def run_episode(
         pad = desired
 
         after_grid = renderer.render(engine.world_state())
-        progress.update(after_grid)
-        after_distance = _distance(after_grid)
+        after_self_position, after_goal_position = vision_centers(after_grid)
+        progress.update_centers(after_self_position, after_goal_position)
+        after_distance = center_distance(
+            after_self_position, after_goal_position
+        )
         reward = -CONTROL_CHANGE_PENALTY * (
             int(action.right) + int(action.jump)
         )
@@ -268,6 +271,9 @@ def run_episode(
                 "grounded": state.grounded,
             })
         grid = after_grid
+        self_position = after_self_position
+        goal_position = after_goal_position
+        before_distance = after_distance
 
     assert actor.result is not None
     return EpisodeResult(

@@ -18,7 +18,7 @@ from .contracts import (
 )
 from .critic import CNNCritic
 from .motor import motor_input_tensor
-from .motion import MotionEstimator, goal_center, self_center
+from .motion import MotionEstimator, center_distance, self_center, vision_centers
 from .vision import vision_to_tensor
 
 
@@ -43,6 +43,8 @@ class DecisionSample:
     policy_sequence: int = 0
     prob_right: float | None = None
     prob_jump: float | None = None
+    self_x: float | None = None
+    self_y: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,11 @@ class TrainingRecord:
     @classmethod
     def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
         grid = sample.vision_grid
-        center = self_center(grid)
+        center = (
+            (sample.self_x, sample.self_y)
+            if sample.self_x is not None and sample.self_y is not None
+            else self_center(grid)
+        )
         return cls(
             grid.columns,
             grid.rows,
@@ -288,15 +294,15 @@ class LearnedPlayer:
         )
         return planner_output, logits
 
-    def _track_reward_observation(self, frame: VisionGrid) -> None:
-        self_position = self_center(frame)
-        goal_position = goal_center(frame)
-        if self_position is None or goal_position is None:
+    def _track_reward_observation(
+        self,
+        frame: VisionGrid,
+        self_position: tuple[float, float] | None,
+        goal_position: tuple[float, float] | None,
+    ) -> None:
+        distance = center_distance(self_position, goal_position)
+        if distance is None:
             return
-        distance = math.hypot(
-            self_position[0] - goal_position[0],
-            self_position[1] - goal_position[1],
-        )
         self._last_observed_distance = distance
         if self._start_distance is None:
             self._start_distance = max(distance, 1e-9)
@@ -354,7 +360,12 @@ class LearnedPlayer:
         if sample.log_prob is not None:
             self._log_probabilities.append(float(sample.log_prob))
 
-    def _process_model_grid(self, frame: VisionGrid, motion_x: float) -> DecisionSample:
+    def _process_model_grid(
+        self,
+        frame: VisionGrid,
+        motion_x: float,
+        self_position: tuple[float, float] | None,
+    ) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
         pad_state = self.actuated_state
         with torch.no_grad():
@@ -415,6 +426,12 @@ class LearnedPlayer:
             desired_state,
             prob_right=float(probabilities[0]),
             prob_jump=float(probabilities[1]),
+            self_x=(
+                None if self_position is None else float(self_position[0])
+            ),
+            self_y=(
+                None if self_position is None else float(self_position[1])
+            ),
         )
 
     def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
@@ -426,7 +443,11 @@ class LearnedPlayer:
         """
         if not isinstance(frame, VisionGrid):
             raise TypeError("LearnedPlayer requires a VisionGrid")
-        motion_x = self.motion_estimator.update(frame)
+        self_position, goal_position = vision_centers(frame)
+        motion_x = self.motion_estimator.update_center(
+            frame,
+            None if self_position is None else self_position[0],
+        )
         if not self.motion_estimator.last_observation_usable:
             return None
         chunk_index = chunk_offset = None
@@ -435,10 +456,14 @@ class LearnedPlayer:
             chunk_index, chunk_offset, chunk_first = self._chunk_position(
                 frame.world_tick
             )
-            self._track_reward_observation(frame)
+            self._track_reward_observation(
+                frame, self_position, goal_position
+            )
 
         if self._episode_mode in {"train", "evaluate"}:
-            sample = self._process_model_grid(frame, motion_x)
+            sample = self._process_model_grid(
+                frame, motion_x, self_position
+            )
             self._policy_sequence += 1
             sample = replace(
                 sample,
@@ -473,6 +498,12 @@ class LearnedPlayer:
                 self.actuated_state.jump,
                 None,
                 desired_state,
+                self_x=(
+                    None if self_position is None else float(self_position[0])
+                ),
+                self_y=(
+                    None if self_position is None else float(self_position[1])
+                ),
             )
         goal = sample.motor_goal
         desired_state = sample.desired_state

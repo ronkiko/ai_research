@@ -52,8 +52,14 @@ from game2.v2.player.learned.contracts import (
 from game2.v2.player.learned.inference import InferenceWorker
 from game2.v2.player.learned.motor import MotorController582
 from game2.v2.player.learned.planner import CNNPlanner
-from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_metadata,
-                                             self_center)
+from game2.v2.player.learned.motion import (
+    MotionEstimator,
+    VisionProgress,
+    goal_center,
+    has_metadata,
+    self_center,
+    vision_centers,
+)
 from game2.v2.player.learned.runtime import (
     CONTROL_CHANGE_PENALTY,
     PPO_GAE_LAMBDA,
@@ -181,6 +187,34 @@ class VisionProgressTests(unittest.TestCase):
         tracker.update(self._grid(6, 2, tick=2))
         tracker.update(self._grid(6, 2, tick=3, include_goal=False))
         self.assertAlmostEqual(tracker.progress, 0.5, delta=0.05)
+
+    def test_combined_center_scan_matches_existing_helpers(self):
+        grid = self._grid(3, 2, goal_x=11, goal_y=2)
+        combined_self, combined_goal = vision_centers(grid)
+        self.assertEqual(combined_self, self_center(grid))
+        self.assertEqual(combined_goal, goal_center(grid))
+
+    def test_progress_and_motion_accept_precomputed_centers(self):
+        first = self._grid(2, 2, tick=1)
+        second = self._grid(4, 2, tick=2)
+        first_self, first_goal = vision_centers(first)
+        second_self, second_goal = vision_centers(second)
+
+        progress = VisionProgress()
+        self.assertTrue(progress.update_centers(first_self, first_goal))
+        self.assertTrue(progress.update_centers(second_self, second_goal))
+        self.assertGreater(progress.progress, 0.0)
+
+        motion = MotionEstimator()
+        first_motion = motion.update_center(
+            first, None if first_self is None else first_self[0]
+        )
+        second_motion = motion.update_center(
+            second, None if second_self is None else second_self[0]
+        )
+        self.assertEqual(first_motion, 0.0)
+        self.assertGreater(second_motion, 0.0)
+        self.assertTrue(motion.last_observation_usable)
 
     def test_metadata_helpers_preserve_independent_self_and_goal_bits(self):
         fine_columns = 16 * 8

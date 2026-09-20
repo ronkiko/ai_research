@@ -146,6 +146,21 @@ class LearnedContractTests(unittest.TestCase):
             len({id(parameter) for parameter in optimizer_parameters}),
         )
 
+    def test_training_record_reuses_sampled_self_position(self):
+        grid = _grid(4, 3)
+        sample = DecisionSample(
+            grid.world_tick,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(False, False),
+            self_x=123.0,
+            self_y=45.0,
+        )
+        record = TrainingRecord.from_sample(sample)
+        self.assertEqual(record.self_x, 123.0)
+        self.assertEqual(record.self_y, 45.0)
+
     def test_motion_input_includes_current_virtual_pad_state(self):
         values = motor_input(MotorGoal(0.5, -0.5), 1, True, False)
         self.assertEqual(tuple(values.shape), (5,))
