@@ -291,6 +291,7 @@ def ppo_update(
     *,
     seed: int,
     should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[bool, float]:
     if not steps:
         return False, 0.0
@@ -314,6 +315,10 @@ def ppo_update(
     generator.manual_seed(seed)
     total_loss = 0.0
     updates = 0
+    batches_per_epoch = (
+        len(steps) + PPO_BATCH_SIZE - 1
+    ) // PPO_BATCH_SIZE
+    total_updates = PPO_EPOCHS * batches_per_epoch
 
     for _epoch in range(PPO_EPOCHS):
         if should_stop is not None and should_stop():
@@ -374,6 +379,16 @@ def ppo_update(
             model.optimizer.step()
             total_loss += float(loss.detach())
             updates += 1
+            if on_progress is not None:
+                on_progress({
+                    "epoch": _epoch + 1,
+                    "epochs": PPO_EPOCHS,
+                    "batch": start // PPO_BATCH_SIZE + 1,
+                    "batches": batches_per_epoch,
+                    "step": updates,
+                    "steps": total_updates,
+                    "loss": float(loss.detach()),
+                })
 
     return True, total_loss / max(updates, 1)
 
@@ -452,6 +467,25 @@ def run_unpaced_training_set(
                 live_active = True
             return
 
+        if prefix == "PPO":
+            step = int(payload["step"])
+            total_steps = int(payload["steps"])
+            fraction = step / max(total_steps, 1)
+            line = (
+                f"PPO   {int(payload['episode_id']):<4} "
+                f"[{_progress_bar(fraction)}] {100.0 * fraction:3.0f}% · "
+                f"epoch {int(payload['epoch'])}/{int(payload['epochs'])} · "
+                f"batch {int(payload['batch'])}/{int(payload['batches'])} · "
+                f"loss {float(payload['loss']):.4f}"
+            )
+            if interactive:
+                output.write("\r" + line + "\x1b[K")
+                output.flush()
+                live_active = True
+            else:
+                write_line(line)
+            return
+
         if prefix == "TRAIN_RESULT":
             clear_live()
             write_line(
@@ -488,6 +522,15 @@ def run_unpaced_training_set(
             return
 
         if prefix == "PROGRESS":
+            attempts = int(payload["attempts"])
+            successes = int(payload["successes"])
+            success_percent = 100.0 * successes / max(attempts, 1)
+            write_line(
+                f"Train {int(payload['episode_id']):<4} "
+                f"{str(payload['result']).upper()} · "
+                f"best {100.0 * float(payload['progress']):.1f}% · "
+                f"success {successes}/{attempts} ({success_percent:.1f}%)"
+            )
             return
 
         if prefix == "EVALUATION":
@@ -514,6 +557,11 @@ def run_unpaced_training_set(
                 **snapshot,
             })
         return write_progress
+
+    def ppo_writer(episode_id: int):
+        def write_ppo(snapshot: dict[str, object]) -> None:
+            write("PPO", {"episode_id": episode_id, **snapshot})
+        return write_ppo
 
     map_count = len(manifest.training_maps)
     for map_index, spec in enumerate(manifest.training_maps, start=1):
@@ -560,7 +608,11 @@ def run_unpaced_training_set(
                 })
             update_started = time.monotonic()
             updated, loss = ppo_update(
-                model, steps, seed=episode_id, should_stop=should_stop
+                model,
+                steps,
+                seed=episode_id,
+                should_stop=should_stop,
+                on_progress=ppo_writer(episode_id),
             )
             if updated:
                 save_checkpoints(model, checkpoint_dir)
