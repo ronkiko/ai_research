@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, TextIO
 
@@ -21,7 +21,7 @@ from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.training_set import TrainingSetManifest
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.checkpoint import save_checkpoint_set
-from game2.v2.player.learned.contracts import ActionDecision
+from game2.v2.player.learned.contracts import ActionDecision, gate_control_command
 from game2.v2.player.learned.motion import VisionProgress, vision_centers
 from game2.v2.training.main import reward_for_result
 from game2.v2.training.work import (
@@ -117,7 +117,8 @@ def _run_episode(
     actor = engine.spawn_actor(player_id, ACTOR_ID)
     renderer = VisionGridRenderer(world, self_actor_id=ACTOR_ID)
     progress = VisionProgress()
-    sequence = 0
+    request_sequence = 0
+    policy_decisions = 0
     model.prepare_episode(mode, seed)
 
     grid = renderer.render(engine.world_state())
@@ -148,16 +149,31 @@ def _run_episode(
         )
         progress.update_centers(self_position, goal_position)
 
-        sequence += 1
-        status = engine.submit_input(
-            InputStateCommand(
-                ACTOR_ID, sequence, desired.right, desired.jump
-            )
+        policy_decisions += 1
+        base_state = model.actuated_state
+        desired, applied_command, suppressed = gate_control_command(
+            base_state, sample.action_decision
         )
-        if status != "accepted":
-            raise RuntimeError(
-                f"unpaced Engine rejected policy input: {status}"
+        if suppressed:
+            sample = replace(
+                sample,
+                desired_state=desired,
+                suppressed_buttons=suppressed,
             )
+        requested = applied_command.any
+        status = ""
+        if requested:
+            request_sequence += 1
+            status = engine.submit_input(
+                InputStateCommand(
+                    ACTOR_ID, request_sequence, desired.right, desired.jump
+                )
+            )
+            if status != "accepted":
+                raise RuntimeError(
+                    f"unpaced Engine rejected policy input: {status}"
+                )
+            model.record_actuated(sample)
 
         advanced = 0
         for _ in range(POLICY_STRIDE_TICKS):
@@ -166,11 +182,12 @@ def _run_episode(
             if actor.result is not None:
                 break
 
-        model.record_actuated(sample)
         dataset.upsert_sample(
             sample,
             duration_ticks=advanced,
-            actuated=sample.action_decision.any,
+            actuated=requested and status == "accepted",
+            control_requested=requested,
+            control_status=status,
         )
 
         after_grid = renderer.render(engine.world_state())
@@ -185,7 +202,8 @@ def _run_episode(
             state = engine.actor_state(ACTOR_ID)
             on_progress({
                 "world_tick": engine.world_tick,
-                "decisions": sequence,
+                "decisions": policy_decisions,
+                "controller_requests": request_sequence,
                 "episode_limit": episode_limit,
                 "progress": progress.progress,
                 "x": state.x,
@@ -205,7 +223,7 @@ def _run_episode(
         actor.result,
         progress.progress,
         engine.world_tick,
-        sequence,
+        policy_decisions,
     )
 
 

@@ -8,11 +8,10 @@ from typing import Callable
 
 import torch
 
-from game2.v2.contracts.motor import ButtonCommand
 from game2.v2.learning.vision import vision_to_tensor
 
 from .config import (
-    CONTROL_CHANGE_PENALTY,
+    CONTROL_REQUEST_PENALTY,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_ENTROPY_COEF,
@@ -92,10 +91,7 @@ def _rewards(
     finish_world_tick: int,
 ) -> list[float]:
     rewards = [
-        -CONTROL_CHANGE_PENALTY * (
-            int(step.action_right is not ButtonCommand.KEEP)
-            + int(step.action_jump is not ButtonCommand.KEEP)
-        )
+        -CONTROL_REQUEST_PENALTY * int(step.control_requested)
         for step in steps
     ]
     distances = [_distance(step) for step in steps]
@@ -174,10 +170,15 @@ def train_episode(
     # A state-changing realtime command is usable only after its actuation ACK.
     steps = tuple(step for step in all_steps if (
         step.world_tick < int(meta.get("finish_world_tick") or 0)
-        and (meta["source"] != "realtime" or step.actuated or (
-            step.desired_right == step.pad_right
-            and step.desired_jump == step.pad_jump
-        ))
+        and (
+            meta["source"] != "realtime"
+            or step.actuated
+            or step.control_requested
+            or (
+                step.desired_right == step.pad_right
+                and step.desired_jump == step.pad_jump
+            )
+        )
     ))
     discarded = len(all_steps) - len(steps)
     if (
@@ -191,6 +192,18 @@ def train_episode(
             "ppo_records": 0,
             "optimizer_steps": 0,
             "reward_sum": 0.0,
+            "controller_requests": sum(
+                int(step.control_requested) for step in all_steps
+            ),
+            "controller_accepted": sum(
+                int(step.control_status == "accepted") for step in all_steps
+            ),
+            "controller_rejected": sum(
+                int(step.control_status == "rejected") for step in all_steps
+            ),
+            "controller_duplicate": sum(
+                int(step.control_status == "duplicate") for step in all_steps
+            ),
         }
         dataset.write_training_annotations(
             [], updated=False, loss=0.0, metrics=metrics
@@ -434,12 +447,38 @@ def train_episode(
 
     norm_after, hash_after = _parameter_stats(parameters)
     loss_value = total_loss / max(updates, 1)
+    total_control_requests = sum(int(step.control_requested) for step in steps)
+    total_control_penalty = CONTROL_REQUEST_PENALTY * total_control_requests
+    total_duration = sum(max(1, int(step.duration_ticks)) for step in steps)
+    right_hold_ticks = sum(
+        max(1, int(step.duration_ticks)) for step in steps if step.pad_right
+    )
+    jump_hold_ticks = sum(
+        max(1, int(step.duration_ticks)) for step in steps if step.pad_jump
+    )
     metrics: dict[str, object] = {
         "rollout_records": len(all_steps),
         "discarded_records": discarded,
         "ppo_records": count,
         "optimizer_steps": updates,
         "reward_sum": float(sum(rewards)),
+        "controller_requests": total_control_requests,
+        "controller_accepted": sum(
+            int(step.control_status == "accepted") for step in steps
+        ),
+        "controller_rejected": sum(
+            int(step.control_status == "rejected") for step in steps
+        ),
+        "controller_duplicate": sum(
+            int(step.control_status == "duplicate") for step in steps
+        ),
+        "controller_penalty_sum": -float(total_control_penalty),
+        "suppressed_button_commands": sum(
+            len(tuple(filter(None, step.suppressed_buttons.split(","))))
+            for step in steps
+        ),
+        "right_hold_fraction": right_hold_ticks / max(total_duration, 1),
+        "jump_hold_fraction": jump_hold_ticks / max(total_duration, 1),
         "policy_loss": total_policy_loss / max(updates, 1),
         "value_loss": total_value_loss / max(updates, 1),
         "entropy": total_entropy / max(updates, 1),

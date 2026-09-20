@@ -7,6 +7,8 @@ from pathlib import Path
 
 from game2.v2.contracts.model import (
     actuated_message,
+    control_requested_message,
+    control_result_message,
     episode_end_message,
     prepare_message,
     recv_model_message,
@@ -93,6 +95,16 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 decision_id = next(iter(runtime._samples))
                 runtime._handle(
                     left,
+                    control_requested_message(decision_id),
+                    None,
+                )
+                runtime._handle(
+                    left,
+                    control_result_message(decision_id, "accepted"),
+                    None,
+                )
+                runtime._handle(
+                    left,
                     actuated_message(decision_id),
                     None,
                 )
@@ -100,6 +112,8 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 assert dataset is not None
                 steps = dataset.steps()
                 self.assertEqual(len(steps), 1)
+                self.assertTrue(steps[0].control_requested)
+                self.assertEqual(steps[0].control_status, "accepted")
                 self.assertTrue(steps[0].actuated)
             finally:
                 left.close()

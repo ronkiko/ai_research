@@ -111,14 +111,24 @@ class EpisodeDatasetTests(unittest.TestCase):
             dropped = _sample(3, 4, 4)
             dropped.action_decision = ControlCommand(ButtonCommand.RELEASE, ButtonCommand.KEEP)
             dropped.desired_state = ActionDecision(False, False)
-            dataset.upsert_sample(dropped, actuated=False)
+            dataset.upsert_sample(
+                dropped,
+                actuated=False,
+                control_requested=True,
+                control_status="rejected",
+            )
             dataset.finalize(result="timeout", finish_world_tick=6,
                              terminal_reward=-1, trainable=True)
             result = train_episode(build_model(fresh=True), dataset)
             self.assertTrue(result.updated)
-            self.assertEqual(result.metrics["discarded_records"], 1)
-            self.assertEqual([s.ppo_selected for s in dataset.steps()], [True, True, False])
-            self.assertIsNone(dataset.steps()[2].advantage)
+            self.assertEqual(result.metrics["discarded_records"], 0)
+            self.assertEqual(result.metrics["controller_requests"], 1)
+            self.assertEqual(result.metrics["controller_rejected"], 1)
+            self.assertEqual(
+                [s.ppo_selected for s in dataset.steps()],
+                [True, True, True],
+            )
+            self.assertIsNotNone(dataset.steps()[2].advantage)
 
     def test_ppo_keeps_every_policy_decision_for_stateful_controls(self):
         ticks = list(range(0, 1200, POLICY_STRIDE_TICKS))
@@ -142,7 +152,9 @@ class EpisodeDatasetTests(unittest.TestCase):
                 dataset.upsert_sample(
                     _sample(sequence, tick, self_x),
                     duration_ticks=2,
-                    actuated=True,
+                    actuated=(sequence == 1),
+                    control_requested=(sequence == 1),
+                    control_status="accepted" if sequence == 1 else "",
                 )
             dataset.finalize(
                 result="dead",
@@ -162,9 +174,13 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 4)
+            self.assertEqual(metadata["schema_version"], 5)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
+            self.assertEqual(metadata["metrics"]["controller_requests"], 1)
+            self.assertAlmostEqual(
+                metadata["metrics"]["controller_penalty_sum"], -0.005
+            )
             self.assertEqual(
                 [step.action_right for step in dataset.steps()],
                 [

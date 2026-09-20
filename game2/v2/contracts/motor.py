@@ -122,6 +122,25 @@ def apply_control_command(
     )
 
 
+def gate_control_command(
+    state: ActionDecision, command: ControlCommand
+) -> tuple[ActionDecision, ControlCommand, tuple[str, ...]]:
+    """Suppress commands that would not change the latched controller state."""
+    desired = apply_control_command(state, command)
+    suppressed: list[str] = []
+    right = command.right
+    jump = command.jump
+    if desired.right == state.right:
+        if right is not ButtonCommand.KEEP:
+            suppressed.append("right")
+        right = ButtonCommand.KEEP
+    if desired.jump == state.jump:
+        if jump is not ButtonCommand.KEEP:
+            suppressed.append("jump")
+        jump = ButtonCommand.KEEP
+    return desired, ControlCommand(right, jump), tuple(suppressed)
+
+
 # Compatibility aliases kept for internal callers while the command surface settles.
 ControlChange = ControlCommand
 apply_control_change = apply_control_command
@@ -136,4 +155,5 @@ __all__ = [
     "MotorPlan",
     "apply_control_change",
     "apply_control_command",
+    "gate_control_command",
 ]

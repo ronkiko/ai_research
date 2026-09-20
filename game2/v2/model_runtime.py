@@ -17,6 +17,8 @@ from game2.v2.learning.checkpoints import pin_checkpoint_paths
 from game2.v2.contracts.framing import MAX_FRAME_SIZE, ProtocolError, decode_frame
 from game2.v2.contracts.model import (
     ACTUATED,
+    CONTROL_REQUESTED,
+    CONTROL_RESULT,
     DECISION,
     EPISODE_END,
     OBSERVE,
@@ -38,6 +40,7 @@ from game2.v2.player.learned.contracts import (
     ButtonCommand,
     ControlCommand,
     apply_control_command,
+    gate_control_command,
 )
 from game2.v2.player.learned.checkpoint import (
     load_critic,
@@ -275,24 +278,11 @@ class ModelRuntime:
         requested = sample.action_decision
         if not isinstance(requested, ControlCommand):
             raise TypeError("Model policy must return a ControlCommand")
-        resolved = apply_control_command(self._control_tick_state, requested)
-        suppressed = []
-        right_command = requested.right
-        jump_command = requested.jump
-        if resolved.right == self._control_tick_state.right:
-            if right_command is not ButtonCommand.KEEP:
-                suppressed.append("right")
-            right_command = ButtonCommand.KEEP
-        if resolved.jump == self._control_tick_state.jump:
-            if jump_command is not ButtonCommand.KEEP:
-                suppressed.append("jump")
-            jump_command = ButtonCommand.KEEP
-
-        applied = ControlCommand(right_command, jump_command)
-        self._control_tick_state = resolved
-        sample = self._replace_control_result(
-            sample, self._control_tick_state, tuple(suppressed)
+        desired, applied, suppressed = gate_control_command(
+            self._control_tick_state, requested
         )
+        self._control_tick_state = desired
+        sample = self._replace_control_result(sample, desired, suppressed)
         return sample, applied
 
     @staticmethod
@@ -397,6 +387,20 @@ class ModelRuntime:
             if pending_observation is not None:
                 self._episode_dropped_observations += 1
             return observation_from_message(message, observation_matrices)
+        if message_type == CONTROL_REQUESTED:
+            sample = self._samples.get(message["decision_id"])
+            if sample is not None and self._episode_dataset is not None:
+                self._episode_dataset.mark_control_requested(
+                    sample.policy_sequence
+                )
+            return pending_observation
+        if message_type == CONTROL_RESULT:
+            sample = self._samples.get(message["decision_id"])
+            if sample is not None and self._episode_dataset is not None:
+                self._episode_dataset.mark_control_result(
+                    sample.policy_sequence, message["status"]
+                )
+            return pending_observation
         if message_type == ACTUATED:
             sample = self._samples.pop(message["decision_id"], None)
             if sample is not None:

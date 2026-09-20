@@ -19,6 +19,8 @@ from .vision import (
 PREPARE = "prepare"
 OBSERVE = "observe"
 ACTUATED = "actuated"
+CONTROL_REQUESTED = "control_requested"
+CONTROL_RESULT = "control_result"
 EPISODE_END = "episode_end"
 SAVE = "save"
 READY = "ready"
@@ -30,6 +32,7 @@ TRAIN = "train"
 EVALUATE = "evaluate"
 MODES = frozenset((TRAIN, EVALUATE))
 RESULTS = frozenset(("success", "dead", "timeout"))
+CONTROL_STATUSES = frozenset(("accepted", "duplicate", "rejected"))
 
 
 def _message(message_type: str, **fields: Any) -> dict[str, Any]:
@@ -117,6 +120,20 @@ def actuated_message(decision_id: int) -> dict[str, Any]:
     return _message(ACTUATED, decision_id=_positive_int("decision_id", decision_id))
 
 
+def control_requested_message(decision_id: int) -> dict[str, Any]:
+    return _message(
+        CONTROL_REQUESTED,
+        decision_id=_positive_int("decision_id", decision_id),
+    )
+
+
+def control_result_message(decision_id: int, status: str) -> dict[str, Any]:
+    _positive_int("decision_id", decision_id)
+    if type(status) is not str or status not in CONTROL_STATUSES:
+        raise ProtocolError("control result status is invalid")
+    return _message(CONTROL_RESULT, decision_id=decision_id, status=status)
+
+
 def episode_end_message(
     episode_id: int,
     result: str,
@@ -191,6 +208,8 @@ _FIELDS = {
         "physics_length", "metadata_length",
     )),
     ACTUATED: frozenset(("version", "type", "decision_id")),
+    CONTROL_REQUESTED: frozenset(("version", "type", "decision_id")),
+    CONTROL_RESULT: frozenset(("version", "type", "decision_id", "status")),
     EPISODE_END: frozenset((
         "version", "type", "episode_id", "result", "reward",
         "trainable", "finish_world_tick",
@@ -220,6 +239,10 @@ def decode_model_message(message: dict[str, Any]) -> dict[str, Any]:
         _validate_observation_header(message)
     elif message_type == ACTUATED:
         actuated_message(message["decision_id"])
+    elif message_type == CONTROL_REQUESTED:
+        control_requested_message(message["decision_id"])
+    elif message_type == CONTROL_RESULT:
+        control_result_message(message["decision_id"], message["status"])
     elif message_type == EPISODE_END:
         episode_end_message(
             message["episode_id"],
@@ -316,9 +339,11 @@ def send_model_observation(sock: socket.socket, grid: VisionGrid) -> None:
 
 
 __all__ = [
-    "ACTUATED", "DECISION", "EPISODE_END", "EVALUATE", "MODES", "OBSERVE",
+    "ACTUATED", "CONTROL_REQUESTED", "CONTROL_RESULT", "CONTROL_STATUSES",
+    "DECISION", "EPISODE_END", "EVALUATE", "MODES", "OBSERVE",
     "PREPARE", "READY", "RESULTS", "SAVE", "SAVED", "TRAIN", "UPDATE_RESULT",
-    "actuated_message", "decode_model_message", "decision_message",
+    "actuated_message", "control_requested_message", "control_result_message",
+    "decode_model_message", "decision_message",
     "episode_end_message", "message_frame", "observe_message", "observation_from_message",
     "observation_packet", "prepare_message", "ready_message", "recv_model_message",
     "save_message", "saved_message", "send_model_message", "send_model_observation",

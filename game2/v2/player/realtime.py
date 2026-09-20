@@ -16,9 +16,9 @@ from game2.v2.learning.config import POLICY_STRIDE_TICKS
 PLAYER_ACTION_HZ = 120
 
 
-def _apply_accepted_acks(joystick, pending: dict[int, int],
-                         actuated_ids: set[int], model: ModelClient) -> None:
-    """Tell Model only about states Engine actually accepted."""
+def _apply_control_acks(joystick, pending: dict[int, int],
+                        actuated_ids: set[int], model: ModelClient) -> None:
+    """Report Controller outcomes; only accepted requests become actuated."""
     drain = getattr(joystick, "drain_acknowledgements", None)
     if not callable(drain):
         return
@@ -27,11 +27,11 @@ def _apply_accepted_acks(joystick, pending: dict[int, int],
             continue
         sequence = acknowledgement.get("sequence")
         decision_id = pending.pop(sequence, None)
-        if (
-            decision_id is not None
-            and acknowledgement.get("status") == "accepted"
-            and decision_id not in actuated_ids
-        ):
+        if decision_id is None:
+            continue
+        status = acknowledgement.get("status")
+        model.control_result(decision_id, status)
+        if status == "accepted" and decision_id not in actuated_ids:
             model.actuated(decision_id)
             actuated_ids.add(decision_id)
 
@@ -56,6 +56,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
     next_send = clock()
     gameplay_started = False
     latest_decision = None
+    last_sent_decision_id: int | None = None
     actuated_ids: set[int] = set()
     pending_actuation: dict[int, int] = {}
     saw_self_frame = False
@@ -74,7 +75,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 raise ConnectionError("Console rejected START")
 
         while decisions is None or sent < decisions:
-            _apply_accepted_acks(
+            _apply_control_acks(
                 joystick, pending_actuation, actuated_ids, model
             )
             if vision.failed:
@@ -125,7 +126,11 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 continue
             if lifecycle is not None and lifecycle.latest_event is not None:
                 break
-            if latest_decision is None:
+            if (
+                latest_decision is None
+                or latest_decision.decision_id == last_sent_decision_id
+            ):
+                sleeper(0.001)
                 continue
             now = clock()
             if now < next_send:
@@ -135,14 +140,16 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 latest_decision.action_decision.right,
                 latest_decision.action_decision.jump,
             )
+            model.control_requested(latest_decision.decision_id)
             sequence = getattr(state, "sequence", None)
             if type(sequence) is int:
                 pending_actuation[sequence] = latest_decision.decision_id
+            last_sent_decision_id = latest_decision.decision_id
             sent += 1
-            _apply_accepted_acks(
+            _apply_control_acks(
                 joystick, pending_actuation, actuated_ids, model
             )
-            next_send += 1 / action_hz
+            next_send = max(next_send + 1 / action_hz, now)
             if missing_self_after_seen:
                 break
             if next_send < now:

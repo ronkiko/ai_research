@@ -11,6 +11,8 @@ from typing import Callable
 from game2.v2.contracts.framing import MAX_FRAME_SIZE, ProtocolError, decode_frame
 from game2.v2.contracts.model import (
     ACTUATED,
+    CONTROL_REQUESTED,
+    CONTROL_RESULT,
     DECISION,
     EPISODE_END,
     OBSERVE,
@@ -20,6 +22,8 @@ from game2.v2.contracts.model import (
     SAVED,
     UPDATE_RESULT,
     actuated_message,
+    control_requested_message,
+    control_result_message,
     decode_model_message,
     episode_end_message,
     message_frame,
@@ -260,6 +264,14 @@ class ModelClient:
             if self._queued_observation is not None:
                 self._dropped_observations += 1
             self._queued_observation = encoded
+        self._flush()
+
+    def control_requested(self, decision_id: int) -> None:
+        self._queue_control(control_requested_message(decision_id))
+        self._flush()
+
+    def control_result(self, decision_id: int, status: str) -> None:
+        self._queue_control(control_result_message(decision_id, status))
         self._flush()
 
     def actuated(self, decision_id: int) -> None:

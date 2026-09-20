@@ -150,6 +150,8 @@ class _RemoteModel:
 
     def __init__(self):
         self.latest_decision = None
+        self.control_requested_ids = []
+        self.control_results = []
         self.actuated_ids = []
         self.episode_end_calls = []
 
@@ -163,6 +165,12 @@ class _RemoteModel:
 
     def poll(self):
         return None
+
+    def control_requested(self, decision_id):
+        self.control_requested_ids.append(decision_id)
+
+    def control_result(self, decision_id, status):
+        self.control_results.append((decision_id, status))
 
     def actuated(self, decision_id):
         self.actuated_ids.append(decision_id)
@@ -310,8 +318,19 @@ class LearnedJoystickTests(unittest.TestCase):
             failed = False
             error = None
             connected = True
-            grids_received = 1
-            latest = _grid(self_x=3, tick=1)
+            grids_received = 2
+
+            def __init__(self):
+                self.frames = [
+                    _grid(self_x=3, tick=1),
+                    _grid(self_x=4, tick=3),
+                ]
+
+            @property
+            def latest(self):
+                if len(self.frames) > 1:
+                    return self.frames.pop(0)
+                return self.frames[0]
 
             def connect(self):
                 return None
@@ -367,7 +386,41 @@ class LearnedJoystickTests(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertEqual(model.actuated_ids, [1])
+        self.assertEqual(model.control_requested_ids, [1, 2])
+        self.assertEqual(
+            model.control_results,
+            [(1, "rejected"), (2, "accepted")],
+        )
+        self.assertEqual(model.actuated_ids, [2])
+
+    def test_latched_state_is_not_resent_without_a_new_model_decision(self):
+        order = []
+        lifecycle = _Lifecycle(self._manifest(), order)
+        sleeps = {"count": 0}
+
+        def sleeper(_duration):
+            sleeps["count"] += 1
+            if sleeps["count"] >= 5:
+                lifecycle.latest_event = {
+                    "event": "terminal", "result": "timeout", "world_tick": 3
+                }
+
+        vision = _LifecycleVision([_grid(self_x=3, tick=1)])
+        joystick = _LifecycleJoystick()
+        model = _RemoteModel()
+        with redirect_stdout(StringIO()):
+            run_player(
+                lifecycle.manifest,
+                model,
+                decisions=10,
+                vision_factory=lambda _manifest: vision,
+                joystick_factory=lambda _manifest: joystick,
+                lifecycle=lifecycle,
+                clock=lambda: 1.0,
+                sleeper=sleeper,
+            )
+        self.assertEqual(joystick.sent, [(True, True)])
+        self.assertEqual(model.control_requested_ids, [1])
 
     def test_model_failure_is_not_replaced_with_a_neutral_action(self):
         manifest = PlayerManifest("session", "player", "actor", Endpoint("127.0.0.1", 1),

@@ -8,6 +8,7 @@ from game2.v2.contracts.motor import (
     MotorPlan,
     apply_control_change,
     apply_control_command,
+    gate_control_command,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "MotorPlan",
     "apply_control_change",
     "apply_control_command",
+    "gate_control_command",
 ]

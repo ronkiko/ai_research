@@ -22,7 +22,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,8 @@ class EpisodeStep:
     goal_x: float | None
     goal_y: float | None
     suppressed_buttons: str
+    control_requested: bool
+    control_status: str
     actuated: bool
     chunk_index: int | None
     chunk_offset: int | None
@@ -178,7 +180,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=4;
+                PRAGMA user_version=5;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -238,6 +240,8 @@ class EpisodeDataset:
                     goal_x REAL,
                     goal_y REAL,
                     suppressed_buttons TEXT NOT NULL DEFAULT '',
+                    control_requested INTEGER NOT NULL DEFAULT 0,
+                    control_status TEXT NOT NULL DEFAULT '',
                     actuated INTEGER NOT NULL DEFAULT 0,
                     chunk_index INTEGER,
                     chunk_offset INTEGER,
@@ -307,7 +311,11 @@ class EpisodeDataset:
         *,
         duration_ticks: int = POLICY_STRIDE_TICKS,
         actuated: bool | None = None,
+        control_requested: bool | None = None,
+        control_status: str | None = None,
     ) -> None:
+        if control_status not in {None, "", "accepted", "duplicate", "rejected"}:
+            raise ValueError("control_status is invalid")
         grid = sample.vision_grid
         if not isinstance(grid, VisionGrid):
             raise TypeError("episode sample requires a VisionGrid")
@@ -383,6 +391,8 @@ class EpisodeDataset:
             goal_x,
             goal_y,
             ",".join(getattr(sample, "suppressed_buttons", ()) or ()),
+            int(bool(control_requested)) if control_requested is not None else 0,
+            "" if control_status is None else str(control_status),
             int(bool(actuated)) if actuated is not None else 0,
             getattr(sample, "chunk_index", None),
             getattr(sample, "chunk_offset", None),
@@ -404,10 +414,10 @@ class EpisodeDataset:
                     prob_right_keep, prob_right_press, prob_right_release,
                     prob_jump_keep, prob_jump_press, prob_jump_release,
                     self_x, self_y, goal_x, goal_y,
-                    suppressed_buttons, actuated,
-                    chunk_index, chunk_offset, chunk_first
+                    suppressed_buttons, control_requested, control_status,
+                    actuated, chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -448,6 +458,13 @@ class EpisodeDataset:
                     goal_x=excluded.goal_x,
                     goal_y=excluded.goal_y,
                     suppressed_buttons=excluded.suppressed_buttons,
+                    control_requested=MAX(
+                        steps.control_requested, excluded.control_requested
+                    ),
+                    control_status=CASE
+                        WHEN excluded.control_status<>'' THEN excluded.control_status
+                        ELSE steps.control_status
+                    END,
                     actuated=MAX(steps.actuated, excluded.actuated),
                     chunk_index=excluded.chunk_index,
                     chunk_offset=excluded.chunk_offset,
@@ -504,6 +521,23 @@ class EpisodeDataset:
             sample, duration_ticks=duration_ticks, actuated=actuated
         )
 
+    def mark_control_requested(self, policy_sequence: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE steps SET control_requested=1 WHERE policy_sequence=?",
+                (int(policy_sequence),),
+            )
+
+    def mark_control_result(self, policy_sequence: int, status: str) -> None:
+        if status not in {"accepted", "duplicate", "rejected"}:
+            raise ValueError("control status is invalid")
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE steps SET control_requested=1, control_status=? "
+                "WHERE policy_sequence=?",
+                (status, int(policy_sequence)),
+            )
+
     def mark_actuated(self, policy_sequence: int) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -557,6 +591,8 @@ class EpisodeDataset:
             goal_x=row["goal_x"],
             goal_y=row["goal_y"],
             suppressed_buttons=str(row["suppressed_buttons"] or ""),
+            control_requested=bool(row["control_requested"]),
+            control_status=str(row["control_status"] or ""),
             actuated=bool(row["actuated"]),
             chunk_index=row["chunk_index"],
             chunk_offset=row["chunk_offset"],
