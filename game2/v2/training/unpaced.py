@@ -200,9 +200,11 @@ def _rollout_line(payload: dict[str, object]) -> str:
     limit = int(payload["episode_limit"])
     tick = int(payload["world_tick"])
     progress = min(1.0, max(0.0, float(payload["progress"])))
-    label = "Attempt" if payload.get("mode") == "train" else "Check"
+    label = "Run" if payload.get("mode") == "train" else "Verify"
+    attempt = int(payload["attempt"])
+    max_attempts = int(payload["max_attempts"])
     return (
-        f"{label:<7} {int(payload['episode_id']):<4} "
+        f"{label:<6} {attempt}/{max_attempts:<3} "
         f"[{_progress_bar(progress)}] "
         f"reached {100.0 * progress:4.1f}% toward goal · "
         f"time {tick}/{limit}"
@@ -216,22 +218,22 @@ def _behavior_trend(
     previous_progress: float | None,
 ) -> str:
     if previous_result is None or previous_progress is None:
-        return "baseline"
+        return "first training run"
 
     if result == "success":
         if previous_result == "success":
-            return "→ success repeated"
-        return "↑ improved: reached goal"
+            return "success repeated in training"
+        return "farther than previous run"
 
     if previous_result == "success":
-        return "↓ worse: previous attempt reached goal"
+        return "less successful than previous run"
 
     delta = 100.0 * (float(progress) - float(previous_progress))
     if delta >= 1.0:
-        return f"↑ improved +{delta:.1f} pp"
+        return f"+{delta:.1f} pp vs previous run"
     if delta <= -1.0:
-        return f"↓ worse {abs(delta):.1f} pp"
-    return "→ about the same"
+        return f"-{abs(delta):.1f} pp vs previous run"
+    return "about the same as previous run"
 
 
 def run_unpaced_training_set(
@@ -302,9 +304,10 @@ def run_unpaced_training_set(
             output.write(
                 "\r"
                 + (
-                    f"Learning {int(payload['episode_id']):<3} "
+                    f"Update {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} "
                     f"[{_progress_bar(fraction)}] "
-                    f"{100.0 * fraction:3.0f}% · updating model"
+                    f"{100.0 * fraction:3.0f}% · learning from this run"
                 )
                 + "\x1b[K"
             )
@@ -327,38 +330,32 @@ def run_unpaced_training_set(
                 payload.get("previous_progress"),
             )
             write_line(
-                f"Attempt {int(payload['episode_id']):<3} "
+                f"Run {int(payload['attempt'])}/"
+                f"{int(payload['max_attempts'])} "
                 f"{result.upper()} · {outcome_text} · {trend}"
             )
             return
         if prefix == "LEARNING":
             if payload["status"] == "start":
-                if interactive:
-                    output.write(
-                        "\r"
-                        + _rollout_line({
-                            "episode_id": payload["episode_id"],
-                            "mode": "train",
-                            "episode_limit": payload["episode_limit"],
-                            "world_tick": 0,
-                            "progress": 0.0,
-                        })
-                        + "\x1b[K"
-                    )
-                    output.flush()
-                    live_active = True
+                write_line(
+                    f"Run {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} · "
+                    "collecting experience in the world"
+                )
                 return
             clear_live()
             if payload.get("updated"):
                 write_line(
-                    f"Learning {int(payload['episode_id']):<3} "
-                    f"model updated · "
+                    f"Update {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} DONE · "
+                    "model updated from this run · "
                     f"{float(payload.get('seconds', 0.0)):.1f}s"
                 )
             else:
                 write_line(
-                    f"Learning {int(payload['episode_id']):<3} "
-                    "no model update"
+                    f"Update {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} SKIPPED · "
+                    "model was not changed"
                 )
             return
         if prefix == "PROGRESS":
@@ -368,31 +365,40 @@ def run_unpaced_training_set(
             result = str(payload["result"])
             if result == "success":
                 write_line(
-                    f"Check {int(payload['episode_id']):<5} PASS · "
-                    "success reproduced after learning"
+                    f"Verify {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} PASS · "
+                    "reached goal again with learning OFF · map learned"
                 )
             else:
                 write_line(
-                    f"Check {int(payload['episode_id']):<5} FAIL "
+                    f"Verify {int(payload['attempt'])}/"
+                    f"{int(payload['max_attempts'])} FAIL "
                     f"({result.upper()}) · "
                     f"reached {100.0 * float(payload['progress']):.1f}% toward goal · "
-                    "success not stable yet"
+                    "map NOT learned yet · training continues"
                 )
             return
         write_line(prefix)
 
-    def progress_writer(episode: int, mode: str):
+    def progress_writer(episode: int, mode: str, attempt: int):
         def write_progress(snapshot: dict[str, object]) -> None:
             write("ROLLOUT", {
                 "episode_id": episode,
                 "mode": mode,
+                "attempt": attempt,
+                "max_attempts": max_episodes,
                 **snapshot,
             })
         return write_progress
 
-    def ppo_writer(episode: int):
+    def ppo_writer(episode: int, attempt: int):
         def write_ppo(snapshot: dict[str, object]) -> None:
-            write("PPO", {"episode_id": episode, **snapshot})
+            write("PPO", {
+                "episode_id": episode,
+                "attempt": attempt,
+                "max_attempts": max_episodes,
+                **snapshot,
+            })
         return write_ppo
 
     map_count = len(manifest.training_maps)
@@ -408,6 +414,17 @@ def run_unpaced_training_set(
             if map_index > 1:
                 write_line()
             write_line(f"Map {map_index}/{map_count} · {spec.map_id}")
+            write_line(
+                "Learning loop: RUN -> UPDATE MODEL -> "
+                "VERIFY after a successful run."
+            )
+            write_line(
+                "A RUN success is only a candidate. "
+                "Only VERIFY PASS with learning OFF means the map is learned."
+            )
+            write_line(
+                f"Budget: up to {max_episodes} training runs on this map."
+            )
             write_line()
 
         mastered = False
@@ -425,6 +442,8 @@ def run_unpaced_training_set(
                 "mode": "unpaced",
                 "status": "start",
                 "episode_limit": episode_limit,
+                "attempt": attempt,
+                "max_attempts": max_episodes,
             })
             dataset = episode_store.create(
                 episode_id=episode_id,
@@ -440,7 +459,7 @@ def run_unpaced_training_set(
                 seed=episode_id,
                 dataset=dataset,
                 should_stop=should_stop,
-                on_progress=progress_writer(episode_id, "train"),
+                on_progress=progress_writer(episode_id, "train", attempt),
             )
             terminal_reward = reward_for_result(
                 outcome.result, outcome.progress
@@ -461,6 +480,8 @@ def run_unpaced_training_set(
                     "decisions": outcome.decisions,
                     "previous_result": previous_train_result,
                     "previous_progress": previous_train_progress,
+                    "attempt": attempt,
+                    "max_attempts": max_episodes,
                 })
 
             update_started = time.monotonic()
@@ -468,7 +489,7 @@ def run_unpaced_training_set(
                 model,
                 dataset,
                 should_stop=should_stop,
-                on_progress=ppo_writer(episode_id),
+                on_progress=ppo_writer(episode_id, attempt),
             )
             if training.updated:
                 save_checkpoints(model, checkpoint_dir)
@@ -484,6 +505,8 @@ def run_unpaced_training_set(
                     training.metrics.get("rollout_records", 0)
                 ),
                 "ppo_records": int(training.metrics.get("ppo_records", 0)),
+                "attempt": attempt,
+                "max_attempts": max_episodes,
             })
             if outcome.result == "success":
                 successes += 1
@@ -512,6 +535,12 @@ def run_unpaced_training_set(
             if outcome.result != "success" or not training.updated:
                 continue
 
+            if not json_output:
+                write_line(
+                    f"Verify {attempt}/{max_episodes} · learning OFF · "
+                    "must reach the goal again to prove this was learned"
+                )
+
             episode_id += 1
             evaluation_dataset = episode_store.create(
                 episode_id=episode_id,
@@ -527,7 +556,7 @@ def run_unpaced_training_set(
                 seed=episode_id,
                 dataset=evaluation_dataset,
                 should_stop=should_stop,
-                on_progress=progress_writer(episode_id, "evaluate"),
+                on_progress=progress_writer(episode_id, "evaluate", attempt),
             )
             evaluation_dataset.finalize(
                 result=evaluation.result,
@@ -546,6 +575,8 @@ def run_unpaced_training_set(
                 "progress": evaluation.progress,
                 "world_ticks": evaluation.finish_world_tick,
                 "decisions": evaluation.decisions,
+                "attempt": attempt,
+                "max_attempts": max_episodes,
             })
             if evaluation.result == "success":
                 mastered = True
@@ -561,9 +592,12 @@ def run_unpaced_training_set(
             write_line(
                 f"Map {map_index}/{map_count} · {spec.map_id} · "
                 + (
-                    "LEARNED · validation PASS"
+                    "LEARNED · verification PASS · moving to next map"
                     if mastered
-                    else "NOT LEARNED · attempts exhausted"
+                    else (
+                        f"NOT LEARNED · {max_episodes} training runs used "
+                        "without a verification pass"
+                    )
                 )
             )
         if not mastered:

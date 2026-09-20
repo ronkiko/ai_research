@@ -26,11 +26,14 @@ class UnpacedTrainingTests(unittest.TestCase):
         line = _rollout_line({
             "episode_id": 3,
             "mode": "train",
+            "attempt": 2,
+            "max_attempts": 20,
             "episode_limit": 1200,
             "world_tick": 600,
             "progress": 0.251,
         })
-        self.assertIn("Attempt", line)
+        self.assertIn("Run", line)
+        self.assertIn("2/20", line)
         self.assertIn("reached 25.1% toward goal", line)
         self.assertIn("time 600/1200", line)
         self.assertNotIn("best", line)
@@ -39,19 +42,19 @@ class UnpacedTrainingTests(unittest.TestCase):
     def test_behavior_trend_describes_visible_improvement(self):
         self.assertEqual(
             _behavior_trend("timeout", 0.426, None, None),
-            "baseline",
+            "first training run",
         )
         self.assertEqual(
             _behavior_trend("timeout", 0.550, "timeout", 0.426),
-            "↑ improved +12.4 pp",
+            "+12.4 pp vs previous run",
         )
         self.assertEqual(
             _behavior_trend("success", 0.931, "timeout", 0.426),
-            "↑ improved: reached goal",
+            "farther than previous run",
         )
         self.assertEqual(
             _behavior_trend("timeout", 0.600, "success", 0.931),
-            "↓ worse: previous attempt reached goal",
+            "less successful than previous run",
         )
 
     def test_unpaced_episode_reuses_each_policy_decision_for_two_world_ticks(self):
