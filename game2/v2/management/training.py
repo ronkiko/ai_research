@@ -29,6 +29,7 @@ from game2.v2.contracts.screen_server import (
     unbind_message,
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
+from game2.v2.training.work import DEFAULT_EPISODE_STORE, EpisodeStore
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -361,6 +362,7 @@ class TrainingRun:
         screen_control: ScreenControl | None,
         view: str,
         trajectory_log: Path,
+        episode_store: Path,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
@@ -401,6 +403,7 @@ class TrainingRun:
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
                 "--checkpoint-dir", str(checkpoint_dir),
                 "--trajectory-log", str(trajectory_log),
+                "--episode-store", str(episode_store),
             ]
             if fresh:
                 model_command.append("--fresh")
@@ -495,6 +498,7 @@ class TrainingRun:
         view: str = "screen",
         mode: str = "realtime",
         json_output: bool = False,
+        episode_store: str | Path = DEFAULT_EPISODE_STORE,
     ) -> int:
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
@@ -513,12 +517,15 @@ class TrainingRun:
             screen_control = self.screen_control_factory(screen, screen_server)
             screen_control.preflight()
 
+        episode_store_path = Path(episode_store).expanduser().resolve()
         planner = checkpoint_path / "planner.pt"
         motor = checkpoint_path / "motor.pt"
         critic = checkpoint_path / "critic.pt"
         optimizer = checkpoint_path / "optimizer.pt"
         log_root = checkpoint_path / "logs"
         if fresh:
+            EpisodeStore(episode_store_path).reset()
+            self._write("FRESH reset episode datasets")
             if log_root.exists():
                 shutil.rmtree(log_root)
             self._write("FRESH reset logs")
@@ -565,6 +572,7 @@ class TrainingRun:
                 output=self.output,
                 should_stop=self.stop_requested.is_set,
                 json_output=json_output,
+                episode_store_dir=episode_store_path,
             )
 
         log_run = _next_log_run(log_root)
@@ -594,6 +602,7 @@ class TrainingRun:
                     screen_control=screen_control,
                     view=view,
                     trajectory_log=log_run / f"{index + 1:02d}-{spec.map_id}.jsonl",
+                    episode_store=episode_store_path,
                 )
                 if not passed:
                     self._write(f"TRAINING SET {manifest.training_set_level}: FAIL")
@@ -619,6 +628,7 @@ def _parser() -> argparse.ArgumentParser:
         help="emit structured unpaced training events instead of human output",
     )
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
+    parser.add_argument("--episode-store", default=str(DEFAULT_EPISODE_STORE))
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fresh", action="store_true")
     mode.add_argument("--resume", action="store_true")
@@ -642,6 +652,7 @@ def main(argv=None) -> int:
             view=args.view,
             mode=args.mode,
             json_output=args.json_output,
+            episode_store=args.episode_store,
         )
     except KeyboardInterrupt:
         print("Training interrupted", file=sys.stderr, flush=True)

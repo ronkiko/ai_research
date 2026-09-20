@@ -20,6 +20,11 @@ from .critic import CNNCritic
 from .motor import motor_input_tensor
 from .motion import MotionEstimator, center_distance, self_center, vision_centers
 from .vision import vision_to_tensor
+from game2.v2.training.work.config import (
+    POLICY_STRIDE_TICKS,
+    PPO_HISTORY_STRIDE_TICKS,
+    PPO_TAIL_TICKS,
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,8 @@ class DecisionSample:
     prob_jump: float | None = None
     self_x: float | None = None
     self_y: float | None = None
+    goal_x: float | None = None
+    goal_y: float | None = None
 
 
 @dataclass(frozen=True)
@@ -127,9 +134,6 @@ def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState
 
 
 PPO_CHUNK_TICKS = 100
-POLICY_STRIDE_TICKS = 2
-PPO_TAIL_TICKS = 200
-PPO_HISTORY_STRIDE_TICKS = 10
 CONTROL_CHANGE_PENALTY = 0.005
 PPO_GAMMA = 0.99
 PPO_GAE_LAMBDA = 0.95
@@ -513,6 +517,12 @@ class LearnedPlayer:
                 chunk_offset=chunk_offset,
                 chunk_first=chunk_first,
                 policy_sequence=self._policy_sequence,
+                goal_x=(
+                    None if goal_position is None else float(goal_position[0])
+                ),
+                goal_y=(
+                    None if goal_position is None else float(goal_position[1])
+                ),
             )
             if self._episode_mode == "train":
                 self._record_training_sample(sample)
@@ -545,6 +555,12 @@ class LearnedPlayer:
                 ),
                 self_y=(
                     None if self_position is None else float(self_position[1])
+                ),
+                goal_x=(
+                    None if goal_position is None else float(goal_position[0])
+                ),
+                goal_y=(
+                    None if goal_position is None else float(goal_position[1])
                 ),
             )
         goal = sample.motor_goal

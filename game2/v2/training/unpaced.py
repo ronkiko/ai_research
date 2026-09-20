@@ -59,6 +59,12 @@ from game2.v2.player.learned.runtime import (
 )
 from game2.v2.player.learned.vision import vision_to_tensor
 from game2.v2.training.main import reward_for_result
+from game2.v2.training.work import (
+    DEFAULT_EPISODE_STORE,
+    EpisodeDataset,
+    EpisodeStore,
+    train_episode,
+)
 
 
 PLAYER_ID = "unpaced-player"
@@ -178,6 +184,7 @@ def run_episode(
     seed: int,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[dict[str, object]], None] | None = None,
+    dataset: EpisodeDataset | None = None,
 ) -> tuple[EpisodeResult, list[Step]]:
     if mode not in {"train", "evaluate"}:
         raise ValueError("mode must be train or evaluate")
@@ -263,6 +270,21 @@ def run_episode(
         if actor.result is not None:
             reward += reward_for_result(actor.result, progress.progress)
 
+        if dataset is not None:
+            dataset.append_step(
+                policy_sequence=sequence,
+                grid=grid,
+                duration_ticks=advanced,
+                motion_x=motion_x,
+                pad_state=base_pad,
+                action=action,
+                desired_state=desired,
+                old_log_prob=old_log_prob,
+                old_value=old_value,
+                self_position=self_position,
+                goal_position=goal_position,
+                actuated=True,
+            )
         if train:
             steps.append(Step(
                 grid,
@@ -517,11 +539,15 @@ def run_unpaced_training_set(
     output: TextIO = sys.stdout,
     should_stop: Callable[[], bool] | None = None,
     json_output: bool = False,
+    episode_store_dir: str | Path = DEFAULT_EPISODE_STORE,
 ) -> int:
     if max_episodes <= 0 or episode_limit <= 0:
         raise ValueError("episode limits must be positive")
     manifest_path = Path(set_path).expanduser().resolve()
     manifest = TrainingSetManifest.from_file(manifest_path)
+    episode_store = EpisodeStore(episode_store_dir)
+    if fresh:
+        episode_store.reset()
     model = load_model(fresh=fresh, checkpoint_dir=checkpoint_dir)
     episode_id = 0
 
@@ -687,6 +713,13 @@ def run_unpaced_training_set(
                 "status": "start",
                 "episode_limit": episode_limit,
             })
+            dataset = episode_store.create(
+                episode_id=episode_id,
+                mode="train",
+                source="unpaced",
+                seed=episode_id,
+                policy_stride_ticks=POLICY_STRIDE_TICKS,
+            )
             outcome, steps = run_episode(
                 model,
                 map_path,
@@ -695,6 +728,16 @@ def run_unpaced_training_set(
                 seed=episode_id,
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "train"),
+                dataset=dataset,
+            )
+            dataset.finalize(
+                result=outcome.result,
+                finish_world_tick=outcome.finish_world_tick,
+                terminal_reward=reward_for_result(
+                    outcome.result, outcome.progress
+                ),
+                trainable=True,
+                progress=outcome.progress,
             )
             if not json_output:
                 write("TRAIN_RESULT", {
@@ -705,15 +748,16 @@ def run_unpaced_training_set(
                     "decisions": outcome.decisions,
                 })
             update_started = time.monotonic()
-            updated, loss = ppo_update(
+            training = train_episode(
                 model,
-                steps,
-                seed=episode_id,
+                dataset,
                 should_stop=should_stop,
                 on_progress=ppo_writer(episode_id),
             )
+            updated, loss = training.updated, training.loss
             if updated:
                 save_checkpoints(model, checkpoint_dir)
+            episode_store.rotate()
             write("LEARNING", {
                 "episode_id": episode_id,
                 "mode": "unpaced",
@@ -721,8 +765,8 @@ def run_unpaced_training_set(
                 "seconds": round(time.monotonic() - update_started, 3),
                 "updated": updated,
                 "loss": loss if updated else None,
-                "rollout_records": len(steps),
-                "ppo_records": len(_ppo_training_indexes(steps)),
+                "rollout_records": int(training.metrics.get("rollout_records", len(steps))),
+                "ppo_records": int(training.metrics.get("ppo_records", 0)),
             })
             if outcome.result == "success":
                 successes += 1
@@ -736,8 +780,8 @@ def run_unpaced_training_set(
                 "reward": reward_for_result(outcome.result, outcome.progress),
                 "world_ticks": outcome.finish_world_tick,
                 "decisions": outcome.decisions,
-                "rollout_records": len(steps),
-                "ppo_records": len(_ppo_training_indexes(steps)),
+                "rollout_records": int(training.metrics.get("rollout_records", len(steps))),
+                "ppo_records": int(training.metrics.get("ppo_records", 0)),
                 "updated": updated,
                 "loss": loss if updated else None,
                 "seconds": round(time.monotonic() - started, 3),
@@ -747,6 +791,13 @@ def run_unpaced_training_set(
                 continue
 
             episode_id += 1
+            evaluation_dataset = episode_store.create(
+                episode_id=episode_id,
+                mode="evaluate",
+                source="unpaced",
+                seed=episode_id,
+                policy_stride_ticks=POLICY_STRIDE_TICKS,
+            )
             evaluation, _unused = run_episode(
                 model,
                 map_path,
@@ -755,7 +806,18 @@ def run_unpaced_training_set(
                 seed=episode_id,
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "evaluate"),
+                dataset=evaluation_dataset,
             )
+            evaluation_dataset.finalize(
+                result=evaluation.result,
+                finish_world_tick=evaluation.finish_world_tick,
+                terminal_reward=reward_for_result(
+                    evaluation.result, evaluation.progress
+                ),
+                trainable=False,
+                progress=evaluation.progress,
+            )
+            episode_store.rotate()
             write("EVALUATION", {
                 "mode": "unpaced",
                 "episode_id": episode_id,

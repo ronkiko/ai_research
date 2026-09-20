@@ -56,6 +56,12 @@ from game2.v2.player.learned.runtime import (
     LearnedPlayer,
     POLICY_STRIDE_TICKS,
 )
+from game2.v2.training.work import (
+    DEFAULT_EPISODE_STORE,
+    EpisodeDataset,
+    EpisodeStore,
+    train_episode,
+)
 
 
 def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
@@ -169,7 +175,8 @@ class ModelRuntime:
 
     def __init__(self, player: LearnedPlayer, *, listen_host: str = "127.0.0.1",
                  listen_port: int = 0, inference_delay: float = 0.0,
-                 trajectory_log: str | Path | None = None):
+                 trajectory_log: str | Path | None = None,
+                 episode_store: str | Path = DEFAULT_EPISODE_STORE):
         if not isinstance(listen_host, str) or not listen_host:
             raise ValueError("listen_host must be non-empty")
         if type(listen_port) is not int or not 0 <= listen_port <= 65535:
@@ -183,6 +190,8 @@ class ModelRuntime:
         self.trajectory_log = (
             Path(trajectory_log) if trajectory_log is not None else None
         )
+        self.episode_store = EpisodeStore(episode_store)
+        self._episode_dataset: EpisodeDataset | None = None
         self.bound_address: tuple[str, int] | None = None
         self._decision_id = 0
         self._samples: dict[int, object] = {}
@@ -419,19 +428,31 @@ class ModelRuntime:
         trainable = message["trainable"] and message["result"] in {
             "success", "dead", "timeout",
         }
+        dataset = self._episode_dataset
+        if dataset is None:
+            raise ProtocolError("EPISODE_END has no active EpisodeDataset")
+        dataset.finalize(
+            result=message["result"],
+            finish_world_tick=message["finish_world_tick"],
+            terminal_reward=message["reward"],
+            trainable=trainable,
+        )
         metrics: dict[str, object] = {}
         if trainable and self.player.episode_mode == "train":
-            updated, loss = self.player.apply_result(
-                message["reward"], message["finish_world_tick"]
-            )
-            diagnostics = tuple(
-                getattr(self.player, "last_update_diagnostics", ())
-            )
-            metrics.update(getattr(self.player, "last_update_metrics", {}))
+            training = train_episode(self.player, dataset)
+            updated, loss = training.updated, training.loss
+            diagnostics = training.diagnostics
+            metrics.update(training.metrics)
         else:
-            self.player.reset_episode()
             updated, loss = False, 0.0
             diagnostics = ()
+            metrics.update({
+                "rollout_records": len(dataset.steps()),
+                "ppo_records": 0,
+                "optimizer_steps": 0,
+            })
+        self.player.reset_episode()
+        self.episode_store.rotate()
         metrics["policy_stride_ticks"] = POLICY_STRIDE_TICKS
         metrics["decision_count"] = self._episode_decision_count
         metrics["actuated_count"] = self._episode_actuated_count
@@ -450,6 +471,7 @@ class ModelRuntime:
         self._append_ppo_diagnostics(episode_id, diagnostics)
         self._append_update_summary(episode_id, metrics)
         self._samples.clear()
+        self._episode_dataset = None
         self._episode_id = None
         self._active = False
         self._control_tick = None
@@ -469,6 +491,13 @@ class ModelRuntime:
             if self._active:
                 raise ProtocolError("PREPARE arrived before EPISODE_END")
             self.player.prepare_episode(message["mode"], message["seed"])
+            self._episode_dataset = self.episode_store.create(
+                episode_id=message["episode_id"],
+                mode=message["mode"],
+                source="realtime",
+                seed=message["seed"],
+                policy_stride_ticks=POLICY_STRIDE_TICKS,
+            )
             self._episode_id = message["episode_id"]
             self._active = True
             self._samples.clear()
@@ -492,6 +521,12 @@ class ModelRuntime:
             if sample is not None:
                 self._episode_actuated_count += 1
                 self.player.record_actuated(sample)
+                if self._episode_dataset is not None:
+                    self._episode_dataset.upsert_sample(
+                        sample,
+                        duration_ticks=POLICY_STRIDE_TICKS,
+                        actuated=True,
+                    )
                 if self._episode_id is not None:
                     self._append_policy_action(self._episode_id, sample)
             return pending_observation
@@ -512,6 +547,11 @@ class ModelRuntime:
         sample = self.player.process_grid(frame)
         if sample is not None:
             self._episode_decision_count += 1
+            if self._episode_dataset is None:
+                raise RuntimeError("Model decision has no active EpisodeDataset")
+            self._episode_dataset.upsert_sample(
+                sample, duration_ticks=POLICY_STRIDE_TICKS
+            )
             change = sample.action_decision
             if not isinstance(change, ControlChange):
                 raise TypeError("Model policy must return a ControlChange")
@@ -523,6 +563,9 @@ class ModelRuntime:
                     self._append_policy_action(self._episode_id, sample)
                 return None
             sample, applied_change = self._gate_control_request(sample)
+            self._episode_dataset.upsert_sample(
+                sample, duration_ticks=POLICY_STRIDE_TICKS
+            )
             if hasattr(self.player, "latest_sample"):
                 self.player.latest_sample = sample
             if hasattr(self.player, "latest_decision"):
@@ -616,6 +659,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--optimizer-checkpoint")
     parser.add_argument("--checkpoint-dir")
     parser.add_argument("--trajectory-log")
+    parser.add_argument("--episode-store", default=str(DEFAULT_EPISODE_STORE))
     parser.add_argument("--inference-delay", type=float, default=0.0)
     return parser
 
@@ -668,6 +712,7 @@ def main(argv=None) -> int:
             listen_port=args.listen_port,
             inference_delay=args.inference_delay,
             trajectory_log=args.trajectory_log,
+            episode_store=args.episode_store,
         ).run(planner_path, motor_path, critic_path, optimizer_path)
     except (EOFError, OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:
         print(f"ERROR Model runtime failed: {exc}", file=sys.stderr, flush=True)
