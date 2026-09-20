@@ -11,9 +11,10 @@ from game2.v2.contracts.vision import VisionGrid
 from game2.v2.training.work.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
 from .contracts import (
     ActionDecision,
-    ControlChange,
+    ButtonCommand,
+    ControlCommand,
     MotorGoal,
-    apply_control_change,
+    apply_control_command,
 )
 from .critic import CNNCritic
 from .motor import motor_input_tensor
@@ -44,7 +45,7 @@ class DecisionSample:
     vision_grid: VisionGrid
     motor_goal: MotorGoal
     motion_x: float
-    action_decision: ControlChange
+    action_decision: ControlCommand
     log_prob: float | None = None
     pad_right: bool = False
     pad_jump: bool = False
@@ -216,50 +217,49 @@ class LearnedPlayer:
                 )
                 value = float(self.critic(vision)[0])
 
-        probabilities = torch.sigmoid(logits)
+        if logits.ndim != 1 or logits.shape[0] != 6:
+            raise ValueError("Motor Controller must return six command logits")
+        button_logits = logits.reshape(2, 3)
+        probabilities = torch.softmax(button_logits, dim=1)
         if self._episode_mode == "train":
             if self._episode_generator is None:
                 raise RuntimeError("train episode has no random generator")
-            random_values = torch.rand(
-                probabilities.shape,
+            action_tensor = torch.multinomial(
+                probabilities,
+                1,
+                replacement=True,
                 generator=self._episode_generator,
-                dtype=probabilities.dtype,
-                device=probabilities.device,
+            ).squeeze(1)
+            selected_log_prob = torch.log_softmax(button_logits, dim=1).gather(
+                1, action_tensor.unsqueeze(1)
             )
-            action_tensor = (
-                random_values < probabilities
-            ).to(dtype=logits.dtype)
-            log_prob = float(
-                -torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits, action_tensor, reduction="none"
-                ).sum()
-            )
+            log_prob = float(selected_log_prob.sum())
         else:
-            action_tensor = logits >= 0.0
+            action_tensor = button_logits.argmax(dim=1)
             log_prob = None
 
         goal = MotorGoal(
             float(planner_output[0].detach()),
             float(planner_output[1].detach()),
         )
-        change = ControlChange(
-            bool(action_tensor[0].item()),
-            bool(action_tensor[1].item()),
+        command = ControlCommand(
+            ButtonCommand(int(action_tensor[0].item())),
+            ButtonCommand(int(action_tensor[1].item())),
         )
-        desired_state = apply_control_change(pad_state, change)
+        desired_state = apply_control_command(pad_state, command)
         return DecisionSample(
             frame.world_tick,
             frame,
             goal,
             motion_x,
-            change,
+            command,
             log_prob,
             pad_state.right,
             pad_state.jump,
             value,
             desired_state,
-            prob_right=float(probabilities[0]),
-            prob_jump=float(probabilities[1]),
+            prob_right=float(probabilities[0, action_tensor[0]]),
+            prob_jump=float(probabilities[1, action_tensor[1]]),
             self_x=(
                 None if self_position is None else float(self_position[0])
             ),
@@ -298,21 +298,21 @@ class LearnedPlayer:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
                 raise TypeError("Planner returned an invalid MotorGoal")
-            change = self.motor_controller.decide(
+            command = self.motor_controller.decide(
                 goal,
                 motion_x,
                 self.actuated_state.right,
                 self.actuated_state.jump,
             )
-            if not isinstance(change, ControlChange):
-                raise TypeError("Motor Controller returned an invalid ControlChange")
-            desired_state = apply_control_change(self.actuated_state, change)
+            if not isinstance(command, ControlCommand):
+                raise TypeError("Motor Controller returned an invalid ControlCommand")
+            desired_state = apply_control_command(self.actuated_state, command)
             sample = DecisionSample(
                 frame.world_tick,
                 frame,
                 goal,
                 motion_x,
-                change,
+                command,
                 None,
                 self.actuated_state.right,
                 self.actuated_state.jump,
@@ -334,7 +334,7 @@ class LearnedPlayer:
 
         desired_state = sample.desired_state
         if desired_state is None:
-            desired_state = apply_control_change(
+            desired_state = apply_control_command(
                 self.actuated_state, sample.action_decision
             )
         self.latest_goal = sample.motor_goal

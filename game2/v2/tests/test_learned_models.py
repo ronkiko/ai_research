@@ -21,7 +21,13 @@ from game2.v2.player.learned.checkpoint import (
     save_motor_controller,
     save_planner,
 )
-from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
+from game2.v2.player.learned.contracts import (
+    ActionDecision,
+    ButtonCommand,
+    ControlCommand,
+    MotorGoal,
+    apply_control_command,
+)
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582, motor_input
 from game2.v2.player.learned.planner import CNNPlanner
@@ -75,8 +81,27 @@ class LearnedContractTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ActionDecision(1, False)
         with self.assertRaises(TypeError):
-            ControlChange(1, False)
-        self.assertTrue(ControlChange(True, False).any)
+            ControlCommand(True, ButtonCommand.KEEP)
+        self.assertFalse(
+            ControlCommand(ButtonCommand.KEEP, ButtonCommand.KEEP).any
+        )
+        self.assertTrue(
+            ControlCommand(ButtonCommand.PRESS, ButtonCommand.KEEP).any
+        )
+        self.assertEqual(
+            apply_control_command(
+                ActionDecision(False, True),
+                ControlCommand(ButtonCommand.PRESS, ButtonCommand.KEEP),
+            ),
+            ActionDecision(True, True),
+        )
+        self.assertEqual(
+            apply_control_command(
+                ActionDecision(True, True),
+                ControlCommand(ButtonCommand.KEEP, ButtonCommand.RELEASE),
+            ),
+            ActionDecision(True, False),
+        )
 
     def test_multiscale_grid_becomes_fine_logical_cnn_channels(self):
         grid = _grid(3, 2)
@@ -121,7 +146,7 @@ class LearnedModelTests(unittest.TestCase):
             frame,
             MotorGoal(0.0, 0.0),
             0.0,
-            ControlChange(True, True),
+            ControlCommand(ButtonCommand.PRESS, ButtonCommand.PRESS),
             None,
             False,
             False,
@@ -151,11 +176,11 @@ class LearnedModelTests(unittest.TestCase):
         )
         self.assertEqual(
             (controller.output.in_features, controller.output.out_features),
-            (8, 2),
+            (8, 6),
         )
         self.assertIsInstance(
             controller.decide(MotorGoal(0.1, -0.2), 0.3, True, False),
-            ControlChange,
+            ControlCommand,
         )
 
     def test_fresh_models_are_reproducible_and_rng_isolated(self):

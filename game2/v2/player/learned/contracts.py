@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import IntEnum
 from numbers import Real
 
 
@@ -43,34 +44,78 @@ class ActionDecision:
             raise TypeError("ActionDecision fields must be bool")
 
 
-@dataclass(frozen=True)
-class ControlChange:
-    """Policy answer to whether RIGHT or JUMP should change now."""
+class ButtonCommand(IntEnum):
+    """One explicit instruction for a persistent virtual-pad button."""
 
-    right: bool
-    jump: bool
+    KEEP = 0
+    PRESS = 1
+    RELEASE = 2
+
+
+@dataclass(frozen=True)
+class ControlCommand:
+    """Independent KEEP/PRESS/RELEASE instructions for RIGHT and JUMP."""
+
+    right: ButtonCommand
+    jump: ButtonCommand
 
     def __post_init__(self) -> None:
-        if type(self.right) is not bool or type(self.jump) is not bool:
-            raise TypeError("ControlChange fields must be bool")
+        for name in ("right", "jump"):
+            value = getattr(self, name)
+            if isinstance(value, ButtonCommand):
+                continue
+            if type(value) is int:
+                try:
+                    value = ButtonCommand(value)
+                except ValueError as exc:
+                    raise ValueError(f"{name} command is invalid") from exc
+                object.__setattr__(self, name, value)
+                continue
+            raise TypeError(f"{name} command must be a ButtonCommand")
 
     @property
     def any(self) -> bool:
-        return self.right or self.jump
+        return (
+            self.right is not ButtonCommand.KEEP
+            or self.jump is not ButtonCommand.KEEP
+        )
 
 
-def apply_control_change(
-    state: ActionDecision, change: ControlChange
+def _apply_button_command(current: bool, command: ButtonCommand) -> bool:
+    if command is ButtonCommand.KEEP:
+        return current
+    if command is ButtonCommand.PRESS:
+        return True
+    if command is ButtonCommand.RELEASE:
+        return False
+    raise ValueError("unknown ButtonCommand")
+
+
+def apply_control_command(
+    state: ActionDecision, command: ControlCommand
 ) -> ActionDecision:
-    """Toggle only the buttons requested by a policy ControlChange."""
+    """Resolve explicit button commands into the desired persistent pad state."""
     if not isinstance(state, ActionDecision):
         raise TypeError("state must be an ActionDecision")
-    if not isinstance(change, ControlChange):
-        raise TypeError("change must be a ControlChange")
+    if not isinstance(command, ControlCommand):
+        raise TypeError("command must be a ControlCommand")
     return ActionDecision(
-        state.right ^ change.right,
-        state.jump ^ change.jump,
+        _apply_button_command(state.right, command.right),
+        _apply_button_command(state.jump, command.jump),
     )
 
 
-__all__ = ["ActionDecision", "ControlChange", "MotorGoal", "apply_control_change"]
+# Compatibility names for callers migrated in the second commit.
+ControlChange = ControlCommand
+apply_control_change = apply_control_command
+
+
+__all__ = [
+    "ActionDecision",
+    "ButtonCommand",
+    "ControlChange",
+    "ControlCommand",
+    "MotorGoal",
+    "apply_control_change",
+    "apply_control_command",
+]

@@ -7,10 +7,10 @@ from numbers import Real
 import torch
 from torch import nn
 
-from .contracts import ControlChange, MotorGoal
+from .contracts import ButtonCommand, ControlCommand, MotorGoal
 
 
-MOTOR_CONTROLLER_CONFIGURATION = "5-8-2-dendy-latch-v1"
+MOTOR_CONTROLLER_CONFIGURATION = "5-8-6-explicit-command-v2"
 
 
 def _normalized_motion(value: object) -> float:
@@ -66,13 +66,13 @@ def motor_input_tensor(
 
 
 class MotorController582(nn.Module):
-    """Decide whether RIGHT and JUMP should change from their current state."""
+    """Choose KEEP/PRESS/RELEASE independently for RIGHT and JUMP."""
 
     def __init__(self) -> None:
         super().__init__()
         self.hidden = nn.Linear(5, 8)
         self.activation = nn.ReLU()
-        self.output = nn.Linear(8, 2)
+        self.output = nn.Linear(8, 6)
         self.initialization_seed: int | None = None
 
     @classmethod
@@ -115,8 +115,8 @@ class MotorController582(nn.Module):
         motion_x: float,
         current_right: bool = False,
         current_jump: bool = False,
-    ) -> ControlChange:
-        """Return a per-button change mask; False means keep current state."""
+    ) -> ControlCommand:
+        """Return explicit KEEP/PRESS/RELEASE commands for both buttons."""
         was_training = self.training
         self.eval()
         try:
@@ -126,9 +126,12 @@ class MotorController582(nn.Module):
                 ))
         finally:
             self.train(was_training)
-        return ControlChange(
-            right=bool(logits[0].item() >= 0.0),
-            jump=bool(logits[1].item() >= 0.0),
+        if logits.ndim != 1 or logits.shape[0] != 6:
+            raise ValueError("MotorController582 must return six command logits")
+        choices = logits.reshape(2, 3).argmax(dim=1)
+        return ControlCommand(
+            right=ButtonCommand(int(choices[0].item())),
+            jump=ButtonCommand(int(choices[1].item())),
         )
 
 

@@ -33,8 +33,9 @@ from game2.v2.contracts.model import (
 )
 from game2.v2.player.learned.contracts import (
     ActionDecision,
-    ControlChange,
-    apply_control_change,
+    ButtonCommand,
+    ControlCommand,
+    apply_control_command,
 )
 from game2.v2.player.learned.checkpoint import (
     load_critic,
@@ -243,12 +244,9 @@ class ModelRuntime:
         if type(pad_right) is bool and type(pad_jump) is bool:
             return ActionDecision(pad_right, pad_jump)
         desired = getattr(sample, "desired_state", None)
-        change = getattr(sample, "action_decision", None)
-        if isinstance(desired, ActionDecision) and isinstance(change, ControlChange):
-            return ActionDecision(
-                desired.right ^ change.right,
-                desired.jump ^ change.jump,
-            )
+        command = getattr(sample, "action_decision", None)
+        if isinstance(desired, ActionDecision) and isinstance(command, ControlCommand):
+            return desired
         raise TypeError("Model sample does not expose its controller base state")
 
     @staticmethod
@@ -266,7 +264,7 @@ class ModelRuntime:
         updated.suppressed_buttons = suppressed_buttons
         return updated
 
-    def _gate_control_request(self, sample) -> tuple[object, ControlChange]:
+    def _gate_control_request(self, sample) -> tuple[object, ControlCommand]:
         tick = sample.world_tick
         if type(tick) is not int or tick < 0:
             raise ProtocolError("Model control request has invalid world_tick")
@@ -280,24 +278,23 @@ class ModelRuntime:
             self._control_tick_state = self._sample_pad_state(sample)
 
         requested = sample.action_decision
-        allowed_right = requested.right and "right" not in self._control_used_buttons
-        allowed_jump = requested.jump and "jump" not in self._control_used_buttons
+        if not isinstance(requested, ControlCommand):
+            raise TypeError("Model policy must return a ControlCommand")
+        resolved = apply_control_command(self._control_tick_state, requested)
         suppressed = []
-        if requested.right:
-            if allowed_right:
-                self._control_used_buttons.add("right")
-            else:
+        right_command = requested.right
+        jump_command = requested.jump
+        if resolved.right == self._control_tick_state.right:
+            if right_command is not ButtonCommand.KEEP:
                 suppressed.append("right")
-        if requested.jump:
-            if allowed_jump:
-                self._control_used_buttons.add("jump")
-            else:
+            right_command = ButtonCommand.KEEP
+        if resolved.jump == self._control_tick_state.jump:
+            if jump_command is not ButtonCommand.KEEP:
                 suppressed.append("jump")
+            jump_command = ButtonCommand.KEEP
 
-        applied = ControlChange(allowed_right, allowed_jump)
-        self._control_tick_state = apply_control_change(
-            self._control_tick_state, applied
-        )
+        applied = ControlCommand(right_command, jump_command)
+        self._control_tick_state = resolved
         sample = self._replace_control_result(
             sample, self._control_tick_state, tuple(suppressed)
         )
@@ -439,12 +436,12 @@ class ModelRuntime:
             self._episode_dataset.upsert_sample(
                 sample, duration_ticks=POLICY_STRIDE_TICKS
             )
-            change = sample.action_decision
-            if not isinstance(change, ControlChange):
-                raise TypeError("Model policy must return a ControlChange")
-            if not change.any:
+            command = sample.action_decision
+            if not isinstance(command, ControlCommand):
+                raise TypeError("Model policy must return a ControlCommand")
+            if not command.any:
                 return None
-            sample, applied_change = self._gate_control_request(sample)
+            sample, applied_command = self._gate_control_request(sample)
             self._episode_dataset.upsert_sample(
                 sample, duration_ticks=POLICY_STRIDE_TICKS
             )
@@ -452,7 +449,7 @@ class ModelRuntime:
                 self.player.latest_sample = sample
             if hasattr(self.player, "latest_decision"):
                 self.player.latest_decision = sample.desired_state
-            if not applied_change.any:
+            if not applied_command.any:
                 return None
             desired_state = sample.desired_state
             if not isinstance(desired_state, ActionDecision):
