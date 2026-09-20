@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import torch
 
 from game2.v2.player.learned.contracts import ActionDecision
 from game2.v2.training.unpaced import (
+    EpisodeResult,
     _progress_bar,
     _rollout_line,
     load_model,
     run_episode,
+    run_unpaced_training_set,
     save_checkpoints,
 )
 
@@ -55,6 +60,139 @@ class UnpacedTrainingTests(unittest.TestCase):
         )
         self.assertNotIn("x=", line)
         self.assertNotIn("airborne", line)
+
+    def test_non_tty_human_output_has_no_duplicate_train_or_ppo_batch_spam(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "set.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "world_id": "platformer",
+                "training_set_level": 1,
+                "training_maps": [{
+                    "map_id": "flat_run",
+                    "path": str(FLAT_RUN),
+                }],
+                "exam_resource_id": "exam",
+            }), encoding="utf-8")
+            output = io.StringIO()
+
+            def fake_ppo(_model, _steps, *, seed, should_stop, on_progress):
+                on_progress({
+                    "epoch": 1,
+                    "epochs": 4,
+                    "batch": 1,
+                    "batches": 2,
+                    "step": 1,
+                    "steps": 8,
+                    "loss": 0.2,
+                })
+                on_progress({
+                    "epoch": 4,
+                    "epochs": 4,
+                    "batch": 2,
+                    "batches": 2,
+                    "step": 8,
+                    "steps": 8,
+                    "loss": 0.1,
+                })
+                return True, 0.15
+
+            with (
+                mock.patch(
+                    "game2.v2.training.unpaced.load_model",
+                    return_value=SimpleNamespace(),
+                ),
+                mock.patch(
+                    "game2.v2.training.unpaced.run_episode",
+                    return_value=(
+                        EpisodeResult("timeout", 0.25, 1200, 1200),
+                        [object()],
+                    ),
+                ),
+                mock.patch(
+                    "game2.v2.training.unpaced.ppo_update",
+                    side_effect=fake_ppo,
+                ),
+                mock.patch("game2.v2.training.unpaced.save_checkpoints"),
+            ):
+                result = run_unpaced_training_set(
+                    set_path=manifest,
+                    checkpoint_dir=root / "checkpoints",
+                    max_episodes=1,
+                    episode_limit=1200,
+                    fresh=True,
+                    output=output,
+                )
+
+            self.assertEqual(result, 1)
+            text = output.getvalue()
+            self.assertEqual(text.count("Train 1   TIMEOUT"), 1)
+            self.assertEqual(text.count("PPO 1      updated"), 1)
+            self.assertNotIn("epoch 1/4", text)
+            self.assertNotIn("batch 1/2", text)
+            self.assertNotIn("success 0/1", text)
+
+    def test_json_output_keeps_ppo_progress_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "set.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "world_id": "platformer",
+                "training_set_level": 1,
+                "training_maps": [{
+                    "map_id": "flat_run",
+                    "path": str(FLAT_RUN),
+                }],
+                "exam_resource_id": "exam",
+            }), encoding="utf-8")
+            output = io.StringIO()
+
+            def fake_ppo(_model, _steps, *, seed, should_stop, on_progress):
+                on_progress({
+                    "epoch": 1,
+                    "epochs": 4,
+                    "batch": 1,
+                    "batches": 1,
+                    "step": 1,
+                    "steps": 4,
+                    "loss": 0.2,
+                })
+                return True, 0.2
+
+            with (
+                mock.patch(
+                    "game2.v2.training.unpaced.load_model",
+                    return_value=SimpleNamespace(),
+                ),
+                mock.patch(
+                    "game2.v2.training.unpaced.run_episode",
+                    return_value=(
+                        EpisodeResult("timeout", 0.25, 1200, 1200),
+                        [object()],
+                    ),
+                ),
+                mock.patch(
+                    "game2.v2.training.unpaced.ppo_update",
+                    side_effect=fake_ppo,
+                ),
+                mock.patch("game2.v2.training.unpaced.save_checkpoints"),
+            ):
+                run_unpaced_training_set(
+                    set_path=manifest,
+                    checkpoint_dir=root / "checkpoints",
+                    max_episodes=1,
+                    episode_limit=1200,
+                    fresh=True,
+                    output=output,
+                    json_output=True,
+                )
+
+            text = output.getvalue()
+            self.assertIn("PPO {", text)
+            self.assertIn('"epoch":1', text)
+            self.assertIn("PROGRESS {", text)
 
     def test_unpaced_episode_honors_stop_callback_inside_rollout(self):
         model = SimpleNamespace(

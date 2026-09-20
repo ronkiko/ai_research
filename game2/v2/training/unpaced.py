@@ -468,6 +468,8 @@ def run_unpaced_training_set(
             return
 
         if prefix == "PPO":
+            if not interactive:
+                return
             step = int(payload["step"])
             total_steps = int(payload["steps"])
             fraction = step / max(total_steps, 1)
@@ -478,12 +480,9 @@ def run_unpaced_training_set(
                 f"batch {int(payload['batch'])}/{int(payload['batches'])} · "
                 f"loss {float(payload['loss']):.4f}"
             )
-            if interactive:
-                output.write("\r" + line + "\x1b[K")
-                output.flush()
-                live_active = True
-            else:
-                write_line(line)
+            output.write("\r" + line + "\x1b[K")
+            output.flush()
+            live_active = True
             return
 
         if prefix == "TRAIN_RESULT":
@@ -522,15 +521,6 @@ def run_unpaced_training_set(
             return
 
         if prefix == "PROGRESS":
-            attempts = int(payload["attempts"])
-            successes = int(payload["successes"])
-            success_percent = 100.0 * successes / max(attempts, 1)
-            write_line(
-                f"Train {int(payload['episode_id']):<4} "
-                f"{str(payload['result']).upper()} · "
-                f"best {100.0 * float(payload['progress']):.1f}% · "
-                f"success {successes}/{attempts} ({success_percent:.1f}%)"
-            )
             return
 
         if prefix == "EVALUATION":
