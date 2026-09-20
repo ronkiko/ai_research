@@ -1,11 +1,9 @@
 """Realtime learned Player process using only the Model IPC boundary."""
 from __future__ import annotations
 
-import json
 import socket
 import time
 from collections.abc import Callable, Iterable
-from pathlib import Path
 from typing import cast
 
 from game2.v2.contracts.framing import ProtocolError
@@ -43,30 +41,6 @@ PPO_RATING_DISPLAY_SECONDS = 0.5
 def _pause_after_ppo_ratings(update: dict, sleeper: Callable[[float], None]) -> None:
     if update.get("updated") is True:
         sleeper(PPO_RATING_DISPLAY_SECONDS)
-
-
-class VisionTrajectoryLog:
-    """JSONL episode boundaries; ModelRuntime owns all action rows."""
-
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a", encoding="utf-8")
-
-    def _write(self, payload: dict) -> None:
-        self._handle.write(
-            json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
-        )
-        self._handle.flush()
-
-    def start(self, episode_id: int, mode: str) -> None:
-        self._write({"e": episode_id, "m": mode})
-
-    def finish(self, episode_id: int, result: str, world_tick: int) -> None:
-        self._write({"e": episode_id, "r": result, "t": world_tick})
-
-    def close(self) -> None:
-        self._handle.close()
 
 
 class TrainingPeer:
@@ -192,10 +166,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
                  mode: str, *, first_lifecycle: bool, vision, joystick, action_hz: int,
                  sleeper: Callable[[float], None], clock: Callable[[], float],
                  ack_settle_timeout: float,
-                 on_started: Callable[[dict], None],
-                 trajectory: VisionTrajectoryLog | None = None) -> tuple[dict, bool, bool]:
-    if trajectory is not None:
-        trajectory.start(episode_id, mode)
+                 on_started: Callable[[dict], None]) -> tuple[dict, bool, bool]:
     connection.clear_terminal_events()
     connection.clear_acknowledgements()
     ack_statuses: dict[int, list[str]] = {}
@@ -215,8 +186,6 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     if not accepted_lifecycle:
         finished = episode_finished_message(episode_id, 0, 0, "timeout", False, 0.0, 0, 0)
         model.episode_end(episode_id, "timeout", 0.0, False)
-        if trajectory is not None:
-            trajectory.finish(episode_id, "timeout", 0)
         return finished, False, False
 
     assert lifecycle_ack is not None
@@ -328,8 +297,6 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     finished = episode_finished_message(
         episode_id, started_tick, finish_tick, latest_terminal["result"], trainable,
         0.0 if dirty else progress_tracker.progress, accepted, rejected)
-    if trajectory is not None:
-        trajectory.finish(episode_id, latest_terminal["result"], finish_tick)
     return finished, trainable, True
 
 
@@ -339,8 +306,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
                         peer_factory=TrainingPeer, model_factory=ModelClient,
                         sleeper: Callable[[float], None] = time.sleep,
                         clock: Callable[[], float] = time.monotonic,
-                        ack_settle_timeout: float = 0.25,
-                        trajectory_log_path: str | Path | None = None) -> int:
+                        ack_settle_timeout: float = 0.25) -> int:
     if action_hz <= 0:
         raise ValueError("action_hz must be positive")
     manifest = connection.manifest
@@ -350,10 +316,6 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
     joystick = joystick_factory(manifest)
     peer = peer_factory(trainer_host, trainer_port)
     model = model_factory(model_host, model_port)
-    trajectory = (
-        VisionTrajectoryLog(trajectory_log_path)
-        if trajectory_log_path is not None else None
-    )
     actor_started = False
     prepared: dict | None = None
     awaiting_update: int | None = None
@@ -388,8 +350,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
                     connection, model, episode_id, prepared["mode"],
                     first_lifecycle=not actor_started, vision=vision, joystick=joystick,
                     action_hz=action_hz, sleeper=sleeper, clock=clock,
-                    ack_settle_timeout=ack_settle_timeout, on_started=peer.send,
-                    trajectory=trajectory)
+                    ack_settle_timeout=ack_settle_timeout, on_started=peer.send)
                 peer.send(finished)
                 if lifecycle_accepted:
                     actor_started = True
@@ -449,8 +410,6 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
             return 0
         raise
     finally:
-        if trajectory is not None:
-            trajectory.close()
         model.close()
         peer.close()
         vision.close()
@@ -469,5 +428,4 @@ def run_attached_training_player(connection: PlayerConnection, trainer_host: str
 
 
 __all__ = ["ModelClient", "PPO_RATING_DISPLAY_SECONDS", "TrainingPeer",
-           "VisionTrajectoryLog", "run_attached_training_player",
-           "run_training_player"]
+           "run_attached_training_player", "run_training_player"]

@@ -1,7 +1,6 @@
 """Human spectator renderer for public Grid Vision plus presentation overlays."""
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from ....contracts.vision import (
     PHYSICS_SOLID,
     VisionGrid,
 )
+from ....training.work import EpisodeDataset, EpisodeStore
 
 
 PHYSICS_COLORS = {
@@ -50,13 +50,14 @@ class VisionPreviewRenderer:
     """Render VisionGrid with optional human-only terminal status."""
 
     def __init__(
-        self, world, *, target_surface, pygame_module, trajectory_log=None
+        self, world, *, target_surface, pygame_module, episode_store=None
     ):
         self.world = world
         self.target_surface = target_surface
         self.pygame = pygame_module
-        self.trajectory_log = (
-            Path(trajectory_log) if trajectory_log is not None else None
+        self.episode_store = (
+            EpisodeStore(Path(episode_store))
+            if episode_store is not None else None
         )
         if target_surface.get_size() != (world.width, world.height):
             raise ValueError("Vision preview target must match World dimensions")
@@ -68,8 +69,7 @@ class VisionPreviewRenderer:
         self._trail: list[tuple[int, int]] = []
         self._trail_epoch: int | None = None
         self._trail_tick = -1
-        self._trajectory_offset = 0
-        self._trajectory_file_id: tuple[int, int] | None = None
+        self._dataset_stamp: tuple[str, int, int] | None = None
         self._trajectory_episode: int | None = None
         self._rated_episode: int | None = None
         self._action_ticks: dict[int, tuple[int, int]] = {}
@@ -179,101 +179,71 @@ class VisionPreviewRenderer:
             self._advantage_font.set_bold(True)
         return self._advantage_font
 
-    @staticmethod
-    def _trajectory_point(payload: dict) -> tuple[int, tuple[int, int]] | None:
-        tick = payload.get("t")
-        x = payload.get("x")
-        y = payload.get("y")
-        if type(tick) is not int:
-            return None
-        if type(x) not in (int, float) or type(y) not in (int, float):
-            return None
-        if not math.isfinite(float(x)) or not math.isfinite(float(y)):
-            return None
-        return tick, (round(float(x)), round(float(y)))
-
-    def _reset_trajectory_annotations(self) -> None:
+    def _reset_episode_annotations(self) -> None:
         self._trajectory_episode = None
         self._rated_episode = None
         self._action_ticks.clear()
         self._rated_ticks.clear()
 
-    def _consume_trajectory_row(self, payload: dict) -> bool:
-        episode_id = payload.get("e")
-        if type(episode_id) is not int:
+    def refresh_episode_data(self) -> bool:
+        """Refresh policy ticks and PPO ratings from the newest episode SQLite."""
+        if self.episode_store is None:
             return False
-        if "m" in payload:
-            changed = (
-                episode_id != self._trajectory_episode
-                or bool(self._action_ticks)
-                or bool(self._rated_ticks)
-            )
-            if episode_id != self._trajectory_episode:
-                self._action_ticks.clear()
-                self._rated_ticks.clear()
-                self._rated_episode = None
-            self._trajectory_episode = episode_id
-            return changed
-        if payload.get("k") != "a" or episode_id != self._trajectory_episode:
-            return False
-        point = self._trajectory_point(payload)
-        if point is None:
-            return False
-        tick, position = point
-        if "adv" not in payload:
-            changed = self._action_ticks.get(tick) != position
-            self._action_ticks[tick] = position
-            return changed
-        advantage = payload.get("adv")
-        if type(advantage) not in (int, float) or not math.isfinite(float(advantage)):
-            return False
-        if abs(float(advantage)) <= 1e-12:
-            return self._rated_ticks.pop(tick, None) is not None
-        if episode_id != self._rated_episode:
-            self._rated_episode = episode_id
-            self._rated_ticks.clear()
-        item = (position, float(advantage))
-        changed = self._rated_ticks.get(tick) != item
-        self._rated_ticks[tick] = item
-        return changed
-
-    def refresh_trajectory(self) -> bool:
-        if self.trajectory_log is None:
-            return False
+        path = self.episode_store.latest_path()
+        if path is None:
+            if self._dataset_stamp is None:
+                return False
+            self._dataset_stamp = None
+            self._reset_episode_annotations()
+            return True
         try:
-            stat = self.trajectory_log.stat()
+            stat = path.stat()
         except FileNotFoundError:
             return False
-        file_id = (stat.st_dev, stat.st_ino)
-        changed = False
-        if (
-            self._trajectory_file_id is not None
-            and (
-                file_id != self._trajectory_file_id
-                or stat.st_size < self._trajectory_offset
-            )
-        ):
-            self._trajectory_offset = 0
-            self._reset_trajectory_annotations()
-            changed = True
-        self._trajectory_file_id = file_id
-        with self.trajectory_log.open("rb") as handle:
-            handle.seek(self._trajectory_offset)
-            data = handle.read()
-        if not data:
-            return changed
-        newline = data.rfind(b"\n")
-        if newline < 0:
-            return changed
-        complete = data[:newline + 1]
-        self._trajectory_offset += len(complete)
-        for raw_line in complete.splitlines():
-            try:
-                payload = json.loads(raw_line.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+        stamp = (path.name, stat.st_mtime_ns, stat.st_size)
+        if stamp == self._dataset_stamp:
+            return False
+
+        try:
+            episode_id, rows = EpisodeDataset(path).trace_snapshot()
+        except (OSError, ValueError):
+            return False
+
+        action_ticks: dict[int, tuple[int, int]] = {}
+        rated_ticks: dict[int, tuple[tuple[int, int], float]] = {}
+        for row in rows:
+            tick = row["world_tick"]
+            x = row["x"]
+            y = row["y"]
+            if (
+                type(tick) is not int
+                or type(x) not in (int, float)
+                or type(y) not in (int, float)
+                or not math.isfinite(float(x))
+                or not math.isfinite(float(y))
+            ):
                 continue
-            if isinstance(payload, dict):
-                changed = self._consume_trajectory_row(payload) or changed
+            position = (round(float(x)), round(float(y)))
+            action_ticks[tick] = position
+            advantage = row["advantage"]
+            if (
+                row["ppo_selected"]
+                and type(advantage) in (int, float)
+                and math.isfinite(float(advantage))
+                and abs(float(advantage)) > 1e-12
+            ):
+                rated_ticks[tick] = (position, float(advantage))
+
+        changed = (
+            self._trajectory_episode != episode_id
+            or self._action_ticks != action_ticks
+            or self._rated_ticks != rated_ticks
+        )
+        self._dataset_stamp = stamp
+        self._trajectory_episode = episode_id
+        self._rated_episode = episode_id if rated_ticks else None
+        self._action_ticks = action_ticks
+        self._rated_ticks = rated_ticks
         return changed
 
     @staticmethod
@@ -456,7 +426,7 @@ class VisionPreviewRenderer:
         self, grid: VisionGrid, terminal: str | None = None, trail_epoch: int = 0
     ):
         cell = self._validate_grid(grid)
-        self.refresh_trajectory()
+        self.refresh_episode_data()
         self.target_surface.blit(self._static(grid, cell), (0, 0))
         self._draw_metadata(self.target_surface, grid, cell)
         self._draw_grid(self.target_surface, grid, cell)
@@ -475,9 +445,8 @@ class VisionPreviewRenderer:
         self._trail.clear()
         self._trail_epoch = None
         self._trail_tick = -1
-        self._trajectory_offset = 0
-        self._trajectory_file_id = None
-        self._reset_trajectory_annotations()
+        self._dataset_stamp = None
+        self._reset_episode_annotations()
 
 
 __all__ = [

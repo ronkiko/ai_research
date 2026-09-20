@@ -31,15 +31,10 @@ class PerformanceProbeTests(unittest.TestCase):
         self.assertEqual(result["ticks"], 4)
         self.assertEqual(result["result"], "timeout")
         for name in (
-            "vision_before_seconds",
-            "bookkeeping_before_seconds",
-            "inference_seconds",
-            "input_seconds",
-            "engine_seconds",
-            "vision_after_seconds",
-            "bookkeeping_after_seconds",
+            "rollout_seconds",
             "ppo_seconds",
             "checkpoint_seconds",
+            "total_seconds",
         ):
             self.assertIn(name, result)
             self.assertGreaterEqual(float(result[name]), 0.0)

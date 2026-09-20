@@ -31,7 +31,6 @@ class EpisodeTrainingResult:
     updated: bool
     loss: float
     metrics: dict[str, object]
-    diagnostics: tuple[dict, ...]
 
 
 def unique_parameters(*modules) -> list[torch.nn.Parameter]:
@@ -181,7 +180,7 @@ def train_episode(
         dataset.write_training_annotations(
             [], updated=False, loss=0.0, metrics=metrics
         )
-        return EpisodeTrainingResult(False, 0.0, metrics, ())
+        return EpisodeTrainingResult(False, 0.0, metrics)
 
     if model.optimizer is None:
         raise RuntimeError("episode PPO requires a trainable optimizer")
@@ -362,7 +361,6 @@ def train_episode(
         for local_index, global_index in enumerate(selected_indexes)
     }
     annotations = []
-    diagnostics = []
     for index, step in enumerate(steps):
         local = selected_lookup.get(index)
         new_lp = new_value = ratio_value = None
@@ -381,26 +379,6 @@ def train_episode(
             "new_value": new_value,
             "ratio": ratio_value,
         })
-        if local is not None:
-            diagnostics.append({
-                "t": step.world_tick,
-                "x": step.self_x,
-                "y": step.self_y,
-                "a": (
-                    ("R" if step.action_right else "")
-                    + ("J" if step.action_jump else "")
-                ) or "KEEP",
-                "rw": float(rewards[index]),
-                "v": float(step.old_value),
-                "nv": new_value,
-                "gae": float(raw_gae[index]),
-                "adv": float(advantages_all[index]),
-                "ret": float(returns_all[index]),
-                "lp": float(step.old_log_prob),
-                "nlp": new_lp,
-                "ratio": ratio_value,
-                "_log": True,
-            })
 
     dataset.write_training_annotations(
         annotations,
@@ -408,9 +386,7 @@ def train_episode(
         loss=loss_value,
         metrics=metrics,
     )
-    return EpisodeTrainingResult(
-        True, loss_value, metrics, tuple(diagnostics)
-    )
+    return EpisodeTrainingResult(True, loss_value, metrics)
 
 
 __all__ = [

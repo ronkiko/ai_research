@@ -5,7 +5,6 @@ import argparse
 import json
 import queue
 from collections import deque
-import shutil
 import signal
 import socket
 import subprocess
@@ -152,19 +151,6 @@ def _resolve_map(manifest_path: Path, spec: TrainingMapSpec) -> Path:
     return (path if path.is_absolute() else manifest_path.parent / path).resolve()
 
 
-def _next_log_run(log_root: Path) -> Path:
-    log_root.mkdir(parents=True, exist_ok=True)
-    indexes = []
-    for entry in log_root.iterdir():
-        if entry.is_dir() and entry.name.startswith("run-"):
-            suffix = entry.name[4:]
-            if suffix.isdigit():
-                indexes.append(int(suffix))
-    run = log_root / f"run-{max(indexes, default=0) + 1:04d}"
-    run.mkdir()
-    return run
-
-
 class ScreenControl:
     """Optional Management-side binding to an already-running Screen Server."""
 
@@ -308,7 +294,7 @@ class TrainingRun:
 
     def _start_console(
         self, directory: Path, map_path: Path, episode_limit: int, view: str,
-        trajectory_log: Path,
+        episode_store: Path,
     ) -> tuple[ManagedProcess, Path, Path]:
         config_path = directory / "console.json"
         discovery_path = directory / "console-discovery.json"
@@ -326,7 +312,7 @@ class TrainingRun:
         ]
         if view == "vision":
             console_command.extend([
-                "--screen-trajectory-log", str(trajectory_log),
+                "--screen-episode-store", str(episode_store),
             ])
         console = self._spawn(console_command)
         try:
@@ -361,7 +347,6 @@ class TrainingRun:
         directory: Path,
         screen_control: ScreenControl | None,
         view: str,
-        trajectory_log: Path,
         episode_store: Path,
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
@@ -373,7 +358,7 @@ class TrainingRun:
                 _resolve_map(manifest_path, spec),
                 episode_limit,
                 view,
-                trajectory_log,
+                episode_store,
             )
             processes.append(console)
 
@@ -402,7 +387,6 @@ class TrainingRun:
                 sys.executable, "-m", "game2.v2.training.model_runtime",
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
                 "--checkpoint-dir", str(checkpoint_dir),
-                "--trajectory-log", str(trajectory_log),
                 "--episode-store", str(episode_store),
             ]
             if fresh:
@@ -418,7 +402,6 @@ class TrainingRun:
                 "--discovery", str(discovery_path),
                 "--model-host", model_host, "--model-port", str(model_port),
                 "--trainer-host", trainer_host, "--trainer-port", str(trainer_port),
-                "--trajectory-log", str(trajectory_log),
             ])
             processes.append(player)
             try:
@@ -522,13 +505,9 @@ class TrainingRun:
         motor = checkpoint_path / "motor.pt"
         critic = checkpoint_path / "critic.pt"
         optimizer = checkpoint_path / "optimizer.pt"
-        log_root = checkpoint_path / "logs"
         if fresh:
             EpisodeStore(episode_store_path).reset()
             self._write("FRESH reset episode datasets")
-            if log_root.exists():
-                shutil.rmtree(log_root)
-            self._write("FRESH reset logs")
             removed = []
             for checkpoint in (planner, motor, critic, optimizer):
                 if checkpoint.exists():
@@ -575,9 +554,6 @@ class TrainingRun:
                 episode_store_dir=episode_store_path,
             )
 
-        log_run = _next_log_run(log_root)
-        self._write(f"LOG run: {log_run}")
-
         self._write(
             f"TRAINING SET {manifest.training_set_level}: "
             f"{'fresh' if fresh else 'resume'}"
@@ -601,7 +577,6 @@ class TrainingRun:
                     directory=directory,
                     screen_control=screen_control,
                     view=view,
-                    trajectory_log=log_run / f"{index + 1:02d}-{spec.map_id}.jsonl",
                     episode_store=episode_store_path,
                 )
                 if not passed:

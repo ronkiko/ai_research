@@ -63,7 +63,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--episode-id", type=int, default=1)
     parser.add_argument("--mode", choices=("train", "evaluate"), default="evaluate")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--trajectory-log")
     return parser
 
 
@@ -75,8 +74,6 @@ def main(argv=None) -> int:
     try:
         if (args.trainer_host is None) != (args.trainer_port is None):
             raise ValueError("--trainer-host and --trainer-port must be provided together")
-        if args.trajectory_log is not None and args.trainer_host is None:
-            raise ValueError("--trajectory-log requires Trainer mode")
         discovery = ConsoleDiscovery.from_file(args.discovery)
         connection = PlayerConnection(discovery)
         manifest = connection.connect()
@@ -89,7 +86,6 @@ def main(argv=None) -> int:
             return run_attached_training_player(
                 connection, args.trainer_host, args.trainer_port,
                 args.model_host, args.model_port, action_hz=args.action_hz,
-                trajectory_log_path=args.trajectory_log,
             )
         model = ModelClient(args.model_host, args.model_port)
         model.connect()

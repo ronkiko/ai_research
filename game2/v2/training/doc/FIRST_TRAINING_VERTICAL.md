@@ -1,281 +1,76 @@
-# First Training Vertical
+# Current Training Vertical
 
-Status: normative architecture and executable contract for the first V2
-Train/Evaluate vertical.
+Status: executable Game2 V2 training contract.
 
-This document defines semantics and ownership. The executable shared contract,
-Trainer process, and Player training adapter implement this boundary without
-adding a Console training endpoint.
+## One Data Path
 
-## Vertical Boundary
-
-The first Player/model gameplay path is:
+Realtime and unpaced execution have one learning boundary:
 
 ```text
-public Vision -> Player/model -> public Joystick -> Console
+public Vision + public Joystick/lifecycle evidence
+                    |
+                    v
+             EpisodeDataset
+                    |
+                    v
+        canonical dataset PPO trainer
+                    |
+                    v
+              checkpoints
 ```
 
-Training is a separate control plane:
+Execution speed is not a training semantic. Realtime follows wall-clock pacing;
+unpaced advances the same fixed-step Engine as fast as possible. Both emit the
+same episode row schema and use the same `training/work/ppo.py` update.
 
-```text
-Training <-> formal Trainer/Player boundary <-> Player/model
-```
+## EpisodeDataset
 
-Training does not connect to Console. The Player runtime owns the Console
-connection and uses only public Console-facing capabilities.
+One episode is one SQLite file in `training/work/episodes/`. The file is the
+training source of truth and the universal training log. It stores:
 
-## Baseline Player
+- episode id, mode, source, seed, result, finish tick and progress;
+- exact public Vision matrices for each policy decision;
+- policy world tick and duration in world ticks;
+- motion and current virtual-pad state;
+- MotorGoal, action/toggle decision, desired pad state and policy probability;
+- SELF/GOAL positions derived from public Vision;
+- actuation acknowledgement state;
+- reward, GAE, normalized advantage and return;
+- PPO-selection flag and post-update value/log-probability/ratio;
+- aggregate PPO/update metrics.
 
-The first laboratory baseline is a **collapsed first baseline** (also called a
-single-layer/direct-action baseline), not the final V2 AI hierarchy. It is a
-small feed-forward MLP with three inputs, a small hidden layer, and two outputs.
-The V1 `5-8-2` shape is allowed as the first V2 laboratory baseline.
+The store retains at most the five newest episode files. `--fresh` clears the
+store before collection starts.
 
-In this first vertical:
+There is no parallel trajectory JSONL, in-memory replay record type, or separate
+realtime/unpaced PPO implementation.
 
-- Research Strategist is absent;
-- Planner is absent as a separate layer;
-- the small MLP receives Player-side Vision features directly;
-- the MLP directly produces independent `RIGHT` / `JUMP` decisions.
+## Policy And Physics Cadence
 
-This collapse is useful for validating Vision sensing, the learning boundary,
-TrainingEpisode, checkpoint/update flow, and realtime interaction. It is not a
-final Motor Controller interface. In the target hierarchy, Motor Controller
-receives a `MotorGoal` plus fast sensory/motion representation while Planner
-owns higher-level gameplay reasoning. The logical boundaries are defined in
-[../../doc/INTELLIGENCE_ARCHITECTURE.md](../../doc/INTELLIGENCE_ARCHITECTURE.md).
+Console physics stays at 120 Hz. The current learned policy cadence is one
+decision per two world ticks. The chosen virtual-pad state is held between
+policy decisions.
 
-`5-8-2 is not a permanent V2 architecture.` It may later be replaced by
-another MLP, PPO, a Planner/Motor Controller hierarchy, an LLM executor, or
-another Player/model design without changing the Console boundary.
+Discounting uses actual `world_tick` gaps, so the same episode data has the
+same learning meaning regardless of wall-clock delivery rate.
 
-The two outputs are independent `Right` and `Jump` decisions. There is no
-action masking. A model may choose Jump while airborne; Physics decides whether
-that input has a physical effect, and the decision remains visible for
-learning analysis.
+## PPO Selection
 
-## Vision-Only Inputs
+Credit/reward values are calculated over the full episode sequence. Expensive
+PPO optimization then selects:
 
-The first baseline receives no privileged Engine state. All three features are
-extracted on the Player side from public Vision:
+- a dense terminal tail covering the last 200 world ticks;
+- sparse earlier history at approximately one record per 10 world ticks.
 
-| Feature | Semantics |
-|---|---|
-| `gap_distance` | Normalized distance to the nearest substantial gap in the supporting surface ahead of SELF, inferred from SELF plus SOLID/HAZARD geometry. It does not use `WorldDefinition`, STATE, or Engine coordinates. |
-| `grounded_visual` | A sensory estimate that SELF visually contacts or is supported by SOLID terrain below. It is not the Engine `grounded` value and does not import Physics. |
-| `motion_x` | Horizontal SELF displacement between consecutive Vision frames divided by elapsed `world_tick` difference, then normalized to a bounded input range. The normalization constant is an implementation detail for the next patch. |
+This selection policy is shared by realtime and unpaced training and is owned
+by `training/work/`, not by either runner.
 
-`motion_x` is inferred from temporal Vision. It is not read from Engine
-telemetry or Engine state. The first implementation must not add velocity,
-grounded, or other privileged metadata to Vision.
+## Process Ownership
 
-No new proprioception capability is part of this vertical. The existing
-`player/adapters/proprioception.py` placeholder remains non-public and is not
-turned into a runtime peripheral. If explicit proprioception is later needed,
-it requires a separate architecture decision and public contract.
+Console owns physics and lifecycle. Player owns public Vision, public Joystick
+and actuator timing. Model runtime owns learned inference and weights.
+EpisodeDataset owns collected training material. The canonical PPO trainer owns
+the gradient update. Training/Management orchestrate episodes and checkpoints.
 
-## Ownership And Connections
-
-The Player runtime owns:
-
-- the Console lifecycle Connection;
-- the Vision connection;
-- the Joystick connection;
-- model inference and action execution.
-
-Training does not know Engine CONTROL, STATE, TELEMETRY, Console private
-manifests, Controller internals, or private Engine EVENTS. The Trainer talks to
-Player/model only through the formal training-side boundary.
-
-The training contract says `begin episode`. It does not expose Console command
-names. The Player maps the first begin request to public `START`, and maps a
-later begin request to public actor-local `RESPAWN`. These lifecycle details
-belong to the Player adapter.
-
-## TrainingEpisode
-
-`TrainingEpisode` is a record in the Training domain, not a Console or Engine
-lifecycle. Its minimum semantic fields are:
-
-```text
-episode_id
-mode              # train | evaluate
-start_world_tick
-finish_world_tick
-result            # success | dead | timeout
-```
-
-`episode_id` is a Training-local monotonically increasing identity. It is not a
-`session_id`, Player ID, Actor ID, `world_tick`, or Engine lifecycle counter.
-
-The Console has one persistent `world_tick`. Training episodes are intervals
-observed on that clock; they never create or reset a physical clock:
-
-```text
-world_tick:
-10000 ---------------- 10742 ---------------- 11451
-          Episode 1              Episode 2
-          10023 -> 10742        10780 -> 11451
-```
-
-There is no `episode_tick` in Engine, no `Trainer -> Engine.step()`, and no
-Trainer reset of the World clock.
-
-## Episode Start And Finish
-
-The first episode begins when the Player completes the begin-episode lifecycle
-and receives the first valid public Vision frame for the new attempt in which
-SELF is present. That frame's `world_tick` is the canonical
-`start_world_tick`; sending START or RESPAWN is not sufficient.
-
-The episode finishes from the owning Player's public lifecycle terminal event.
-The terminal result is one of `success`, `dead`, or `timeout`, using the
-authoritative Actor result semantics. The event's tick is
-`finish_world_tick`. The Player reports it to Training; the Trainer does not
-read private Engine EVENTS.
-
-## Executable Trainer/Player Contract
-
-The contract is a versioned framed TCP boundary. `contracts/training.py`
-validates every message before it crosses the process boundary.
-
-Trainer to Player/model:
-
-| Operation | Fields |
-|---|---|
-| `PREPARE` | `mode` (`train` or `evaluate`), `episode_id` |
-| `BEGIN_EPISODE` | `episode_id` |
-| `APPLY_RESULT` | `episode_id`, `reward`; valid only in `train` mode |
-| `SAVE` | logical request to persist the current model state |
-
-Player/model to Trainer:
-
-| Event | Fields |
-|---|---|
-| `READY` | readiness result |
-| `EPISODE_STARTED` | `episode_id`, `start_world_tick` |
-| `EPISODE_FINISHED` | `episode_id`, `start_world_tick`, `finish_world_tick`, `result`, `trainable`, `accepted_actions`, `rejected_actions` |
-| `UPDATE_RESULT` | `episode_id`, `updated`, `loss` |
-| `SAVED` | save result |
-
-Episode identity must match across all messages. A mismatch makes the episode
-dirty and non-trainable.
-
-## Player/Model And Training Responsibilities
-
-Player/model owns:
-
-- model parameters and inference;
-- stochastic sampling in Train mode and greedy/deterministic decisions in
-  Evaluate mode;
-- temporary differentiable trajectory state required by its model;
-- model-specific update mechanics;
-- checkpoint serialization and deserialization.
-
-Training owns:
-
-- experiment orchestration and the Train/Evaluate choice;
-- reward policy;
-- when to request an update and when to request a save;
-- aggregate experiment metrics.
-
-The Trainer must not import a Player/model implementation. Player/model is the
-only domain that understands model representation, so it serializes weights,
-required optimizer or learning state, and any model-specific continuation
-state. It also validates model/version compatibility and restores the state.
-Training chooses Fresh or Resume and when to save, then receives a success or
-error result. Management may later choose a config or path, but does not
-serialize model state.
-
-## Train And Evaluate
-
-Train mode uses stochastic policy decisions, collects the episode trajectory,
-applies terminal reward, and may update parameters and save a checkpoint.
-
-Evaluate mode uses deterministic or greedy decisions. It performs no parameter
-update, no optimizer update, and no checkpoint mutation. Evaluation is
-observational.
-
-The first implementation may use simple episodic REINFORCE with this baseline
-reward:
-
-```text
-success = +1
-dead    = -1
-timeout = -1
-```
-
-Independent Bernoulli Right/Jump outputs, a reward baseline, an entropy bonus,
-and gradient clipping are candidate model-side mechanics. REINFORCE is a first
-baseline, not a permanent V2 algorithm requirement.
-
-The first implementation operates in one conceptual World: Platformer World.
-Training, development evaluation, and later certification differ by Map and
-orchestration, not by secretly changing the World mechanics. Training Maps may
-be specialized, while each Training Set Level has exactly one isolated Exam
-Map. Future entirely different environments may introduce other Worlds. This
-patch does not add `short_pit`.
-
-## Training Integrity
-
-An episode is not trainable if any of the following occurs:
-
-- Player or Console disconnect;
-- lifecycle mismatch;
-- terminal event loss;
-- model runtime failure;
-- Joystick action rejection;
-- invalid observation stream;
-- episode identity mismatch.
-
-Public Joystick ACK is diagnostic evidence of acceptance or rejection only. It
-does not expose the private scheduling target or prove the exact physical
-execution tick of an action. The first baseline trajectory therefore contains
-decisions made before terminal and accepted through the public Joystick path;
-it must not claim exact execution attribution. If that attribution is needed
-later, it requires a separate public contract decision, not access to Engine
-internals.
-
-## Metrics And Quality
-
-Player/model reports per episode:
-
-- `accepted_actions`;
-- `rejected_actions`;
-- `update_applied`;
-- `loss` when applicable;
-- model-specific diagnostics.
-
-Training aggregates:
-
-- `attempts`;
-- `successes`;
-- `failures`;
-- `success_rate_total`;
-- `rolling_success_rate`;
-- `rolling_terminal_duration`;
-- `actual_update_count`;
-- trainable and dirty episode counts.
-
-Loss is an optimizer diagnostic, not Player quality. Primary experiment
-quality is measured by success, success rate, terminal duration, and
-generalization/evaluation results.
-
-## Management Boundary
-
-Future Management may choose the Player/model, training algorithm, Train or
-Evaluate mode, World, seed, attempt count, Fresh or Resume mode, checkpoint,
-and Start or Stop. It consumes Training summaries and results; it does not
-compute learning semantics itself.
-
-This patch does not add a UI, cockpit, or process orchestrator.
-
-## Next Implementation Boundary
-
-The first full hierarchy is a small CNN Planner producing `MotorGoal` for an
-MLP `5-8-2` Motor Controller, which produces `ActionDecision` for the public
-Joystick. The full training-set, trajectory, and exam semantics are defined in
-[TRAINING_SYSTEM.md](TRAINING_SYSTEM.md).
-
-It must not add privileged Engine inputs, a Trainer-to-Console path, Engine
-training hooks, a world-clock reset, action masking, or a new Console endpoint.
+No training component reads private Engine state or calls an Engine step
+through a Trainer-facing API.

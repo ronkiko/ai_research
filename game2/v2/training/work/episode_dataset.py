@@ -274,8 +274,8 @@ class EpisodeDataset:
             int(desired.jump),
             float(getattr(sample, "log_prob", 0.0) or 0.0),
             float(getattr(sample, "value", 0.0) or 0.0),
-            self._finite_or_none(getattr(goal, "dx", None)),
-            self._finite_or_none(getattr(goal, "dy", None)),
+            self._finite_or_none(getattr(goal, "target_dx", None)),
+            self._finite_or_none(getattr(goal, "target_dy", None)),
             self._finite_or_none(getattr(sample, "prob_right", None)),
             self._finite_or_none(getattr(sample, "prob_jump", None)),
             self_x,
@@ -451,6 +451,30 @@ class EpisodeDataset:
             float(step.self_y) - float(step.goal_y),
         )
 
+    def trace_snapshot(self) -> tuple[int, tuple[dict[str, Any], ...]]:
+        """Return lightweight policy/rating rows for the Vision spectator."""
+        meta = self.metadata()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    world_tick, self_x, self_y,
+                    action_right, action_jump,
+                    ppo_selected, advantage
+                FROM steps
+                ORDER BY world_tick, policy_sequence
+                """
+            ).fetchall()
+        return int(meta["episode_id"]), tuple({
+            "world_tick": int(row["world_tick"]),
+            "x": row["self_x"],
+            "y": row["self_y"],
+            "action_right": bool(row["action_right"]),
+            "action_jump": bool(row["action_jump"]),
+            "ppo_selected": bool(row["ppo_selected"]),
+            "advantage": row["advantage"],
+        } for row in rows)
+
     def compute_progress(self) -> float:
         distances = [
             distance for distance in (self._distance(step) for step in self.steps())
@@ -472,6 +496,20 @@ class EpisodeDataset:
         if progress is None:
             progress = self.compute_progress()
         with self._connect() as connection:
+            timing_rows = connection.execute(
+                "SELECT id, world_tick FROM steps ORDER BY world_tick, policy_sequence"
+            ).fetchall()
+            for index, row in enumerate(timing_rows):
+                next_tick = (
+                    int(timing_rows[index + 1]["world_tick"])
+                    if index + 1 < len(timing_rows)
+                    else int(finish_world_tick)
+                )
+                duration = max(1, next_tick - int(row["world_tick"]))
+                connection.execute(
+                    "UPDATE steps SET duration_ticks=? WHERE id=?",
+                    (duration, int(row["id"])),
+                )
             connection.execute(
                 """
                 UPDATE episode SET
@@ -485,6 +523,26 @@ class EpisodeDataset:
                     float(progress),
                     float(terminal_reward),
                     int(bool(trainable)),
+                ),
+            )
+
+    def update_training_summary(
+        self,
+        *,
+        updated: bool,
+        loss: float,
+        metrics: dict[str, Any],
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE episode SET updated=?, loss=?, metrics_json=?
+                WHERE singleton=1
+                """,
+                (
+                    int(bool(updated)),
+                    float(loss),
+                    json.dumps(metrics, separators=(",", ":"), sort_keys=True),
                 ),
             )
 

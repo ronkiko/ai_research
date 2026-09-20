@@ -30,6 +30,8 @@ from game2.v2.console.world import (CollisionRect, Rect, TileID,
                                      WorldDefinition, load_world)
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
+from game2.v2.player.learned.contracts import ActionDecision, ControlChange
+from game2.v2.training.work import EpisodeStore
 
 from pathlib import Path
 
@@ -424,99 +426,103 @@ class VisionPreviewRendererTests(unittest.TestCase):
         finally:
             preview.close()
 
-    def test_preview_draws_logged_and_rated_trajectory_ticks(self):
+    def test_preview_draws_episode_dataset_action_and_rating_ticks(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"
         import pygame
         world = load_world(PIT)
         surface = pygame.Surface((world.width, world.height))
         with tempfile.TemporaryDirectory() as directory:
-            trajectory = Path(directory) / "trajectory.jsonl"
-            rows = [
-                {"e": 1, "m": "train"},
-                {"e": 1, "t": 9, "x": 96, "y": 384},
-                {"e": 1, "k": "a", "t": 10, "x": 128, "y": 384, "a": "R"},
-                {"e": 1, "k": "a", "t": 20, "x": 192, "y": 384, "a": "RJ"},
-                {"e": 1, "k": "a", "t": 30, "x": 256, "y": 384, "a": "R"},
-                {"e": 1, "k": "a", "t": 40, "x": 320, "y": 448, "a": "-"},
-            ]
-            trajectory.write_text(
-                "".join(json.dumps(row) + "\n" for row in rows),
-                encoding="utf-8",
+            store = EpisodeStore(Path(directory) / "episodes")
+            dataset = store.create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            renderer = VisionGridRenderer(world)
+            points = (
+                (10, 128, 384, ControlChange(True, False), -0.25),
+                (20, 192, 384, ControlChange(True, True), 0.031),
+                (30, 256, 384, ControlChange(True, False), None),
+            )
+            annotations = []
+            for sequence, (tick, x, y, action, advantage) in enumerate(
+                points, start=1
+            ):
+                grid = renderer.render(
+                    _view(world, x=x, y=y, world_tick=tick)
+                )
+                dataset.append_step(
+                    policy_sequence=sequence,
+                    grid=grid,
+                    duration_ticks=2,
+                    motion_x=0.0,
+                    pad_state=ActionDecision(False, False),
+                    action=action,
+                    desired_state=ActionDecision(
+                        action.right, action.jump
+                    ),
+                    old_log_prob=-0.7,
+                    old_value=0.0,
+                    self_position=(x, y),
+                    goal_position=(world.goal.x, world.goal.y),
+                )
+                annotations.append({
+                    "id": dataset.steps()[-1].id,
+                    "reward": 0.0,
+                    "gae": advantage,
+                    "advantage": advantage,
+                    "return_value": 0.0,
+                    "ppo_selected": advantage is not None,
+                    "new_log_prob": -0.7 if advantage is not None else None,
+                    "new_value": 0.0 if advantage is not None else None,
+                    "ratio": 1.0 if advantage is not None else None,
+                })
+            dataset.finalize(
+                result="timeout",
+                finish_world_tick=32,
+                terminal_reward=-1.0,
+                trainable=True,
+                progress=0.0,
+            )
+            dataset.write_training_annotations(
+                annotations,
+                updated=True,
+                loss=0.1,
+                metrics={"rollout_records": 3, "ppo_records": 2},
             )
             preview = VisionPreviewRenderer(
                 world,
                 target_surface=surface,
                 pygame_module=pygame,
-                trajectory_log=trajectory,
+                episode_store=store.root,
             )
-            grid = VisionGridRenderer(world).render(
+            grid = renderer.render(
                 _view(world, x=320, y=384, world_tick=20)
             )
             try:
+                self.assertTrue(preview.refresh_episode_data())
                 preview.render(grid)
                 self.assertEqual(
-                    tuple(surface.get_at((128, 384)))[:3], ACTION_TICK_COLOR
+                    tuple(surface.get_at((128, 384)))[:3],
+                    ADVANTAGE_NEGATIVE_COLOR,
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((192, 384)))[:3], ACTION_TICK_COLOR
-                )
-                self.assertNotIn(9, preview._action_ticks)
-
-                action_rows = [
-                    {
-                        "e": 1, "k": "a", "t": 20, "x": 192, "y": 384,
-                        "rw": 0.75, "adv": -0.25,
-                    },
-                    {
-                        "e": 1, "k": "a", "t": 30, "x": 256, "y": 384,
-                        "rw": -0.75, "adv": 0.031,
-                    },
-                    {
-                        "e": 1, "k": "a", "t": 40, "x": 320, "y": 448,
-                        "rw": 1.0, "adv": 0.0,
-                    },
-                ]
-                with trajectory.open("a", encoding="utf-8") as handle:
-                    for row in action_rows:
-                        handle.write(json.dumps(row) + "\n")
-                self.assertTrue(preview.refresh_trajectory())
-                preview.render(grid)
-                self.assertEqual(
-                    tuple(surface.get_at((192, 384)))[:3], ADVANTAGE_NEGATIVE_COLOR
+                    tuple(surface.get_at((192, 384)))[:3],
+                    ADVANTAGE_POSITIVE_COLOR,
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((256, 384)))[:3], ADVANTAGE_POSITIVE_COLOR
+                    tuple(surface.get_at((256, 384)))[:3],
+                    ACTION_TICK_COLOR,
                 )
                 self.assertEqual(
-                    tuple(surface.get_at((320, 448)))[:3], ACTION_TICK_COLOR
+                    preview._advantage_visual(0.031)[0], "+0.031"
                 )
-                self.assertNotIn(40, preview._rated_ticks)
-                self.assertEqual(preview._advantage_visual(0.031)[0], "+0.031")
-                self.assertEqual(preview._advantage_visual(-1.0)[0], "-1.000")
+                self.assertEqual(
+                    preview._advantage_visual(-1.0)[0], "-1.000"
+                )
                 with self.assertRaises(ValueError):
                     preview._advantage_visual(0.0)
-
-                with trajectory.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"e": 2, "m": "train"}) + "\n")
-                    handle.write(json.dumps(
-                        {"e": 2, "k": "a", "t": 50, "x": 128, "y": 448, "a": "R"}
-                    ) + "\n")
-                self.assertTrue(preview.refresh_trajectory())
-                preview.render(grid)
-                self.assertEqual(preview._trajectory_episode, 2)
-                self.assertIsNone(preview._rated_episode)
-                self.assertEqual(preview._rated_ticks, {})
-                self.assertEqual(
-                    tuple(surface.get_at((128, 448)))[:3], ACTION_TICK_COLOR
-                )
-                self.assertNotEqual(
-                    tuple(surface.get_at((192, 384)))[:3], ADVANTAGE_NEGATIVE_COLOR
-                )
-                self.assertNotEqual(
-                    tuple(surface.get_at((256, 384)))[:3], ADVANTAGE_POSITIVE_COLOR
-                )
             finally:
                 preview.close()
+                renderer.close()
 
     def test_preview_draws_terminal_outcomes_as_presentation_only_overlay(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"

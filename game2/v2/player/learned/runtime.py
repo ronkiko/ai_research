@@ -1,14 +1,15 @@
-"""Executable learned Player runtime over public Vision and Joystick data."""
+"""Learned Player inference state; training data lives in EpisodeDataset."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import hashlib
 import math
 
 import torch
 
 from game2.v2.contracts.joystick import JoystickState
 from game2.v2.contracts.vision import VisionGrid
+from game2.v2.training.work.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
+from game2.v2.training.work.ppo import unique_parameters
 
 from .contracts import (
     ActionDecision,
@@ -18,18 +19,13 @@ from .contracts import (
 )
 from .critic import CNNCritic
 from .motor import motor_input_tensor
-from .motion import MotionEstimator, center_distance, self_center, vision_centers
+from .motion import MotionEstimator, vision_centers
 from .vision import vision_to_tensor
-from game2.v2.training.work.config import (
-    POLICY_STRIDE_TICKS,
-    PPO_HISTORY_STRIDE_TICKS,
-    PPO_TAIL_TICKS,
-)
 
 
 @dataclass(frozen=True)
 class DecisionSample:
-    """One in-memory Player-side inference sample; never persisted automatically."""
+    """One policy decision ready to be persisted in an EpisodeDataset."""
 
     world_tick: int
     vision_grid: VisionGrid
@@ -41,9 +37,6 @@ class DecisionSample:
     pad_jump: bool = False
     value: float | None = None
     desired_state: ActionDecision | None = None
-    chunk_index: int | None = None
-    chunk_offset: int | None = None
-    chunk_first: bool = False
     suppressed_buttons: tuple[str, ...] = ()
     policy_sequence: int = 0
     prob_right: float | None = None
@@ -54,158 +47,23 @@ class DecisionSample:
     goal_y: float | None = None
 
 
-@dataclass(frozen=True)
-class TrainingRecord:
-    """Small logical-grid replay record for one trainable policy decision."""
-
-    columns: int
-    rows: int
-    tile_size: int
-    subdivisions: int
-    world_tick: int
-    coarse_physics: bytes
-    physics: bytes
-    metadata: bytes
-    motion_x: float
-    action_decision: ControlChange
-    pad_right: bool = False
-    pad_jump: bool = False
-    old_log_prob: float = 0.0
-    old_value: float = 0.0
-    self_x: float | None = None
-    self_y: float | None = None
-    suppressed_buttons: tuple[str, ...] = ()
-    chunk_index: int | None = None
-    chunk_offset: int | None = None
-    chunk_first: bool = False
-    policy_sequence: int = 0
-
-    @classmethod
-    def from_sample(cls, sample: DecisionSample) -> "TrainingRecord":
-        grid = sample.vision_grid
-        center = (
-            (sample.self_x, sample.self_y)
-            if sample.self_x is not None and sample.self_y is not None
-            else self_center(grid)
-        )
-        return cls(
-            grid.columns,
-            grid.rows,
-            grid.tile_size,
-            grid.subdivisions,
-            grid.world_tick,
-            bytes(grid.coarse_physics),
-            bytes(grid.physics),
-            bytes(grid.metadata),
-            float(sample.motion_x),
-            sample.action_decision,
-            sample.pad_right,
-            sample.pad_jump,
-            float(sample.log_prob if sample.log_prob is not None else 0.0),
-            float(sample.value if sample.value is not None else 0.0),
-            float(center[0]) if center is not None else None,
-            float(center[1]) if center is not None else None,
-            tuple(sample.suppressed_buttons),
-            sample.chunk_index,
-            sample.chunk_offset,
-            sample.chunk_first,
-            sample.policy_sequence,
-        )
-
-    @property
-    def vision_grid(self) -> VisionGrid:
-        return VisionGrid(
-            self.columns,
-            self.rows,
-            self.tile_size,
-            self.coarse_physics,
-            self.physics,
-            self.metadata,
-            self.world_tick,
-            self.subdivisions,
-        )
-
-
 def action_to_joystick(sequence: int, decision: ActionDecision) -> JoystickState:
-    """Adapt only the logical action buttons to the public Joystick contract."""
     if not isinstance(decision, ActionDecision):
         raise TypeError("action_to_joystick requires an ActionDecision")
     return JoystickState(sequence, decision.right, decision.jump)
 
 
-PPO_CHUNK_TICKS = 100
-CONTROL_CHANGE_PENALTY = 0.005
-PPO_GAMMA = 0.99
-PPO_GAE_LAMBDA = 0.95
-PPO_CLIP_EPS = 0.2
-PPO_EPOCHS = 4
-PPO_BATCH_SIZE = 64
-PPO_ENTROPY_COEF = 0.01
-PPO_VALUE_COEF = 0.5
-PPO_MAX_GRAD_NORM = 0.5
-PPO_LEARNING_RATE = 3e-4
-
-
-def _select_ppo_indexes(
-    world_ticks: list[int] | tuple[int, ...],
-    finish_world_tick: int,
-) -> list[int]:
-    """Dense terminal context plus sparse earlier history for PPO."""
-    if not world_ticks:
-        return []
-    if type(finish_world_tick) is not int or finish_world_tick < 0:
-        raise ValueError("finish_world_tick must be a non-negative integer")
-    previous = None
-    for tick in world_ticks:
-        if type(tick) is not int or tick < 0:
-            raise ValueError("PPO world ticks must be non-negative integers")
-        if previous is not None and tick < previous:
-            raise ValueError("PPO world ticks cannot move backwards")
-        previous = tick
-    if finish_world_tick < world_ticks[-1]:
-        raise ValueError("finish_world_tick cannot precede the last PPO record")
-
-    tail_start = max(world_ticks[0], finish_world_tick - PPO_TAIL_TICKS)
-    origin = world_ticks[0]
-    history_by_bucket: dict[int, int] = {}
-    tail: list[int] = []
-    for index, tick in enumerate(world_ticks):
-        if tick >= tail_start:
-            tail.append(index)
-            continue
-        bucket = (tick - origin) // PPO_HISTORY_STRIDE_TICKS
-        history_by_bucket[bucket] = index
-
-    selected = sorted(set(history_by_bucket.values()) | set(tail))
-    if 0 not in selected:
-        selected.insert(0, 0)
-    last = len(world_ticks) - 1
-    if last not in selected:
-        selected.append(last)
-    return selected
-
-
-def _unique_parameters(*modules) -> list[torch.nn.Parameter]:
-    seen: set[int] = set()
-    parameters: list[torch.nn.Parameter] = []
-    for module in modules:
-        if not isinstance(module, torch.nn.Module):
-            continue
-        for parameter in module.parameters():
-            identity = id(parameter)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            parameters.append(parameter)
-    return parameters
-
-
 class LearnedPlayer:
-    """Own the Planner, Motor Controller, temporal representation, and latest values."""
+    """Own inference, stochastic policy state, and persistent virtual pad state."""
 
-    def __init__(self, planner, motor_controller, critic=None,
-                 motion_estimator: MotionEstimator | None = None,
-                 learning_rate: float = PPO_LEARNING_RATE):
+    def __init__(
+        self,
+        planner,
+        motor_controller,
+        critic=None,
+        motion_estimator: MotionEstimator | None = None,
+        learning_rate: float = PPO_LEARNING_RATE,
+    ):
         if not hasattr(planner, "decide"):
             raise TypeError("planner must provide decide(grid)")
         if not hasattr(motor_controller, "decide"):
@@ -214,8 +72,7 @@ class LearnedPlayer:
         self.motor_controller = motor_controller
         planner_backbone = getattr(planner, "backbone", None)
         self.critic = (
-            critic
-            if critic is not None
+            critic if critic is not None
             else CNNCritic.fresh(3, planner_backbone)
         )
         if not isinstance(self.critic, torch.nn.Module):
@@ -226,52 +83,36 @@ class LearnedPlayer:
             and self.critic.backbone is not planner_backbone
         ):
             self.critic.backbone = planner_backbone
+
         self.motion_estimator = motion_estimator or MotionEstimator()
         self.latest_goal: MotorGoal | None = None
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
         self.latest_sample: DecisionSample | None = None
-        if type(learning_rate) not in (int, float) or not math.isfinite(float(learning_rate)) \
-                or learning_rate <= 0:
+
+        if (
+            type(learning_rate) not in (int, float)
+            or not math.isfinite(float(learning_rate))
+            or learning_rate <= 0
+        ):
             raise ValueError("learning_rate must be a positive finite number")
         self.learning_rate = float(learning_rate)
-        parameters = _unique_parameters(
+        parameters = unique_parameters(
             self.planner, self.motor_controller, self.critic
         )
         self.optimizer = (
             torch.optim.Adam(parameters, lr=self.learning_rate)
             if parameters else None
         )
+
         self._episode_mode: str | None = None
         self._episode_seed: int | None = None
         self._episode_generator: torch.Generator | None = None
-        self._training_records: list[TrainingRecord] = []
-        self._recorded_samples: dict[tuple[str, int], int] = {}
         self._policy_sequence = 0
-        self._chunk_origin_tick: int | None = None
-        self._chunk_seen: set[int] = set()
-        self._log_probabilities: list[float] = []
-        self._reward_events: list[tuple[int, float]] = []
-        self._reward_origin_tick: int | None = None
-        self._next_reward_tick: int | None = None
-        self._start_distance: float | None = None
-        self._last_reward_distance: float | None = None
-        self._last_observed_distance: float | None = None
-        self.last_update_loss: float | None = None
-        self.last_update_diagnostics: tuple[dict, ...] = ()
-        self.last_update_metrics: dict[str, object] = {}
 
     @property
     def episode_mode(self) -> str | None:
         return self._episode_mode
-
-    @property
-    def log_probabilities(self) -> tuple[float, ...]:
-        return tuple(self._log_probabilities)
-
-    @property
-    def training_records(self) -> tuple[TrainingRecord, ...]:
-        return tuple(self._training_records)
 
     def _reset_episode_local(self) -> None:
         self.motion_estimator.reset()
@@ -279,31 +120,15 @@ class LearnedPlayer:
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
         self.latest_sample = None
-        self._training_records.clear()
-        self._recorded_samples.clear()
         self._policy_sequence = 0
-        self._chunk_origin_tick = None
-        self._chunk_seen.clear()
-        self._log_probabilities.clear()
-        self._reward_events.clear()
-        self._reward_origin_tick = None
-        self._next_reward_tick = None
-        self._start_distance = None
-        self._last_reward_distance = None
-        self._last_observed_distance = None
-        self.last_update_loss = None
-        self.last_update_diagnostics = ()
-        self.last_update_metrics = {}
 
     def reset_episode(self) -> None:
-        """Reset only attempt-local state; model weights and identity survive."""
         self._reset_episode_local()
         self._episode_mode = None
         self._episode_seed = None
         self._episode_generator = None
 
     def prepare_episode(self, mode: str, seed: int) -> None:
-        """Select an episode policy and create its isolated stochastic stream."""
         if type(mode) is not str or mode not in {"train", "evaluate"}:
             raise ValueError("mode must be train or evaluate")
         if type(seed) is not int:
@@ -333,78 +158,18 @@ class LearnedPlayer:
         planner_output = self.planner(vision)[0]
         if planner_output.ndim != 1 or planner_output.shape[0] != 2:
             raise ValueError("Planner must return two MotorGoal values")
-        logits = self.motor_controller.forward_goal(
-            planner_output, motion_x, pad_right, pad_jump
-        ) if hasattr(self.motor_controller, "forward_goal") else self.motor_controller(
-            motor_input_tensor(planner_output, motion_x, pad_right, pad_jump)
+        logits = (
+            self.motor_controller.forward_goal(
+                planner_output, motion_x, pad_right, pad_jump
+            )
+            if hasattr(self.motor_controller, "forward_goal")
+            else self.motor_controller(
+                motor_input_tensor(
+                    planner_output, motion_x, pad_right, pad_jump
+                )
+            )
         )
         return planner_output, logits
-
-    def _track_reward_observation(
-        self,
-        frame: VisionGrid,
-        self_position: tuple[float, float] | None,
-        goal_position: tuple[float, float] | None,
-    ) -> None:
-        distance = center_distance(self_position, goal_position)
-        if distance is None:
-            return
-        self._last_observed_distance = distance
-        if self._start_distance is None:
-            self._start_distance = max(distance, 1e-9)
-            self._last_reward_distance = distance
-            self._reward_origin_tick = frame.world_tick
-            self._next_reward_tick = frame.world_tick + PPO_CHUNK_TICKS
-            return
-        assert self._last_reward_distance is not None
-        assert self._next_reward_tick is not None
-        if frame.world_tick < self._next_reward_tick:
-            return
-        crossed = 1 + (frame.world_tick - self._next_reward_tick) // PPO_CHUNK_TICKS
-        reward = (self._last_reward_distance - distance) / self._start_distance
-        share = reward / crossed
-        for offset in range(crossed):
-            self._reward_events.append((
-                self._next_reward_tick + offset * PPO_CHUNK_TICKS,
-                share,
-            ))
-        self._next_reward_tick += crossed * PPO_CHUNK_TICKS
-        self._last_reward_distance = distance
-
-    def _chunk_position(self, world_tick: int) -> tuple[int, int, bool]:
-        if self._chunk_origin_tick is None:
-            self._chunk_origin_tick = world_tick
-        if world_tick < self._chunk_origin_tick:
-            raise ValueError("chunk world_tick moved backwards")
-        elapsed = world_tick - self._chunk_origin_tick
-        chunk_index, chunk_offset = divmod(elapsed, PPO_CHUNK_TICKS)
-        chunk_first = chunk_index not in self._chunk_seen
-        if chunk_first:
-            self._chunk_seen.add(chunk_index)
-        return chunk_index, chunk_offset, chunk_first
-
-    @staticmethod
-    def _training_sample_key(sample: DecisionSample) -> tuple[str, int]:
-        if sample.policy_sequence > 0:
-            return ("policy", sample.policy_sequence)
-        return ("object", id(sample))
-
-    def _record_training_sample(
-        self, sample: DecisionSample, *, refresh: bool = False
-    ) -> None:
-        if self._episode_mode != "train":
-            return
-        key = self._training_sample_key(sample)
-        record = TrainingRecord.from_sample(sample)
-        existing = self._recorded_samples.get(key)
-        if existing is not None:
-            if refresh:
-                self._training_records[existing] = record
-            return
-        self._recorded_samples[key] = len(self._training_records)
-        self._training_records.append(record)
-        if sample.log_prob is not None:
-            self._log_probabilities.append(float(sample.log_prob))
 
     def _process_model_grid(
         self,
@@ -437,23 +202,33 @@ class LearnedPlayer:
                     vision, motion_x, pad_state.right, pad_state.jump
                 )
                 value = float(self.critic(vision)[0])
+
         probabilities = torch.sigmoid(logits)
         if self._episode_mode == "train":
             if self._episode_generator is None:
                 raise RuntimeError("train episode has no random generator")
             random_values = torch.rand(
-                probabilities.shape, generator=self._episode_generator,
-                dtype=probabilities.dtype, device=probabilities.device,
+                probabilities.shape,
+                generator=self._episode_generator,
+                dtype=probabilities.dtype,
+                device=probabilities.device,
             )
-            action_tensor = (random_values < probabilities).to(dtype=logits.dtype)
-            log_prob = float(-torch.nn.functional.binary_cross_entropy_with_logits(
-                logits, action_tensor, reduction="none").sum())
+            action_tensor = (
+                random_values < probabilities
+            ).to(dtype=logits.dtype)
+            log_prob = float(
+                -torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, action_tensor, reduction="none"
+                ).sum()
+            )
         else:
             action_tensor = logits >= 0.0
             log_prob = None
 
-        goal = MotorGoal(float(planner_output[0].detach()),
-                         float(planner_output[1].detach()))
+        goal = MotorGoal(
+            float(planner_output[0].detach()),
+            float(planner_output[1].detach()),
+        )
         change = ControlChange(
             bool(action_tensor[0].item()),
             bool(action_tensor[1].item()),
@@ -481,12 +256,6 @@ class LearnedPlayer:
         )
 
     def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
-        """Run one valid public VisionGrid through the learned hierarchy.
-
-        Missing SELF or a temporal discontinuity only resets/updates the motion
-        representation. The last complete goal and action remain available to
-        the caller, while the first observation starts with a neutral motion.
-        """
         if not isinstance(frame, VisionGrid):
             raise TypeError("LearnedPlayer requires a VisionGrid")
         self_position, goal_position = vision_centers(frame)
@@ -496,15 +265,6 @@ class LearnedPlayer:
         )
         if not self.motion_estimator.last_observation_usable:
             return None
-        chunk_index = chunk_offset = None
-        chunk_first = False
-        if self._episode_mode in {"train", "evaluate"}:
-            chunk_index, chunk_offset, chunk_first = self._chunk_position(
-                frame.world_tick
-            )
-            self._track_reward_observation(
-                frame, self_position, goal_position
-            )
 
         if self._episode_mode in {"train", "evaluate"}:
             sample = self._process_model_grid(
@@ -513,9 +273,6 @@ class LearnedPlayer:
             self._policy_sequence += 1
             sample = replace(
                 sample,
-                chunk_index=chunk_index,
-                chunk_offset=chunk_offset,
-                chunk_first=chunk_first,
                 policy_sequence=self._policy_sequence,
                 goal_x=(
                     None if goal_position is None else float(goal_position[0])
@@ -524,8 +281,6 @@ class LearnedPlayer:
                     None if goal_position is None else float(goal_position[1])
                 ),
             )
-            if self._episode_mode == "train":
-                self._record_training_sample(sample)
         else:
             goal = self.planner.decide(frame)
             if not isinstance(goal, MotorGoal):
@@ -563,27 +318,18 @@ class LearnedPlayer:
                     None if goal_position is None else float(goal_position[1])
                 ),
             )
-        goal = sample.motor_goal
+
         desired_state = sample.desired_state
         if desired_state is None:
             desired_state = apply_control_change(
                 self.actuated_state, sample.action_decision
             )
-        self.latest_goal = goal
+        self.latest_goal = sample.motor_goal
         self.latest_decision = desired_state
         self.latest_sample = sample
         return sample
 
-    def record_control_request(self, sample: DecisionSample) -> None:
-        """Charge and retain one non-KEEP policy request before physical actuation."""
-        if not isinstance(sample, DecisionSample):
-            raise TypeError("record_control_request requires a DecisionSample")
-        if not sample.action_decision.any:
-            return
-        self._record_training_sample(sample, refresh=True)
-
     def record_actuated(self, sample: DecisionSample) -> None:
-        """Apply one Engine-accepted control change to persistent pad memory."""
         if not isinstance(sample, DecisionSample):
             raise TypeError("record_actuated requires a DecisionSample")
         desired_state = sample.desired_state
@@ -592,426 +338,14 @@ class LearnedPlayer:
                 self.actuated_state, sample.action_decision
             )
         self.actuated_state = desired_state
-        self._record_training_sample(sample, refresh=True)
-
-    def record_sent_sample(self, sample: DecisionSample) -> None:
-        """Compatibility method for train-path tests; an accepted sample is actuated."""
-        if self._episode_mode != "train":
-            raise ValueError("sent samples can be recorded only in train mode")
-        self.record_actuated(sample)
-
-    def _rewards_for_records(
-        self,
-        records: tuple[TrainingRecord, ...],
-        terminal_reward: float,
-        finish_world_tick: int | None = None,
-    ) -> list[float]:
-        rewards = [
-            -CONTROL_CHANGE_PENALTY * (
-                int(record.action_decision.right)
-                + int(record.action_decision.jump)
-            )
-            for record in records
-        ]
-        if not records:
-            return rewards
-        record_index = 0
-        for event_tick, event_reward in self._reward_events:
-            while (
-                record_index + 1 < len(records)
-                and records[record_index + 1].world_tick < event_tick
-            ):
-                record_index += 1
-            record_tick = records[record_index].world_tick
-            if record_tick < event_tick:
-                delay = max(0, event_tick - 1 - record_tick)
-                rewards[record_index] += float(event_reward) * (PPO_GAMMA ** delay)
-        partial = 0.0
-        if (
-            self._start_distance is not None
-            and self._last_reward_distance is not None
-            and self._last_observed_distance is not None
-        ):
-            partial = (
-                self._last_reward_distance - self._last_observed_distance
-            ) / self._start_distance
-        terminal_delay = 0
-        if finish_world_tick is not None:
-            if type(finish_world_tick) is not int or finish_world_tick < 0:
-                raise ValueError("finish_world_tick must be a non-negative integer")
-            if finish_world_tick < records[-1].world_tick:
-                raise ValueError("finish_world_tick cannot precede the last PPO record")
-            terminal_delay = max(
-                0, finish_world_tick - 1 - records[-1].world_tick
-            )
-        terminal_discount = PPO_GAMMA ** terminal_delay
-        rewards[-1] += (float(terminal_reward) + partial) * terminal_discount
-        return rewards
-
-    @staticmethod
-    def _gae(
-        records: tuple[TrainingRecord, ...], rewards: list[float]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if len(records) != len(rewards):
-            raise ValueError("records and rewards must have equal length")
-        values = [record.old_value for record in records]
-        advantages = [0.0 for _ in records]
-        gae = 0.0
-        for index in range(len(records) - 1, -1, -1):
-            if index + 1 < len(records):
-                delta_ticks = (
-                    records[index + 1].world_tick - records[index].world_tick
-                )
-                if delta_ticks < 0:
-                    raise ValueError("PPO record world_tick cannot move backwards")
-                gamma = PPO_GAMMA ** delta_ticks
-                trace = (PPO_GAMMA * PPO_GAE_LAMBDA) ** delta_ticks
-                next_value = values[index + 1]
-            else:
-                gamma = 0.0
-                trace = 0.0
-                next_value = 0.0
-            delta = rewards[index] + gamma * next_value - values[index]
-            gae = delta + trace * gae
-            advantages[index] = gae
-        advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
-        returns = advantage_tensor + torch.tensor(values, dtype=torch.float32)
-        if len(records) > 1:
-            std = advantage_tensor.std(unbiased=False)
-            if float(std) > 1e-8:
-                advantage_tensor = (
-                    advantage_tensor - advantage_tensor.mean()
-                ) / (std + 1e-8)
-        return advantage_tensor, returns
-
-    @staticmethod
-    def _parameter_stats(
-        parameters: list[torch.nn.Parameter],
-    ) -> tuple[float, str]:
-        squared_norm = 0.0
-        digest = hashlib.sha256()
-        for parameter in parameters:
-            tensor = parameter.detach().cpu().contiguous()
-            squared_norm += float(torch.sum(tensor.float() * tensor.float()))
-            digest.update(str(tuple(tensor.shape)).encode("ascii"))
-            digest.update(str(tensor.dtype).encode("ascii"))
-            digest.update(tensor.numpy().tobytes())
-        return math.sqrt(squared_norm), digest.hexdigest()
-
-    def _ppo_update(
-        self,
-        records: tuple[TrainingRecord, ...],
-        advantages: torch.Tensor,
-        returns: torch.Tensor,
-    ) -> tuple[float, torch.Tensor, torch.Tensor, dict[str, object]]:
-        if self.optimizer is None:
-            raise RuntimeError("trainable models are required for updates")
-        count = len(records)
-        old_log_prob = torch.tensor(
-            [record.old_log_prob for record in records], dtype=torch.float32
-        )
-        actions = torch.tensor(
-            [[record.action_decision.right, record.action_decision.jump]
-             for record in records],
-            dtype=torch.float32,
-        )
-        total_loss = 0.0
-        total_policy_loss = 0.0
-        total_value_loss = 0.0
-        total_entropy = 0.0
-        total_grad_norm = 0.0
-        total_right_logit = 0.0
-        total_jump_logit = 0.0
-        total_examples = 0
-        updates = 0
-        final_log_prob = torch.empty(count, dtype=torch.float32)
-        final_values = torch.empty(count, dtype=torch.float32)
-        parameters = _unique_parameters(
-            self.planner, self.motor_controller, self.critic
-        )
-        parameter_norm_before, parameter_hash_before = self._parameter_stats(parameters)
-        generator = self._episode_generator
-        shared = (
-            hasattr(self.planner, "backbone")
-            and hasattr(self.planner, "encode_prepared")
-            and hasattr(self.planner, "forward_features")
-            and hasattr(self.critic, "forward_features")
-            and self.planner.backbone is getattr(self.critic, "backbone", None)
-        )
-        if shared:
-            prepared_vision = torch.stack([
-                self.planner.backbone.prepare(
-                    vision_to_tensor(record.vision_grid).unsqueeze(0)
-                )[0]
-                for record in records
-            ])
-            full_vision = None
-        else:
-            prepared_vision = None
-            full_vision = torch.stack([
-                vision_to_tensor(record.vision_grid) for record in records
-            ])
-        motion_all = torch.tensor(
-            [record.motion_x for record in records], dtype=torch.float32
-        ).unsqueeze(1)
-        pad_all = torch.tensor(
-            [[record.pad_right, record.pad_jump] for record in records],
-            dtype=torch.float32,
-        )
-        for _epoch in range(PPO_EPOCHS):
-            order = torch.randperm(count, generator=generator)
-            for start in range(0, count, PPO_BATCH_SIZE):
-                indexes = order[start:start + PPO_BATCH_SIZE]
-                batch_records = [records[index] for index in indexes.tolist()]
-                if shared:
-                    assert prepared_vision is not None
-                    features = self.planner.encode_prepared(
-                        prepared_vision[indexes]
-                    )
-                    planner_output = self.planner.forward_features(features)
-                    values = self.critic.forward_features(features)
-                else:
-                    assert full_vision is not None
-                    vision = full_vision[indexes]
-                    planner_output = self.planner(vision)
-                    values = self.critic(vision)
-                motion = motion_all[indexes].to(
-                    dtype=planner_output.dtype,
-                    device=planner_output.device,
-                )
-                pad = pad_all[indexes].to(
-                    dtype=planner_output.dtype,
-                    device=planner_output.device,
-                )
-                logits = self.motor_controller(
-                    torch.cat((planner_output, motion, pad), dim=1)
-                )
-                batch_actions = actions[indexes].to(
-                    dtype=logits.dtype, device=logits.device
-                )
-                new_log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits, batch_actions, reduction="none"
-                ).sum(dim=1)
-                batch_old_log_prob = old_log_prob[indexes].to(logits.device)
-                batch_advantages = advantages[indexes].to(logits.device)
-                ratio = torch.exp(new_log_prob - batch_old_log_prob)
-                unclipped = ratio * batch_advantages
-                clipped = torch.clamp(
-                    ratio, 1.0 - PPO_CLIP_EPS, 1.0 + PPO_CLIP_EPS
-                ) * batch_advantages
-                policy_loss = -torch.minimum(unclipped, clipped).mean()
-
-                if _epoch == PPO_EPOCHS - 1:
-                    final_log_prob[indexes] = new_log_prob.detach().cpu()
-                    final_values[indexes] = values.detach().cpu()
-                value_loss = torch.nn.functional.mse_loss(
-                    values, returns[indexes].to(values.device)
-                )
-                probabilities = torch.sigmoid(logits)
-                entropy = -(
-                    probabilities * torch.nn.functional.logsigmoid(logits)
-                    + (1.0 - probabilities)
-                    * torch.nn.functional.logsigmoid(-logits)
-                ).sum(dim=1).mean()
-                loss = (
-                    policy_loss
-                    + PPO_VALUE_COEF * value_loss
-                    - PPO_ENTROPY_COEF * entropy
-                )
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters, max_norm=PPO_MAX_GRAD_NORM
-                )
-                self.optimizer.step()
-                batch_count = len(batch_records)
-                total_loss += float(loss.detach())
-                total_policy_loss += float(policy_loss.detach())
-                total_value_loss += float(value_loss.detach())
-                total_entropy += float(entropy.detach())
-                total_grad_norm += float(grad_norm)
-                total_right_logit += float(logits[:, 0].detach().sum())
-                total_jump_logit += float(logits[:, 1].detach().sum())
-                total_examples += batch_count
-                updates += 1
-        parameter_norm_after, parameter_hash_after = self._parameter_stats(parameters)
-        metrics: dict[str, object] = {
-            "rollout_records": count,
-            "ppo_records": count,
-            "optimizer_steps": updates,
-            "policy_loss": total_policy_loss / max(updates, 1),
-            "value_loss": total_value_loss / max(updates, 1),
-            "entropy": total_entropy / max(updates, 1),
-            "grad_norm": total_grad_norm / max(updates, 1),
-            "mean_logit_right": total_right_logit / max(total_examples, 1),
-            "mean_logit_jump": total_jump_logit / max(total_examples, 1),
-            "parameter_norm_before": parameter_norm_before,
-            "parameter_norm_after": parameter_norm_after,
-            "parameter_hash_before": parameter_hash_before,
-            "parameter_hash_after": parameter_hash_after,
-        }
-        return (
-            total_loss / max(updates, 1),
-            final_log_prob,
-            final_values,
-            metrics,
-        )
-
-    def _build_update_diagnostics(
-        self,
-        records: tuple[TrainingRecord, ...],
-        rewards: list[float],
-        advantages: torch.Tensor,
-        returns: torch.Tensor,
-        new_log_prob: torch.Tensor,
-        new_values: torch.Tensor,
-    ) -> tuple[dict, ...]:
-        diagnostics = []
-        for index, record in enumerate(records):
-            action = (
-                ("R" if record.action_decision.right else "")
-                + ("J" if record.action_decision.jump else "")
-            ) or "KEEP"
-            old_log_prob = float(record.old_log_prob)
-            final_log_prob = float(new_log_prob[index])
-            raw_gae = float(returns[index]) - float(record.old_value)
-            ratio = math.exp(final_log_prob - old_log_prob)
-            item = {
-                "t": record.world_tick,
-                "a": action,
-                "rw": float(rewards[index]),
-                "v": float(record.old_value),
-                "nv": float(new_values[index]),
-                "gae": raw_gae,
-                "adv": float(advantages[index]),
-                "ret": float(returns[index]),
-                "lp": old_log_prob,
-                "nlp": final_log_prob,
-                "ratio": ratio,
-            }
-            if record.chunk_index is not None and record.chunk_offset is not None:
-                item["c"] = record.chunk_index
-                item["o"] = record.chunk_offset
-            elif self._chunk_origin_tick is not None:
-                elapsed = record.world_tick - self._chunk_origin_tick
-                if elapsed >= 0:
-                    item["c"], item["o"] = divmod(elapsed, PPO_CHUNK_TICKS)
-            item["_log"] = bool(
-                record.chunk_first
-                or record.action_decision.any
-                or record.suppressed_buttons
-            )
-            if record.suppressed_buttons:
-                item["b"] = "".join(
-                    "R" if button == "right" else "J"
-                    for button in record.suppressed_buttons
-                )
-            if record.self_x is not None and record.self_y is not None:
-                item["x"] = record.self_x
-                item["y"] = record.self_y
-            diagnostics.append(item)
-        return tuple(diagnostics)
-
-    def apply_result(
-        self, reward: float, finish_world_tick: int | None = None
-    ) -> tuple[bool, float]:
-        """Apply one terminal result through chunk rewards, GAE, and PPO-Clip."""
-        if self._episode_mode != "train":
-            raise ValueError("APPLY_RESULT is valid only in train mode")
-        if type(reward) is bool or not isinstance(reward, (int, float)) \
-                or not math.isfinite(float(reward)):
-            raise ValueError("reward must be finite")
-        records = tuple(sorted(
-            self._training_records, key=lambda record: record.world_tick
-        ))
-        if not records:
-            self.last_update_loss = 0.0
-            self.last_update_diagnostics = ()
-            self.last_update_metrics = {
-                "rollout_records": 0,
-                "ppo_records": 0,
-                "optimizer_steps": 0,
-                "reward_sum": 0.0,
-            }
-            self._recorded_samples.clear()
-            self._log_probabilities.clear()
-            self._reward_events.clear()
-            return False, 0.0
-        rewards = self._rewards_for_records(
-            records, float(reward), finish_world_tick
-        )
-        if not any(abs(value) > 1e-12 for value in rewards):
-            self._training_records.clear()
-            self._recorded_samples.clear()
-            self._log_probabilities.clear()
-            self._reward_events.clear()
-            self.last_update_loss = 0.0
-            self.last_update_diagnostics = ()
-            self.last_update_metrics = {
-                "rollout_records": len(records),
-                "ppo_records": 0,
-                "optimizer_steps": 0,
-                "reward_sum": float(sum(rewards)),
-            }
-            return False, 0.0
-        advantages_all, returns_all = self._gae(records, rewards)
-        effective_finish_tick = (
-            finish_world_tick
-            if finish_world_tick is not None
-            else records[-1].world_tick + POLICY_STRIDE_TICKS
-        )
-        selected_indexes = _select_ppo_indexes(
-            [record.world_tick for record in records],
-            effective_finish_tick,
-        )
-        selected_records = tuple(records[index] for index in selected_indexes)
-        selected_rewards = [rewards[index] for index in selected_indexes]
-        selected_tensor = torch.tensor(selected_indexes, dtype=torch.long)
-        selected_advantages = advantages_all[selected_tensor]
-        selected_returns = returns_all[selected_tensor]
-
-        loss_value, new_log_prob, new_values, metrics = self._ppo_update(
-            selected_records, selected_advantages, selected_returns
-        )
-        metrics["rollout_records"] = len(records)
-        metrics["reward_sum"] = float(sum(rewards))
-        if records:
-            metrics["first_world_tick"] = records[0].world_tick
-            metrics["last_world_tick"] = records[-1].world_tick
-            metrics["world_tick_span"] = (
-                records[-1].world_tick - records[0].world_tick + 1
-            )
-            metrics["missing_world_ticks"] = max(
-                0, int(metrics["world_tick_span"]) - len(records)
-            )
-        self.last_update_metrics = metrics
-        if not math.isfinite(loss_value):
-            raise RuntimeError("training loss is not finite")
-        self.last_update_diagnostics = self._build_update_diagnostics(
-            selected_records,
-            selected_rewards,
-            selected_advantages,
-            selected_returns,
-            new_log_prob,
-            new_values,
-        )
-        self._training_records.clear()
-        self._recorded_samples.clear()
-        self._log_probabilities.clear()
-        self._reward_events.clear()
-        self.last_update_loss = loss_value
-        return True, loss_value
 
     def joystick_state(self, sequence: int) -> JoystickState:
-        """Return the latest action, neutral until the first valid goal exists."""
         return action_to_joystick(sequence, self.latest_decision)
 
 
 __all__ = [
-    "CONTROL_CHANGE_PENALTY", "DecisionSample", "LearnedPlayer",
-    "PPO_BATCH_SIZE", "PPO_CHUNK_TICKS", "POLICY_STRIDE_TICKS",
-    "PPO_HISTORY_STRIDE_TICKS", "PPO_TAIL_TICKS",
-    "PPO_CLIP_EPS", "PPO_ENTROPY_COEF", "PPO_EPOCHS", "PPO_GAE_LAMBDA",
-    "PPO_GAMMA", "PPO_LEARNING_RATE", "PPO_MAX_GRAD_NORM", "PPO_VALUE_COEF",
-    "TrainingRecord", "_select_ppo_indexes", "action_to_joystick",
+    "DecisionSample",
+    "LearnedPlayer",
+    "POLICY_STRIDE_TICKS",
+    "action_to_joystick",
 ]

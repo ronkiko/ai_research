@@ -6,7 +6,6 @@ import hashlib
 from copy import copy
 from dataclasses import replace
 import json
-import math
 import select
 import socket
 import sys
@@ -49,7 +48,6 @@ from game2.v2.player.learned.checkpoint import (
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
-from game2.v2.player.learned.motion import self_center
 from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
     DecisionSample,
@@ -175,7 +173,6 @@ class ModelRuntime:
 
     def __init__(self, player: LearnedPlayer, *, listen_host: str = "127.0.0.1",
                  listen_port: int = 0, inference_delay: float = 0.0,
-                 trajectory_log: str | Path | None = None,
                  episode_store: str | Path = DEFAULT_EPISODE_STORE):
         if not isinstance(listen_host, str) or not listen_host:
             raise ValueError("listen_host must be non-empty")
@@ -187,9 +184,6 @@ class ModelRuntime:
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.inference_delay = float(inference_delay)
-        self.trajectory_log = (
-            Path(trajectory_log) if trajectory_log is not None else None
-        )
         self.episode_store = EpisodeStore(episode_store)
         self._episode_dataset: EpisodeDataset | None = None
         self.bound_address: tuple[str, int] | None = None
@@ -205,110 +199,6 @@ class ModelRuntime:
         self._episode_actuated_count = 0
         self._episode_observations_received = 0
         self._episode_dropped_observations = 0
-
-    @staticmethod
-    def _compact_number(value: float) -> int | float:
-        rounded = round(float(value), 6)
-        if rounded == 0:
-            return 0
-        integer = round(rounded)
-        return integer if abs(rounded - integer) < 1e-9 else rounded
-
-    @staticmethod
-    def _action_label(sample) -> str:
-        change = sample.action_decision
-        return (
-            ("R" if change.right else "")
-            + ("J" if change.jump else "")
-        ) or "KEEP"
-
-    def _append_policy_action(self, episode_id: int, sample) -> None:
-        if self.trajectory_log is None:
-            return
-        sample_x = getattr(sample, "self_x", None)
-        sample_y = getattr(sample, "self_y", None)
-        center = (
-            (float(sample_x), float(sample_y))
-            if isinstance(sample_x, (int, float))
-            and not isinstance(sample_x, bool)
-            and isinstance(sample_y, (int, float))
-            and not isinstance(sample_y, bool)
-            and math.isfinite(float(sample_x))
-            and math.isfinite(float(sample_y))
-            else self_center(sample.vision_grid)
-        )
-        if center is None:
-            return
-        payload = {
-            "e": episode_id,
-            "k": "a",
-            "t": sample.world_tick,
-            "x": self._compact_number(center[0]),
-            "y": self._compact_number(center[1]),
-            "a": self._action_label(sample),
-        }
-        chunk_index = getattr(sample, "chunk_index", None)
-        chunk_offset = getattr(sample, "chunk_offset", None)
-        if type(chunk_index) is int and type(chunk_offset) is int:
-            payload["c"] = chunk_index
-            payload["o"] = chunk_offset
-        for key, attribute in (("pr", "prob_right"), ("pj", "prob_jump")):
-            probability = getattr(sample, attribute, None)
-            if isinstance(probability, (int, float)) and math.isfinite(float(probability)):
-                payload[key] = self._compact_number(float(probability))
-        suppressed = tuple(getattr(sample, "suppressed_buttons", ()))
-        if suppressed:
-            payload["b"] = "".join(
-                "R" if button == "right" else "J"
-                for button in suppressed
-            )
-        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
-        with self.trajectory_log.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(payload, separators=(",", ":"), sort_keys=True)
-                + "\n"
-            )
-
-    def _append_ppo_diagnostics(
-        self, episode_id: int, diagnostics: tuple[dict, ...]
-    ) -> None:
-        if self.trajectory_log is None or not diagnostics:
-            return
-        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
-        with self.trajectory_log.open("a", encoding="utf-8") as handle:
-            for diagnostic in diagnostics:
-                if diagnostic.get("_log", True) is False:
-                    continue
-                payload = {"e": episode_id, "k": "a"}
-                for key, value in diagnostic.items():
-                    if key.startswith("_"):
-                        continue
-                    payload[key] = (
-                        self._compact_number(value)
-                        if isinstance(value, float) else value
-                    )
-                handle.write(
-                    json.dumps(payload, separators=(",", ":"), sort_keys=True)
-                    + "\n"
-                )
-
-    def _append_update_summary(
-        self, episode_id: int, metrics: dict[str, object]
-    ) -> None:
-        if self.trajectory_log is None:
-            return
-        payload = {"e": episode_id, "k": "u"}
-        for key, value in metrics.items():
-            payload[key] = (
-                self._compact_number(value)
-                if isinstance(value, float) else value
-            )
-        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
-        with self.trajectory_log.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(payload, separators=(",", ":"), sort_keys=True)
-                + "\n"
-            )
 
     def _save_checkpoints(self) -> str:
         if self._checkpoint_paths is None:
@@ -441,11 +331,9 @@ class ModelRuntime:
         if trainable and self.player.episode_mode == "train":
             training = train_episode(self.player, dataset)
             updated, loss = training.updated, training.loss
-            diagnostics = training.diagnostics
             metrics.update(training.metrics)
         else:
             updated, loss = False, 0.0
-            diagnostics = ()
             metrics.update({
                 "rollout_records": len(dataset.steps()),
                 "ppo_records": 0,
@@ -468,8 +356,9 @@ class ModelRuntime:
             metrics["checkpoint_hash"] = self._save_checkpoints()
             metrics["checkpoint_saved"] = True
         episode_id = self._episode_id
-        self._append_ppo_diagnostics(episode_id, diagnostics)
-        self._append_update_summary(episode_id, metrics)
+        dataset.update_training_summary(
+            updated=updated, loss=loss, metrics=metrics
+        )
         self._samples.clear()
         self._episode_dataset = None
         self._episode_id = None
@@ -527,8 +416,6 @@ class ModelRuntime:
                         duration_ticks=POLICY_STRIDE_TICKS,
                         actuated=True,
                     )
-                if self._episode_id is not None:
-                    self._append_policy_action(self._episode_id, sample)
             return pending_observation
         if message_type == EPISODE_END:
             self._handle_episode_end(peer, message)
@@ -556,11 +443,6 @@ class ModelRuntime:
             if not isinstance(change, ControlChange):
                 raise TypeError("Model policy must return a ControlChange")
             if not change.any:
-                if (
-                    getattr(sample, "chunk_first", False)
-                    and self._episode_id is not None
-                ):
-                    self._append_policy_action(self._episode_id, sample)
                 return None
             sample, applied_change = self._gate_control_request(sample)
             self._episode_dataset.upsert_sample(
@@ -570,12 +452,7 @@ class ModelRuntime:
                 self.player.latest_sample = sample
             if hasattr(self.player, "latest_decision"):
                 self.player.latest_decision = sample.desired_state
-            recorder = getattr(self.player, "record_control_request", None)
-            if callable(recorder):
-                recorder(sample)
             if not applied_change.any:
-                if self._episode_id is not None:
-                    self._append_policy_action(self._episode_id, sample)
                 return None
             desired_state = sample.desired_state
             if not isinstance(desired_state, ActionDecision):
@@ -658,7 +535,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--critic-checkpoint")
     parser.add_argument("--optimizer-checkpoint")
     parser.add_argument("--checkpoint-dir")
-    parser.add_argument("--trajectory-log")
     parser.add_argument("--episode-store", default=str(DEFAULT_EPISODE_STORE))
     parser.add_argument("--inference-delay", type=float, default=0.0)
     return parser
@@ -711,7 +587,6 @@ def main(argv=None) -> int:
             listen_host=args.listen_host,
             listen_port=args.listen_port,
             inference_delay=args.inference_delay,
-            trajectory_log=args.trajectory_log,
             episode_store=args.episode_store,
         ).run(planner_path, motor_path, critic_path, optimizer_path)
     except (EOFError, OSError, RuntimeError, TypeError, ValueError, ConnectionError) as exc:

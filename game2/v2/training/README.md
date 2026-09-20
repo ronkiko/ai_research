@@ -1,16 +1,33 @@
 # Training
 
-Training is external to Console and communicates with the realtime Player/model
-through formal contracts.
+Game2 V2 has one executable learning path.
 
-`training/main.py` is the standalone Trainer. It owns reward mapping,
-episode-level learning semantics, mastery evaluation, and aggregate metrics. It
-does not launch Console, Player, Model, Management, or graphical code.
+Both realtime and unpaced runners produce the same per-episode SQLite dataset
+under `training/work/episodes/`. The difference between the modes is only the
+rate at which public Vision/action data arrives:
 
-`training/model_runtime.py` is the standalone learned Model runtime wrapper.
-The Model owns inference, trajectory state, updates, and checkpoints.
+```text
+realtime ----\
+              -> EpisodeDataset -> training/work/ppo.py -> checkpoint
+unpaced -----/
+```
 
-Training Set Level 1 is data: `flat_run`, `short_gap`, and `long_gap`.
+The episode dataset is the source of truth for learning and training
+inspection. It contains public Vision matrices, policy inputs/outputs, terminal
+metadata, rewards, GAE/advantages/returns, PPO selection, and post-update
+ratings. At most five episode files are retained; the oldest is rotated out.
+
+`training/work/config.py` owns the shared policy/PPO cadence.
+`training/work/episode_dataset.py` owns storage and rotation.
+`training/work/ppo.py` is the only PPO implementation.
+
+`training/main.py` remains the standalone Trainer control-plane process. It
+owns episode orchestration, result/reward mapping, evaluation, and aggregate
+metrics. `training/model_runtime.py` is the standalone Model runtime wrapper.
+
+`--fresh` clears the episode dataset store and the four learned checkpoints
+(`planner.pt`, `motor.pt`, `critic.pt`, `optimizer.pt`) before starting.
+`--resume` requires all four checkpoints.
 
 Process composition lives in Management:
 
@@ -19,25 +36,15 @@ Process composition lives in Management:
 ./game2/v2/op/train.sh --resume
 ```
 
-`--fresh` resets the known checkpoint pair before starting. `--resume`
-requires that pair and continues from it.
-
-Human observation is external to Training. To observe a run, the operator first
-starts a persistent foreground Screen in another terminal:
+To observe realtime training:
 
 ```bash
 ./game2/v2/op/screen.sh 1
+./game2/v2/op/train.sh --fresh --screen 1 --view vision --mode realtime
 ```
 
-and then requests that already-open Screen:
+The Vision spectator reads the same episode SQLite files for policy ticks and
+PPO ratings. There is no separate trajectory JSONL.
 
-```bash
-./game2/v2/op/train.sh --fresh --screen 1
-```
-
-Training only sends BIND/UNBIND to Screen Server. It never starts, stops, or owns
-the Screen process. The same Screen survives map transitions and returns to
-waiting after UNBIND.
-
-A Training Episode remains a Training-domain record and never owns or resets the
-Console global `world_tick`.
+Training remains external to Console. A Training Episode never owns or resets
+the Console global `world_tick`.

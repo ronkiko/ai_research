@@ -494,14 +494,14 @@ def run_server(config_path: str | Path,
                discovery_path: str | Path = CURRENT_CONSOLE_PATH,
                screen_discovery_path: str | Path | None = None,
                screen_view: str = "screen",
-               screen_trajectory_log: str | Path | None = None) -> int:
+               screen_episode_store: str | Path | None = None) -> int:
     """Run one persistent Console until explicit shutdown or process failure."""
     config_path = Path(config_path).resolve()
     discovery_path = Path(discovery_path)
     if screen_view not in {"screen", "vision"}:
         raise ValueError("screen_view must be screen or vision")
-    if screen_trajectory_log is not None and screen_view != "vision":
-        raise ValueError("screen_trajectory_log requires screen_view=vision")
+    if screen_episode_store is not None and screen_view != "vision":
+        raise ValueError("screen_episode_store requires screen_view=vision")
     if screen_discovery_path is None:
         screen_discovery_path = (
             CURRENT_SCREEN_SOURCE_PATH
@@ -568,9 +568,9 @@ def run_server(config_path: str | Path,
                 sys.executable, "-m", SCREEN_SOURCE_MODULE,
                 "--manifest", str(screen_manifest_path),
             ]
-            if screen_trajectory_log is not None:
+            if screen_episode_store is not None:
                 screen_command.extend([
-                    "--trajectory-log", str(screen_trajectory_log),
+                    "--episode-store", str(screen_episode_store),
                 ])
             screen_source = _launch_ready(
                 screen_command, root, screen_log, "ScreenSource")

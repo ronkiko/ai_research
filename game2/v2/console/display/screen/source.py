@@ -38,11 +38,11 @@ def _connect(endpoint, timeout: float = 5.0) -> socket.socket:
 
 class ScreenSourceService:
     def __init__(
-        self, manifest: ScreenSourceManifest, *, trajectory_log: str | Path | None = None
+        self, manifest: ScreenSourceManifest, *, episode_store: str | Path | None = None
     ):
         self.manifest = manifest
-        self.trajectory_log = (
-            Path(trajectory_log) if trajectory_log is not None else None
+        self.episode_store = (
+            Path(episode_store) if episode_store is not None else None
         )
         self.world = load_world(manifest.world_file)
         self.publisher = ScreenPublisher(
@@ -230,7 +230,7 @@ class ScreenSourceService:
                 self.world,
                 target_surface=surface,
                 pygame_module=pygame,
-                trajectory_log=self.trajectory_log,
+                episode_store=self.episode_store,
             )
         else:
             self.renderer = ScreenRenderer(
@@ -271,12 +271,12 @@ class ScreenSourceService:
                     if self.reader_done.is_set():
                         return 0
                     continue
-                trajectory_changed = (
+                episode_data_changed = (
                     self.manifest.view == "vision"
                     and self.renderer is not None
-                    and self.renderer.refresh_trajectory()
+                    and self.renderer.refresh_episode_data()
                 )
-                view = self._next_view(force=trajectory_changed)
+                view = self._next_view(force=episode_data_changed)
                 if view is None:
                     if self.reader_done.is_set():
                         return 0
@@ -327,12 +327,12 @@ class ScreenSourceService:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Game2 V2 headless Screen source")
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--trajectory-log")
+    parser.add_argument("--episode-store")
     args = parser.parse_args(argv)
     try:
         return ScreenSourceService(
             ScreenSourceManifest.from_file(args.manifest),
-            trajectory_log=args.trajectory_log,
+            episode_store=args.episode_store,
         ).run()
     except KeyboardInterrupt:
         return 0
