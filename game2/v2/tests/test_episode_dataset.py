@@ -202,7 +202,10 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["metrics"]["motor_decisions"], 4)
             self.assertEqual(metadata["metrics"]["controller_requests"], 1)
             self.assertAlmostEqual(
-                metadata["metrics"]["controller_penalty_sum"], -0.005
+                metadata["metrics"]["controller_penalty_sum"], 0.0
+            )
+            self.assertEqual(
+                metadata["metrics"]["controller_request_penalty"], 0.0
             )
             self.assertIn("progress_reward_sum", metadata["metrics"])
             self.assertIn("terminal_reward_contribution", metadata["metrics"])

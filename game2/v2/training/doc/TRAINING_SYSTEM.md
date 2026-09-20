@@ -344,6 +344,39 @@ An online update may happen according to the selected training orchestration
 after valid experience is collected. It must not turn the Console into a
 request/response physics loop.
 
+## Controller Cost Policy
+
+Controller requests are **free during Training Map skill acquisition**. Training
+still records every actual Controller request, its accepted/rejected/duplicate
+result, accepted button changes, and hold fractions, but the request count does
+not subtract from Training reward:
+
+```text
+Training Map Controller request cost = 0
+```
+
+This is deliberate curriculum policy. The model must first acquire reliable
+physical skills and learn to solve the task without an efficiency tax pushing
+it toward inactivity.
+
+The Controller economy objective begins only after graduation in the persistent
+**Free World / Free Play** environment:
+
+```text
+Free World Controller request cost = configured positive price
+current initial policy value       = 0.005 per actual request
+```
+
+The charge is per real Player -> Controller request, not per button field.
+A request carrying RIGHT and JUMP is one charged request; a rejected request is
+still charged; a latched KEEP that sends nothing is free. Free World may tune
+the price later, but Training Maps must remain zero-cost unless the Operator
+explicitly changes this curriculum rule.
+
+Task competence and control economy remain separate metrics. Training can
+measure economy without optimizing it; Free World may optimize both after the
+agent has acquired the required skills.
+
 ## PPO Temporal Scale And Diagnostics
 
 The current PPO implementation defines discounting in **Planner-time**, not raw

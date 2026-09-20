@@ -12,7 +12,7 @@ from game2.v2.contracts.motor import PlanCommand
 from game2.v2.learning.vision import vision_to_tensor
 
 from .config import (
-    CONTROL_REQUEST_PENALTY,
+    TRAINING_CONTROL_REQUEST_PENALTY,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_ENTROPY_COEF,
@@ -110,7 +110,7 @@ def _rewards(
     finish_world_tick: int,
 ) -> list[float]:
     rewards = [
-        -CONTROL_REQUEST_PENALTY * int(step.control_requested)
+        -TRAINING_CONTROL_REQUEST_PENALTY * int(step.control_requested)
         for step in steps
     ]
     distances = [_distance(step) for step in steps]
@@ -595,7 +595,9 @@ def train_episode(
     critic_value_mae = float(residual.abs().mean())
 
     total_control_requests = sum(int(step.control_requested) for step in steps)
-    total_control_penalty = CONTROL_REQUEST_PENALTY * total_control_requests
+    total_control_penalty = (
+        TRAINING_CONTROL_REQUEST_PENALTY * total_control_requests
+    )
     terminal_contribution = _terminal_contribution(
         steps, terminal_reward, finish_tick
     )
@@ -648,6 +650,7 @@ def train_episode(
             int(step.control_status == "duplicate") for step in steps
         ),
         "controller_penalty_sum": -float(total_control_penalty),
+        "controller_request_penalty": TRAINING_CONTROL_REQUEST_PENALTY,
         "progress_reward_sum": progress_reward_sum,
         "terminal_reward_contribution": terminal_contribution,
         "task_reward_sum": progress_reward_sum + terminal_contribution,

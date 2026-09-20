@@ -14,9 +14,17 @@ PPO_TAIL_TICKS = 200
 PPO_HISTORY_STRIDE_TICKS = POLICY_STRIDE_TICKS
 MAX_EPISODE_DATASETS = 5
 
-# Price of one actual Player -> Controller request. KEEP with no request is free.
-CONTROL_REQUEST_PENALTY = 0.005
-CONTROL_CHANGE_PENALTY = CONTROL_REQUEST_PENALTY
+# Controller economy is not part of skill acquisition on Training Maps.
+# Requests are still measured, but they carry no reward cost during Training.
+TRAINING_CONTROL_REQUEST_PENALTY = 0.0
+
+# Controller economy is introduced only after graduation in Free World / Free
+# Play. The future Free World runtime should apply this price per actual request.
+FREE_WORLD_CONTROL_REQUEST_PENALTY = 0.005
+
+# Compatibility aliases for current Training callers.
+CONTROL_REQUEST_PENALTY = TRAINING_CONTROL_REQUEST_PENALTY
+CONTROL_CHANGE_PENALTY = TRAINING_CONTROL_REQUEST_PENALTY
 # Gamma/lambda are defined per Planner-time unit, not per 120 Hz physics tick.
 # This keeps the learning horizon tied to meaningful motor-plan time.
 PPO_DISCOUNT_TICKS = PLANNER_STRIDE_TICKS
