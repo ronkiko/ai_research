@@ -17,7 +17,12 @@ from game2.v2.player.learned.contracts import (
     ControlChange,
     MotorGoal,
 )
-from game2.v2.training.work import EpisodeStore, train_episode
+from game2.v2.training.work import (
+    POLICY_STRIDE_TICKS,
+    EpisodeStore,
+    train_episode,
+)
+from game2.v2.training.work.ppo import select_ppo_indexes
 
 
 def _grid(tick: int, self_x: int) -> VisionGrid:
@@ -64,6 +69,13 @@ def _sample(sequence: int, tick: int, self_x: int):
 
 
 class EpisodeDatasetTests(unittest.TestCase):
+    def test_ppo_keeps_every_policy_decision_for_stateful_controls(self):
+        ticks = list(range(0, 1200, POLICY_STRIDE_TICKS))
+        self.assertEqual(
+            select_ppo_indexes(ticks, 1200),
+            list(range(len(ticks))),
+        )
+
     def test_episode_file_is_self_contained_and_trainable(self):
         with tempfile.TemporaryDirectory() as directory:
             store = EpisodeStore(Path(directory) / "episodes")

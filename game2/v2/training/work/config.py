@@ -2,7 +2,12 @@
 
 POLICY_STRIDE_TICKS = 2
 PPO_TAIL_TICKS = 200
-PPO_HISTORY_STRIDE_TICKS = 10
+
+# Stateful button actions need dense credit assignment.  The policy emits
+# toggles (RIGHT/JUMP changes), so dropping intermediate KEEP decisions can
+# teach a lucky stochastic trajectory without teaching the deterministic
+# policy to preserve the control state.  Keep every policy decision.
+PPO_HISTORY_STRIDE_TICKS = POLICY_STRIDE_TICKS
 MAX_EPISODE_DATASETS = 5
 
 CONTROL_CHANGE_PENALTY = 0.005
