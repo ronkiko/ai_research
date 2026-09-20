@@ -97,6 +97,44 @@ hidden Engine synchronization points. UI, Display, rendering, telemetry, and
 Training must not become hot-path blockers. Future sensory systems must also
 publish or consume observations without pausing world progression.
 
+## Fast Reflex Loop
+
+Realtime hierarchy requires the Motor layer to remain autonomous between Planner
+updates. Planner/CNN performs medium-rate perception and coordination; an active
+Motor skill performs faster physical correction against the latest MotorGoal.
+
+The intended control flow is:
+
+```text
+CNN observes world
+    |
+    | start/update skill + MotorGoal
+    v
+Motor reflex loop  <---- proprioceptive feedback
+    |
+    | low-level actuator commands
+    v
+Console physics
+```
+
+A disturbance does not automatically require a new CNN decision. For example,
+if a future humanoid is commanded to remain upright and is pushed, its balance
+Motor should react from body state while the high-level objective remains
+unchanged. In the current platformer, after CNN starts a jump toward a landing
+target, the Jump Motor should continue correcting its button-level execution
+without needing CNN to choose KEEP/PRESS/RELEASE every policy tick.
+
+This is why `motor-controller clock` is a distinct timing domain rather than a
+renaming of the Planner clock. Exact frequencies are experimental, but the
+relative requirement is normative:
+
+```text
+Research Strategist: slowest / asynchronous
+Planner CNN:         medium-rate situation understanding
+Motor reflex:        high-rate physical correction
+Console physics:     autonomous fixed step
+```
+
 ## Player and Future AI
 
 The Player domain owns decision-making. It acts through Player-facing peripheral

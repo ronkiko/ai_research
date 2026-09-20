@@ -53,6 +53,101 @@ The current Game2 actuator remains `RIGHT` / `JUMP` through the public
 Joystick. Console does not know about Strategist, Planner, Motor Controller,
 Trainer, or a model architecture.
 
+
+## Humanoid Control Analogy
+
+Game2 intentionally follows the same control separation used in modern
+humanoid-robot stacks: slow cognition and task reasoning do not directly drive
+every actuator at every physics tick. A higher layer chooses a task or physical
+objective; a faster learned whole-body or motor controller closes the local
+feedback loop and keeps executing that objective while reacting to disturbances.
+
+The intended analogy is:
+
+```text
+Research Strategist / future LLM
+    slow research, hypotheses, guidance
+                    |
+                    v
+Planner / Policy / current CNN
+    realtime perception and "spinal-cord" coordination
+    chooses WHEN a skill starts and WHAT physical result is wanted
+                    |
+                 MotorGoal
+                    |
+                    v
+Motor Controller / reflex layer
+    fast learned physical reflexes
+    chooses HOW to drive actuators to achieve the active MotorGoal
+                    |
+                    v
+             physical actuators
+                    |
+                    v
+                 World
+```
+
+For the current platformer avatar, the actuator set is only RIGHT and JUMP.
+Later the avatar is expected to gain virtual legs, arms, joints, balance and
+whole-body dynamics. The hierarchy must therefore already preserve the boundary
+needed by a future humanoid rather than teaching the CNN to micromanage every
+future joint.
+
+A humanoid example makes the rule concrete. An upper controller may command:
+
+```text
+"stand upright"
+```
+
+If the robot is pushed, the upper controller does not need to re-plan every
+joint torque. The fast controller continues pursuing the same physical objective
+and automatically changes its low-level actuation to recover balance. Likewise,
+for a jump the Planner may command:
+
+```text
+start JUMP now
+land at relative target (dx, dy)
+```
+
+The Jump Motor then owns the fast execution loop: press/hold/release the current
+actuator as needed, observe proprioceptive motion, compensate for perturbations,
+and attempt to reach the requested landing target. It does not need to know why
+the jump was requested or whether the Planner saw a gap.
+
+This means the Motor Controller may receive rich **proprioceptive** state needed
+to execute a physical skill (relative target error, motion, body/joint state,
+contact/balance state, actuator state), but it must not receive high-level
+environment semantics such as "gap ahead", route choice, task meaning, or map
+interpretation. Those belong to Planner.
+
+This architecture is intentionally aligned with current humanoid-robot research
+and tooling:
+
+- NVIDIA, *Building Generalist Humanoid Capabilities with NVIDIA Isaac GR00T
+  N1.6 Using a Sim-to-Real Workflow*:
+  https://developer.nvidia.com/blog/?p=111368
+  — describes whole-body reinforcement-learning policies as dynamically stable
+  low-level motor intelligence coordinated by a higher-level GR00T policy.
+- NVIDIA, *R²D²: Advancing Robot Mobility and Whole-Body Control with Novel
+  Workflows and AI Foundation Models from NVIDIA Research*:
+  https://developer.nvidia.com/blog/?p=98193
+  — describes HOVER as a unified neural whole-body controller that provides the
+  control foundation beneath higher robot capabilities.
+- NVIDIA, *Advancing Humanoid Robot Sight and Skill Development with NVIDIA
+  Project GR00T*:
+  https://developer.nvidia.com/blog/?p=91333
+  — describes GR00T-Control whole-body-control workflows and learning-based WBC
+  policies trained in Isaac Lab.
+- NVIDIA, *Develop Humanoid Robot Policies End-to-End with NVIDIA Isaac GR00T*:
+  https://developer.nvidia.com/blog/develop-humanoid-robot-policies-end-to-end-with-nvidia-isaac-gr00t/
+  — gives a concrete stack where a Whole Body Controller keeps a humanoid
+  balanced while a higher policy performs the task.
+
+Game2 is not claiming to reproduce NVIDIA's implementation. These references
+document the same architectural principle we intentionally adopt: cognition
+sets physical objectives; a faster learned controller closes the local physical
+feedback loop.
+
 ## Research Strategist
 
 Research Strategist is the slow, meta-level intelligence of the experiment. Its
@@ -191,68 +286,123 @@ measured; Planner and Motor Controller must act autonomously.
 
 ## MotorGoal
 
-`MotorGoal` is the logical boundary between gameplay reasoning and fast motor
-control. Planner may update it at its own rate while the Motor Controller keeps
-acting on the latest valid goal.
+`MotorGoal` is the logical boundary between realtime situation understanding
+and fast physical reflex control. It is a **physical objective**, not a direct
+button command and not a semantic description of the map.
 
-It describes a physical objective or manoeuvre, for example:
+Planner owns two decisions:
 
-- move toward a region;
-- land in a target region;
-- maintain desired motion;
-- execute a running jump;
-- stabilize;
-- stop or brake;
-- follow a local target.
+1. **when** a motor skill should start, continue, change target, or stop;
+2. **what physical result** the selected skill should pursue.
 
-The final schema is intentionally deferred. Planner does not choose buttons on
-every realtime tick.
+For the current platformer a useful MotorGoal can retain a relative target
+`(dx, dy)`. For example, on `short_gap` the CNN may recognize that the edge
+has reached the correct launch point and activate the Jump Motor with a landing
+target beyond the gap. The Jump Motor must not decide for itself that a gap
+exists.
+
+A future humanoid MotorGoal may represent balance, pose, end-effector, velocity,
+contact, landing or other body-space objectives. The schema may therefore grow,
+but its meaning stays the same: **desired physical state**, not high-level world
+semantics.
+
+Planner may update MotorGoal at its own medium rate. Once a motor skill is
+active, the Motor Controller continues pursuing the latest valid goal between
+Planner updates and must not require a fresh Planner decision for every
+low-level correction.
 
 ## Motor Controller
 
-Motor Controller is the fast realtime intelligence layer inside Player. It
-consumes the current `MotorGoal` and the freshest allowed sensory/motion
-information, performs fast correction, and produces an `ActionDecision`.
+Motor Controller is the fast reflex layer inside Player. It executes an active
+MotorGoal by closing a local feedback loop over the avatar's physical state and
+producing low-level actuator commands.
 
-It does not understand the entire strategic task, wait for Planner, wait for
-Strategist, or access Engine internals. Its future responsibilities may
-include balance, motor coordination, trajectory and landing correction,
-reaction to external disturbances, and local adaptation to physical dynamics.
-Humanoid actuators are not part of this patch.
+The Motor Controller is deliberately **not a small Planner**. It does not
+understand route choice, hazards, goals of the level, maps, or why a manoeuvre
+was requested. It learns physical reflexes: how to accelerate, brake, jump,
+land, balance, recover from perturbations, coordinate future limbs, and reduce
+error relative to the commanded physical target.
 
-Possible implementations include a small MLP, SNN, lightweight policy, or a
-later low-latency controller. These are implementation choices, not additional
-architecture levels.
-
-The Planner-to-controller relationship uses latest-value semantics:
+The key rule is:
 
 ```text
-Planner -> latest complete MotorGoal -> Motor Controller
+Planner/CNN:  decide WHEN and WHERE/WHAT
+Motor:        decide HOW, continuously and quickly
 ```
 
-The Motor Controller continues with the last valid goal while Planner computes
-the next one. It must never synchronously wait for Planner. The exact transport
-is deferred.
+A Jump Motor may therefore consume information such as:
 
-`ActionDecision` is a logical boundary, not an executable module in this
-patch. The Player adapter translates it into the current public `RIGHT` /
-`JUMP` Joystick contract. A future humanoid experiment may define another
-actuator contract without changing this Game2 contract.
+```text
+active MotorGoal(dx, dy)
+current relative target error
+motion_x / motion_y
+current JUMP actuator state
+future body/contact/balance proprioception
+```
+
+but must not consume:
+
+```text
+"gap ahead"
+"enemy nearby"
+"take upper route"
+map semantics
+task meaning
+```
+
+Those are Planner responsibilities.
+
+Once Planner starts a skill, the Motor owns its high-rate execution until the
+goal is completed, changed, cancelled, or declared failed. If the avatar is
+perturbed between Planner updates, the Motor should react immediately from
+proprioception while continuing to pursue the same MotorGoal. This is the same
+reason a humanoid balance controller can compensate for a push without asking a
+high-level reasoning model to recompute every joint action.
+
+The current RIGHT/JUMP implementation is only the smallest experimental
+actuator surface. The future avatar is expected to gain legs, arms and
+whole-body dynamics, so this reflex boundary is normative now.
+
+Possible implementations include a small MLP, SNN, lightweight policy or
+another low-latency controller. Network shape is an implementation detail. The
+Motor may run at a higher rate than Planner and must never synchronously wait
+for Planner.
+
+The Planner-to-Motor relationship uses latest-value / active-skill semantics:
+
+```text
+Planner starts/updates skill + MotorGoal
+                 |
+                 v
+Motor keeps executing and correcting locally
+                 |
+                 v
+low-level actuator commands
+```
+
+`ActionDecision` remains the current logical actuator boundary and is adapted
+to the public RIGHT/JUMP Joystick. A future humanoid actuator contract may
+contain many joints without changing the cognitive hierarchy.
 
 ## Learning Architecture
 
 The curriculum, Training Set Levels, Training and Exam Maps, Trainer process,
 trajectory data, and certification semantics are defined in the normative
-[training system document](../training/doc/TRAINING_SYSTEM.md). The first full
-learned Player target is:
+[training system document](../training/doc/TRAINING_SYSTEM.md). The first full learned Player target is conceptually:
 
 ```text
-CNN Planner -> MotorGoal -> MLP 5-8-2 Motor Controller
-             -> ActionDecision -> Joystick
+CNN Planner
+    -> activate/update Motor skill + MotorGoal
+    -> fast learned Motor reflex loop
+    -> ActionDecision
+    -> Joystick
 ```
 
-The collapsed direct-action `5-8-2` MLP remains the first minimal experiment,
-but it is not this hierarchy. Research Strategist chooses what should be
+The exact Motor input width is intentionally not normative. A Motor must receive
+the physical target and enough proprioception to execute and stabilize the
+skill; forcing every Motor into an arbitrary fixed input count would violate
+the role boundary. The historical collapsed direct-action MLP remains a useful
+baseline, but it is not this hierarchy. Research Strategist chooses what should be
 trained and why; Trainer performs the learning mechanics for a selected
 Planner or Motor Controller candidate. Neither changes the Player hot path or
 the Console contract.
