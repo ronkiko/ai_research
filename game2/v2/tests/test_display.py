@@ -30,7 +30,12 @@ from game2.v2.console.world import (CollisionRect, Rect, TileID,
                                      WorldDefinition, load_world)
 from game2.v2.contracts.framing import encode_frame
 from game2.v2.contracts.manifests import Endpoint
-from game2.v2.player.learned.contracts import ActionDecision, ControlChange
+from game2.v2.player.learned.contracts import (
+    ActionDecision,
+    ButtonCommand,
+    ControlCommand,
+    apply_control_command,
+)
 from game2.v2.training.work import EpisodeStore
 
 from pathlib import Path
@@ -438,9 +443,21 @@ class VisionPreviewRendererTests(unittest.TestCase):
             )
             renderer = VisionGridRenderer(world)
             points = (
-                (10, 128, 384, ControlChange(True, False), -0.25),
-                (20, 192, 384, ControlChange(True, True), 0.031),
-                (30, 256, 384, ControlChange(True, False), None),
+                (
+                    10, 128, 384,
+                    ControlCommand(ButtonCommand.PRESS, ButtonCommand.KEEP),
+                    -0.25,
+                ),
+                (
+                    20, 192, 384,
+                    ControlCommand(ButtonCommand.KEEP, ButtonCommand.PRESS),
+                    0.031,
+                ),
+                (
+                    30, 256, 384,
+                    ControlCommand(ButtonCommand.RELEASE, ButtonCommand.KEEP),
+                    None,
+                ),
             )
             annotations = []
             for sequence, (tick, x, y, action, advantage) in enumerate(
@@ -456,8 +473,8 @@ class VisionPreviewRendererTests(unittest.TestCase):
                     motion_x=0.0,
                     pad_state=ActionDecision(False, False),
                     action=action,
-                    desired_state=ActionDecision(
-                        action.right, action.jump
+                    desired_state=apply_control_command(
+                        ActionDecision(False, False), action
                     ),
                     old_log_prob=-0.7,
                     old_value=0.0,

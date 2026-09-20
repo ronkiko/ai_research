@@ -8,6 +8,7 @@ from typing import Callable
 
 import torch
 
+from game2.v2.player.learned.contracts import ButtonCommand
 from game2.v2.player.learned.vision import vision_to_tensor
 
 from .config import (
@@ -91,7 +92,10 @@ def _rewards(
     finish_world_tick: int,
 ) -> list[float]:
     rewards = [
-        -CONTROL_CHANGE_PENALTY * (int(step.action_right) + int(step.action_jump))
+        -CONTROL_CHANGE_PENALTY * (
+            int(step.action_right is not ButtonCommand.KEEP)
+            + int(step.action_jump is not ButtonCommand.KEEP)
+        )
         for step in steps
     ]
     distances = [_distance(step) for step in steps]
@@ -201,8 +205,8 @@ def train_episode(
         [step.old_log_prob for step in selected_steps], dtype=torch.float32
     )
     actions = torch.tensor(
-        [[step.action_right, step.action_jump] for step in selected_steps],
-        dtype=torch.float32,
+        [[int(step.action_right), int(step.action_jump)] for step in selected_steps],
+        dtype=torch.long,
     )
     parameters = unique_parameters(
         model.planner, model.motor_controller, model.critic
@@ -246,7 +250,7 @@ def train_episode(
     final_values = torch.empty(count, dtype=torch.float32)
     total_loss = total_policy_loss = total_value_loss = 0.0
     total_entropy = total_grad_norm = 0.0
-    total_right_logit = total_jump_logit = 0.0
+    total_right_confidence = total_jump_confidence = 0.0
     total_examples = updates = 0
 
     for epoch in range(PPO_EPOCHS):
@@ -276,12 +280,14 @@ def train_episode(
             logits = model.motor_controller(
                 torch.cat((goals, motion, pad), dim=1)
             )
-            batch_actions = actions[indexes].to(
-                dtype=logits.dtype, device=logits.device
-            )
-            new_log_prob = -torch.nn.functional.binary_cross_entropy_with_logits(
-                logits, batch_actions, reduction="none"
-            ).sum(dim=1)
+            if logits.ndim != 2 or logits.shape[1] != 6:
+                raise ValueError("Motor Controller must return six command logits")
+            command_logits = logits.reshape(-1, 2, 3)
+            batch_actions = actions[indexes].to(device=logits.device)
+            log_probabilities = torch.log_softmax(command_logits, dim=2)
+            new_log_prob = log_probabilities.gather(
+                2, batch_actions.unsqueeze(2)
+            ).squeeze(2).sum(dim=1)
             batch_old = old_log_prob[indexes].to(logits.device)
             batch_adv = advantages[indexes].to(logits.device)
             ratio = torch.exp(new_log_prob - batch_old)
@@ -293,12 +299,10 @@ def train_episode(
             value_loss = torch.nn.functional.mse_loss(
                 values, returns[indexes].to(values.device)
             )
-            probabilities = torch.sigmoid(logits)
+            probabilities = torch.softmax(command_logits, dim=2)
             entropy = -(
-                probabilities * torch.nn.functional.logsigmoid(logits)
-                + (1.0 - probabilities)
-                * torch.nn.functional.logsigmoid(-logits)
-            ).sum(dim=1).mean()
+                probabilities * log_probabilities
+            ).sum(dim=2).sum(dim=1).mean()
             loss = (
                 policy_loss
                 + PPO_VALUE_COEF * value_loss
@@ -320,8 +324,12 @@ def train_episode(
             total_value_loss += float(value_loss.detach())
             total_entropy += float(entropy.detach())
             total_grad_norm += float(grad_norm)
-            total_right_logit += float(logits[:, 0].detach().sum())
-            total_jump_logit += float(logits[:, 1].detach().sum())
+            total_right_confidence += float(
+                probabilities[:, 0, :].detach().amax(dim=1).sum()
+            )
+            total_jump_confidence += float(
+                probabilities[:, 1, :].detach().amax(dim=1).sum()
+            )
             total_examples += batch_count
             updates += 1
             if on_progress is not None:
@@ -348,8 +356,12 @@ def train_episode(
         "value_loss": total_value_loss / max(updates, 1),
         "entropy": total_entropy / max(updates, 1),
         "grad_norm": total_grad_norm / max(updates, 1),
-        "mean_logit_right": total_right_logit / max(total_examples, 1),
-        "mean_logit_jump": total_jump_logit / max(total_examples, 1),
+        "mean_right_command_confidence": (
+            total_right_confidence / max(total_examples, 1)
+        ),
+        "mean_jump_command_confidence": (
+            total_jump_confidence / max(total_examples, 1)
+        ),
         "parameter_norm_before": norm_before,
         "parameter_norm_after": norm_after,
         "parameter_hash_before": hash_before,

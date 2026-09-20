@@ -14,7 +14,8 @@ from game2.v2.contracts.vision import (
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.contracts import (
     ActionDecision,
-    ControlChange,
+    ButtonCommand,
+    ControlCommand,
     MotorGoal,
 )
 from game2.v2.training.work import (
@@ -49,7 +50,10 @@ def _sample(sequence: int, tick: int, self_x: int):
         vision_grid=grid,
         motor_goal=MotorGoal(1.0, 0.0),
         motion_x=0.0,
-        action_decision=ControlChange(sequence == 1, False),
+        action_decision=ControlCommand(
+            ButtonCommand.PRESS if sequence == 1 else ButtonCommand.KEEP,
+            ButtonCommand.KEEP,
+        ),
         log_prob=-0.7,
         pad_right=sequence > 1,
         pad_jump=False,
@@ -111,8 +115,18 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
+            self.assertEqual(metadata["schema_version"], 2)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
-            self.assertGreater(metadata["metrics"]["ppo_records"], 0)
+            self.assertEqual(metadata["metrics"]["ppo_records"], 4)
+            self.assertEqual(
+                [step.action_right for step in dataset.steps()],
+                [
+                    ButtonCommand.PRESS,
+                    ButtonCommand.KEEP,
+                    ButtonCommand.KEEP,
+                    ButtonCommand.KEEP,
+                ],
+            )
             self.assertTrue(any(
                 step.ppo_selected and step.advantage is not None
                 for step in dataset.steps()

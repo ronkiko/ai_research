@@ -9,14 +9,18 @@ import sqlite3
 from typing import Any
 
 from game2.v2.contracts.vision import VisionGrid
-from game2.v2.player.learned.contracts import ActionDecision, ControlChange
+from game2.v2.player.learned.contracts import (
+    ActionDecision,
+    ButtonCommand,
+    ControlCommand,
+)
 from game2.v2.player.learned.motion import vision_centers
 
 from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parent / "episodes"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -35,8 +39,8 @@ class EpisodeStep:
     motion_x: float
     pad_right: bool
     pad_jump: bool
-    action_right: bool
-    action_jump: bool
+    action_right: ButtonCommand
+    action_jump: ButtonCommand
     desired_right: bool
     desired_jump: bool
     old_log_prob: float
@@ -64,8 +68,8 @@ class EpisodeStep:
     ratio: float | None
 
     @property
-    def action(self) -> ControlChange:
-        return ControlChange(self.action_right, self.action_jump)
+    def action(self) -> ControlCommand:
+        return ControlCommand(self.action_right, self.action_jump)
 
     @property
     def vision_grid(self) -> VisionGrid:
@@ -114,7 +118,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -250,8 +254,8 @@ class EpisodeDataset:
                 bool(getattr(sample, "pad_jump", False)),
             )
         action = getattr(sample, "action_decision", None)
-        if not isinstance(action, ControlChange):
-            raise TypeError("episode sample requires a ControlChange")
+        if not isinstance(action, ControlCommand):
+            raise TypeError("episode sample requires a ControlCommand")
         goal = getattr(sample, "motor_goal", None)
 
         values = (
@@ -348,7 +352,7 @@ class EpisodeDataset:
         duration_ticks: int,
         motion_x: float,
         pad_state: ActionDecision,
-        action: ControlChange,
+        action: ControlCommand,
         desired_state: ActionDecision,
         old_log_prob: float,
         old_value: float,
@@ -413,8 +417,8 @@ class EpisodeDataset:
             motion_x=float(row["motion_x"]),
             pad_right=bool(row["pad_right"]),
             pad_jump=bool(row["pad_jump"]),
-            action_right=bool(row["action_right"]),
-            action_jump=bool(row["action_jump"]),
+            action_right=ButtonCommand(int(row["action_right"])),
+            action_jump=ButtonCommand(int(row["action_jump"])),
             desired_right=bool(row["desired_right"]),
             desired_jump=bool(row["desired_jump"]),
             old_log_prob=float(row["old_log_prob"]),
@@ -469,8 +473,8 @@ class EpisodeDataset:
             "world_tick": int(row["world_tick"]),
             "x": row["self_x"],
             "y": row["self_y"],
-            "action_right": bool(row["action_right"]),
-            "action_jump": bool(row["action_jump"]),
+            "action_right": int(row["action_right"]),
+            "action_jump": int(row["action_jump"]),
             "ppo_selected": bool(row["ppo_selected"]),
             "advantage": row["advantage"],
         } for row in rows)
