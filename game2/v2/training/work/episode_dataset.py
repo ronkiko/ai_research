@@ -20,7 +20,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parent / "episodes"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,10 @@ class EpisodeStep:
     old_value: float
     motor_goal_dx: float | None
     motor_goal_dy: float | None
+    skill_right_active: bool
+    skill_jump_active: bool
+    skill_right_probability: float | None
+    skill_jump_probability: float | None
     prob_right: float | None
     prob_jump: float | None
     prob_right_keep: float | None
@@ -79,6 +83,8 @@ class EpisodeStep:
     new_prob_jump_keep: float | None
     new_prob_jump_press: float | None
     new_prob_jump_release: float | None
+    new_skill_right_probability: float | None
+    new_skill_jump_probability: float | None
 
     @property
     def action(self) -> ControlCommand:
@@ -131,7 +137,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=3;
+                PRAGMA user_version=4;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -174,6 +180,10 @@ class EpisodeDataset:
                     old_value REAL NOT NULL,
                     motor_goal_dx REAL,
                     motor_goal_dy REAL,
+                    skill_right_active INTEGER NOT NULL,
+                    skill_jump_active INTEGER NOT NULL,
+                    skill_right_probability REAL,
+                    skill_jump_probability REAL,
                     prob_right REAL,
                     prob_jump REAL,
                     prob_right_keep REAL,
@@ -204,7 +214,9 @@ class EpisodeDataset:
                     new_prob_right_release REAL,
                     new_prob_jump_keep REAL,
                     new_prob_jump_press REAL,
-                    new_prob_jump_release REAL
+                    new_prob_jump_release REAL,
+                    new_skill_right_probability REAL,
+                    new_skill_jump_probability REAL
                 );
                 CREATE INDEX steps_world_tick ON steps(world_tick);
                 """
@@ -313,6 +325,14 @@ class EpisodeDataset:
             float(getattr(sample, "value", 0.0) or 0.0),
             self._finite_or_none(getattr(goal, "target_dx", None)),
             self._finite_or_none(getattr(goal, "target_dy", None)),
+            int(bool(getattr(sample, "skill_right_active", False))),
+            int(bool(getattr(sample, "skill_jump_active", False))),
+            self._finite_or_none(
+                getattr(sample, "skill_right_probability", None)
+            ),
+            self._finite_or_none(
+                getattr(sample, "skill_jump_probability", None)
+            ),
             self._finite_or_none(getattr(sample, "prob_right", None)),
             self._finite_or_none(getattr(sample, "prob_jump", None)),
             *(self._finite_or_none(value) for value in right_probabilities),
@@ -337,6 +357,8 @@ class EpisodeDataset:
                     motion_x, motion_y, pad_right, pad_jump,
                     action_right, action_jump, desired_right, desired_jump,
                     old_log_prob, old_value, motor_goal_dx, motor_goal_dy,
+                    skill_right_active, skill_jump_active,
+                    skill_right_probability, skill_jump_probability,
                     prob_right, prob_jump,
                     prob_right_keep, prob_right_press, prob_right_release,
                     prob_jump_keep, prob_jump_press, prob_jump_release,
@@ -344,7 +366,7 @@ class EpisodeDataset:
                     suppressed_buttons, actuated,
                     chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -368,6 +390,10 @@ class EpisodeDataset:
                     old_value=excluded.old_value,
                     motor_goal_dx=excluded.motor_goal_dx,
                     motor_goal_dy=excluded.motor_goal_dy,
+                    skill_right_active=excluded.skill_right_active,
+                    skill_jump_active=excluded.skill_jump_active,
+                    skill_right_probability=excluded.skill_right_probability,
+                    skill_jump_probability=excluded.skill_jump_probability,
                     prob_right=excluded.prob_right,
                     prob_jump=excluded.prob_jump,
                     prob_right_keep=excluded.prob_right_keep,
@@ -473,6 +499,10 @@ class EpisodeDataset:
             old_value=float(row["old_value"]),
             motor_goal_dx=row["motor_goal_dx"],
             motor_goal_dy=row["motor_goal_dy"],
+            skill_right_active=bool(row["skill_right_active"]),
+            skill_jump_active=bool(row["skill_jump_active"]),
+            skill_right_probability=row["skill_right_probability"],
+            skill_jump_probability=row["skill_jump_probability"],
             prob_right=row["prob_right"],
             prob_jump=row["prob_jump"],
             prob_right_keep=row["prob_right_keep"],
@@ -504,6 +534,8 @@ class EpisodeDataset:
             new_prob_jump_keep=row["new_prob_jump_keep"],
             new_prob_jump_press=row["new_prob_jump_press"],
             new_prob_jump_release=row["new_prob_jump_release"],
+            new_skill_right_probability=row["new_skill_right_probability"],
+            new_skill_jump_probability=row["new_skill_jump_probability"],
         ) for row in rows)
 
     @staticmethod
@@ -629,7 +661,9 @@ class EpisodeDataset:
                     new_prob_right_release=NULL,
                     new_prob_jump_keep=NULL,
                     new_prob_jump_press=NULL,
-                    new_prob_jump_release=NULL
+                    new_prob_jump_release=NULL,
+                    new_skill_right_probability=NULL,
+                    new_skill_jump_probability=NULL
                 """
             )
             for item in annotations:
@@ -640,7 +674,9 @@ class EpisodeDataset:
                         ppo_selected=?, new_log_prob=?, new_value=?, ratio=?,
                         new_prob_right_keep=?, new_prob_right_press=?,
                         new_prob_right_release=?, new_prob_jump_keep=?,
-                        new_prob_jump_press=?, new_prob_jump_release=?
+                        new_prob_jump_press=?, new_prob_jump_release=?,
+                        new_skill_right_probability=?,
+                        new_skill_jump_probability=?
                     WHERE id=?
                     """,
                     (
@@ -658,6 +694,8 @@ class EpisodeDataset:
                         item.get("new_prob_jump_keep"),
                         item.get("new_prob_jump_press"),
                         item.get("new_prob_jump_release"),
+                        item.get("new_skill_right_probability"),
+                        item.get("new_skill_jump_probability"),
                         int(item["id"]),
                     ),
                 )

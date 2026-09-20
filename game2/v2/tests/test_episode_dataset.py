@@ -64,6 +64,10 @@ def _sample(sequence: int, tick: int, self_x: int):
         chunk_offset=None,
         chunk_first=False,
         suppressed_buttons=(),
+        skill_right_active=True,
+        skill_jump_active=sequence % 2 == 0,
+        skill_right_probability=0.8,
+        skill_jump_probability=0.4,
         prob_right=0.5,
         prob_jump=0.5,
         right_probabilities=(0.5, 0.4, 0.1),
@@ -118,7 +122,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 3)
+            self.assertEqual(metadata["schema_version"], 4)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(
@@ -135,6 +139,8 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertAlmostEqual(steps[0].prob_jump_keep, 0.6)
             self.assertAlmostEqual(steps[0].prob_jump_press, 0.3)
             self.assertAlmostEqual(steps[0].prob_jump_release, 0.1)
+            self.assertTrue(steps[0].skill_right_active)
+            self.assertAlmostEqual(steps[0].skill_right_probability, 0.8)
             self.assertTrue(any(
                 step.ppo_selected and step.advantage is not None
                 for step in steps
@@ -142,7 +148,40 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertTrue(any(
                 step.ppo_selected
                 and step.new_prob_jump_press is not None
+                and step.new_skill_right_probability is not None
+                and step.new_skill_jump_probability is not None
                 for step in steps
+            ))
+
+    def test_inactive_jump_skill_does_not_update_jump_reflex(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = EpisodeStore(Path(directory) / "episodes")
+            dataset = store.create(
+                episode_id=8, mode="train", source="realtime", seed=8
+            )
+            for sequence, (tick, self_x) in enumerate(
+                ((0, 2), (2, 3), (4, 4), (6, 5)), start=1
+            ):
+                sample = _sample(sequence, tick, self_x)
+                sample.skill_jump_active = False
+                dataset.upsert_sample(sample, duration_ticks=2, actuated=True)
+            dataset.finalize(
+                result="dead", finish_world_tick=8,
+                terminal_reward=-1.0, trainable=True,
+            )
+            model = build_model(fresh=True)
+            before = [
+                parameter.detach().clone()
+                for parameter in model.motor_controller.jump_motor.parameters()
+            ]
+            result = train_episode(model, dataset)
+            after = [
+                parameter.detach().clone()
+                for parameter in model.motor_controller.jump_motor.parameters()
+            ]
+            self.assertTrue(result.updated)
+            self.assertTrue(all(
+                left.equal(right) for left, right in zip(before, after)
             ))
 
     def test_store_rotates_to_five_episode_files_and_fresh_reset_clears_them(self):

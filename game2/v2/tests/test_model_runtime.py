@@ -80,7 +80,11 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                     prepare_message(1, "evaluate", 1),
                     None,
                 )
-                # Force RIGHT=PRESS so the runtime emits a state change.
+                # Force Planner RIGHT skill active and RIGHT Motor=PRESS.
+                for parameter in player.planner.parameters():
+                    parameter.data.zero_()
+                player.planner.skill_head.bias.data[0] = 1.0
+                player.planner.skill_head.bias.data[1] = -1.0
                 for parameter in player.motor_controller.parameters():
                     parameter.data.zero_()
                 player.motor_controller.right_motor.output.bias.data[1] = 1.0

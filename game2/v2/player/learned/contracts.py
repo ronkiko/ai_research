@@ -20,16 +20,33 @@ def _normalized_value(name: str, value: object) -> float:
 
 @dataclass(frozen=True)
 class MotorGoal:
-    """Relative normalized objective passed from Planner to Motor Controller."""
+    """Normalized physical target passed from Planner to reflex Motors."""
 
     target_dx: float
     target_dy: float
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "target_dx",
-                           _normalized_value("target_dx", self.target_dx))
-        object.__setattr__(self, "target_dy",
-                           _normalized_value("target_dy", self.target_dy))
+        object.__setattr__(
+            self, "target_dx", _normalized_value("target_dx", self.target_dx)
+        )
+        object.__setattr__(
+            self, "target_dy", _normalized_value("target_dy", self.target_dy)
+        )
+
+
+@dataclass(frozen=True)
+class MotorPlan:
+    """Planner command: active skills plus their shared physical MotorGoal."""
+
+    goal: MotorGoal
+    right_active: bool
+    jump_active: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.goal, MotorGoal):
+            raise TypeError("MotorPlan goal must be a MotorGoal")
+        if type(self.right_active) is not bool or type(self.jump_active) is not bool:
+            raise TypeError("MotorPlan skill states must be bool")
 
 
 @dataclass(frozen=True)
@@ -105,7 +122,7 @@ def apply_control_command(
     )
 
 
-# Compatibility names for callers migrated in the second commit.
+# Compatibility aliases kept for internal callers while the command surface settles.
 ControlChange = ControlCommand
 apply_control_change = apply_control_command
 
@@ -116,6 +133,7 @@ __all__ = [
     "ControlChange",
     "ControlCommand",
     "MotorGoal",
+    "MotorPlan",
     "apply_control_change",
     "apply_control_command",
 ]

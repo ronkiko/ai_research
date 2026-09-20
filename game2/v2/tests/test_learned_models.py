@@ -26,11 +26,12 @@ from game2.v2.player.learned.contracts import (
     ButtonCommand,
     ControlCommand,
     MotorGoal,
+    MotorPlan,
     apply_control_command,
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import (
-    ButtonMotor383,
+    ButtonMotor583,
     DualMotorController,
     motor_input,
 )
@@ -83,6 +84,9 @@ class LearnedContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MotorGoal(math.inf, 0.0)
         with self.assertRaises(TypeError):
+            MotorPlan(goal, 1, False)
+        self.assertEqual(MotorPlan(goal, True, False).goal, goal)
+        with self.assertRaises(TypeError):
             ActionDecision(1, False)
         with self.assertRaises(TypeError):
             ControlCommand(True, ButtonCommand.KEEP)
@@ -134,13 +138,14 @@ class LearnedContractTests(unittest.TestCase):
         )
 
     def test_each_motor_input_is_intent_motion_and_own_button_state(self):
-        right = motor_input(0.5, 0.25, False)
-        jump = motor_input(-0.5, -0.75, True)
+        goal = MotorGoal(0.5, -0.5)
+        right = motor_input(goal, 0.25, -0.75, False)
+        jump = motor_input(goal, 0.25, -0.75, True)
         self.assertTrue(torch.equal(
-            right, torch.tensor([0.5, 0.25, 0.0])
+            right, torch.tensor([0.5, -0.5, 0.25, -0.75, 0.0])
         ))
         self.assertTrue(torch.equal(
-            jump, torch.tensor([-0.5, -0.75, 1.0])
+            jump, torch.tensor([0.5, -0.5, 0.25, -0.75, 1.0])
         ))
 
 
@@ -166,15 +171,16 @@ class LearnedModelTests(unittest.TestCase):
         player.reset_episode()
         self.assertEqual(player.actuated_state, ActionDecision(False, False))
 
-    def test_cnn_planner_supports_variable_resolution_and_returns_goals(self):
+    def test_cnn_planner_supports_variable_resolution_and_returns_motor_plans(self):
         planner = CNNPlanner.fresh(11)
         for frame in (_grid(5, 4), _grid(8, 3)):
             output = planner(vision_to_tensor(frame).unsqueeze(0))
-            self.assertEqual(tuple(output.shape), (1, 2))
+            self.assertEqual(tuple(output.shape), (1, 4))
             self.assertTrue(torch.isfinite(output).all())
-            goal = planner.decide(frame)
-            self.assertTrue(-1.0 <= goal.target_dx <= 1.0)
-            self.assertTrue(-1.0 <= goal.target_dy <= 1.0)
+            plan = planner.decide(frame)
+            self.assertIsInstance(plan, MotorPlan)
+            self.assertTrue(-1.0 <= plan.goal.target_dx <= 1.0)
+            self.assertTrue(-1.0 <= plan.goal.target_dy <= 1.0)
 
     def test_axis_feedback_is_routed_only_to_its_matching_motor(self):
         class CaptureMotor(torch.nn.Module):
@@ -199,10 +205,10 @@ class LearnedModelTests(unittest.TestCase):
             current_jump=False,
         )
         self.assertTrue(torch.equal(
-            right.last, torch.tensor([0.25, 0.75, 1.0])
+            right.last, torch.tensor([0.25, -0.5, 0.75, -0.25, 1.0])
         ))
         self.assertTrue(torch.equal(
-            jump.last, torch.tensor([-0.5, -0.25, 0.0])
+            jump.last, torch.tensor([0.25, -0.5, 0.75, -0.25, 0.0])
         ))
 
     def test_vertical_motion_estimator_is_independent_from_horizontal_motion(self):
@@ -221,10 +227,19 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(player.motion_estimator.last_observation_usable)
         self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
 
-    def test_right_and_jump_are_independent_3_8_3_motors(self):
+    def test_inactive_skill_bypasses_reflex_and_releases_latched_button(self):
         controller = DualMotorController.fresh(12)
-        self.assertIsInstance(controller.right_motor, ButtonMotor383)
-        self.assertIsInstance(controller.jump_motor, ButtonMotor383)
+        plan = MotorPlan(MotorGoal(0.5, 0.0), False, False)
+        command = controller.decide(
+            plan, 0.0, 0.0, current_right=True, current_jump=False
+        )
+        self.assertEqual(command.right, ButtonCommand.RELEASE)
+        self.assertEqual(command.jump, ButtonCommand.KEEP)
+
+    def test_right_and_jump_are_independent_5_8_3_reflex_motors(self):
+        controller = DualMotorController.fresh(12)
+        self.assertIsInstance(controller.right_motor, ButtonMotor583)
+        self.assertIsInstance(controller.jump_motor, ButtonMotor583)
         self.assertIsNot(
             controller.right_motor.hidden.weight,
             controller.jump_motor.hidden.weight,
@@ -232,7 +247,7 @@ class LearnedModelTests(unittest.TestCase):
         for motor in (controller.right_motor, controller.jump_motor):
             self.assertEqual(
                 (motor.hidden.in_features, motor.hidden.out_features),
-                (3, 8),
+                (5, 8),
             )
             self.assertEqual(
                 (motor.output.in_features, motor.output.out_features),
@@ -240,7 +255,8 @@ class LearnedModelTests(unittest.TestCase):
             )
         self.assertIsInstance(
             controller.decide(
-                MotorGoal(0.1, -0.2), 0.3, -0.4, True, False
+                MotorPlan(MotorGoal(0.1, -0.2), True, True),
+                0.3, -0.4, True, False
             ),
             ControlCommand,
         )

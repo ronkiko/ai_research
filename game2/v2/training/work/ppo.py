@@ -208,6 +208,13 @@ def train_episode(
         [[int(step.action_right), int(step.action_jump)] for step in selected_steps],
         dtype=torch.long,
     )
+    skill_active = torch.tensor(
+        [
+            [step.skill_right_active, step.skill_jump_active]
+            for step in selected_steps
+        ],
+        dtype=torch.float32,
+    )
     parameters = unique_parameters(
         model.planner, model.motor_controller, model.critic
     )
@@ -250,6 +257,7 @@ def train_episode(
     final_log_prob = torch.empty(count, dtype=torch.float32)
     final_values = torch.empty(count, dtype=torch.float32)
     final_probabilities = torch.empty((count, 2, 3), dtype=torch.float32)
+    final_skill_probabilities = torch.empty((count, 2), dtype=torch.float32)
     total_loss = total_policy_loss = total_value_loss = 0.0
     total_entropy = total_grad_norm = 0.0
     total_right_confidence = total_jump_confidence = 0.0
@@ -268,13 +276,19 @@ def train_episode(
             if shared:
                 assert prepared_vision is not None
                 features = model.planner.encode_prepared(prepared_vision[indexes])
-                goals = model.planner.forward_features(features)
+                planner_output = model.planner.forward_features(features)
                 values = model.critic.forward_features(features)
             else:
                 assert full_vision is not None
                 vision = full_vision[indexes]
-                goals = model.planner(vision)
+                planner_output = model.planner(vision)
                 values = model.critic(vision)
+            if planner_output.ndim != 2 or planner_output.shape[1] != 4:
+                raise ValueError(
+                    "Planner must return goal[2] + skill_logits[2]"
+                )
+            goals = planner_output[:, :2]
+            skill_logits = planner_output[:, 2:]
             motion = motion_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
@@ -284,10 +298,20 @@ def train_episode(
                 raise ValueError("Motor Controller must return six command logits")
             command_logits = logits.reshape(-1, 2, 3)
             batch_actions = actions[indexes].to(device=logits.device)
-            log_probabilities = torch.log_softmax(command_logits, dim=2)
-            new_log_prob = log_probabilities.gather(
+            motor_log_probabilities = torch.log_softmax(command_logits, dim=2)
+            motor_selected_log_prob = motor_log_probabilities.gather(
                 2, batch_actions.unsqueeze(2)
-            ).squeeze(2).sum(dim=1)
+            ).squeeze(2)
+            batch_skills = skill_active[indexes].to(device=logits.device)
+            skill_log_probabilities = -torch.nn.functional.binary_cross_entropy_with_logits(
+                skill_logits,
+                batch_skills,
+                reduction="none",
+            )
+            new_log_prob = (
+                skill_log_probabilities.sum(dim=1)
+                + (motor_selected_log_prob * batch_skills).sum(dim=1)
+            )
             batch_old = old_log_prob[indexes].to(logits.device)
             batch_adv = advantages[indexes].to(logits.device)
             ratio = torch.exp(new_log_prob - batch_old)
@@ -300,9 +324,19 @@ def train_episode(
                 values, returns[indexes].to(values.device)
             )
             probabilities = torch.softmax(command_logits, dim=2)
-            entropy = -(
-                probabilities * log_probabilities
-            ).sum(dim=2).sum(dim=1).mean()
+            motor_entropy = -(
+                probabilities * motor_log_probabilities
+            ).sum(dim=2)
+            skill_probabilities = torch.sigmoid(skill_logits)
+            skill_entropy = -(
+                skill_probabilities * torch.log(skill_probabilities.clamp_min(1e-8))
+                + (1.0 - skill_probabilities)
+                * torch.log((1.0 - skill_probabilities).clamp_min(1e-8))
+            )
+            entropy = (
+                skill_entropy.sum(dim=1)
+                + (motor_entropy * batch_skills).sum(dim=1)
+            ).mean()
             loss = (
                 policy_loss
                 + PPO_VALUE_COEF * value_loss
@@ -342,21 +376,22 @@ def train_episode(
                     "ppo_records": count,
                 })
 
-    # Re-evaluate once after every Adam step. These are true post-update
-    # diagnostics, not the pre-step values from the final PPO minibatch.
+    # Re-evaluate once after every Adam step for true post-update diagnostics.
     with torch.no_grad():
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = torch.arange(start, min(start + PPO_BATCH_SIZE, count))
             if shared:
                 assert prepared_vision is not None
                 features = model.planner.encode_prepared(prepared_vision[indexes])
-                goals = model.planner.forward_features(features)
+                planner_output = model.planner.forward_features(features)
                 values = model.critic.forward_features(features)
             else:
                 assert full_vision is not None
                 vision = full_vision[indexes]
-                goals = model.planner(vision)
+                planner_output = model.planner(vision)
                 values = model.critic(vision)
+            goals = planner_output[:, :2]
+            skill_logits = planner_output[:, 2:]
             motion = motion_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
@@ -364,14 +399,27 @@ def train_episode(
             logits = model.motor_controller.forward_batch(goals, motion, pad)
             command_logits = logits.reshape(-1, 2, 3)
             probabilities = torch.softmax(command_logits, dim=2)
-            log_probabilities = torch.log_softmax(command_logits, dim=2)
+            motor_log_probabilities = torch.log_softmax(command_logits, dim=2)
             batch_actions = actions[indexes].to(device=logits.device)
-            final_lp = log_probabilities.gather(
+            batch_skills = skill_active[indexes].to(device=logits.device)
+            motor_selected_log_prob = motor_log_probabilities.gather(
                 2, batch_actions.unsqueeze(2)
-            ).squeeze(2).sum(dim=1)
+            ).squeeze(2)
+            skill_log_probabilities = -torch.nn.functional.binary_cross_entropy_with_logits(
+                skill_logits,
+                batch_skills,
+                reduction="none",
+            )
+            final_lp = (
+                skill_log_probabilities.sum(dim=1)
+                + (motor_selected_log_prob * batch_skills).sum(dim=1)
+            )
             final_log_prob[indexes] = final_lp.detach().cpu()
             final_values[indexes] = values.detach().cpu()
             final_probabilities[indexes] = probabilities.detach().cpu()
+            final_skill_probabilities[indexes] = torch.sigmoid(
+                skill_logits
+            ).detach().cpu()
 
     norm_after, hash_after = _parameter_stats(parameters)
     loss_value = total_loss / max(updates, 1)
@@ -405,6 +453,7 @@ def train_episode(
         local = selected_lookup.get(index)
         new_lp = new_value = ratio_value = None
         new_right = new_jump = (None, None, None)
+        new_skill_right = new_skill_jump = None
         if local is not None:
             new_lp = float(final_log_prob[local])
             new_value = float(final_values[local])
@@ -415,6 +464,8 @@ def train_episode(
             new_jump = tuple(
                 float(value) for value in final_probabilities[local, 1]
             )
+            new_skill_right = float(final_skill_probabilities[local, 0])
+            new_skill_jump = float(final_skill_probabilities[local, 1])
         annotations.append({
             "id": step.id,
             "reward": float(rewards[index]),
@@ -431,6 +482,8 @@ def train_episode(
             "new_prob_jump_keep": new_jump[0],
             "new_prob_jump_press": new_jump[1],
             "new_prob_jump_release": new_jump[2],
+            "new_skill_right_probability": new_skill_right,
+            "new_skill_jump_probability": new_skill_jump,
         })
 
     dataset.write_training_annotations(
