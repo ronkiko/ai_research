@@ -159,8 +159,14 @@ def run_attached_player(connection: PlayerConnection, model: ModelClient, *,
                             lifecycle=connection, clock=clock, sleeper=sleeper)
         event = connection.latest_event
         if isinstance(event, dict) and event.get("event") == "terminal":
-            model.episode_end(1, event["result"], 0.0, False)
             finish_tick = event.get("world_tick")
+            model.episode_end(
+                1,
+                event["result"],
+                0.0,
+                False,
+                finish_tick if type(finish_tick) is int else 0,
+            )
             start_tick = getattr(connection, "latest_episode_start_tick", None)
             if type(start_tick) is not int:
                 start_tick = finish_tick

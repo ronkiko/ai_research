@@ -48,6 +48,25 @@ def _non_negative_int(name: str, value: object) -> int:
     return value
 
 
+def _metrics_object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProtocolError("metrics must be an object")
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if type(key) is not str or not key:
+            raise ProtocolError("metric names must be non-empty strings")
+        if type(item) is bool or type(item) is int or type(item) is str:
+            result[key] = item
+        elif isinstance(item, Real) and not isinstance(item, bool):
+            number = float(item)
+            if not math.isfinite(number):
+                raise ProtocolError("numeric metrics must be finite")
+            result[key] = number
+        else:
+            raise ProtocolError("metric values must be scalar JSON values")
+    return result
+
+
 def _finite_number(name: str, value: object) -> float:
     if type(value) is bool or not isinstance(value, Real):
         raise ProtocolError(f"{name} must be a real number")
@@ -98,15 +117,26 @@ def actuated_message(decision_id: int) -> dict[str, Any]:
     return _message(ACTUATED, decision_id=_positive_int("decision_id", decision_id))
 
 
-def episode_end_message(episode_id: int, result: str, reward: Real,
-                       trainable: bool) -> dict[str, Any]:
+def episode_end_message(
+    episode_id: int,
+    result: str,
+    reward: Real,
+    trainable: bool,
+    finish_world_tick: int = 0,
+) -> dict[str, Any]:
     _positive_int("episode_id", episode_id)
     if type(result) is not str or result not in RESULTS:
         raise ProtocolError("result is invalid")
     if type(trainable) is not bool:
         raise ProtocolError("trainable must be a boolean")
-    return _message(EPISODE_END, episode_id=episode_id, result=result,
-                    reward=_finite_number("reward", reward), trainable=trainable)
+    return _message(
+        EPISODE_END,
+        episode_id=episode_id,
+        result=result,
+        reward=_finite_number("reward", reward),
+        trainable=trainable,
+        finish_world_tick=_non_negative_int("finish_world_tick", finish_world_tick),
+    )
 
 
 def save_message() -> dict[str, Any]:
@@ -131,12 +161,22 @@ def decision_message(decision_id: int, observation_world_tick: int, right: bool,
     )
 
 
-def update_result_message(episode_id: int, updated: bool, loss: Real) -> dict[str, Any]:
+def update_result_message(
+    episode_id: int,
+    updated: bool,
+    loss: Real,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     _positive_int("episode_id", episode_id)
     if type(updated) is not bool:
         raise ProtocolError("updated must be a boolean")
-    return _message(UPDATE_RESULT, episode_id=episode_id, updated=updated,
-                    loss=_finite_number("loss", loss))
+    return _message(
+        UPDATE_RESULT,
+        episode_id=episode_id,
+        updated=updated,
+        loss=_finite_number("loss", loss),
+        metrics=_metrics_object({} if metrics is None else metrics),
+    )
 
 
 def saved_message() -> dict[str, Any]:
@@ -151,13 +191,17 @@ _FIELDS = {
         "physics_length", "metadata_length",
     )),
     ACTUATED: frozenset(("version", "type", "decision_id")),
-    EPISODE_END: frozenset(("version", "type", "episode_id", "result", "reward",
-                            "trainable")),
+    EPISODE_END: frozenset((
+        "version", "type", "episode_id", "result", "reward",
+        "trainable", "finish_world_tick",
+    )),
     SAVE: frozenset(("version", "type")),
     READY: frozenset(("version", "type")),
     DECISION: frozenset(("version", "type", "decision_id",
                          "observation_world_tick", "right", "jump")),
-    UPDATE_RESULT: frozenset(("version", "type", "episode_id", "updated", "loss")),
+    UPDATE_RESULT: frozenset((
+        "version", "type", "episode_id", "updated", "loss", "metrics",
+    )),
     SAVED: frozenset(("version", "type")),
 }
 
@@ -177,13 +221,23 @@ def decode_model_message(message: dict[str, Any]) -> dict[str, Any]:
     elif message_type == ACTUATED:
         actuated_message(message["decision_id"])
     elif message_type == EPISODE_END:
-        episode_end_message(message["episode_id"], message["result"],
-                            message["reward"], message["trainable"])
+        episode_end_message(
+            message["episode_id"],
+            message["result"],
+            message["reward"],
+            message["trainable"],
+            message["finish_world_tick"],
+        )
     elif message_type == DECISION:
         decision_message(message["decision_id"], message["observation_world_tick"],
                          message["right"], message["jump"])
     elif message_type == UPDATE_RESULT:
-        update_result_message(message["episode_id"], message["updated"], message["loss"])
+        update_result_message(
+            message["episode_id"],
+            message["updated"],
+            message["loss"],
+            message["metrics"],
+        )
     return message
 
 

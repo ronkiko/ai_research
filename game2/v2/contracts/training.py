@@ -41,6 +41,25 @@ def _non_negative_int(name: str, value: object) -> int:
     return value
 
 
+def _metrics_object(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProtocolError("metrics must be an object")
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if type(key) is not str or not key:
+            raise ProtocolError("metric names must be non-empty strings")
+        if type(item) is bool or type(item) is int or type(item) is str:
+            result[key] = item
+        elif isinstance(item, Real) and not isinstance(item, bool):
+            number = float(item)
+            if not math.isfinite(number):
+                raise ProtocolError("numeric metrics must be finite")
+            result[key] = number
+        else:
+            raise ProtocolError("metric values must be scalar JSON values")
+    return result
+
+
 def _finite_number(name: str, value: object) -> float:
     if type(value) is bool or not isinstance(value, Real):
         raise ProtocolError(f"{name} must be a real number")
@@ -116,11 +135,21 @@ def episode_finished_message(episode_id: int, start_world_tick: int,
     )
 
 
-def update_result_message(episode_id: int, updated: bool, loss: Real) -> dict[str, Any]:
+def update_result_message(
+    episode_id: int,
+    updated: bool,
+    loss: Real,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if type(updated) is not bool:
         raise ProtocolError("updated must be a boolean")
-    return _message(UPDATE_RESULT, episode_id=_positive_int("episode_id", episode_id),
-                    updated=updated, loss=_finite_number("loss", loss))
+    return _message(
+        UPDATE_RESULT,
+        episode_id=_positive_int("episode_id", episode_id),
+        updated=updated,
+        loss=_finite_number("loss", loss),
+        metrics=_metrics_object({} if metrics is None else metrics),
+    )
 
 
 def saved_message() -> dict[str, Any]:
@@ -138,7 +167,9 @@ _FIELDS = {
         "version", "type", "episode_id", "start_world_tick", "finish_world_tick",
         "result", "trainable", "progress", "accepted_actions", "rejected_actions",
     )),
-    UPDATE_RESULT: frozenset(("version", "type", "episode_id", "updated", "loss")),
+    UPDATE_RESULT: frozenset((
+        "version", "type", "episode_id", "updated", "loss", "metrics",
+    )),
     SAVED: frozenset(("version", "type")),
 }
 
@@ -171,7 +202,12 @@ def decode_training_message(message: dict[str, Any]) -> dict[str, Any]:
             message["accepted_actions"], message["rejected_actions"],
         )
     elif message_type == UPDATE_RESULT:
-        update_result_message(message["episode_id"], message["updated"], message["loss"])
+        update_result_message(
+            message["episode_id"],
+            message["updated"],
+            message["loss"],
+            message["metrics"],
+        )
     return message
 
 

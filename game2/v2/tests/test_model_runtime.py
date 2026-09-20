@@ -34,7 +34,9 @@ from game2.v2.player.model_client import (
     ModelClient,
 )
 from game2.v2.player.learned.contracts import ActionDecision, ControlChange, MotorGoal
-from game2.v2.player.learned.runtime import DecisionSample
+from game2.v2.player.learned.motor import MotorController582
+from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.runtime import DecisionSample, LearnedPlayer
 from game2.v2.player.realtime import run_player
 from game2.v2.player.learned.process import (
     PPO_RATING_DISPLAY_SECONDS,
@@ -249,7 +251,7 @@ class _StubModel:
     def record_sent_sample(self, sample):
         self.record_actuated(sample)
 
-    def apply_result(self, _reward):
+    def apply_result(self, _reward, _finish_world_tick=None):
         self.update_started.set()
         if not self.release.is_set() and self.slow_tick is not None:
             raise AssertionError("update overlapped inference")
@@ -461,6 +463,22 @@ class ModelRuntimeTests(unittest.TestCase):
         raise AssertionError("Model runtime did not publish the expected decision")
 
 
+    def test_checkpoint_helper_writes_all_resume_files(self):
+        player = LearnedPlayer(CNNPlanner.fresh(1), MotorController582.fresh(2))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = ModelRuntime(player)
+            runtime._checkpoint_paths = (
+                root / "planner.pt",
+                root / "motor.pt",
+                root / "critic.pt",
+                root / "optimizer.pt",
+            )
+            digest = runtime._save_checkpoints()
+            self.assertEqual(len(digest), 64)
+            self.assertTrue(all(path.is_file() for path in runtime._checkpoint_paths))
+            self.assertFalse(any(root.glob("*.tmp")))
+
     def test_model_control_timeouts_are_not_realtime_frame_deadlines(self):
         self.assertGreaterEqual(MODEL_UPDATE_TIMEOUT, 60.0)
         self.assertGreaterEqual(MODEL_SAVE_TIMEOUT, 10.0)
@@ -553,7 +571,7 @@ class ModelRuntimeTests(unittest.TestCase):
                 client.actuated(first.decision_id)
             client.observe(_grid(2))
             self._wait_decision(client, 2)
-            update = client.episode_end(1, "dead", 0.0, False)
+            update = client.episode_end(1, "dead", 0.0, False, 2)
             self.assertFalse(update["updated"])
         finally:
             client.close()
@@ -571,7 +589,7 @@ class ModelRuntimeTests(unittest.TestCase):
             self.assertTrue(model.started.wait(1.0))
 
             def finish():
-                update.append(client.episode_end(1, "success", 1.0, True))
+                update.append(client.episode_end(1, "success", 1.0, True, 101))
 
             finisher = threading.Thread(target=finish)
             finisher.start()

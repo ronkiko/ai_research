@@ -309,7 +309,13 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
         dirty = True
     trainable = not dirty
     if mode == EVALUATE or not trainable:
-        model.episode_end(episode_id, latest_terminal["result"], 0.0, False)
+        model.episode_end(
+            episode_id,
+            latest_terminal["result"],
+            0.0,
+            False,
+            finish_tick,
+        )
     finished = episode_finished_message(
         episode_id, started_tick, finish_tick, latest_terminal["result"], trainable,
         0.0 if dirty else progress_tracker.progress, accepted, rejected)
@@ -390,11 +396,27 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
                         or awaiting_mode != TRAIN:
                     raise ProtocolError("APPLY_RESULT does not match a trainable episode")
                 terminal_result = awaiting_terminal["result"]
-                update = model.episode_end(message["episode_id"], terminal_result,
-                                            message["reward"], True)
+                update = model.episode_end(
+                    message["episode_id"],
+                    terminal_result,
+                    message["reward"],
+                    True,
+                    awaiting_terminal["finish_world_tick"],
+                )
                 _pause_after_ppo_ratings(update, sleeper)
-                peer.send(update_result_message(message["episode_id"], update["updated"],
-                                                update["loss"]))
+                metrics = dict(update["metrics"])
+                metrics["observations_submitted"] = int(
+                    getattr(model, "observations_submitted", 0)
+                )
+                metrics["dropped_observations"] = int(
+                    getattr(model, "dropped_observations", 0)
+                )
+                peer.send(update_result_message(
+                    message["episode_id"],
+                    update["updated"],
+                    update["loss"],
+                    metrics,
+                ))
                 awaiting_update = None
                 awaiting_terminal = None
                 awaiting_mode = None

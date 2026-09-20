@@ -177,12 +177,21 @@ class Trainer:
                 send_training_message(peer, apply_result_message(episode_id, reward))
                 update = self._expect(peer, UPDATE_RESULT)
                 update_seconds = time.monotonic() - update_started
-                print("LEARNING " + json.dumps({
+                learning_done = {
                     "episode_id": episode_id,
                     "status": "done",
                     "seconds": round(update_seconds, 3),
                     "updated": update["updated"],
-                }, separators=(",", ":"), sort_keys=True), flush=True)
+                }
+                for key in (
+                    "rollout_records", "optimizer_steps", "checkpoint_saved",
+                    "missing_world_ticks",
+                ):
+                    if key in update["metrics"]:
+                        learning_done[key] = update["metrics"][key]
+                print("LEARNING " + json.dumps(
+                    learning_done, separators=(",", ":"), sort_keys=True
+                ), flush=True)
                 if update["episode_id"] != episode_id:
                     raise ValueError("UPDATE_RESULT identity mismatch")
                 updated = update["updated"]
@@ -191,7 +200,7 @@ class Trainer:
                     summary.losses.append(update["loss"])
             loss = update["loss"] if updated and update is not None else None
 
-            print("PROGRESS " + json.dumps({
+            progress_payload = {
                 "episode_id": episode_id,
                 "result": finished["result"],
                 "trainable": finished["trainable"],
@@ -203,7 +212,12 @@ class Trainer:
                 "accepted_actions": finished["accepted_actions"],
                 "rejected_actions": finished["rejected_actions"],
                 "loss": loss,
-            }, separators=(",", ":"), sort_keys=True), flush=True)
+            }
+            if update is not None:
+                progress_payload.update(update["metrics"])
+            print("PROGRESS " + json.dumps(
+                progress_payload, separators=(",", ":"), sort_keys=True
+            ), flush=True)
 
             if (self.stop_on_success and finished["result"] == "success"
                     and finished["trainable"] and updated):

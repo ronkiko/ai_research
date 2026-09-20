@@ -56,6 +56,8 @@ from game2.v2.player.learned.motion import (VisionProgress, goal_center, has_met
                                              self_center)
 from game2.v2.player.learned.runtime import (
     CONTROL_CHANGE_PENALTY,
+    PPO_GAE_LAMBDA,
+    PPO_GAMMA,
     DecisionSample,
     LearnedPlayer,
     TrainingRecord,
@@ -99,7 +101,7 @@ class TrainingContractTests(unittest.TestCase):
             apply_result_message(1, -1), save_message(), ready_message(),
             episode_started_message(1, 12),
             episode_finished_message(1, 12, 20, "dead", True, 0.25, 3, 0),
-            update_result_message(1, True, -0.5), saved_message(),
+            update_result_message(1, True, -0.5, {"rollout_records": 3}), saved_message(),
         ]
         for message in messages:
             self.assertEqual(decode_training_message(message), message)
@@ -491,6 +493,79 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertEqual(tuple(advantages.shape), (101,))
         self.assertTrue(torch.isfinite(advantages).all())
 
+    def test_sparse_chunk_reward_is_discounted_to_its_actual_world_tick(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+
+        def record(tick):
+            grid = _grid(tick, self_x=2, goal_x=10)
+            return TrainingRecord.from_sample(DecisionSample(
+                tick,
+                grid,
+                MotorGoal(0.0, 0.0),
+                0.0,
+                ControlChange(False, False),
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(False, False),
+            ))
+
+        records = (record(80), record(105))
+        player._reward_events = [(101, 0.25)]
+        rewards = player._rewards_for_records(records, 0.0)
+        self.assertAlmostEqual(
+            rewards[0], 0.25 * (PPO_GAMMA ** 20), delta=1e-10
+        )
+        self.assertEqual(rewards[1], 0.0)
+
+    def test_gae_uses_world_tick_gap_instead_of_record_count(self):
+        def record(tick):
+            grid = _grid(tick, self_x=2, goal_x=10)
+            return TrainingRecord.from_sample(DecisionSample(
+                tick,
+                grid,
+                MotorGoal(0.0, 0.0),
+                0.0,
+                ControlChange(False, False),
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(False, False),
+            ))
+
+        records = (record(10), record(12))
+        advantages, returns = LearnedPlayer._gae(records, [0.0, 1.0])
+        expected = (PPO_GAMMA * PPO_GAE_LAMBDA) ** 2
+        self.assertAlmostEqual(float(returns[0]), expected, delta=1e-6)
+        self.assertAlmostEqual(float(returns[1]), 1.0, delta=1e-6)
+        self.assertTrue(torch.isfinite(advantages).all())
+
+    def test_terminal_reward_is_discounted_across_unobserved_ticks(self):
+        player = self._player()
+        player.prepare_episode("train", 42)
+        grid = _grid(10, self_x=2, goal_x=10)
+        record = TrainingRecord.from_sample(DecisionSample(
+            10,
+            grid,
+            MotorGoal(0.0, 0.0),
+            0.0,
+            ControlChange(False, False),
+            -0.5,
+            False,
+            False,
+            0.0,
+            ActionDecision(False, False),
+        ))
+        rewards = player._rewards_for_records(
+            (record,), -1.0, finish_world_tick=15
+        )
+        self.assertAlmostEqual(
+            rewards[0], -(PPO_GAMMA ** 4), delta=1e-10
+        )
+
     def test_timeout_with_only_keep_still_updates_and_rates_keep(self):
         player = self._player()
         player.prepare_episode("train", 42)
@@ -710,24 +785,36 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
     def test_ppo_chunk_rewards_preserve_temporal_credit(self):
         player = self._player()
         player.prepare_episode("train", 42)
+
+        def keep(frame, motion_x):
+            return DecisionSample(
+                frame.world_tick,
+                frame,
+                MotorGoal(0.0, 0.0),
+                motion_x,
+                ControlChange(False, False),
+                -0.5,
+                False,
+                False,
+                0.0,
+                ActionDecision(False, False),
+            )
+
         frames = [
             _grid(1, self_x=2, goal_x=10),
             _grid(101, self_x=4, goal_x=10),
             _grid(201, self_x=6, goal_x=10),
         ]
-        for frame in frames:
-            player.record_sent_sample(player.process_grid(frame))
+        with mock.patch.object(player, "_process_model_grid", side_effect=keep):
+            for frame in frames:
+                player.process_grid(frame)
 
         records = player.training_records
-        self.assertEqual(len(records), 3)
-        self.assertTrue(all(isinstance(record.old_log_prob, float) for record in records))
-        self.assertTrue(all(isinstance(record.old_value, float) for record in records))
-        rewards = player._rewards_for_records(records, -1.0)
-        first_cost = -CONTROL_CHANGE_PENALTY * (
-            int(records[0].action_decision.right)
-            + int(records[0].action_decision.jump)
+        self.assertEqual([record.world_tick for record in records], [1, 101, 201])
+        rewards = player._rewards_for_records(
+            records, -1.0, finish_world_tick=202
         )
-        self.assertAlmostEqual(rewards[0], first_cost, delta=1e-8)
+        self.assertGreater(rewards[0], 0.0)
         self.assertGreater(rewards[1], 0.0)
         self.assertLess(rewards[2], 0.0)
 
@@ -737,14 +824,17 @@ class LearnedPolicyTrainingTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(advantages).all())
         self.assertTrue(torch.isfinite(returns).all())
 
-        updated, loss = player.apply_result(-1.0)
+        updated, loss = player.apply_result(-1.0, finish_world_tick=202)
         self.assertTrue(updated)
         self.assertTrue(math.isfinite(loss))
         diagnostics = player.last_update_diagnostics
         self.assertEqual(len(diagnostics), len(records))
-        self.assertEqual(
-            [item["rw"] for item in diagnostics],
-            rewards,
+        self.assertEqual([item["rw"] for item in diagnostics], rewards)
+        self.assertEqual(player.last_update_metrics["rollout_records"], 3)
+        self.assertGreater(player.last_update_metrics["optimizer_steps"], 0)
+        self.assertNotEqual(
+            player.last_update_metrics["parameter_hash_before"],
+            player.last_update_metrics["parameter_hash_after"],
         )
         for item in diagnostics:
             self.assertIn(item["a"], {"KEEP", "R", "J", "RJ"})
@@ -1918,7 +2008,9 @@ class TrainerRuntimeTests(unittest.TestCase):
                 1, 10, 20, "success", True, 0.0, 1, 0))
             apply = recv_training_message(client)
             self.assertEqual((apply["type"], apply["reward"]), (APPLY_RESULT, 1.0))
-            send_training_message(client, update_result_message(1, True, 0.25))
+            send_training_message(client, update_result_message(
+                1, True, 0.25, {"rollout_records": 3, "checkpoint_saved": True}
+            ))
             self.assertEqual(recv_training_message(client)["type"], SAVE)
             send_training_message(client, saved_message())
         finally:

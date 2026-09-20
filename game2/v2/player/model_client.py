@@ -124,6 +124,8 @@ class ModelClient:
         self._updates: dict[int, dict] = {}
         self._latest_decision: CompletedDecision | None = None
         self._error: BaseException | None = None
+        self._observations_submitted = 0
+        self._dropped_observations = 0
 
     @property
     def connected(self) -> bool:
@@ -140,6 +142,14 @@ class ModelClient:
     @property
     def latest_decision(self) -> CompletedDecision | None:
         return self._latest_decision
+
+    @property
+    def observations_submitted(self) -> int:
+        return self._observations_submitted
+
+    @property
+    def dropped_observations(self) -> int:
+        return self._dropped_observations
 
     def connect(self) -> None:
         if self._socket is not None:
@@ -236,14 +246,19 @@ class ModelClient:
         self._flush_until_empty()
         self._clear_observation_mailbox()
         self._latest_decision = None
+        self._observations_submitted = 0
+        self._dropped_observations = 0
 
     def observe(self, frame: VisionGrid) -> None:
         self._require_socket()
         encoded = observation_packet(frame)
+        self._observations_submitted += 1
         if self._pending_observation is None and self._current_out is None \
                 and not self._control_out:
             self._pending_observation = encoded
         else:
+            if self._queued_observation is not None:
+                self._dropped_observations += 1
             self._queued_observation = encoded
         self._flush()
 
@@ -251,9 +266,17 @@ class ModelClient:
         self._queue_control(actuated_message(decision_id))
         self._flush()
 
-    def episode_end(self, episode_id: int, result: str, reward: float,
-                    trainable: bool) -> dict:
-        self._queue_control(episode_end_message(episode_id, result, reward, trainable))
+    def episode_end(
+        self,
+        episode_id: int,
+        result: str,
+        reward: float,
+        trainable: bool,
+        finish_world_tick: int = 0,
+    ) -> dict:
+        self._queue_control(episode_end_message(
+            episode_id, result, reward, trainable, finish_world_tick
+        ))
         self._flush_until_empty()
         self._clear_observation_mailbox()
         deadline = time.monotonic() + self.update_timeout

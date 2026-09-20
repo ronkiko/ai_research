@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 import math
 
 import torch
@@ -40,6 +41,8 @@ class DecisionSample:
     chunk_first: bool = False
     suppressed_buttons: tuple[str, ...] = ()
     policy_sequence: int = 0
+    prob_right: float | None = None
+    prob_jump: float | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,7 @@ class LearnedPlayer:
         self._last_observed_distance: float | None = None
         self.last_update_loss: float | None = None
         self.last_update_diagnostics: tuple[dict, ...] = ()
+        self.last_update_metrics: dict[str, object] = {}
 
     @property
     def episode_mode(self) -> str | None:
@@ -211,6 +215,7 @@ class LearnedPlayer:
         self._last_observed_distance = None
         self.last_update_loss = None
         self.last_update_diagnostics = ()
+        self.last_update_metrics = {}
 
     def reset_episode(self) -> None:
         """Reset only attempt-local state; model weights and identity survive."""
@@ -331,10 +336,10 @@ class LearnedPlayer:
                 vision, motion_x, pad_state.right, pad_state.jump
             )
             value = float(self.critic(vision)[0])
+        probabilities = torch.sigmoid(logits)
         if self._episode_mode == "train":
             if self._episode_generator is None:
                 raise RuntimeError("train episode has no random generator")
-            probabilities = torch.sigmoid(logits)
             random_values = torch.rand(
                 probabilities.shape, generator=self._episode_generator,
                 dtype=probabilities.dtype, device=probabilities.device,
@@ -364,6 +369,8 @@ class LearnedPlayer:
             pad_state.jump,
             value,
             desired_state,
+            prob_right=float(probabilities[0]),
+            prob_jump=float(probabilities[1]),
         )
 
     def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
@@ -461,7 +468,10 @@ class LearnedPlayer:
         self.record_actuated(sample)
 
     def _rewards_for_records(
-        self, records: tuple[TrainingRecord, ...], terminal_reward: float
+        self,
+        records: tuple[TrainingRecord, ...],
+        terminal_reward: float,
+        finish_world_tick: int | None = None,
     ) -> list[float]:
         rewards = [
             -CONTROL_CHANGE_PENALTY * (
@@ -479,8 +489,10 @@ class LearnedPlayer:
                 and records[record_index + 1].world_tick < event_tick
             ):
                 record_index += 1
-            if records[record_index].world_tick < event_tick:
-                rewards[record_index] += float(event_reward)
+            record_tick = records[record_index].world_tick
+            if record_tick < event_tick:
+                delay = max(0, event_tick - 1 - record_tick)
+                rewards[record_index] += float(event_reward) * (PPO_GAMMA ** delay)
         partial = 0.0
         if (
             self._start_distance is not None
@@ -490,22 +502,45 @@ class LearnedPlayer:
             partial = (
                 self._last_reward_distance - self._last_observed_distance
             ) / self._start_distance
-        rewards[-1] += float(terminal_reward) + partial
+        terminal_delay = 0
+        if finish_world_tick is not None:
+            if type(finish_world_tick) is not int or finish_world_tick < 0:
+                raise ValueError("finish_world_tick must be a non-negative integer")
+            if finish_world_tick < records[-1].world_tick:
+                raise ValueError("finish_world_tick cannot precede the last PPO record")
+            terminal_delay = max(
+                0, finish_world_tick - 1 - records[-1].world_tick
+            )
+        terminal_discount = PPO_GAMMA ** terminal_delay
+        rewards[-1] += (float(terminal_reward) + partial) * terminal_discount
         return rewards
 
     @staticmethod
     def _gae(
         records: tuple[TrainingRecord, ...], rewards: list[float]
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if len(records) != len(rewards):
+            raise ValueError("records and rewards must have equal length")
         values = [record.old_value for record in records]
         advantages = [0.0 for _ in records]
         gae = 0.0
-        next_value = 0.0
         for index in range(len(records) - 1, -1, -1):
-            delta = rewards[index] + PPO_GAMMA * next_value - values[index]
-            gae = delta + PPO_GAMMA * PPO_GAE_LAMBDA * gae
+            if index + 1 < len(records):
+                delta_ticks = (
+                    records[index + 1].world_tick - records[index].world_tick
+                )
+                if delta_ticks < 0:
+                    raise ValueError("PPO record world_tick cannot move backwards")
+                gamma = PPO_GAMMA ** delta_ticks
+                trace = (PPO_GAMMA * PPO_GAE_LAMBDA) ** delta_ticks
+                next_value = values[index + 1]
+            else:
+                gamma = 0.0
+                trace = 0.0
+                next_value = 0.0
+            delta = rewards[index] + gamma * next_value - values[index]
+            gae = delta + trace * gae
             advantages[index] = gae
-            next_value = values[index]
         advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
         returns = advantage_tensor + torch.tensor(values, dtype=torch.float32)
         if len(records) > 1:
@@ -516,12 +551,26 @@ class LearnedPlayer:
                 ) / (std + 1e-8)
         return advantage_tensor, returns
 
+    @staticmethod
+    def _parameter_stats(
+        parameters: list[torch.nn.Parameter],
+    ) -> tuple[float, str]:
+        squared_norm = 0.0
+        digest = hashlib.sha256()
+        for parameter in parameters:
+            tensor = parameter.detach().cpu().contiguous()
+            squared_norm += float(torch.sum(tensor.float() * tensor.float()))
+            digest.update(str(tuple(tensor.shape)).encode("ascii"))
+            digest.update(str(tensor.dtype).encode("ascii"))
+            digest.update(tensor.numpy().tobytes())
+        return math.sqrt(squared_norm), digest.hexdigest()
+
     def _ppo_update(
         self,
         records: tuple[TrainingRecord, ...],
         advantages: torch.Tensor,
         returns: torch.Tensor,
-    ) -> tuple[float, torch.Tensor, torch.Tensor]:
+    ) -> tuple[float, torch.Tensor, torch.Tensor, dict[str, object]]:
         if self.optimizer is None:
             raise RuntimeError("trainable models are required for updates")
         count = len(records)
@@ -534,6 +583,13 @@ class LearnedPlayer:
             dtype=torch.float32,
         )
         total_loss = 0.0
+        total_policy_loss = 0.0
+        total_value_loss = 0.0
+        total_entropy = 0.0
+        total_grad_norm = 0.0
+        total_right_logit = 0.0
+        total_jump_logit = 0.0
+        total_examples = 0
         updates = 0
         final_log_prob = torch.empty(count, dtype=torch.float32)
         final_values = torch.empty(count, dtype=torch.float32)
@@ -542,6 +598,7 @@ class LearnedPlayer:
             + list(self.motor_controller.parameters())
             + list(self.critic.parameters())
         )
+        parameter_norm_before, parameter_hash_before = self._parameter_stats(parameters)
         generator = self._episode_generator
         for _epoch in range(PPO_EPOCHS):
             order = torch.randperm(count, generator=generator)
@@ -600,16 +657,40 @@ class LearnedPlayer:
                 )
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters, max_norm=PPO_MAX_GRAD_NORM
                 )
                 self.optimizer.step()
+                batch_count = len(batch_records)
                 total_loss += float(loss.detach())
+                total_policy_loss += float(policy_loss.detach())
+                total_value_loss += float(value_loss.detach())
+                total_entropy += float(entropy.detach())
+                total_grad_norm += float(grad_norm)
+                total_right_logit += float(logits[:, 0].detach().sum())
+                total_jump_logit += float(logits[:, 1].detach().sum())
+                total_examples += batch_count
                 updates += 1
+        parameter_norm_after, parameter_hash_after = self._parameter_stats(parameters)
+        metrics: dict[str, object] = {
+            "rollout_records": count,
+            "optimizer_steps": updates,
+            "policy_loss": total_policy_loss / max(updates, 1),
+            "value_loss": total_value_loss / max(updates, 1),
+            "entropy": total_entropy / max(updates, 1),
+            "grad_norm": total_grad_norm / max(updates, 1),
+            "mean_logit_right": total_right_logit / max(total_examples, 1),
+            "mean_logit_jump": total_jump_logit / max(total_examples, 1),
+            "parameter_norm_before": parameter_norm_before,
+            "parameter_norm_after": parameter_norm_after,
+            "parameter_hash_before": parameter_hash_before,
+            "parameter_hash_after": parameter_hash_after,
+        }
         return (
             total_loss / max(updates, 1),
             final_log_prob,
             final_values,
+            metrics,
         )
 
     def _build_update_diagnostics(
@@ -667,7 +748,9 @@ class LearnedPlayer:
             diagnostics.append(item)
         return tuple(diagnostics)
 
-    def apply_result(self, reward: float) -> tuple[bool, float]:
+    def apply_result(
+        self, reward: float, finish_world_tick: int | None = None
+    ) -> tuple[bool, float]:
         """Apply one terminal result through chunk rewards, GAE, and PPO-Clip."""
         if self._episode_mode != "train":
             raise ValueError("APPLY_RESULT is valid only in train mode")
@@ -680,11 +763,18 @@ class LearnedPlayer:
         if not records:
             self.last_update_loss = 0.0
             self.last_update_diagnostics = ()
+            self.last_update_metrics = {
+                "rollout_records": 0,
+                "optimizer_steps": 0,
+                "reward_sum": 0.0,
+            }
             self._recorded_samples.clear()
             self._log_probabilities.clear()
             self._reward_events.clear()
             return False, 0.0
-        rewards = self._rewards_for_records(records, float(reward))
+        rewards = self._rewards_for_records(
+            records, float(reward), finish_world_tick
+        )
         if not any(abs(value) > 1e-12 for value in rewards):
             self._training_records.clear()
             self._recorded_samples.clear()
@@ -692,11 +782,27 @@ class LearnedPlayer:
             self._reward_events.clear()
             self.last_update_loss = 0.0
             self.last_update_diagnostics = ()
+            self.last_update_metrics = {
+                "rollout_records": len(records),
+                "optimizer_steps": 0,
+                "reward_sum": float(sum(rewards)),
+            }
             return False, 0.0
         advantages, returns = self._gae(records, rewards)
-        loss_value, new_log_prob, new_values = self._ppo_update(
+        loss_value, new_log_prob, new_values, metrics = self._ppo_update(
             records, advantages, returns
         )
+        metrics["reward_sum"] = float(sum(rewards))
+        if records:
+            metrics["first_world_tick"] = records[0].world_tick
+            metrics["last_world_tick"] = records[-1].world_tick
+            metrics["world_tick_span"] = (
+                records[-1].world_tick - records[0].world_tick + 1
+            )
+            metrics["missing_world_ticks"] = max(
+                0, int(metrics["world_tick_span"]) - len(records)
+            )
+        self.last_update_metrics = metrics
         if not math.isfinite(loss_value):
             raise RuntimeError("training loss is not finite")
         self.last_update_diagnostics = self._build_update_diagnostics(

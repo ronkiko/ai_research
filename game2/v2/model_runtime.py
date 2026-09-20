@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from copy import copy
 from dataclasses import replace
 import json
+import math
 import select
 import socket
 import sys
@@ -40,6 +42,10 @@ from game2.v2.player.learned.checkpoint import (
     load_motor_controller,
     load_optimizer,
     load_planner,
+    save_critic,
+    save_motor_controller,
+    save_optimizer,
+    save_planner,
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import MotorController582
@@ -171,6 +177,11 @@ class ModelRuntime:
         self._control_tick: int | None = None
         self._control_used_buttons: set[str] = set()
         self._control_tick_state: ActionDecision | None = None
+        self._checkpoint_paths: tuple[Path, Path, Path, Path] | None = None
+        self._episode_decision_count = 0
+        self._episode_actuated_count = 0
+        self._episode_observations_received = 0
+        self._episode_dropped_observations = 0
 
     @staticmethod
     def _compact_number(value: float) -> int | float:
@@ -207,6 +218,10 @@ class ModelRuntime:
         if type(chunk_index) is int and type(chunk_offset) is int:
             payload["c"] = chunk_index
             payload["o"] = chunk_offset
+        for key, attribute in (("pr", "prob_right"), ("pj", "prob_jump")):
+            probability = getattr(sample, attribute, None)
+            if isinstance(probability, (int, float)) and math.isfinite(float(probability)):
+                payload[key] = self._compact_number(float(probability))
         suppressed = tuple(getattr(sample, "suppressed_buttons", ()))
         if suppressed:
             payload["b"] = "".join(
@@ -242,6 +257,60 @@ class ModelRuntime:
                     json.dumps(payload, separators=(",", ":"), sort_keys=True)
                     + "\n"
                 )
+
+    def _append_update_summary(
+        self, episode_id: int, metrics: dict[str, object]
+    ) -> None:
+        if self.trajectory_log is None:
+            return
+        payload = {"e": episode_id, "k": "u"}
+        for key, value in metrics.items():
+            payload[key] = (
+                self._compact_number(value)
+                if isinstance(value, float) else value
+            )
+        self.trajectory_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.trajectory_log.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                + "\n"
+            )
+
+    def _save_checkpoints(self) -> str:
+        if self._checkpoint_paths is None:
+            raise RuntimeError("checkpoint paths are not configured")
+        planner_path, motor_path, critic_path, optimizer_path = self._checkpoint_paths
+        paths = (planner_path, motor_path, critic_path, optimizer_path)
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = tuple(
+            path.with_name(path.name + ".tmp") for path in paths
+        )
+        try:
+            save_planner(self.player.planner, temporary[0])
+            save_motor_controller(self.player.motor_controller, temporary[1])
+            save_critic(self.player.critic, temporary[2])
+            assert self.player.optimizer is not None
+            save_optimizer(self.player.optimizer, temporary[3])
+            for source, destination in zip(temporary, paths):
+                source.replace(destination)
+        finally:
+            for path in temporary:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+
+        digest = hashlib.sha256()
+        for path in paths:
+            digest.update(path.name.encode("utf-8"))
+            with path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+        return digest.hexdigest()
 
     @staticmethod
     def _sample_pad_state(sample) -> ActionDecision:
@@ -325,24 +394,46 @@ class ModelRuntime:
         trainable = message["trainable"] and message["result"] in {
             "success", "dead", "timeout",
         }
+        metrics: dict[str, object] = {}
         if trainable and self.player.episode_mode == "train":
-            updated, loss = self.player.apply_result(message["reward"])
+            updated, loss = self.player.apply_result(
+                message["reward"], message["finish_world_tick"]
+            )
             diagnostics = tuple(
                 getattr(self.player, "last_update_diagnostics", ())
             )
+            metrics.update(getattr(self.player, "last_update_metrics", {}))
         else:
             self.player.reset_episode()
             updated, loss = False, 0.0
             diagnostics = ()
+        metrics["decision_count"] = self._episode_decision_count
+        metrics["actuated_count"] = self._episode_actuated_count
+        metrics["model_observations_received"] = self._episode_observations_received
+        metrics["model_dropped_observations"] = self._episode_dropped_observations
+        metrics["checkpoint_saved"] = False
+        metrics["checkpoint_hash"] = ""
+        if (
+            updated
+            and self._checkpoint_paths is not None
+            and isinstance(self.player, LearnedPlayer)
+        ):
+            metrics["checkpoint_hash"] = self._save_checkpoints()
+            metrics["checkpoint_saved"] = True
         episode_id = self._episode_id
         self._append_ppo_diagnostics(episode_id, diagnostics)
+        self._append_update_summary(episode_id, metrics)
         self._samples.clear()
         self._episode_id = None
         self._active = False
         self._control_tick = None
         self._control_used_buttons.clear()
         self._control_tick_state = None
-        self._send(peer, update_result_message(episode_id, updated, loss))
+        self._episode_decision_count = 0
+        self._episode_actuated_count = 0
+        self._episode_observations_received = 0
+        self._episode_dropped_observations = 0
+        self._send(peer, update_result_message(episode_id, updated, loss, metrics))
 
     def _handle(self, peer: socket.socket, message: dict,
                 pending_observation: object | None,
@@ -358,14 +449,22 @@ class ModelRuntime:
             self._control_tick = None
             self._control_used_buttons.clear()
             self._control_tick_state = None
+            self._episode_decision_count = 0
+            self._episode_actuated_count = 0
+            self._episode_observations_received = 0
+            self._episode_dropped_observations = 0
             return None
         if message_type == OBSERVE:
             if not self._active:
                 return pending_observation
+            self._episode_observations_received += 1
+            if pending_observation is not None:
+                self._episode_dropped_observations += 1
             return observation_from_message(message, observation_matrices)
         if message_type == ACTUATED:
             sample = self._samples.pop(message["decision_id"], None)
             if sample is not None:
+                self._episode_actuated_count += 1
                 self.player.record_actuated(sample)
                 if self._episode_id is not None:
                     self._append_policy_action(self._episode_id, sample)
@@ -386,6 +485,7 @@ class ModelRuntime:
             time.sleep(self.inference_delay)
         sample = self.player.process_grid(frame)
         if sample is not None:
+            self._episode_decision_count += 1
             change = sample.action_decision
             if not isinstance(change, ControlChange):
                 raise TypeError("Model policy must return a ControlChange")
@@ -422,6 +522,12 @@ class ModelRuntime:
 
     def run(self, planner_path: str | Path, motor_path: str | Path,
             critic_path: str | Path, optimizer_path: str | Path) -> int:
+        self._checkpoint_paths = (
+            Path(planner_path),
+            Path(motor_path),
+            Path(critic_path),
+            Path(optimizer_path),
+        )
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((self.listen_host, self.listen_port))
@@ -455,16 +561,7 @@ class ModelRuntime:
                         if message["type"] == SAVE:
                             if self._active:
                                 raise ProtocolError("SAVE arrived during an active episode")
-                            from game2.v2.player.learned.checkpoint import (
-                                save_critic, save_motor_controller,
-                                save_optimizer, save_planner,
-                            )
-                            Path(planner_path).parent.mkdir(parents=True, exist_ok=True)
-                            save_planner(self.player.planner, planner_path)
-                            save_motor_controller(self.player.motor_controller, motor_path)
-                            save_critic(self.player.critic, critic_path)
-                            assert self.player.optimizer is not None
-                            save_optimizer(self.player.optimizer, optimizer_path)
+                            self._save_checkpoints()
                             self._send(peer, saved_message())
                             # Keep the successful worker alive until Player has
                             # consumed SAVED and closed its side of the boundary.

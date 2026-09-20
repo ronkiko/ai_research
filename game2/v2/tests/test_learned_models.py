@@ -25,7 +25,7 @@ from game2.v2.player.learned.planner import CNNPlanner
 from game2.v2.player.learned.runtime import (
     DecisionSample,
     LearnedPlayer,
-    REPLAY_BATCH_SIZE,
+    PPO_BATCH_SIZE,
     TrainingRecord,
 )
 from game2.v2.player.learned.vision import vision_to_tensor
@@ -42,7 +42,7 @@ def _expand_physics(coarse: bytes, columns: int, rows: int) -> bytes:
     return bytes(fine)
 
 
-def _grid(columns: int, rows: int) -> VisionGrid:
+def _grid(columns: int, rows: int, world_tick: int = 1) -> VisionGrid:
     cells = columns * rows
     coarse = bytes(index % 3 for index in range(cells))
     physics = _expand_physics(coarse, columns, rows)
@@ -53,7 +53,7 @@ def _grid(columns: int, rows: int) -> VisionGrid:
         flags[index % len(flags)] for index in range(fine_columns * fine_rows)
     )
     return VisionGrid(
-        columns, rows, 64, coarse, physics, metadata, world_tick=1
+        columns, rows, 64, coarse, physics, metadata, world_tick=world_tick
     )
 
 
@@ -239,8 +239,11 @@ class LearnedModelTests(unittest.TestCase):
         player.prepare_episode("train", 42)
         before = self._action_probabilities(player, frame)
         player._training_records.extend(
-            _record(frame, ControlChange(True, False))
-            for _ in range(REPLAY_BATCH_SIZE + 5)
+            _record(
+                _grid(2, 2, world_tick=tick),
+                ControlChange(True, False),
+            )
+            for tick in range(1, PPO_BATCH_SIZE + 6)
         )
         updated, loss = player.apply_result(1.0)
         after = self._action_probabilities(player, frame)
