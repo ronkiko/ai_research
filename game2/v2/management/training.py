@@ -493,12 +493,17 @@ class TrainingRun:
         screen: int | None = None,
         screen_server: str | Path = DEFAULT_SCREEN_SERVER,
         view: str = "screen",
+        mode: str = "realtime",
     ) -> int:
         manifest_path = Path(set_path).expanduser().resolve()
         checkpoint_path = Path(checkpoint_dir).expanduser().resolve()
         if view not in {"screen", "vision"}:
             raise ValueError("view must be screen or vision")
-        if view != "screen" and screen is None:
+        if mode not in {"realtime", "unpaced"}:
+            raise ValueError("mode must be realtime or unpaced")
+        if mode == "unpaced" and (screen is not None or view != "screen"):
+            raise ValueError("unpaced training is headless; omit --screen and --view vision")
+        if mode == "realtime" and view != "screen" and screen is None:
             raise ValueError("--view vision requires --screen")
         manifest = TrainingSetManifest.from_file(manifest_path)
 
@@ -536,6 +541,23 @@ class TrainingRun:
             raise ValueError("max_episodes must be positive")
         if type(episode_limit) is not int or episode_limit <= 0:
             raise ValueError("episode_limit must be positive")
+
+        if mode == "unpaced":
+            from game2.v2.training.unpaced import run_unpaced_training_set
+
+            self._write(
+                f"TRAINING SET {manifest.training_set_level}: "
+                f"{'fresh' if fresh else 'resume'}, mode=unpaced, headless"
+            )
+            return run_unpaced_training_set(
+                set_path=manifest_path,
+                checkpoint_dir=checkpoint_path,
+                max_episodes=max_episodes,
+                episode_limit=episode_limit,
+                fresh=fresh,
+                output=self.output,
+                should_stop=self.stop_requested.is_set,
+            )
 
         log_run = _next_log_run(log_root)
         self._write(f"LOG run: {log_run}")
@@ -583,6 +605,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--episode-limit", type=int, default=DEFAULT_EPISODE_LIMIT)
     parser.add_argument("--screen", type=int)
     parser.add_argument("--view", choices=("screen", "vision"), default="screen")
+    parser.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fresh", action="store_true")
@@ -605,6 +628,7 @@ def main(argv=None) -> int:
             screen=args.screen,
             screen_server=args.screen_server,
             view=args.view,
+            mode=args.mode,
         )
     except KeyboardInterrupt:
         print("Training interrupted", file=sys.stderr, flush=True)

@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from game2.v2.contracts.discovery import ConsoleDiscovery
@@ -154,6 +155,67 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(motor.read_bytes(), b"keep-motor")
             self.assertEqual(critic.read_bytes(), b"keep-critic")
             self.assertEqual(optimizer.read_bytes(), b"keep-optimizer")
+
+    def test_unpaced_mode_is_headless_in_process_and_creates_no_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            factory = _Factory()
+            output = io.StringIO()
+            checkpoint_dir = Path(directory) / "checkpoints"
+            run = TrainingRun(
+                popen_factory=factory,
+                sleeper=lambda _seconds: None,
+                output=output,
+            )
+            with mock.patch(
+                "game2.v2.training.unpaced.run_unpaced_training_set",
+                return_value=0,
+            ) as unpaced:
+                result = run.train(
+                    set_path=self._manifest(directory),
+                    checkpoint_dir=checkpoint_dir,
+                    max_episodes=3,
+                    fresh=True,
+                    episode_limit=100,
+                    mode="unpaced",
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(factory.commands, [])
+            self.assertFalse((checkpoint_dir / "logs").exists())
+            kwargs = unpaced.call_args.kwargs
+            self.assertTrue(kwargs["fresh"])
+            self.assertEqual(kwargs["max_episodes"], 3)
+            self.assertEqual(kwargs["episode_limit"], 100)
+            self.assertIn("mode=unpaced, headless", output.getvalue())
+
+    def test_unpaced_mode_rejects_screen_and_vision_view(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = TrainingRun(
+                popen_factory=_Factory(),
+                sleeper=lambda _seconds: None,
+                output=io.StringIO(),
+            )
+            manifest = self._manifest(directory)
+            with self.assertRaises(ValueError):
+                run.train(
+                    set_path=manifest,
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    max_episodes=1,
+                    fresh=True,
+                    episode_limit=10,
+                    screen=1,
+                    mode="unpaced",
+                )
+            with self.assertRaises(ValueError):
+                run.train(
+                    set_path=manifest,
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    max_episodes=1,
+                    fresh=True,
+                    episode_limit=10,
+                    view="vision",
+                    mode="unpaced",
+                )
 
     def test_headless_composition_does_not_touch_screen_and_console_display_is_off(self):
         with tempfile.TemporaryDirectory() as directory:
