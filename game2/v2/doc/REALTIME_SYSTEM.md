@@ -174,3 +174,11 @@ Before accepting any Game2 V2 design, verify that it preserves autonomous world
 progression, non-blocking model interaction, fixed physics semantics, separate
 timing domains, and Player peripheral access. If a design makes the world wait
 for intelligence, it violates this contract.
+
+### Latched MotorPlan lifecycle
+
+The 10 Hz Planner cadence is only the opportunity to issue a Planner command;
+it is not an automatic replacement of the current plan. `KEEP` preserves the
+existing MotorPlan across Planner ticks. Only `SET` replaces MotorGoal/skill
+selection and only `STOP` explicitly deactivates the current skills. The 60 Hz
+Motor loop keeps reacting to physics while that plan remains latched.

@@ -61,6 +61,14 @@ class ActionDecision:
             raise TypeError("ActionDecision fields must be bool")
 
 
+class PlanCommand(IntEnum):
+    """One explicit instruction for the currently latched MotorPlan."""
+
+    KEEP = 0
+    SET = 1
+    STOP = 2
+
+
 class ButtonCommand(IntEnum):
     """One explicit instruction for a persistent virtual-pad button."""
 
@@ -153,6 +161,7 @@ __all__ = [
     "ControlCommand",
     "MotorGoal",
     "MotorPlan",
+    "PlanCommand",
     "apply_control_change",
     "apply_control_command",
     "gate_control_command",

@@ -19,6 +19,7 @@ from .contracts import (
     ControlCommand,
     MotorGoal,
     MotorPlan,
+    PlanCommand,
     apply_control_command,
 )
 from .critic import CNNCritic
@@ -72,6 +73,7 @@ class DecisionSample:
     skill_right_probability: float | None = None
     skill_jump_probability: float | None = None
     planner_decision: bool = True
+    plan_command: PlanCommand = PlanCommand.KEEP
     plan_policy_sequence: int = 0
 
 
@@ -207,6 +209,8 @@ class LearnedPlayer:
         ):
             planner_decision = True
 
+        plan_command = PlanCommand.KEEP
+        planner_log_prob = torch.tensor(0.0)
         with torch.no_grad():
             shared = (
                 hasattr(self.planner, "encode")
@@ -222,80 +226,113 @@ class LearnedPlayer:
                 current_features = None
                 value = float(self.critic(vision)[0])
 
-            skill_log_prob = torch.tensor(0.0)
             if planner_decision:
                 planner_output = (
                     self.planner.forward_features(current_features)[0]
                     if shared
                     else self.planner(vision)[0]
                 )
-                if planner_output.ndim != 1 or planner_output.shape[0] != 4:
+                if planner_output.ndim != 1 or planner_output.shape[0] != 7:
                     raise ValueError(
-                        "Planner must return goal[2] + skill_logits[2]"
+                        "Planner must return goal[2] + plan_command_logits[3] "
+                        "+ skill_logits[2]"
                     )
-                goal_tensor = planner_output[:2]
-                skill_logits = planner_output[2:]
-                skill_active_probability = torch.sigmoid(skill_logits)
+                candidate_goal = MotorGoal(
+                    float(planner_output[0].detach()),
+                    float(planner_output[1].detach()),
+                )
+                command_logits = planner_output[2:5]
+                skill_logits = planner_output[5:7]
+                command_probabilities = torch.softmax(command_logits, dim=0)
+                skill_probabilities = torch.sigmoid(skill_logits)
+
                 if self._episode_mode == "train":
                     if self._episode_generator is None:
                         raise RuntimeError("train episode has no random generator")
-                    skill_choices = torch.multinomial(
-                        torch.stack(
-                            (
-                                1.0 - skill_active_probability,
-                                skill_active_probability,
-                            ),
-                            dim=1,
-                        ),
+                    command_choice = torch.multinomial(
+                        command_probabilities,
                         1,
                         replacement=True,
                         generator=self._episode_generator,
-                    ).squeeze(1)
-                    skill_log_prob = torch.log(
-                        torch.stack(
-                            (
-                                1.0 - skill_active_probability,
-                                skill_active_probability,
+                    )[0]
+                    plan_command = PlanCommand(int(command_choice.item()))
+                    planner_log_prob = torch.log(
+                        command_probabilities[command_choice].clamp_min(1e-8)
+                    )
+                else:
+                    plan_command = PlanCommand(
+                        int(command_logits.argmax().item())
+                    )
+
+                if self._active_plan is None:
+                    self._active_plan = MotorPlan(
+                        candidate_goal,
+                        right_active=False,
+                        jump_active=False,
+                    )
+                    self._active_plan_policy_sequence = policy_sequence
+                    self._active_skill_probabilities = (0.0, 0.0)
+
+                if plan_command is PlanCommand.SET:
+                    if self._episode_mode == "train":
+                        assert self._episode_generator is not None
+                        skill_choices = torch.multinomial(
+                            torch.stack(
+                                (1.0 - skill_probabilities, skill_probabilities),
+                                dim=1,
                             ),
+                            1,
+                            replacement=True,
+                            generator=self._episode_generator,
+                        ).squeeze(1)
+                        skill_selected = torch.stack(
+                            (1.0 - skill_probabilities, skill_probabilities),
                             dim=1,
                         ).gather(1, skill_choices.unsqueeze(1)).clamp_min(1e-8)
-                    ).sum()
-                else:
-                    skill_choices = (skill_logits >= 0.0).to(dtype=torch.long)
+                        planner_log_prob = (
+                            planner_log_prob + torch.log(skill_selected).sum()
+                        )
+                    else:
+                        skill_choices = (
+                            skill_logits >= 0.0
+                        ).to(dtype=torch.long)
+                    self._active_plan = MotorPlan(
+                        candidate_goal,
+                        bool(skill_choices[0].item()),
+                        bool(skill_choices[1].item()),
+                    )
+                    self._active_plan_policy_sequence = policy_sequence
+                    self._active_skill_probabilities = (
+                        float(skill_probabilities[0]),
+                        float(skill_probabilities[1]),
+                    )
+                elif plan_command is PlanCommand.STOP:
+                    assert self._active_plan is not None
+                    self._active_plan = MotorPlan(
+                        self._active_plan.goal,
+                        right_active=False,
+                        jump_active=False,
+                    )
+                    self._active_plan_policy_sequence = policy_sequence
+                    self._active_skill_probabilities = (0.0, 0.0)
 
-                goal = MotorGoal(
-                    float(goal_tensor[0].detach()),
-                    float(goal_tensor[1].detach()),
-                )
-                self._active_plan = MotorPlan(
-                    goal,
-                    bool(skill_choices[0].item()),
-                    bool(skill_choices[1].item()),
-                )
                 self._active_plan_tick = frame.world_tick
-                self._active_plan_policy_sequence = policy_sequence
-                self._active_skill_probabilities = (
-                    float(skill_active_probability[0]),
-                    float(skill_active_probability[1]),
-                )
-            else:
-                assert self._active_plan is not None
-                goal = self._active_plan.goal
-                goal_tensor = torch.tensor(
-                    [goal.target_dx, goal.target_dy],
-                    dtype=vision.dtype,
-                    device=vision.device,
-                )
-                skill_choices = torch.tensor(
-                    [
-                        int(self._active_plan.right_active),
-                        int(self._active_plan.jump_active),
-                    ],
-                    dtype=torch.long,
-                )
 
             assert self._active_plan is not None
             assert self._active_skill_probabilities is not None
+            goal = self._active_plan.goal
+            goal_tensor = torch.tensor(
+                [goal.target_dx, goal.target_dy],
+                dtype=vision.dtype,
+                device=vision.device,
+            )
+            skill_choices = torch.tensor(
+                [
+                    int(self._active_plan.right_active),
+                    int(self._active_plan.jump_active),
+                ],
+                dtype=torch.long,
+            )
             motor_logits = self.motor_controller.forward_goal(
                 goal_tensor,
                 motion_x,
@@ -321,7 +358,7 @@ class LearnedPlayer:
                 button_logits, dim=1
             ).gather(1, motor_choices.unsqueeze(1)).squeeze(1)
             log_prob = float(
-                skill_log_prob
+                planner_log_prob
                 + (
                     motor_selected_log_prob
                     * skill_choices.to(dtype=motor_selected_log_prob.dtype)
@@ -380,6 +417,7 @@ class LearnedPlayer:
             skill_right_probability=self._active_skill_probabilities[0],
             skill_jump_probability=self._active_skill_probabilities[1],
             planner_decision=planner_decision,
+            plan_command=plan_command,
             plan_policy_sequence=self._active_plan_policy_sequence,
         )
 

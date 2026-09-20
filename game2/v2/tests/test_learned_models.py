@@ -27,6 +27,7 @@ from game2.v2.player.learned.contracts import (
     ControlCommand,
     MotorGoal,
     MotorPlan,
+    PlanCommand,
     apply_control_command,
 )
 from game2.v2.player.learned.critic import CNNCritic
@@ -179,7 +180,7 @@ class LearnedModelTests(unittest.TestCase):
         planner = CNNPlanner.fresh(11)
         for frame in (_grid(5, 4), _grid(8, 3)):
             output = planner(vision_to_tensor(frame).unsqueeze(0))
-            self.assertEqual(tuple(output.shape), (1, 4))
+            self.assertEqual(tuple(output.shape), (1, 7))
             self.assertTrue(torch.isfinite(output).all())
             plan = planner.decide(frame)
             self.assertIsInstance(plan, MotorPlan)
@@ -231,30 +232,41 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(player.motion_estimator.last_observation_usable)
         self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
 
-    def test_planner_plan_is_latched_while_motors_keep_running(self):
-        player = LearnedPlayer(
-            CNNPlanner.fresh(1), DualMotorController.fresh(2)
-        )
+    def test_planner_keep_preserves_set_plan_across_planner_ticks(self):
+        planner = CNNPlanner.fresh(1)
+        with torch.no_grad():
+            planner.plan_command_head.weight.zero_()
+            planner.plan_command_head.bias.copy_(
+                torch.tensor([0.0, 10.0, 0.0])
+            )
+        player = LearnedPlayer(planner, DualMotorController.fresh(2))
         player.prepare_episode("evaluate", 7)
-        ticks = [1, 3, 5, 7, 9, 11, 13]
+
+        first_ticks = [1, 3, 5, 7, 9, 11]
         samples = [
             player.process_grid(_grid(6, 5, world_tick=tick))
-            for tick in ticks
+            for tick in first_ticks
         ]
         self.assertTrue(all(sample is not None for sample in samples))
         samples = [sample for sample in samples if sample is not None]
-        self.assertEqual(
-            [sample.planner_decision for sample in samples],
-            [True, False, False, False, False, False, True],
-        )
+        self.assertEqual(samples[0].plan_command, PlanCommand.SET)
+        set_goal = samples[0].motor_goal
         self.assertEqual(
             [sample.plan_policy_sequence for sample in samples],
-            [1, 1, 1, 1, 1, 1, 7],
+            [1, 1, 1, 1, 1, 1],
         )
-        self.assertEqual(
-            [sample.motor_goal for sample in samples[:6]],
-            [samples[0].motor_goal] * 6,
-        )
+
+        with torch.no_grad():
+            planner.plan_command_head.bias.copy_(
+                torch.tensor([10.0, 0.0, 0.0])
+            )
+        kept = player.process_grid(_grid(6, 5, world_tick=13))
+        self.assertIsNotNone(kept)
+        assert kept is not None
+        self.assertTrue(kept.planner_decision)
+        self.assertEqual(kept.plan_command, PlanCommand.KEEP)
+        self.assertEqual(kept.plan_policy_sequence, 1)
+        self.assertEqual(kept.motor_goal, set_goal)
         self.assertEqual(PLANNER_STRIDE_TICKS, 12)
 
     def test_inactive_skill_bypasses_reflex_and_releases_latched_button(self):

@@ -506,3 +506,20 @@ This architecture patch does not add PyTorch, MLP, CNN, SNN, LLM, an agent
 loop, MCP server, Trainer runtime, model or checkpoint registry, executable
 `StrategyGuidance`, `MotorGoal`, or `ActionDecision` schemas, sockets, UI,
 chat, Console endpoints, Vision metadata, or Engine changes.
+
+### Persistent Planner commands
+
+Planner decisions are commands over a persistent MotorPlan, not a fresh desired
+skill state sampled every Planner tick. The current command surface is:
+
+```text
+KEEP  -> keep the current MotorPlan unchanged
+SET   -> replace it with a new MotorGoal and selected active skills
+STOP  -> explicitly stop the active skills
+```
+
+A `KEEP` decision does not refresh MotorGoal and does not cancel an active
+skill. Motors continue executing the latched plan at their faster reflex cadence
+until Planner explicitly emits `SET` or `STOP`. This is required for the
+humanoid-style hierarchy: spinal-cord reasoning selects or changes a physical
+plan; reflex Motors own its continuous execution between those changes.

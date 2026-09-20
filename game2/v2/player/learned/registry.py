@@ -71,7 +71,7 @@ def validate_runtime_profile(profile: BotProfile) -> None:
     if (
         planner_topology.kind != "cnn"
         or planner_topology.hidden != (16,)
-        or planner_topology.outputs != 4
+        or planner_topology.outputs != 7
     ):
         raise ValueError("unsupported Planner topology")
     for motor in _motor_map(profile).values():

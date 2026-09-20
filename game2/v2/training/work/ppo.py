@@ -8,6 +8,7 @@ from typing import Callable
 
 import torch
 
+from game2.v2.contracts.motor import PlanCommand
 from game2.v2.learning.vision import vision_to_tensor
 
 from .config import (
@@ -262,6 +263,10 @@ def train_episode(
         [step.planner_decision for step in selected_steps],
         dtype=torch.float32,
     )
+    plan_commands = torch.tensor(
+        [int(step.plan_command) for step in selected_steps],
+        dtype=torch.long,
+    )
     sequence_lookup = {
         step.policy_sequence: index
         for index, step in enumerate(selected_steps)
@@ -344,18 +349,33 @@ def train_episode(
                 plan_features = model.planner.encode_prepared(
                     prepared_vision[source_indexes]
                 )
-                planner_output = model.planner.forward_features(plan_features)
+                current_planner_output = model.planner.forward_features(
+                    current_features
+                )
+                plan_planner_output = model.planner.forward_features(
+                    plan_features
+                )
                 values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                planner_output = model.planner(full_vision[source_indexes])
-                values = model.critic(full_vision[indexes])
-            if planner_output.ndim != 2 or planner_output.shape[1] != 4:
-                raise ValueError(
-                    "Planner must return goal[2] + skill_logits[2]"
+                current_planner_output = model.planner(full_vision[indexes])
+                plan_planner_output = model.planner(
+                    full_vision[source_indexes]
                 )
-            goals = planner_output[:, :2]
-            skill_logits = planner_output[:, 2:]
+                values = model.critic(full_vision[indexes])
+            if (
+                current_planner_output.ndim != 2
+                or current_planner_output.shape[1] != 7
+                or plan_planner_output.ndim != 2
+                or plan_planner_output.shape[1] != 7
+            ):
+                raise ValueError(
+                    "Planner must return goal[2] + plan_command_logits[3] "
+                    "+ skill_logits[2]"
+                )
+            goals = plan_planner_output[:, :2]
+            plan_command_logits = current_planner_output[:, 2:5]
+            skill_logits = current_planner_output[:, 5:7]
             motion = motion_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
@@ -371,13 +391,28 @@ def train_episode(
             ).squeeze(2)
             batch_skills = skill_active[indexes].to(device=logits.device)
             batch_planner = planner_decision[indexes].to(device=logits.device)
+            batch_plan_commands = plan_commands[indexes].to(
+                device=logits.device
+            )
+            batch_set_plan = (
+                (batch_plan_commands == int(PlanCommand.SET)).to(
+                    dtype=logits.dtype
+                ) * batch_planner
+            )
+            plan_log_probabilities = torch.log_softmax(
+                plan_command_logits, dim=1
+            )
+            plan_selected_log_prob = plan_log_probabilities.gather(
+                1, batch_plan_commands.unsqueeze(1)
+            ).squeeze(1)
             skill_log_probabilities = -torch.nn.functional.binary_cross_entropy_with_logits(
                 skill_logits,
                 batch_skills,
                 reduction="none",
             )
             new_log_prob = (
-                skill_log_probabilities.sum(dim=1) * batch_planner
+                plan_selected_log_prob * batch_planner
+                + skill_log_probabilities.sum(dim=1) * batch_set_plan
                 + (motor_selected_log_prob * batch_skills).sum(dim=1)
             )
             batch_old = old_log_prob[indexes].to(logits.device)
@@ -395,6 +430,13 @@ def train_episode(
             motor_entropy = -(
                 probabilities * motor_log_probabilities
             ).sum(dim=2)
+            plan_probabilities = torch.softmax(
+                plan_command_logits, dim=1
+            )
+            plan_entropy = -(
+                plan_probabilities
+                * torch.log(plan_probabilities.clamp_min(1e-8))
+            ).sum(dim=1)
             skill_probabilities = torch.sigmoid(skill_logits)
             skill_entropy = -(
                 skill_probabilities * torch.log(skill_probabilities.clamp_min(1e-8))
@@ -402,7 +444,8 @@ def train_episode(
                 * torch.log((1.0 - skill_probabilities).clamp_min(1e-8))
             )
             entropy = (
-                skill_entropy.sum(dim=1) * batch_planner
+                plan_entropy * batch_planner
+                + skill_entropy.sum(dim=1) * batch_set_plan
                 + (motor_entropy * batch_skills).sum(dim=1)
             ).mean()
             loss = (
@@ -457,14 +500,23 @@ def train_episode(
                 plan_features = model.planner.encode_prepared(
                     prepared_vision[source_indexes]
                 )
-                planner_output = model.planner.forward_features(plan_features)
+                current_planner_output = model.planner.forward_features(
+                    current_features
+                )
+                plan_planner_output = model.planner.forward_features(
+                    plan_features
+                )
                 values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                planner_output = model.planner(full_vision[source_indexes])
+                current_planner_output = model.planner(full_vision[indexes])
+                plan_planner_output = model.planner(
+                    full_vision[source_indexes]
+                )
                 values = model.critic(full_vision[indexes])
-            goals = planner_output[:, :2]
-            skill_logits = planner_output[:, 2:]
+            goals = plan_planner_output[:, :2]
+            plan_command_logits = current_planner_output[:, 2:5]
+            skill_logits = current_planner_output[:, 5:7]
             motion = motion_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
@@ -476,16 +528,31 @@ def train_episode(
             batch_actions = actions[indexes].to(device=logits.device)
             batch_skills = skill_active[indexes].to(device=logits.device)
             batch_planner = planner_decision[indexes].to(device=logits.device)
+            batch_plan_commands = plan_commands[indexes].to(
+                device=logits.device
+            )
+            batch_set_plan = (
+                (batch_plan_commands == int(PlanCommand.SET)).to(
+                    dtype=logits.dtype
+                ) * batch_planner
+            )
             motor_selected_log_prob = motor_log_probabilities.gather(
                 2, batch_actions.unsqueeze(2)
             ).squeeze(2)
+            plan_log_probabilities = torch.log_softmax(
+                plan_command_logits, dim=1
+            )
+            plan_selected_log_prob = plan_log_probabilities.gather(
+                1, batch_plan_commands.unsqueeze(1)
+            ).squeeze(1)
             skill_log_probabilities = -torch.nn.functional.binary_cross_entropy_with_logits(
                 skill_logits,
                 batch_skills,
                 reduction="none",
             )
             final_lp = (
-                skill_log_probabilities.sum(dim=1) * batch_planner
+                plan_selected_log_prob * batch_planner
+                + skill_log_probabilities.sum(dim=1) * batch_set_plan
                 + (motor_selected_log_prob * batch_skills).sum(dim=1)
             )
             final_log_prob[indexes] = final_lp.detach().cpu()

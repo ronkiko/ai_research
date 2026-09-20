@@ -19,6 +19,7 @@ from game2.v2.player.learned.contracts import (
     ButtonCommand,
     ControlCommand,
     MotorGoal,
+    PlanCommand,
 )
 from game2.v2.training.work import (
     POLICY_STRIDE_TICKS,
@@ -74,6 +75,7 @@ def _sample(sequence: int, tick: int, self_x: int):
         skill_right_probability=0.8,
         skill_jump_probability=0.4,
         planner_decision=True,
+        plan_command=PlanCommand.SET,
         plan_policy_sequence=sequence,
         prob_right=0.5,
         prob_jump=0.5,
@@ -164,6 +166,9 @@ class EpisodeDatasetTests(unittest.TestCase):
             ):
                 sample = _sample(sequence, tick, self_x)
                 sample.planner_decision = sequence == 1
+                sample.plan_command = (
+                    PlanCommand.SET if sequence == 1 else PlanCommand.KEEP
+                )
                 sample.plan_policy_sequence = 1
                 dataset.upsert_sample(
                     sample,
@@ -190,7 +195,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 6)
+            self.assertEqual(metadata["schema_version"], 7)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
@@ -238,6 +243,8 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertTrue(steps[0].skill_right_active)
             self.assertAlmostEqual(steps[0].skill_right_probability, 0.8)
             self.assertTrue(steps[0].planner_decision)
+            self.assertEqual(steps[0].plan_command, PlanCommand.SET)
+            self.assertEqual(steps[1].plan_command, PlanCommand.KEEP)
             self.assertEqual(steps[1].plan_policy_sequence, 1)
             self.assertTrue(any(
                 step.ppo_selected and step.advantage is not None
