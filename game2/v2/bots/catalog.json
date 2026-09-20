@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "cerebral_cortex": {
+      "anatomy_anchor": "brain",
+      "status": "not_implemented",
+      "options": [
+        {
+          "enabled": false,
+          "role": "research_strategist",
+          "implementation": "none",
+          "configuration": "disabled",
+          "precisions": [
+            "n/a"
+          ],
+          "runtime_supported": true,
+          "topology": {
+            "kind": "none",
+            "inputs": null,
+            "hidden": [],
+            "outputs": null,
+            "summary": "Research Strategist / LLM not implemented yet"
+          }
+        }
+      ]
+    },
+    "spinal_cord": {
+      "anatomy_anchor": "spinal_cord",
+      "status": "available",
+      "options": [
+        {
+          "enabled": true,
+          "role": "planner",
+          "implementation": "cnn",
+          "configuration": "shared-pool4-motor-plan-v7",
+          "precisions": [
+            "fp32"
+          ],
+          "runtime_supported": true,
+          "topology": {
+            "kind": "cnn",
+            "inputs": null,
+            "hidden": [
+              16
+            ],
+            "outputs": 4,
+            "summary": "VisionBackbone -> hidden 16 -> MotorGoal[2] + skill logits[2]"
+          }
+        }
+      ]
+    },
+    "motor": {
+      "anatomy_anchor": "motor",
+      "status": "available",
+      "options": [
+        {
+          "enabled": true,
+          "role": "motor",
+          "implementation": "mlp",
+          "configuration": "button-reflex-5-8-3-v1",
+          "precisions": [
+            "fp32"
+          ],
+          "runtime_supported": true,
+          "topology": {
+            "kind": "mlp",
+            "inputs": 5,
+            "hidden": [
+              8
+            ],
+            "outputs": 3,
+            "summary": "MotorGoal[2] + motion[2] + actuator state -> KEEP/PRESS/RELEASE"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -22,6 +22,10 @@ from game2.v2.management.bot_profiles import (
     BotProfileStore,
     DEFAULT_BOT_PROFILE_DIR,
 )
+from game2.v2.management.bot_runtime import (
+    BotRuntimeLayout,
+    DEFAULT_BOT_RUNTIME_ROOT,
+)
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.manifests import PlayerManifest
 from game2.v2.contracts.screen import ScreenSourceDiscovery
@@ -33,12 +37,11 @@ from game2.v2.contracts.screen_server import (
     unbind_message,
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
-from game2.v2.training.work import DEFAULT_EPISODE_STORE, EpisodeStore
+from game2.v2.training.work import EpisodeStore
 
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SET = ROOT / "game2" / "v2" / "training" / "sets" / "level-1.json"
-DEFAULT_BOT_RUNTIME_ROOT = ROOT / "game2" / "v2" / "runtime" / "bots"
 DEFAULT_CHECKPOINT_DIR = (
     DEFAULT_BOT_RUNTIME_ROOT / "player1" / "level-1" / "checkpoints"
 )
@@ -508,19 +511,20 @@ class TrainingRun:
         if mode == "realtime" and view != "screen" and screen is None:
             raise ValueError("--view vision requires --screen")
         manifest = TrainingSetManifest.from_file(manifest_path)
-        runtime_root = (
-            self.root / "game2" / "v2" / "runtime" / "bots"
-            / profile.bot_id / f"level-{manifest.training_set_level}"
+        layout = BotRuntimeLayout.resolve(
+            profile.bot_id,
+            manifest.training_set_level,
+            root=self.root / "game2" / "v2" / "runtime" / "bots",
         )
         checkpoint_path = (
             Path(checkpoint_dir).expanduser().resolve()
             if checkpoint_dir is not None
-            else runtime_root / "checkpoints"
+            else layout.checkpoint_dir
         )
         episode_store_path = (
             Path(episode_store).expanduser().resolve()
             if episode_store is not None
-            else runtime_root / "episodes"
+            else layout.episode_dir
         )
 
         screen_control = None

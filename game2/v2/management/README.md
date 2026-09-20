@@ -41,3 +41,18 @@ close it.
 Management launches Console, Trainer, Model, and Player as independent OS
 processes through their public contracts. Screen is a detachable spectator and
 never owns Training.
+
+
+## Bot Profiles and future Bot Profiler
+
+Bot configuration is stored in versioned Bot Profiles under `game2/v2/bots/`.
+Training selects one with `--player <bot_id>`:
+
+```bash
+./game2/v2/op/train.sh --player player1 --fresh --mode unpaced
+```
+
+The future fullscreen **Bot Profiler** GUI must use
+`management.bot_profiler_backend.BotProfilerBackend` rather than importing
+model or Training internals. Backend details and the UI handoff are documented
+in `doc/BOT_PROFILER_BACKEND.md`.

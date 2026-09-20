@@ -46,3 +46,20 @@ remains outside that ownership tree.
 Management must preserve domain dependency direction and must not expose private
 Engine state, physics coordinates, hidden collision geometry, private
 `InputStateCommand`, or debug-only ground truth.
+
+
+## Bot Configuration
+
+Management owns persistent Bot Profile configuration and the future Bot
+Profiler operator interface. This does not create a Console-side Bot domain.
+A configured Bot enters the world through the ordinary Player lifecycle and
+public Player capabilities.
+
+`BotProfilerBackend` is the supported Management boundary for profile CRUD,
+component inspection/editing, component catalog metadata, anatomical read
+models, and per-Bot runtime-state inspection. `BotRuntimeLayout` is shared by
+Training and Bot Profiler so both resolve the same checkpoint/episode paths.
+
+The graphical Bot Profiler is deliberately separate work. It must consume these
+Management services instead of importing Player/model or Training runtime
+internals.
