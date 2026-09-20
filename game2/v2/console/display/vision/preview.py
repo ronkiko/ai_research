@@ -15,7 +15,7 @@ from ....contracts.vision import (
     PHYSICS_SOLID,
     VisionGrid,
 )
-from ....training.work import EpisodeDataset, EpisodeStore
+from ....training.work.episode_dataset import EpisodeDataset, EpisodeStore
 
 
 PHYSICS_COLORS = {

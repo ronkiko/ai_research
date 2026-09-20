@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import shutil
 from collections import deque
 import signal
 import socket
@@ -505,9 +506,13 @@ class TrainingRun:
         motor = checkpoint_path / "motor.pt"
         critic = checkpoint_path / "critic.pt"
         optimizer = checkpoint_path / "optimizer.pt"
+        log_root = checkpoint_path / "logs"
         if fresh:
             EpisodeStore(episode_store_path).reset()
             self._write("FRESH reset episode datasets")
+            if log_root.exists():
+                shutil.rmtree(log_root)
+            self._write("FRESH reset logs")
             removed = []
             for checkpoint in (planner, motor, critic, optimizer):
                 if checkpoint.exists():

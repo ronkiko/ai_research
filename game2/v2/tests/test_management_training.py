@@ -28,10 +28,13 @@ class ManagementTrainingTests(unittest.TestCase):
         with self.assertRaises(TrainingRunError):
             _endpoint_ready({"host": "", "port": 1234}, "Model")
 
-    def test_fresh_unpaced_resets_episode_store_and_has_no_log_reset_path(self):
+    def test_fresh_unpaced_resets_episode_store_and_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             episode_root = root / "episodes"
+            log_root = root / "checkpoints" / "logs"
+            log_root.mkdir(parents=True)
+            (log_root / "stale.jsonl").write_text("old\n", encoding="utf-8")
             store = EpisodeStore(episode_root)
             dataset = store.create(
                 episode_id=1,
@@ -66,7 +69,8 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(list(episode_root.glob("episode-*.sqlite3")), [])
             self.assertIn("FRESH reset episode datasets", output.getvalue())
-            self.assertNotIn("reset logs", output.getvalue())
+            self.assertFalse(log_root.exists())
+            self.assertIn("FRESH reset logs", output.getvalue())
             kwargs = unpaced.call_args.kwargs
             self.assertEqual(Path(kwargs["episode_store_dir"]), episode_root)
 
