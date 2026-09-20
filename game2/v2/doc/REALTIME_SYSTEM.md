@@ -182,3 +182,13 @@ it is not an automatic replacement of the current plan. `KEEP` preserves the
 existing MotorPlan across Planner ticks. Only `SET` replaces MotorGoal/skill
 selection and only `STOP` explicitly deactivates the current skills. The 60 Hz
 Motor loop keeps reacting to physics while that plan remains latched.
+
+
+### Planner input state
+
+Every Planner decision is conditioned on the MotorPlan that exists immediately
+before that decision. This makes `KEEP` meaningful: the same Vision frame plus
+different active plans may correctly lead to different Planner commands.
+Episode replay stores this pre-command state and supplies it back to Planner
+during PPO, so training does not reconstruct a different decision context from
+the one used during inference.

@@ -523,3 +523,21 @@ skill. Motors continue executing the latched plan at their faster reflex cadence
 until Planner explicitly emits `SET` or `STOP`. This is required for the
 humanoid-style hierarchy: spinal-cord reasoning selects or changes a physical
 plan; reflex Motors own its continuous execution between those changes.
+
+
+### Planner state observability
+
+A persistent Planner command is only Markov when Planner can observe the
+MotorPlan that `KEEP` would preserve. The current Planner input therefore
+contains both public Vision features and its own latched plan state:
+
+```text
+current MotorGoal dx/dy
+current RIGHT active
+current JUMP active
+```
+
+This is internal controller state, not Engine truth and not proprioception. It
+does not expose velocity, contact, map semantics, or hidden physics. Runtime and
+PPO replay must use the same pre-command MotorPlan state; EpisodeDataset stores
+that exact Planner input for reproducibility.

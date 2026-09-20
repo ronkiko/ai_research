@@ -179,7 +179,11 @@ class LearnedModelTests(unittest.TestCase):
     def test_cnn_planner_supports_variable_resolution_and_returns_motor_plans(self):
         planner = CNNPlanner.fresh(11)
         for frame in (_grid(5, 4), _grid(8, 3)):
-            output = planner(vision_to_tensor(frame).unsqueeze(0))
+            vision = vision_to_tensor(frame).unsqueeze(0)
+            output = planner(
+                vision,
+                planner.plan_state_tensor(None, dtype=vision.dtype),
+            )
             self.assertEqual(tuple(output.shape), (1, 7))
             self.assertTrue(torch.isfinite(output).all())
             plan = planner.decide(frame)
@@ -232,6 +236,26 @@ class LearnedModelTests(unittest.TestCase):
         self.assertTrue(player.motion_estimator.last_observation_usable)
         self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
 
+    def test_planner_conditioning_includes_current_motor_plan(self):
+        planner = CNNPlanner.fresh(1)
+        frame = _grid(6, 5, world_tick=1)
+        vision = vision_to_tensor(frame).unsqueeze(0)
+        features = planner.encode(vision)
+        with torch.no_grad():
+            planner.plan_command_head.weight.zero_()
+            planner.plan_command_head.bias.zero_()
+            # decision input = hidden[16] + goal dx/dy + RIGHT + JUMP
+            planner.plan_command_head.weight[2, 18] = 5.0
+            stopped = planner.forward_features(
+                features,
+                torch.tensor([[0.0, 0.0, 1.0, 0.0]]),
+            )
+            empty = planner.forward_features(
+                features,
+                torch.zeros((1, 4)),
+            )
+        self.assertGreater(float(stopped[0, 4]), float(empty[0, 4]))
+
     def test_planner_keep_preserves_set_plan_across_planner_ticks(self):
         planner = CNNPlanner.fresh(1)
         with torch.no_grad():
@@ -267,6 +291,8 @@ class LearnedModelTests(unittest.TestCase):
         self.assertEqual(kept.plan_command, PlanCommand.KEEP)
         self.assertEqual(kept.plan_policy_sequence, 1)
         self.assertEqual(kept.motor_goal, set_goal)
+        self.assertEqual(kept.planner_input_goal_dx, set_goal.target_dx)
+        self.assertEqual(kept.planner_input_goal_dy, set_goal.target_dy)
         self.assertEqual(PLANNER_STRIDE_TICKS, 12)
 
     def test_inactive_skill_bypasses_reflex_and_releases_latched_button(self):

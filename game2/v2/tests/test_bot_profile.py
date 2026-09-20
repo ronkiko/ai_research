@@ -30,7 +30,7 @@ def _profile(bot_id: str = "player1") -> BotProfile:
             "enabled": True,
             "role": "planner",
             "implementation": "cnn",
-            "configuration": "shared-pool4-persistent-motor-plan-v8",
+            "configuration": "shared-pool4-plan-context-v9",
             "precision": "fp32",
             "seed": 1,
             "topology": {

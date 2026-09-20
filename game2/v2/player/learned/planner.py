@@ -11,8 +11,9 @@ from .vision import vision_to_tensor
 from .vision_backbone import BACKBONE_CHANNELS, VisionBackbone
 
 
-PLANNER_CONFIGURATION = "shared-pool4-persistent-motor-plan-v8"
+PLANNER_CONFIGURATION = "shared-pool4-plan-context-v9"
 _FEATURES = BACKBONE_CHANNELS * 4 * 4
+_PLAN_STATE_FEATURES = 4
 
 
 class CNNPlanner(nn.Module):
@@ -26,12 +27,13 @@ class CNNPlanner(nn.Module):
             nn.Linear(_FEATURES, 16),
             nn.ReLU(),
         )
+        decision_features = 16 + _PLAN_STATE_FEATURES
         self.goal_head = nn.Sequential(
-            nn.Linear(16, 2),
+            nn.Linear(decision_features, 2),
             nn.Tanh(),
         )
-        self.plan_command_head = nn.Linear(16, 3)
-        self.skill_head = nn.Linear(16, 2)
+        self.plan_command_head = nn.Linear(decision_features, 3)
+        self.skill_head = nn.Linear(decision_features, 2)
         self.initialization_seed: int | None = None
 
     @property
@@ -54,17 +56,57 @@ class CNNPlanner(nn.Module):
     def encode_prepared(self, prepared: torch.Tensor) -> torch.Tensor:
         return self.backbone.forward_prepared(prepared)
 
-    def forward_features(self, features: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def plan_state_tensor(
+        current_plan: MotorPlan | None,
+        *,
+        device=None,
+        dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+        if current_plan is None:
+            values = (0.0, 0.0, 0.0, 0.0)
+        else:
+            values = (
+                float(current_plan.goal.target_dx),
+                float(current_plan.goal.target_dy),
+                float(current_plan.right_active),
+                float(current_plan.jump_active),
+            )
+        return torch.tensor(values, dtype=dtype, device=device).unsqueeze(0)
+
+    def forward_features(
+        self,
+        features: torch.Tensor,
+        plan_state: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if not isinstance(features, torch.Tensor) or features.ndim != 4:
             raise ValueError("Planner features must have shape [B,C,H,W]")
         hidden = self.trunk(features)
-        goal = self.goal_head(hidden)
-        plan_command_logits = self.plan_command_head(hidden)
-        skill_logits = self.skill_head(hidden)
+        if plan_state is None:
+            plan_state = torch.zeros(
+                (hidden.shape[0], _PLAN_STATE_FEATURES),
+                dtype=hidden.dtype,
+                device=hidden.device,
+            )
+        if (
+            not isinstance(plan_state, torch.Tensor)
+            or plan_state.ndim != 2
+            or plan_state.shape != (hidden.shape[0], _PLAN_STATE_FEATURES)
+        ):
+            raise ValueError("Planner plan_state must have shape [B,4]")
+        plan_state = plan_state.to(dtype=hidden.dtype, device=hidden.device)
+        decision_input = torch.cat((hidden, plan_state), dim=1)
+        goal = self.goal_head(decision_input)
+        plan_command_logits = self.plan_command_head(decision_input)
+        skill_logits = self.skill_head(decision_input)
         return torch.cat((goal, plan_command_logits, skill_logits), dim=1)
 
-    def forward(self, vision: torch.Tensor) -> torch.Tensor:
-        return self.forward_features(self.encode(vision))
+    def forward(
+        self,
+        vision: torch.Tensor,
+        plan_state: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.forward_features(self.encode(vision), plan_state)
 
     def decide(
         self, grid: VisionGrid, current_plan: MotorPlan | None = None
@@ -74,7 +116,13 @@ class CNNPlanner(nn.Module):
         self.eval()
         try:
             with torch.no_grad():
-                output = self(vision_to_tensor(grid).unsqueeze(0))[0]
+                vision = vision_to_tensor(grid).unsqueeze(0)
+                state = self.plan_state_tensor(
+                    current_plan,
+                    device=vision.device,
+                    dtype=vision.dtype,
+                )
+                output = self(vision, state)[0]
         finally:
             self.train(was_training)
         if output.ndim != 1 or output.shape[0] != 7:

@@ -21,7 +21,7 @@
     "enabled": true,
     "role": "planner",
     "implementation": "cnn",
-    "configuration": "shared-pool4-persistent-motor-plan-v8",
+    "configuration": "shared-pool4-plan-context-v9",
     "precision": "fp32",
     "seed": 1,
     "topology": {
@@ -31,7 +31,7 @@
         16
       ],
       "outputs": 7,
-      "summary": "VisionBackbone -> hidden 16 -> MotorGoal[2] + plan command KEEP/SET/STOP[3] + skill logits[2]"
+      "summary": "VisionBackbone -> hidden 16 + current MotorPlan[goal dx/dy, RIGHT/JUMP] -> MotorGoal[2] + plan command KEEP/SET/STOP[3] + skill logits[2]"
     }
   },
   "motors": [

@@ -317,6 +317,18 @@ def train_episode(
         [[step.pad_right, step.pad_jump] for step in selected_steps],
         dtype=torch.float32,
     )
+    planner_state_all = torch.tensor(
+        [
+            [
+                step.planner_input_goal_dx,
+                step.planner_input_goal_dy,
+                step.planner_input_right_active,
+                step.planner_input_jump_active,
+            ]
+            for step in selected_steps
+        ],
+        dtype=torch.float32,
+    )
 
     count = len(selected_steps)
     batches_per_epoch = (count + PPO_BATCH_SIZE - 1) // PPO_BATCH_SIZE
@@ -349,18 +361,36 @@ def train_episode(
                 plan_features = model.planner.encode_prepared(
                     prepared_vision[source_indexes]
                 )
+                current_plan_state = planner_state_all[indexes].to(
+                    dtype=current_features.dtype,
+                    device=current_features.device,
+                )
+                source_plan_state = planner_state_all[source_indexes].to(
+                    dtype=plan_features.dtype,
+                    device=plan_features.device,
+                )
                 current_planner_output = model.planner.forward_features(
-                    current_features
+                    current_features, current_plan_state
                 )
                 plan_planner_output = model.planner.forward_features(
-                    plan_features
+                    plan_features, source_plan_state
                 )
                 values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                current_planner_output = model.planner(full_vision[indexes])
+                current_plan_state = planner_state_all[indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                source_plan_state = planner_state_all[source_indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                current_planner_output = model.planner(
+                    full_vision[indexes], current_plan_state
+                )
                 plan_planner_output = model.planner(
-                    full_vision[source_indexes]
+                    full_vision[source_indexes], source_plan_state
                 )
                 values = model.critic(full_vision[indexes])
             if (
@@ -500,18 +530,36 @@ def train_episode(
                 plan_features = model.planner.encode_prepared(
                     prepared_vision[source_indexes]
                 )
+                current_plan_state = planner_state_all[indexes].to(
+                    dtype=current_features.dtype,
+                    device=current_features.device,
+                )
+                source_plan_state = planner_state_all[source_indexes].to(
+                    dtype=plan_features.dtype,
+                    device=plan_features.device,
+                )
                 current_planner_output = model.planner.forward_features(
-                    current_features
+                    current_features, current_plan_state
                 )
                 plan_planner_output = model.planner.forward_features(
-                    plan_features
+                    plan_features, source_plan_state
                 )
                 values = model.critic.forward_features(current_features)
             else:
                 assert full_vision is not None
-                current_planner_output = model.planner(full_vision[indexes])
+                current_plan_state = planner_state_all[indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                source_plan_state = planner_state_all[source_indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                current_planner_output = model.planner(
+                    full_vision[indexes], current_plan_state
+                )
                 plan_planner_output = model.planner(
-                    full_vision[source_indexes]
+                    full_vision[source_indexes], source_plan_state
                 )
                 values = model.critic(full_vision[indexes])
             goals = plan_planner_output[:, :2]

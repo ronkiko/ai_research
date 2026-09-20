@@ -73,6 +73,10 @@ class DecisionSample:
     skill_right_probability: float | None = None
     skill_jump_probability: float | None = None
     planner_decision: bool = True
+    planner_input_goal_dx: float = 0.0
+    planner_input_goal_dy: float = 0.0
+    planner_input_right_active: bool = False
+    planner_input_jump_active: bool = False
     plan_command: PlanCommand = PlanCommand.KEEP
     plan_policy_sequence: int = 0
 
@@ -209,6 +213,27 @@ class LearnedPlayer:
         ):
             planner_decision = True
 
+        if self._active_plan is None:
+            self._active_plan = MotorPlan(
+                MotorGoal(0.0, 0.0),
+                right_active=False,
+                jump_active=False,
+            )
+            self._active_plan_policy_sequence = policy_sequence
+            self._active_skill_probabilities = (0.0, 0.0)
+
+        planner_input_plan = self._active_plan
+        planner_state = torch.tensor(
+            [[
+                planner_input_plan.goal.target_dx,
+                planner_input_plan.goal.target_dy,
+                float(planner_input_plan.right_active),
+                float(planner_input_plan.jump_active),
+            ]],
+            dtype=vision.dtype,
+            device=vision.device,
+        )
+
         plan_command = PlanCommand.KEEP
         planner_log_prob = torch.tensor(0.0)
         with torch.no_grad():
@@ -228,9 +253,11 @@ class LearnedPlayer:
 
             if planner_decision:
                 planner_output = (
-                    self.planner.forward_features(current_features)[0]
+                    self.planner.forward_features(
+                        current_features, planner_state
+                    )[0]
                     if shared
-                    else self.planner(vision)[0]
+                    else self.planner(vision, planner_state)[0]
                 )
                 if planner_output.ndim != 1 or planner_output.shape[0] != 7:
                     raise ValueError(
@@ -263,15 +290,6 @@ class LearnedPlayer:
                     plan_command = PlanCommand(
                         int(command_logits.argmax().item())
                     )
-
-                if self._active_plan is None:
-                    self._active_plan = MotorPlan(
-                        candidate_goal,
-                        right_active=False,
-                        jump_active=False,
-                    )
-                    self._active_plan_policy_sequence = policy_sequence
-                    self._active_skill_probabilities = (0.0, 0.0)
 
                 if plan_command is PlanCommand.SET:
                     if self._episode_mode == "train":
@@ -417,6 +435,14 @@ class LearnedPlayer:
             skill_right_probability=self._active_skill_probabilities[0],
             skill_jump_probability=self._active_skill_probabilities[1],
             planner_decision=planner_decision,
+            planner_input_goal_dx=float(
+                planner_input_plan.goal.target_dx
+            ),
+            planner_input_goal_dy=float(
+                planner_input_plan.goal.target_dy
+            ),
+            planner_input_right_active=planner_input_plan.right_active,
+            planner_input_jump_active=planner_input_plan.jump_active,
             plan_command=plan_command,
             plan_policy_sequence=self._active_plan_policy_sequence,
         )
