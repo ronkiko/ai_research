@@ -201,7 +201,7 @@ def run_model_probe(
             dataset.upsert_sample(
                 sample,
                 duration_ticks=POLICY_STRIDE_TICKS,
-                actuated=True,
+                actuated=sample.action_decision.any,
             )
             model.record_actuated(sample)
             completed = index + 1

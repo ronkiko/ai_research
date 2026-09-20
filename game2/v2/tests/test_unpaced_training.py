@@ -43,6 +43,14 @@ class UnpacedTrainingTests(unittest.TestCase):
             dataset = store.create(
                 episode_id=1, mode="evaluate", source="unpaced", seed=1
             )
+            observed_ticks = []
+            original_process_grid = model.process_grid
+
+            def tracked_process_grid(grid):
+                observed_ticks.append(grid.world_tick)
+                return original_process_grid(grid)
+
+            model.process_grid = tracked_process_grid
             outcome = run_episode(
                 model,
                 FLAT_RUN,
@@ -57,7 +65,12 @@ class UnpacedTrainingTests(unittest.TestCase):
                 (outcome.finish_world_tick + POLICY_STRIDE_TICKS - 1)
                 // POLICY_STRIDE_TICKS,
             )
-            self.assertEqual(len(dataset.steps()), outcome.decisions)
+            steps = dataset.steps()
+            self.assertEqual(len(steps), outcome.decisions)
+            self.assertEqual(
+                [step.world_tick for step in steps],
+                observed_ticks,
+            )
             self.assertTrue(all(
                 step.duration_ticks in {1, POLICY_STRIDE_TICKS}
                 for step in dataset.steps()

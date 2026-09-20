@@ -9,8 +9,6 @@ import torch
 from game2.v2.contracts.joystick import JoystickState
 from game2.v2.contracts.vision import VisionGrid
 from game2.v2.training.work.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
-from game2.v2.training.work.ppo import unique_parameters
-
 from .contracts import (
     ActionDecision,
     ControlChange,
@@ -21,6 +19,21 @@ from .critic import CNNCritic
 from .motor import motor_input_tensor
 from .motion import MotionEstimator, vision_centers
 from .vision import vision_to_tensor
+
+
+def _unique_parameters(*modules) -> list[torch.nn.Parameter]:
+    seen: set[int] = set()
+    result: list[torch.nn.Parameter] = []
+    for module in modules:
+        if not isinstance(module, torch.nn.Module):
+            continue
+        for parameter in module.parameters():
+            identity = id(parameter)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            result.append(parameter)
+    return result
 
 
 @dataclass(frozen=True)
@@ -97,7 +110,7 @@ class LearnedPlayer:
         ):
             raise ValueError("learning_rate must be a positive finite number")
         self.learning_rate = float(learning_rate)
-        parameters = unique_parameters(
+        parameters = _unique_parameters(
             self.planner, self.motor_controller, self.critic
         )
         self.optimizer = (

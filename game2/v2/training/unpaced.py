@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TextIO
 
-import torch
-
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
 from game2.v2.console.engine.engine import Engine
 from game2.v2.console.protocol import InputStateCommand
@@ -27,18 +25,8 @@ from game2.v2.player.learned.checkpoint import (
     save_optimizer,
     save_planner,
 )
-from game2.v2.player.learned.contracts import (
-    ActionDecision,
-    ControlChange,
-    MotorGoal,
-    apply_control_change,
-)
-from game2.v2.player.learned.motion import (
-    MotionEstimator,
-    VisionProgress,
-    vision_centers,
-)
-from game2.v2.player.learned.vision import vision_to_tensor
+from game2.v2.player.learned.contracts import ActionDecision
+from game2.v2.player.learned.motion import VisionProgress, vision_centers
 from game2.v2.training.main import reward_for_result
 from game2.v2.training.work import (
     DEFAULT_EPISODE_STORE,
@@ -99,67 +87,6 @@ def load_model(*, fresh: bool, checkpoint_dir: str | Path):
     )
 
 
-def _policy(
-    model,
-    grid,
-    motion_x: float,
-    pad: ActionDecision,
-    *,
-    train: bool,
-    generator: torch.Generator | None,
-) -> tuple[ControlChange, float, float, MotorGoal, float, float]:
-    vision = vision_to_tensor(grid).unsqueeze(0)
-    with torch.no_grad():
-        shared = (
-            hasattr(model.planner, "encode")
-            and hasattr(model.planner, "forward_features")
-            and hasattr(model.critic, "forward_features")
-            and getattr(model.planner, "backbone", None)
-            is getattr(model.critic, "backbone", None)
-        )
-        if shared:
-            features = model.planner.encode(vision)
-            planner_output = model.planner.forward_features(features)[0]
-            value = float(model.critic.forward_features(features)[0])
-        else:
-            planner_output = model.planner(vision)[0]
-            value = float(model.critic(vision)[0])
-        logits = model.motor_controller.forward_goal(
-            planner_output, motion_x, pad.right, pad.jump
-        )
-        probabilities = torch.sigmoid(logits)
-        if train:
-            if generator is None:
-                raise RuntimeError("train episode requires an RNG")
-            random_values = torch.rand(
-                probabilities.shape,
-                generator=generator,
-                dtype=probabilities.dtype,
-                device=probabilities.device,
-            )
-            actions = (random_values < probabilities).to(dtype=logits.dtype)
-            old_log_prob = float(
-                -torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits, actions, reduction="none"
-                ).sum()
-            )
-        else:
-            actions = (logits >= 0.0).to(dtype=logits.dtype)
-            old_log_prob = 0.0
-
-    return (
-        ControlChange(bool(actions[0].item()), bool(actions[1].item())),
-        old_log_prob,
-        value,
-        MotorGoal(
-            float(planner_output[0].detach()),
-            float(planner_output[1].detach()),
-        ),
-        float(probabilities[0]),
-        float(probabilities[1]),
-    )
-
-
 def run_episode(
     model,
     map_path: str | Path,
@@ -178,56 +105,36 @@ def run_episode(
     engine = Engine(world, session_id="unpaced", episode_limit=episode_limit)
     actor = engine.spawn_actor(PLAYER_ID, ACTOR_ID)
     renderer = VisionGridRenderer(world, self_actor_id=ACTOR_ID)
-    motion = MotionEstimator()
     progress = VisionProgress()
-    pad = ActionDecision(False, False)
     sequence = 0
-    generator = None
-    train = mode == "train"
-    if train:
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(seed)
-        model.planner.train()
-        model.motor_controller.train()
-        model.critic.train()
-    else:
-        model.planner.eval()
-        model.motor_controller.eval()
-        model.critic.eval()
+    model.prepare_episode(mode, seed)
 
     grid = renderer.render(engine.world_state())
-    self_position, goal_position = vision_centers(grid)
-    progress.update_centers(self_position, goal_position)
     next_progress_tick = 100
 
     while actor.result is None:
         if should_stop is not None and should_stop():
             raise KeyboardInterrupt
 
-        motion_x = motion.update_center(
-            grid,
-            None if self_position is None else self_position[0],
-        )
-        if not motion.last_observation_usable:
+        sample = model.process_grid(grid)
+        if sample is None:
             raise RuntimeError("unpaced Vision observation is unusable")
+        desired = sample.desired_state
+        if not isinstance(desired, ActionDecision):
+            raise RuntimeError("unpaced Model produced no desired controller state")
 
-        base_pad = pad
-        (
-            action,
-            old_log_prob,
-            old_value,
-            motor_goal,
-            prob_right,
-            prob_jump,
-        ) = _policy(
-            model,
-            grid,
-            motion_x,
-            base_pad,
-            train=train,
-            generator=generator,
+        self_position = (
+            None
+            if sample.self_x is None or sample.self_y is None
+            else (float(sample.self_x), float(sample.self_y))
         )
-        desired = apply_control_change(base_pad, action)
+        goal_position = (
+            None
+            if sample.goal_x is None or sample.goal_y is None
+            else (float(sample.goal_x), float(sample.goal_y))
+        )
+        progress.update_centers(self_position, goal_position)
+
         sequence += 1
         status = engine.submit_input(
             InputStateCommand(
@@ -245,29 +152,18 @@ def run_episode(
             advanced += 1
             if actor.result is not None:
                 break
-        pad = desired
 
-        dataset.append_step(
-            policy_sequence=sequence,
-            grid=grid,
+        model.record_actuated(sample)
+        dataset.upsert_sample(
+            sample,
             duration_ticks=advanced,
-            motion_x=motion_x,
-            pad_state=base_pad,
-            action=action,
-            desired_state=desired,
-            old_log_prob=old_log_prob,
-            old_value=old_value,
-            self_position=self_position,
-            goal_position=goal_position,
-            motor_goal=motor_goal,
-            prob_right=prob_right,
-            prob_jump=prob_jump,
-            actuated=True,
+            actuated=sample.action_decision.any,
         )
 
         after_grid = renderer.render(engine.world_state())
-        after_self_position, after_goal_position = vision_centers(after_grid)
-        progress.update_centers(after_self_position, after_goal_position)
+        if actor.result is not None:
+            terminal_self, terminal_goal = vision_centers(after_grid)
+            progress.update_centers(terminal_self, terminal_goal)
 
         if on_progress is not None and engine.world_tick >= next_progress_tick:
             state = engine.actor_state(ACTOR_ID)
@@ -284,8 +180,6 @@ def run_episode(
                 next_progress_tick += 100
 
         grid = after_grid
-        self_position = after_self_position
-        goal_position = after_goal_position
 
     assert actor.result is not None
     return EpisodeResult(
@@ -657,7 +551,6 @@ __all__ = [
     "EpisodeResult",
     "PLAYER_ID",
     "POLICY_STRIDE_TICKS",
-    "_policy",
     "_progress_bar",
     "_rollout_line",
     "load_model",
