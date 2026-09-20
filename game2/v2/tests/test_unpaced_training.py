@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -138,6 +139,52 @@ class UnpacedTrainingTests(unittest.TestCase):
             resumed = load_model(fresh=False, checkpoint_dir=root, profile=profile)
             self.assertTrue(all(value.equal(resumed.planner.state_dict()[key])
                                 for key, value in model.planner.state_dict().items()))
+
+    def test_json_progress_exposes_training_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            success = EpisodeResult("success", 1.0, 2, 1)
+            metrics = {
+                "approx_kl": 0.012,
+                "clip_fraction": 0.25,
+                "controller_requests": 3,
+                "right_hold_fraction": 0.75,
+            }
+            with mock.patch("game2.v2.unpaced_runtime.load_model"), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.run_episode",
+                        side_effect=[success, success] * 3 + [success] * 3,
+                    ), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.train_episode",
+                        return_value=SimpleNamespace(
+                            updated=True, loss=0.1, metrics=metrics
+                        ),
+                    ), \
+                    mock.patch("game2.v2.unpaced_runtime.save_checkpoints"):
+                status = run_unpaced_training_set(
+                    set_path=ROOT / "game2/v2/training/sets/level-1.json",
+                    checkpoint_dir=Path(directory) / "checkpoints",
+                    episode_store_dir=Path(directory) / "episodes",
+                    max_episodes=1,
+                    episode_limit=2,
+                    fresh=True,
+                    output=output,
+                    json_output=True,
+                )
+            self.assertEqual(status, 0)
+            progress = [
+                json.loads(line.split(" ", 1)[1])
+                for line in output.getvalue().splitlines()
+                if line.startswith("PROGRESS ")
+            ]
+            self.assertTrue(progress)
+            self.assertEqual(progress[0]["controller_requests"], 3)
+            self.assertAlmostEqual(progress[0]["approx_kl"], 0.012)
+            self.assertIn(
+                'FINAL_CHECK {"map_count":3,"status":"start"',
+                output.getvalue(),
+            )
 
     def test_final_model_must_pass_all_maps_without_updates(self):
         for retained in (True, False):

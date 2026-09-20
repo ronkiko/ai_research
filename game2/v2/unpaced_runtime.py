@@ -573,6 +573,7 @@ def run_unpaced_training_set(
                 "updated": training.updated,
                 "loss": training.loss if training.updated else None,
                 "seconds": round(time.monotonic() - started, 3),
+                **training.metrics,
             })
 
             previous_train_result = outcome.result
@@ -661,7 +662,14 @@ def run_unpaced_training_set(
                 )
             return 1
 
-    write_line("FINAL CHECK · all training maps · frozen model")
+    if json_output:
+        write("FINAL_CHECK", {
+            "status": "start",
+            "training_set_level": manifest.training_set_level,
+            "map_count": len(manifest.training_maps),
+        })
+    else:
+        write_line("FINAL CHECK · all training maps · frozen model")
     final_passed = True
     for spec in manifest.training_maps:
         if should_stop is not None and should_stop():
@@ -699,10 +707,23 @@ def run_unpaced_training_set(
         else:
             write_line(f"Final check {spec.map_id}: {outcome.result.upper()}")
     if not final_passed:
-        write_line(f"TRAINING SET {manifest.training_set_level}: FAIL (final verification)")
+        if json_output:
+            write("FINAL_CHECK", {
+                "status": "fail",
+                "training_set_level": manifest.training_set_level,
+            })
+        else:
+            write_line(
+                f"TRAINING SET {manifest.training_set_level}: "
+                "FAIL (final verification)"
+            )
         return 1
 
     if json_output:
+        write("FINAL_CHECK", {
+            "status": "pass",
+            "training_set_level": manifest.training_set_level,
+        })
         output.write(
             f"TRAINING SET {manifest.training_set_level}: PASS\n"
         )

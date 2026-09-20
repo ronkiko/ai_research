@@ -70,6 +70,11 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(first, output.getvalue())
             display.consume('PPO {"episode_id":1,"attempt":1,"max_attempts":50,"step":1,"steps":4,"loss":0.1}')
             self.assertIn("1/4 batches", output.getvalue())
+            display.consume('FINAL_CHECK {"status":"start","training_set_level":1,"map_count":3}')
+            self.assertIn(
+                "Final check · all training maps · frozen model",
+                output.getvalue(),
+            )
             display.close()
             self.assertFalse(display.active)
             if not tty:

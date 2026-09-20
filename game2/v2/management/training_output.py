@@ -51,7 +51,7 @@ class TrainingDisplay:
     def consume(self, line):
         prefix, _, body = line.strip().partition(" ")
         if prefix not in {"LEARNING", "ROLLOUT", "PPO", "PROGRESS", "TRAIN_RESULT",
-                          "EVALUATION", "FINAL_EVALUATION"}:
+                          "EVALUATION", "FINAL_CHECK", "FINAL_EVALUATION"}:
             if line.startswith("MAP ") and "starting" in line:
                 self.line("")
             self.line(line.rstrip())
@@ -101,6 +101,16 @@ class TrainingDisplay:
         elif prefix == "PROGRESS":
             self.line(f"Attempt total {float(event['seconds']):.1f}s · "
                       f"training successes {event['successes']}/{attempt}")
+        elif prefix == "FINAL_CHECK":
+            status = event["status"]
+            if status == "start":
+                self.line("Final check · all training maps · frozen model")
+            else:
+                self.line(
+                    "Final check · " + (
+                        "PASS" if status == "pass" else "FAIL"
+                    )
+                )
         else:
             passed = event["result"] == "success"
             label = "Final check" if prefix == "FINAL_EVALUATION" else "Verify"
