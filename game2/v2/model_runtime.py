@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 
+from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.framing import MAX_FRAME_SIZE, ProtocolError, decode_frame
 from game2.v2.contracts.model import (
     ACTUATED,
@@ -50,6 +51,11 @@ from game2.v2.player.learned.checkpoint import (
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import DualMotorController
 from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.registry import (
+    build_motor_controller,
+    build_planner,
+    validate_runtime_profile,
+)
 from game2.v2.player.learned.runtime import (
     DecisionSample,
     LearnedPlayer,
@@ -73,12 +79,14 @@ def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
     )
 
 
-def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
-                critic_seed: int = 3,
+def build_model(*, fresh: bool, profile: BotProfile | None = None,
+                planner_seed: int = 1, motor_seed: int = 2, critic_seed: int = 3,
                 planner_checkpoint: str | Path | None = None,
                 motor_checkpoint: str | Path | None = None,
                 critic_checkpoint: str | Path | None = None,
                 optimizer_checkpoint: str | Path | None = None) -> LearnedPlayer:
+    if profile is not None:
+        validate_runtime_profile(profile)
     checkpoints = (
         planner_checkpoint is not None,
         motor_checkpoint is not None,
@@ -88,8 +96,12 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
     if fresh:
         if any(checkpoints):
             raise ValueError("Fresh Model runtime cannot use checkpoints")
-        planner = CNNPlanner.fresh(planner_seed)
-        motor = DualMotorController.fresh(motor_seed)
+        if profile is None:
+            planner = CNNPlanner.fresh(planner_seed)
+            motor = DualMotorController.fresh(motor_seed)
+        else:
+            planner = build_planner(profile)
+            motor = build_motor_controller(profile)
         critic = CNNCritic.fresh(critic_seed, planner.backbone)
     else:
         if checkpoints != (True, True, True, True):
@@ -114,6 +126,7 @@ def build_model(*, fresh: bool, planner_seed: int = 1, motor_seed: int = 2,
             )
         critic.backbone = planner.backbone
     player = LearnedPlayer(planner, motor, critic)
+    player.bot_profile = profile
     if not fresh:
         assert optimizer_checkpoint is not None
         assert player.optimizer is not None

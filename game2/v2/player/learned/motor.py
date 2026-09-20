@@ -10,6 +10,7 @@ from torch import nn
 from .contracts import ButtonCommand, ControlCommand, MotorGoal, MotorPlan
 
 
+BUTTON_MOTOR_CONFIGURATION = "button-reflex-5-8-3-v1"
 MOTOR_CONTROLLER_CONFIGURATION = "dual-reflex-5-8-3-v6"
 
 
@@ -97,6 +98,17 @@ class ButtonMotor583(nn.Module):
         self.hidden = nn.Linear(5, 8)
         self.activation = nn.ReLU()
         self.output = nn.Linear(8, 3)
+        self.initialization_seed: int | None = None
+
+    @classmethod
+    def fresh(cls, seed: int) -> "ButtonMotor583":
+        if type(seed) is not int:
+            raise TypeError("seed must be an int")
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            model = cls()
+        model.initialization_seed = seed
+        return model
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if not isinstance(inputs, torch.Tensor):
@@ -115,11 +127,16 @@ class ButtonMotor583(nn.Module):
 class DualMotorController(nn.Module):
     """Independent RIGHT and JUMP reflex networks."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        right_motor: ButtonMotor583 | None = None,
+        jump_motor: ButtonMotor583 | None = None,
+    ) -> None:
         super().__init__()
-        self.right_motor = ButtonMotor583()
-        self.jump_motor = ButtonMotor583()
+        self.right_motor = right_motor if right_motor is not None else ButtonMotor583()
+        self.jump_motor = jump_motor if jump_motor is not None else ButtonMotor583()
         self.initialization_seed: int | None = None
+        self.component_seeds: dict[str, int] | None = None
 
     @classmethod
     def fresh(cls, seed: int) -> "DualMotorController":
@@ -129,6 +146,18 @@ class DualMotorController(nn.Module):
             torch.manual_seed(seed)
             model = cls()
         model.initialization_seed = seed
+        model.component_seeds = {"right": seed, "jump": seed}
+        return model
+
+    @classmethod
+    def from_seeded_motors(
+        cls, right_seed: int, jump_seed: int
+    ) -> "DualMotorController":
+        right = ButtonMotor583.fresh(right_seed)
+        jump = ButtonMotor583.fresh(jump_seed)
+        model = cls(right, jump)
+        model.initialization_seed = right_seed
+        model.component_seeds = {"right": right_seed, "jump": jump_seed}
         return model
 
     def forward_goal(
@@ -198,6 +227,7 @@ MotorController582 = DualMotorController
 
 
 __all__ = [
+    "BUTTON_MOTOR_CONFIGURATION",
     "ButtonMotor583",
     "DualMotorController",
     "MOTOR_CONTROLLER_CONFIGURATION",
