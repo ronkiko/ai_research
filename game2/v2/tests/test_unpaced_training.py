@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from game2.v2.training.unpaced import (
+from game2.v2.unpaced_runtime import (
     POLICY_STRIDE_TICKS,
     _behavior_trend,
     _progress_bar,

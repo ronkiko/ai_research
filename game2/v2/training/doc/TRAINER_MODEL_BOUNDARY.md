@@ -16,7 +16,7 @@ Engine state.
 
 Model runtime owns inference, trainable modules, optimizer state, and checkpoint
 serialization. `training/work/ppo.py` owns the one PPO update implementation.
-`training/work/episode_dataset.py` owns the durable episode material and the
+`learning/episode_dataset.py` owns the durable episode material and the
 five-episode rotation policy.
 
 Training control-plane code owns Train/Evaluate orchestration, result/reward

@@ -147,8 +147,11 @@ class PlayerConnectionDeadlineTests(unittest.TestCase):
             connection.detach()
         finally:
             connection.close()
-            server.close()
+            # Let the peer consume the already-sent DETACH before closing its
+            # descriptor from this thread.
             worker.join(timeout=2)
+            server.close()
+        self.assertFalse(worker.is_alive())
         self.assertFalse(errors)
 
 

@@ -22,6 +22,8 @@ class BotProfileStore:
             return ()
         result = []
         for path in sorted(self.root.glob("*.json")):
+            if path.name == "catalog.json":
+                continue
             if not path.is_file():
                 continue
             profile = BotProfile.from_file(path)
@@ -35,6 +37,8 @@ class BotProfileStore:
 
     def path_for(self, bot_id: str) -> Path:
         bot_id = validate_bot_id(bot_id)
+        if bot_id == "catalog":
+            raise ValueError("catalog is reserved for the component catalog")
         return self.root / f"{bot_id}.json"
 
     def load(self, bot_id: str) -> BotProfile:
@@ -51,7 +55,7 @@ class BotProfileStore:
         if not isinstance(profile, BotProfile):
             raise TypeError("save requires a BotProfile")
         self.root.mkdir(parents=True, exist_ok=True)
-        destination = self.root / f"{profile.bot_id}.json"
+        destination = self.path_for(profile.bot_id)
         temporary = destination.with_name(destination.name + ".tmp")
         temporary.write_text(profile.to_json(), encoding="utf-8")
         try:

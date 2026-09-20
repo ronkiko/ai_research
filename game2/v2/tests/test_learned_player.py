@@ -167,7 +167,7 @@ class _RemoteModel:
     def actuated(self, decision_id):
         self.actuated_ids.append(decision_id)
 
-    def episode_end(self, episode_id, result, reward, trainable):
+    def episode_end(self, episode_id, result, reward, trainable, finish_world_tick=None):
         self.episode_end_calls.append((episode_id, result, reward, trainable))
 
 

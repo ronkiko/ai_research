@@ -48,3 +48,19 @@ normalizes `import x`, absolute `from x import y`, and relative
 root-domain rules. Relative imports within the owning domain/subdomain remain
 valid, but a relative import that resolves to a forbidden neighboring domain is
 treated exactly like its absolute equivalent.
+
+## Shared learning data and offline composition
+
+`learning/*` is a shared library for episode persistence, cadence configuration,
+public-Vision motion estimates and tensor conversion. It may import contracts
+and its own modules, but never Console, Player, Training, Management or the
+composition runtimes. Importing episode storage does not import PyTorch.
+`contracts/motor.py` contains the shared MotorGoal and action value contracts.
+Existing Player/Training public import paths re-export these shared definitions.
+
+`unpaced_runtime.py`, like `model_runtime.py`, is an explicit composition root
+outside the four domains. It owns the offline Engine/model/Training composition;
+its synchronous world stepping is confined to the unpaced experiment. Management
+launches this runtime as a child process, forwards output and exit status, and
+terminates it on cancellation. Management never imports the offline runtime.
+Realtime Console semantics and the public Player lifecycle are unchanged.

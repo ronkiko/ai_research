@@ -22,7 +22,7 @@ from game2.v2.contracts.vision import (
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.contracts import ActionDecision
 from game2.v2.training.main import reward_for_result
-from game2.v2.training.unpaced import (
+from game2.v2.unpaced_runtime import (
     ACTOR_ID,
     PLAYER_ID,
     run_episode,

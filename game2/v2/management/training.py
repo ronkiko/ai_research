@@ -37,7 +37,7 @@ from game2.v2.contracts.screen_server import (
     unbind_message,
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
-from game2.v2.training.work import EpisodeStore
+from game2.v2.learning.episode_dataset import EpisodeStore
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -258,6 +258,37 @@ class TrainingRun:
 
     def close(self) -> None:
         self._stop(list(self.processes))
+
+    def _run_unpaced(self, *, set_path, checkpoint_dir, max_episodes,
+                     episode_limit, fresh, json_output, episode_store_dir,
+                     profile_path) -> int:
+        command = [
+            sys.executable, "-m", "game2.v2.unpaced_runtime",
+            "--set", str(set_path), "--profile", str(profile_path),
+            "--checkpoint-dir", str(checkpoint_dir),
+            "--episode-store", str(episode_store_dir),
+            "--max-episodes-per-map", str(max_episodes),
+            "--episode-limit", str(episode_limit),
+            "--fresh" if fresh else "--resume",
+        ]
+        if json_output:
+            command.append("--json")
+        process = self._spawn(command)
+        try:
+            while True:
+                self._check_stop()
+                for line in process.drain():
+                    self.output.write(line)
+                self.output.flush()
+                status = process.process.poll()
+                if status is not None and process.output_done.is_set():
+                    for line in process.drain():
+                        self.output.write(line)
+                    self.output.flush()
+                    return status
+                self.sleeper(0.02)
+        finally:
+            self._stop([process])
 
     def _announcement(
         self, process: ManagedProcess, prefix: str, timeout: float = PROCESS_TIMEOUT
@@ -565,8 +596,6 @@ class TrainingRun:
             raise ValueError("episode_limit must be positive")
 
         if mode == "unpaced":
-            from game2.v2.training.unpaced import run_unpaced_training_set
-
             if json_output:
                 self._write(
                     f"PLAYER {profile.bot_id}: "
@@ -583,17 +612,15 @@ class TrainingRun:
                         else "continuing saved model · fast simulation"
                     )
                 )
-            return run_unpaced_training_set(
+            return self._run_unpaced(
                 set_path=manifest_path,
                 checkpoint_dir=checkpoint_path,
                 max_episodes=max_episodes,
                 episode_limit=episode_limit,
                 fresh=fresh,
-                output=self.output,
-                should_stop=self.stop_requested.is_set,
                 json_output=json_output,
                 episode_store_dir=episode_store_path,
-                profile=profile,
+                profile_path=profile_path,
             )
 
         self._write(f"PLAYER {profile.bot_id}")

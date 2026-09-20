@@ -50,7 +50,7 @@ Engine state, physics coordinates, hidden collision geometry, private
 
 ## Bot Configuration
 
-Management owns persistent Bot Profile configuration and the future Bot
+Management owns persistent Bot Profile configuration and the Bot
 Profiler operator interface. This does not create a Console-side Bot domain.
 A configured Bot enters the world through the ordinary Player lifecycle and
 public Player capabilities.
@@ -60,6 +60,5 @@ component inspection/editing, component catalog metadata, anatomical read
 models, and per-Bot runtime-state inspection. `BotRuntimeLayout` is shared by
 Training and Bot Profiler so both resolve the same checkpoint/episode paths.
 
-The graphical Bot Profiler is deliberately separate work. It must consume these
-Management services instead of importing Player/model or Training runtime
-internals.
+The graphical Bot Profiler consumes these Management services and does not
+import Player/model or Training runtime internals.

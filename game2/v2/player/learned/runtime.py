@@ -8,7 +8,7 @@ import torch
 
 from game2.v2.contracts.joystick import JoystickState
 from game2.v2.contracts.vision import VisionGrid
-from game2.v2.training.work.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
+from game2.v2.learning.config import POLICY_STRIDE_TICKS, PPO_LEARNING_RATE
 from .contracts import (
     ActionDecision,
     ButtonCommand,

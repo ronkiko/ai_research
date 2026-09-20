@@ -18,7 +18,7 @@ metadata, rewards, GAE/advantages/returns, PPO selection, and post-update
 ratings. At most five episode files are retained; the oldest is rotated out.
 
 `training/work/config.py` owns the shared policy/PPO cadence.
-`training/work/episode_dataset.py` owns storage and rotation.
+`learning/episode_dataset.py` owns storage and rotation.
 `training/work/ppo.py` is the only PPO implementation.
 
 `training/main.py` remains the standalone Trainer control-plane process. It

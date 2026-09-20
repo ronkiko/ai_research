@@ -22,7 +22,7 @@ class BotProfilerBackendTests(unittest.TestCase):
             SOURCE_PROFILE.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
-        catalog = root / "catalog.json"
+        catalog = profiles / "catalog.json"
         catalog.write_text(
             SOURCE_CATALOG.read_text(encoding="utf-8"),
             encoding="utf-8",

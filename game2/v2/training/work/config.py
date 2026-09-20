@@ -1,22 +1,34 @@
-"""Canonical training cadence and PPO configuration."""
+"""Public imports for shared learning definitions."""
+from game2.v2.learning.config import (
+    POLICY_STRIDE_TICKS,
+    PPO_TAIL_TICKS,
+    PPO_HISTORY_STRIDE_TICKS,
+    MAX_EPISODE_DATASETS,
+    CONTROL_CHANGE_PENALTY,
+    PPO_GAMMA,
+    PPO_GAE_LAMBDA,
+    PPO_CLIP_EPS,
+    PPO_EPOCHS,
+    PPO_BATCH_SIZE,
+    PPO_ENTROPY_COEF,
+    PPO_VALUE_COEF,
+    PPO_MAX_GRAD_NORM,
+    PPO_LEARNING_RATE,
+)
 
-POLICY_STRIDE_TICKS = 2
-PPO_TAIL_TICKS = 200
-
-# Stateful button actions need dense credit assignment. Each Motor explicitly
-# chooses KEEP/PRESS/RELEASE, so dropping intermediate KEEP decisions can teach
-# a lucky stochastic trajectory without teaching the deterministic policy to
-# preserve a stable control sequence. Keep every policy decision.
-PPO_HISTORY_STRIDE_TICKS = POLICY_STRIDE_TICKS
-MAX_EPISODE_DATASETS = 5
-
-CONTROL_CHANGE_PENALTY = 0.005
-PPO_GAMMA = 0.99
-PPO_GAE_LAMBDA = 0.95
-PPO_CLIP_EPS = 0.2
-PPO_EPOCHS = 4
-PPO_BATCH_SIZE = 64
-PPO_ENTROPY_COEF = 0.01
-PPO_VALUE_COEF = 0.5
-PPO_MAX_GRAD_NORM = 0.5
-PPO_LEARNING_RATE = 3e-4
+__all__ = [
+    "POLICY_STRIDE_TICKS",
+    "PPO_TAIL_TICKS",
+    "PPO_HISTORY_STRIDE_TICKS",
+    "MAX_EPISODE_DATASETS",
+    "CONTROL_CHANGE_PENALTY",
+    "PPO_GAMMA",
+    "PPO_GAE_LAMBDA",
+    "PPO_CLIP_EPS",
+    "PPO_EPOCHS",
+    "PPO_BATCH_SIZE",
+    "PPO_ENTROPY_COEF",
+    "PPO_VALUE_COEF",
+    "PPO_MAX_GRAD_NORM",
+    "PPO_LEARNING_RATE",
+]

@@ -39,9 +39,13 @@ class StructureTests(unittest.TestCase):
             "console": ("game2.v2.player", "game2.v2.training", "game2.v2.management"),
             "player": ("game2.v2.console", "game2.v2.training", "game2.v2.management"),
             "training": ("game2.v2.console", "game2.v2.player", "game2.v2.management"),
-            "management": ("game2.v2.console", "game2.v2.player", "game2.v2.training"),
+            "management": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
+                           "game2.v2.model_runtime", "game2.v2.unpaced_runtime", "torch"),
             "contracts": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
-                          "game2.v2.management"),
+                          "game2.v2.management", "game2.v2.learning"),
+            "learning": ("game2.v2.console", "game2.v2.player", "game2.v2.training",
+                         "game2.v2.management", "game2.v2.model_runtime",
+                         "game2.v2.unpaced_runtime"),
         }
         for domain, denied in forbidden.items():
             for source in (V2 / domain).rglob("*.py"):

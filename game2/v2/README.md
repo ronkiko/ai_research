@@ -91,7 +91,9 @@ rendered RGB frames before they cross the Console boundary.
 `Screen Server` is only a broker of numbered slots and bindings. It does not
 create Pygame windows.
 
-`op/screen.sh N` is the only graphical operator process.
+`op/screen.sh N` owns the graphical Screen. The separate Bot Profiler
+Management editor is launched with `./game2/v2/op/bot_profiler.sh`; see
+[Management](management/README.md#bot-profiler) for editing and verification.
 
 ## Tests
 

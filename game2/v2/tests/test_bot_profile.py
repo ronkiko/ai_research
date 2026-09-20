@@ -123,6 +123,8 @@ class BotProfileTests(unittest.TestCase):
                 store.load("../player1")
             with self.assertRaises(ValueError):
                 store.load("missing")
+            with self.assertRaises(ValueError):
+                store.save(_profile("catalog"))
 
 
 if __name__ == "__main__":

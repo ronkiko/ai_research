@@ -17,6 +17,35 @@ from game2.v2.training.work import EpisodeStore
 
 
 class ManagementTrainingTests(unittest.TestCase):
+    def test_unpaced_child_forwards_output_status_and_cleans_up_on_stop(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                output = io.StringIO()
+                run = TrainingRun(output=output, sleeper=lambda _: None)
+                process = mock.Mock()
+                process.drain.side_effect = [["episode completed\n"], []]
+                process.process.poll.return_value = 7
+                process.output_done.is_set.return_value = True
+                if interrupted:
+                    run.request_stop()
+                with mock.patch.object(run, "_spawn", return_value=process) as spawn, \
+                        mock.patch.object(run, "_stop") as stop:
+                    kwargs = dict(set_path="set.json", checkpoint_dir="checkpoints",
+                                  max_episodes=1, episode_limit=30, fresh=True,
+                                  json_output=True, episode_store_dir="episodes",
+                                  profile_path="profiles/player1.json")
+                    if interrupted:
+                        with self.assertRaises(KeyboardInterrupt):
+                            run._run_unpaced(**kwargs)
+                    else:
+                        self.assertEqual(run._run_unpaced(**kwargs), 7)
+                        self.assertEqual(output.getvalue(), "episode completed\n")
+                    command = spawn.call_args.args[0]
+                    self.assertEqual(command[command.index("--profile") + 1], "profiles/player1.json")
+                    self.assertIn("--fresh", command)
+                    self.assertIn("--json", command)
+                    stop.assert_called_once_with([process])
+
     def test_strict_json_and_endpoint_validation(self):
         self.assertEqual(_strict_object('{"a":1}'), {"a": 1})
         with self.assertRaises(ValueError):
@@ -53,7 +82,7 @@ class ManagementTrainingTests(unittest.TestCase):
             run = TrainingRun(output=output)
 
             with mock.patch(
-                "game2.v2.training.unpaced.run_unpaced_training_set",
+                "game2.v2.management.training.TrainingRun._run_unpaced",
                 return_value=0,
             ) as unpaced:
                 status = run.train(
@@ -78,7 +107,7 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertNotIn("· unpaced", output.getvalue())
             kwargs = unpaced.call_args.kwargs
             self.assertEqual(Path(kwargs["episode_store_dir"]), episode_root)
-            self.assertEqual(kwargs["profile"].bot_id, "player1")
+            self.assertEqual(Path(kwargs["profile_path"]).name, "player1.json")
 
     def test_default_runtime_paths_are_isolated_by_player(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -92,7 +121,7 @@ class ManagementTrainingTests(unittest.TestCase):
             output = io.StringIO()
             run = TrainingRun(output=output, root=root)
             with mock.patch(
-                "game2.v2.training.unpaced.run_unpaced_training_set",
+                "game2.v2.management.training.TrainingRun._run_unpaced",
                 return_value=0,
             ) as unpaced:
                 status = run.train(
@@ -118,7 +147,7 @@ class ManagementTrainingTests(unittest.TestCase):
             self.assertEqual(
                 Path(kwargs["episode_store_dir"]), expected / "episodes"
             )
-            self.assertEqual(kwargs["profile"].bot_id, "player1")
+            self.assertEqual(Path(kwargs["profile_path"]).name, "player1.json")
 
     def test_unpaced_mode_rejects_screen_and_vision_view(self):
         run = TrainingRun(output=io.StringIO())

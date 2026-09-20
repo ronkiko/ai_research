@@ -652,3 +652,45 @@ __all__ = [
     "run_unpaced_training_set",
     "save_checkpoints",
 ]
+
+
+def main(argv=None) -> int:
+    """Process boundary for the offline world/model/training composition."""
+    import argparse
+    import signal
+    import threading
+
+    parser = argparse.ArgumentParser(description="Unpaced Training composition runtime")
+    parser.add_argument("--set", dest="set_path", required=True)
+    parser.add_argument("--profile", required=True)
+    parser.add_argument("--checkpoint-dir", required=True)
+    parser.add_argument("--episode-store", required=True)
+    parser.add_argument("--max-episodes-per-map", type=int, required=True)
+    parser.add_argument("--episode-limit", type=int, required=True)
+    parser.add_argument("--json", action="store_true")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--fresh", action="store_true")
+    mode.add_argument("--resume", action="store_true")
+    args = parser.parse_args(argv)
+    stopped = threading.Event()
+    previous = {sig: signal.signal(sig, lambda *_: stopped.set())
+                for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        return run_unpaced_training_set(
+            set_path=args.set_path, checkpoint_dir=args.checkpoint_dir,
+            max_episodes=args.max_episodes_per_map, episode_limit=args.episode_limit,
+            fresh=args.fresh, json_output=args.json, episode_store_dir=args.episode_store,
+            profile=BotProfile.from_file(args.profile), should_stop=stopped.is_set,
+        )
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"ERROR Unpaced training failed: {exc}", file=sys.stderr, flush=True)
+        return 1
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

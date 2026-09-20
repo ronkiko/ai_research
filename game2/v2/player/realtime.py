@@ -10,7 +10,7 @@ from game2.v2.player.model_client import ModelClient
 from game2.v2.player.peripherals import JoystickClient, VisionReceiver
 
 from .learned.motion import self_center_x
-from .learned.runtime import POLICY_STRIDE_TICKS
+from game2.v2.learning.config import POLICY_STRIDE_TICKS
 
 
 PLAYER_ACTION_HZ = 120
@@ -92,20 +92,22 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
             frame = vision.latest
             if frame is not None and frame.world_tick != latest_world_tick:
                 latest_world_tick = frame.world_tick
+                has_self = self_center_x(frame) is not None
+                first_self_frame = has_self and not saw_self_frame
+                if has_self:
+                    saw_self_frame = True
+                    missing_self_after_seen = False
+                elif gameplay_started:
+                    break
+                elif saw_self_frame:
+                    missing_self_after_seen = True
                 should_observe = (
-                    last_model_observation_tick is None
+                    first_self_frame
+                    or last_model_observation_tick is None
                     or frame.world_tick - last_model_observation_tick
                     >= POLICY_STRIDE_TICKS
                 )
                 if should_observe:
-                    has_self = self_center_x(frame) is not None
-                    if has_self:
-                        saw_self_frame = True
-                        missing_self_after_seen = False
-                    elif gameplay_started:
-                        break
-                    elif saw_self_frame:
-                        missing_self_after_seen = True
                     model.observe(frame)
                     last_model_observation_tick = frame.world_tick
 

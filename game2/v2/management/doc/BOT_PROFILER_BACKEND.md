@@ -1,9 +1,9 @@
 # Bot Profiler Backend
 
-Status: backend contract for the future graphical Bot Profiler.
+Status: backend contract for the graphical Bot Profiler.
 
-The graphical Bot Profiler is intentionally **not implemented here**. This
-module boundary exists so a UI agent can build the fullscreen interface without
+The graphical Bot Profiler is implemented in `management/bot_profiler.py`. This
+module boundary lets the fullscreen interface operate without
 refactoring Training, importing PyTorch, parsing model classes, or inventing a
 second configuration source.
 

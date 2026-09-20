@@ -1,11 +1,11 @@
 # UI Boundary
 
-The future management UI is an operator interface, not Display and not a
+The management UI is an operator interface, not Display and not a
 runtime bridge. It must not forward Joystick actions, Engine STATE, or model
 inference through a management process.
 
 
-The future Bot Profiler follows the same boundary. It edits and inspects
+The Bot Profiler follows the same boundary. It edits and inspects
 versioned Bot Profiles through `BotProfilerBackend`; it does not import
 PyTorch, Planner, Motor, Critic, Optimizer, or Trainer implementation classes.
 

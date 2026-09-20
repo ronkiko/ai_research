@@ -8,8 +8,8 @@ from typing import Callable
 
 import torch
 
-from game2.v2.player.learned.contracts import ButtonCommand
-from game2.v2.player.learned.vision import vision_to_tensor
+from game2.v2.contracts.motor import ButtonCommand
+from game2.v2.learning.vision import vision_to_tensor
 
 from .config import (
     CONTROL_CHANGE_PENALTY,
