@@ -77,6 +77,7 @@ class DecisionSample:
     planner_input_goal_dy: float = 0.0
     planner_input_right_active: bool = False
     planner_input_jump_active: bool = False
+    plan_command_probabilities: tuple[float, float, float] | None = None
     plan_command: PlanCommand = PlanCommand.KEEP
     plan_policy_sequence: int = 0
 
@@ -235,6 +236,7 @@ class LearnedPlayer:
         )
 
         plan_command = PlanCommand.KEEP
+        plan_command_probabilities = None
         planner_log_prob = torch.tensor(0.0)
         with torch.no_grad():
             shared = (
@@ -271,6 +273,9 @@ class LearnedPlayer:
                 command_logits = planner_output[2:5]
                 skill_logits = planner_output[5:7]
                 command_probabilities = torch.softmax(command_logits, dim=0)
+                plan_command_probabilities = tuple(
+                    float(value) for value in command_probabilities
+                )
                 skill_probabilities = torch.sigmoid(skill_logits)
 
                 if self._episode_mode == "train":
@@ -443,6 +448,7 @@ class LearnedPlayer:
             ),
             planner_input_right_active=planner_input_plan.right_active,
             planner_input_jump_active=planner_input_plan.jump_active,
+            plan_command_probabilities=plan_command_probabilities,
             plan_command=plan_command,
             plan_policy_sequence=self._active_plan_policy_sequence,
         )

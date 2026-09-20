@@ -394,6 +394,13 @@ This keeps the credit horizon tied to meaningful control time. Changing physics
 or Motor frequency must not silently shorten or lengthen learning merely because
 more or fewer world ticks occurred.
 
+
+Planner-command diagnostics are persisted per real Planner decision: the
+collection-time probabilities for `KEEP/SET/STOP`, the post-PPO probabilities
+for the same observation and pre-command MotorPlan, and aggregate command
+counts. This makes plan persistence measurable without inferring it from the
+chosen command alone.
+
 Training diagnostics must keep task performance separate from control economy.
 Current episode metrics include Controller request counts and cost, accepted
 button changes, RIGHT/JUMP hold fractions, progress reward, terminal reward,

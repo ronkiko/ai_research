@@ -79,6 +79,7 @@ def _sample(sequence: int, tick: int, self_x: int):
         planner_input_goal_dy=0.0,
         planner_input_right_active=False,
         planner_input_jump_active=False,
+        plan_command_probabilities=(0.2, 0.5, 0.3),
         plan_command=PlanCommand.SET,
         plan_policy_sequence=sequence,
         prob_right=0.5,
@@ -199,10 +200,13 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 8)
+            self.assertEqual(metadata["schema_version"], 9)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
+            self.assertEqual(metadata["metrics"]["planner_keep_decisions"], 0)
+            self.assertEqual(metadata["metrics"]["planner_set_decisions"], 1)
+            self.assertEqual(metadata["metrics"]["planner_stop_decisions"], 0)
             self.assertEqual(metadata["metrics"]["motor_decisions"], 4)
             self.assertEqual(metadata["metrics"]["controller_requests"], 1)
             self.assertAlmostEqual(
@@ -252,6 +256,9 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertTrue(steps[0].planner_decision)
             self.assertEqual(steps[0].planner_input_goal_dx, 0.0)
             self.assertFalse(steps[0].planner_input_right_active)
+            self.assertAlmostEqual(steps[0].prob_plan_keep, 0.2)
+            self.assertAlmostEqual(steps[0].prob_plan_set, 0.5)
+            self.assertAlmostEqual(steps[0].prob_plan_stop, 0.3)
             self.assertEqual(steps[0].plan_command, PlanCommand.SET)
             self.assertEqual(steps[1].plan_command, PlanCommand.KEEP)
             self.assertEqual(steps[1].plan_policy_sequence, 1)
@@ -262,6 +269,9 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertTrue(any(
                 step.ppo_selected
                 and step.new_prob_jump_press is not None
+                and step.new_prob_plan_keep is not None
+                and step.new_prob_plan_set is not None
+                and step.new_prob_plan_stop is not None
                 and step.new_skill_right_probability is not None
                 and step.new_skill_jump_probability is not None
                 for step in steps

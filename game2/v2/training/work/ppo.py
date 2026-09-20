@@ -336,6 +336,7 @@ def train_episode(
     final_log_prob = torch.empty(count, dtype=torch.float32)
     final_values = torch.empty(count, dtype=torch.float32)
     final_probabilities = torch.empty((count, 2, 3), dtype=torch.float32)
+    final_plan_probabilities = torch.empty((count, 3), dtype=torch.float32)
     final_skill_probabilities = torch.empty((count, 2), dtype=torch.float32)
     total_loss = total_policy_loss = total_value_loss = 0.0
     total_entropy = total_grad_norm = 0.0
@@ -606,6 +607,9 @@ def train_episode(
             final_log_prob[indexes] = final_lp.detach().cpu()
             final_values[indexes] = values.detach().cpu()
             final_probabilities[indexes] = probabilities.detach().cpu()
+            final_plan_probabilities[indexes] = torch.softmax(
+                plan_command_logits, dim=1
+            ).detach().cpu()
             final_skill_probabilities[indexes] = torch.sigmoid(
                 skill_logits
             ).detach().cpu()
@@ -685,6 +689,27 @@ def train_episode(
         "planner_decisions": sum(
             int(step.planner_decision) for step in steps
         ),
+        "planner_keep_decisions": sum(
+            int(
+                step.planner_decision
+                and step.plan_command is PlanCommand.KEEP
+            )
+            for step in steps
+        ),
+        "planner_set_decisions": sum(
+            int(
+                step.planner_decision
+                and step.plan_command is PlanCommand.SET
+            )
+            for step in steps
+        ),
+        "planner_stop_decisions": sum(
+            int(
+                step.planner_decision
+                and step.plan_command is PlanCommand.STOP
+            )
+            for step in steps
+        ),
         "motor_decisions": len(steps),
         "reward_sum": float(sum(rewards)),
         "controller_requests": total_control_requests,
@@ -739,6 +764,7 @@ def train_episode(
         local = selected_lookup.get(index)
         new_lp = new_value = ratio_value = None
         new_right = new_jump = (None, None, None)
+        new_plan = (None, None, None)
         new_skill_right = new_skill_jump = None
         if local is not None:
             new_lp = float(final_log_prob[local])
@@ -750,6 +776,11 @@ def train_episode(
             new_jump = tuple(
                 float(value) for value in final_probabilities[local, 1]
             )
+            if step.planner_decision:
+                new_plan = tuple(
+                    float(value)
+                    for value in final_plan_probabilities[local]
+                )
             new_skill_right = float(final_skill_probabilities[local, 0])
             new_skill_jump = float(final_skill_probabilities[local, 1])
         annotations.append({
@@ -768,6 +799,9 @@ def train_episode(
             "new_prob_jump_keep": new_jump[0],
             "new_prob_jump_press": new_jump[1],
             "new_prob_jump_release": new_jump[2],
+            "new_prob_plan_keep": new_plan[0],
+            "new_prob_plan_set": new_plan[1],
+            "new_prob_plan_stop": new_plan[2],
             "new_skill_right_probability": new_skill_right,
             "new_skill_jump_probability": new_skill_jump,
         })
