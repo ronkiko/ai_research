@@ -20,6 +20,17 @@ from game2.v2.learning.config import POLICY_STRIDE_TICKS
 PLAYER_ACTION_HZ = 120
 
 
+def _latest_body_for_frame(proprioception, frame):
+    body = getattr(proprioception, "latest", None)
+    if body is None:
+        # Small compatibility boundary for deterministic test/peripheral
+        # implementations that expose only historical lookup.
+        body = proprioception.latest_at_or_before(frame.world_tick)
+    if body is None or body.world_tick < frame.world_tick:
+        return None
+    return body
+
+
 def _apply_control_acks(joystick, pending: dict[int, int],
                         actuated_ids: set[int], model: ModelClient) -> None:
     """Report Controller outcomes; only accepted requests become actuated."""
@@ -58,6 +69,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
     joystick = joystick_factory(manifest)
     sent = 0
     latest_world_tick: int | None = None
+    latest_usable_frame = None
     last_model_observation_tick: int | None = None
     next_send = clock()
     gameplay_started = False
@@ -109,25 +121,26 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
             if frame is not None and frame.world_tick != latest_world_tick:
                 latest_world_tick = frame.world_tick
                 has_self = self_center_x(frame) is not None
-                first_self_frame = has_self and not saw_self_frame
                 if has_self:
                     saw_self_frame = True
                     missing_self_after_seen = False
+                    latest_usable_frame = frame
                 elif gameplay_started:
                     break
                 elif saw_self_frame:
                     missing_self_after_seen = True
-                should_observe = (
-                    first_self_frame
-                    or last_model_observation_tick is None
-                    or frame.world_tick - last_model_observation_tick
-                    >= POLICY_STRIDE_TICKS
+
+            if latest_usable_frame is not None:
+                body = _latest_body_for_frame(
+                    proprioception, latest_usable_frame
                 )
-                if should_observe and has_self:
-                    body = proprioception.latest_at_or_before(frame.world_tick)
-                    if body is not None:
-                        model.observe(frame, body)
-                        last_model_observation_tick = frame.world_tick
+                if body is not None and (
+                    last_model_observation_tick is None
+                    or body.world_tick - last_model_observation_tick
+                    >= POLICY_STRIDE_TICKS
+                ):
+                    model.observe(latest_usable_frame, body)
+                    last_model_observation_tick = body.world_tick
 
             model.poll()
             if model.latest_decision is not None:

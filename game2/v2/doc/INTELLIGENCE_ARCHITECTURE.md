@@ -577,3 +577,24 @@ Critic receives Vision features plus the complete current v1 body state and the 
 Planner remains deliberately separated: its additional non-Vision input is its own current MotorPlan, not raw body Proprioception. Experiments may change that later only with an explicit architectural reason.
 
 The same rule scales to hardware: later body orientation, angular velocity, joint angle/rate, foot contacts, load/force, and actuator feedback are admissible only when they correspond to real measurable body quantities.
+
+
+### Multi-rate sensor fusion
+
+The current physical timing model is deliberately not camera-clocked:
+
+```text
+physics / body telemetry   120 Hz
+Motor policy target         60 Hz
+Vision capture              30 Hz
+Planner target              10 Hz
+```
+
+A Motor cycle may therefore reuse the latest already-captured Vision frame with
+a newer Proprioception measurement. The decision clock is body time, not camera
+time. This mirrors hardware where cameras are slower than IMU/contact/encoder
+feedback. Reusing an older observed image is allowed; reading a Vision frame
+from after the decision tick is not.
+
+Unpaced training must emulate the same sensor cadence. It may execute faster
+than wall clock, but it must not grant the model fresher Vision than realtime.

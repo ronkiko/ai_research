@@ -92,7 +92,7 @@ class ProprioceptionContractTests(unittest.TestCase):
         self.assertEqual(receiver.latest_at_or_before(12), older)
         self.assertNotEqual(receiver.latest_at_or_before(12), future)
 
-    def test_model_observation_rejects_future_body_measurement(self):
+    def test_model_observation_accepts_newer_body_than_vision_capture(self):
         grid = VisionGrid(
             1, 1, 64,
             bytes([0]),
@@ -102,6 +102,21 @@ class ProprioceptionContractTests(unittest.TestCase):
         )
         body = ProprioceptionFrame(
             11, 0.0, 0.0, True, False, False
+        )
+        message = observe_message(grid, body)
+        self.assertEqual(message["observation_world_tick"], 10)
+        self.assertEqual(message["proprioception_world_tick"], 11)
+
+    def test_model_observation_rejects_vision_from_after_body_tick(self):
+        grid = VisionGrid(
+            1, 1, 64,
+            bytes([0]),
+            bytes(64),
+            bytes(64),
+            world_tick=11,
+        )
+        body = ProprioceptionFrame(
+            10, 0.0, 0.0, True, False, False
         )
         with self.assertRaises(ProtocolError):
             observe_message(grid, body)

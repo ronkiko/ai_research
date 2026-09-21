@@ -96,8 +96,10 @@ def observe_message(
         raise TypeError("observe_message requires a VisionGrid")
     if not isinstance(proprioception, ProprioceptionFrame):
         raise TypeError("observe_message requires ProprioceptionFrame")
-    if proprioception.world_tick > grid.world_tick:
-        raise ProtocolError("Proprioception cannot come from a future world tick")
+    if proprioception.world_tick < grid.world_tick:
+        raise ProtocolError(
+            "Vision capture cannot come from after the Proprioception decision tick"
+        )
     return _message(
         OBSERVE,
         observation_world_tick=grid.world_tick,
@@ -120,7 +122,7 @@ def observe_message(
 def observation_packet(
     grid: VisionGrid, proprioception: ProprioceptionFrame
 ) -> bytes:
-    """Encode synchronized Vision + self-body state and the Vision matrices."""
+    """Encode latest Vision plus a same-or-newer self-body measurement."""
     if not isinstance(grid, VisionGrid):
         raise TypeError("observation_packet requires a VisionGrid")
     return (
@@ -321,9 +323,11 @@ def _validate_observation_header(message: dict[str, Any]) -> None:
     if (
         type(sensor_tick) is not int
         or sensor_tick < 0
-        or sensor_tick > world_tick
+        or sensor_tick < world_tick
     ):
-        raise ProtocolError("Proprioception tick is invalid or from the future")
+        raise ProtocolError(
+            "Proprioception tick is invalid or older than the Vision capture"
+        )
     _finite_number("proprioception_vx", message.get("proprioception_vx"))
     _finite_number("proprioception_vy", message.get("proprioception_vy"))
     for field in (

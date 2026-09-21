@@ -215,14 +215,15 @@ class LearnedPlayer:
             proprioception.right_pressed,
             proprioception.jump_pressed,
         )
+        decision_tick = proprioception.world_tick
         planner_decision = (
             self._active_plan is None
             or self._active_plan_tick is None
-            or frame.world_tick - self._active_plan_tick >= PLANNER_STRIDE_TICKS
+            or decision_tick - self._active_plan_tick >= PLANNER_STRIDE_TICKS
         )
         if (
             self._active_plan_tick is not None
-            and frame.world_tick < self._active_plan_tick
+            and decision_tick < self._active_plan_tick
         ):
             planner_decision = True
 
@@ -361,7 +362,7 @@ class LearnedPlayer:
                     self._active_plan_policy_sequence = policy_sequence
                     self._active_skill_probabilities = (0.0, 0.0)
 
-                self._active_plan_tick = frame.world_tick
+                self._active_plan_tick = decision_tick
 
             assert self._active_plan is not None
             assert self._active_skill_probabilities is not None
@@ -427,7 +428,7 @@ class LearnedPlayer:
         command = ControlCommand(right_command, jump_command)
         desired_state = apply_control_command(pad_state, command)
         return DecisionSample(
-            frame.world_tick,
+            decision_tick,
             frame,
             self._active_plan.goal,
             normalize_velocity_x(proprioception.velocity_x),
@@ -491,8 +492,10 @@ class LearnedPlayer:
             raise TypeError("LearnedPlayer requires a VisionGrid")
         if not isinstance(proprioception, ProprioceptionFrame):
             raise TypeError("LearnedPlayer requires ProprioceptionFrame")
-        if proprioception.world_tick > frame.world_tick:
-            raise ValueError("Proprioception cannot come from a future tick")
+        if proprioception.world_tick < frame.world_tick:
+            raise ValueError(
+                "Vision capture cannot be newer than Proprioception decision state"
+            )
 
         self_position, goal_position = vision_centers(frame)
         if self_position is None:

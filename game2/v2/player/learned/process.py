@@ -162,6 +162,17 @@ def _settle_acks(
     return accepted, rejected, complete
 
 
+def _latest_body_for_frame(proprioception, frame):
+    body = getattr(proprioception, "latest", None)
+    if body is None:
+        # Small compatibility boundary for deterministic test/peripheral
+        # implementations that expose only historical lookup.
+        body = proprioception.latest_at_or_before(frame.world_tick)
+    if body is None or body.world_tick < frame.world_tick:
+        return None
+    return body
+
+
 def _request_lifecycle_ack(connection: PlayerConnection, first_lifecycle: bool) -> dict | None:
     request = cast(
         Callable[[], dict | None],
@@ -218,6 +229,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     vision_floor_tick = max(pre_lifecycle_world_tick, lifecycle_world_tick)
     started_tick: int | None = None
     latest_frame_tick = vision_floor_tick
+    latest_usable_frame = None
     last_policy_tick: int | None = None
     latest_terminal: dict | None = None
     next_send = clock()
@@ -254,32 +266,33 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
         if frame is not None and frame.world_tick > latest_frame_tick \
                 and frame.world_tick > vision_floor_tick:
             latest_frame_tick = frame.world_tick
-            should_observe = (
-                last_policy_tick is None
-                or frame.world_tick - last_policy_tick >= POLICY_STRIDE_TICKS
+            self_position, goal_position = vision_centers(frame)
+            progress_tracker.update_centers(self_position, goal_position)
+            has_self = self_position is not None
+            if has_self:
+                saw_self_frame = True
+                missing_self_after_seen = False
+                latest_usable_frame = frame
+            elif gameplay_started or saw_self_frame:
+                missing_self_after_seen = True
+                latest_usable_frame = None
+
+        if latest_usable_frame is not None:
+            body = _latest_body_for_frame(
+                proprioception, latest_usable_frame
             )
-            if should_observe:
-                self_position, goal_position = vision_centers(frame)
-                progress_tracker.update_centers(self_position, goal_position)
-                has_self = self_position is not None
-                if has_self:
+            if body is not None and (
+                last_policy_tick is None
+                or body.world_tick - last_policy_tick >= POLICY_STRIDE_TICKS
+            ):
+                model.observe(latest_usable_frame, body)
+                last_policy_tick = body.world_tick
+                if started_tick is None:
+                    started_tick = body.world_tick
+                    on_started(
+                        episode_started_message(episode_id, started_tick)
+                    )
                     saw_self_frame = True
-                    missing_self_after_seen = False
-                elif gameplay_started:
-                    missing_self_after_seen = True
-                body = (
-                    proprioception.latest_at_or_before(frame.world_tick)
-                    if has_self else None
-                )
-                if body is not None:
-                    model.observe(frame, body)
-                    last_policy_tick = frame.world_tick
-                    if started_tick is None:
-                        started_tick = frame.world_tick
-                        on_started(
-                            episode_started_message(episode_id, started_tick)
-                        )
-                        saw_self_frame = True
 
         model.poll()
         latest_decision = model.latest_decision or latest_decision

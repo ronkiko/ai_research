@@ -9,6 +9,9 @@ from .framing import PROTOCOL_VERSION, ProtocolError, encode_frame, recv_exact, 
 
 
 VISION_TYPE = "vision_grid"
+# Current public exteroceptive camera cadence. Motor reflexes are deliberately
+# faster and may reuse the latest captured frame with newer Proprioception.
+VISION_CAPTURE_HZ = 30
 VISION_MAX_COLUMNS = 64
 VISION_MAX_ROWS = 64
 VISION_MAX_CELLS = VISION_MAX_COLUMNS * VISION_MAX_ROWS
@@ -216,7 +219,8 @@ __all__ = [
     "META_GOAL", "META_MASK", "META_OTHER_ACTOR", "META_OTHER_CENTER",
     "META_SELF", "META_SELF_CENTER",
     "PHYSICS_EMPTY", "PHYSICS_HAZARD", "PHYSICS_SOLID",
-    "VISION_FIELDS", "VISION_MAX_CELLS", "VISION_MAX_COLUMNS", "VISION_MAX_ROWS",
-    "VISION_SUBDIVISIONS", "VISION_TYPE", "VisionGrid",
+    "VISION_CAPTURE_HZ", "VISION_FIELDS", "VISION_MAX_CELLS",
+    "VISION_MAX_COLUMNS", "VISION_MAX_ROWS", "VISION_SUBDIVISIONS",
+    "VISION_TYPE", "VisionGrid",
     "recv_vision_grid", "send_vision_grid",
 ]

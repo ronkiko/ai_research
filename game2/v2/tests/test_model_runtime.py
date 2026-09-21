@@ -84,6 +84,36 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 left.close()
                 right.close()
 
+    def test_realtime_runtime_uses_body_tick_as_decision_clock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / "episodes"
+            player = build_model(fresh=True)
+            runtime = ModelRuntime(player, episode_store=store)
+            left, right = socket.socketpair()
+            try:
+                runtime._handle(
+                    left, prepare_message(1, "evaluate", 1), None
+                )
+                runtime._process_pending(
+                    left,
+                    (
+                        _grid(10),
+                        ProprioceptionFrame(
+                            12, 0.0, 0.0, True, False, False
+                        ),
+                    ),
+                )
+                dataset = runtime._episode_dataset
+                assert dataset is not None
+                runtime._finish_episode_writer()
+                step = dataset.steps()[0]
+                self.assertEqual(step.world_tick, 12)
+                self.assertEqual(step.proprioception_world_tick, 12)
+                self.assertEqual(dataset.vision_grid(step).world_tick, 10)
+            finally:
+                left.close()
+                right.close()
+
     def test_actuation_marks_same_dataset_row_instead_of_creating_a_second_log(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Path(directory) / "episodes"

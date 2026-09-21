@@ -25,7 +25,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 VISION_SCHEMA_VERSION = 2
 VISION_BLOB_COMPRESSION_LEVEL = 1
 
@@ -414,9 +414,18 @@ class EpisodeDataset:
             raise TypeError(
                 "episode sample requires explicit Proprioception fields"
             ) from exc
-        if proprioception.world_tick > grid.world_tick:
+        decision_tick = getattr(
+            sample, "world_tick", proprioception.world_tick
+        )
+        if type(decision_tick) is not int or decision_tick < 0:
+            raise ValueError("episode decision world_tick is invalid")
+        if decision_tick != proprioception.world_tick:
             raise ValueError(
-                "episode Proprioception cannot come from a future world tick"
+                "episode decision tick must equal Proprioception tick"
+            )
+        if grid.world_tick > decision_tick:
+            raise ValueError(
+                "episode Vision capture cannot come from after the decision tick"
             )
 
         self_x = self._finite_or_none(getattr(sample, "self_x", None))
@@ -454,7 +463,7 @@ class EpisodeDataset:
 
         values = (
             sequence,
-            int(grid.world_tick),
+            int(decision_tick),
             int(duration_ticks),
             grid.columns,
             grid.rows,
@@ -952,9 +961,13 @@ class EpisodeDataset:
                         raise ValueError(
                             "episode Vision sidecar has no matching policy frame"
                         )
-                    if frame[0] != step.world_tick:
+                    if schema_version == 13 and frame[0] != step.world_tick:
                         raise ValueError(
                             "episode Vision sidecar world_tick does not match step"
+                        )
+                    if schema_version >= 14 and frame[0] > step.world_tick:
+                        raise ValueError(
+                            "episode Vision capture tick is after decision tick"
                         )
                     if geometry != (
                         step.columns, step.rows, step.tile_size, step.subdivisions
@@ -969,7 +982,7 @@ class EpisodeDataset:
                         coarse,
                         physics,
                         frame[1],
-                        step.world_tick,
+                        frame[0] if schema_version >= 14 else step.world_tick,
                         geometry[3],
                     ))
                 return tuple(result)

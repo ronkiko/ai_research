@@ -8,13 +8,11 @@ import time
 
 from ..config import DisplayManifest
 from ...contracts.framing import recv_frame
-from ...contracts.vision import VisionGrid
+from ...contracts.vision import VISION_CAPTURE_HZ, VisionGrid
 from ..world import load_world
 from ..transport.publisher import VisionPublisher
 from .view_state import DisplayState
 
-
-VISION_HZ = 30
 
 
 def _connect(endpoint, timeout=5.0):
@@ -185,7 +183,7 @@ class DisplayService:
         print("READY " + json.dumps({"session_id": self.manifest.session_id,
                                      "mode": self.manifest.mode}, sort_keys=True), flush=True)
         next_vision = time.monotonic()
-        vision_period = 1 / VISION_HZ
+        vision_period = 1 / VISION_CAPTURE_HZ
         try:
             while True:
                 if self.manifest.mode == "screen" and self._poll_close():

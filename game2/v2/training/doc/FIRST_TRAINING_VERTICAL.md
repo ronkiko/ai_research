@@ -131,3 +131,16 @@ Critic/policy to dislike progressed late states.
 
 A map is mastered only after three consecutive deterministic learning-OFF
 successes. The final frozen Training Set check uses the same 3-in-a-row rule.
+
+
+## Multi-rate realtime/unpaced parity
+
+Realtime and unpaced share the same current sensor semantics: 120 Hz physics,
+60 Hz Motor opportunities, 30 Hz Vision capture, and 10 Hz Planner
+opportunities. Unpaced may advance those clocks without sleeping, but it does
+not render a fresh camera frame on every Motor decision. Intermediate Motor
+decisions reuse the latest captured Vision frame with fresh Proprioception.
+
+EpisodeDataset schema v14 records the Motor/Proprioception decision tick in the
+main step and the exact Vision capture tick in the Vision sidecar. PPO replay
+therefore reconstructs the same asynchronous sensor pair used online.

@@ -147,7 +147,7 @@ class EpisodeDatasetTests(unittest.TestCase):
                     row[1]
                     for row in connection.execute("PRAGMA table_info(steps)")
                 }
-            self.assertEqual(user_version, 13)
+            self.assertEqual(user_version, 14)
             self.assertTrue(dataset.vision_path.is_file())
             self.assertTrue(
                 {"coarse_physics", "physics", "metadata"}.isdisjoint(
@@ -192,6 +192,21 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(restored.coarse_physics, sample.vision_grid.coarse_physics)
             self.assertEqual(restored.physics, sample.vision_grid.physics)
             self.assertEqual(restored.metadata, sample.vision_grid.metadata)
+
+    def test_multirate_step_keeps_decision_and_vision_ticks_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            sample = _sample(1, 10, 2)
+            sample.proprioception_world_tick = 12
+            sample.world_tick = 12
+            dataset.upsert_sample(sample)
+            step = dataset.steps()[0]
+            restored = dataset.vision_grid(step)
+            self.assertEqual(step.world_tick, 12)
+            self.assertEqual(step.proprioception_world_tick, 12)
+            self.assertEqual(restored.world_tick, 10)
 
     def test_vision_sidecar_rejects_mismatched_tick(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -453,7 +468,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 13)
+            self.assertEqual(metadata["schema_version"], 14)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)

@@ -187,7 +187,7 @@ class _RemoteModel:
         if not any(value & META_SELF for value in frame.metadata):
             return
         self.latest_decision = SimpleNamespace(
-            decision_id=frame.world_tick,
+            decision_id=_proprioception.world_tick,
             action_decision=SimpleNamespace(right=True, jump=True),
         )
 
@@ -440,7 +440,76 @@ class LearnedTrainingLifecycleTests(unittest.TestCase):
         self.assertEqual(finished["accepted_actions"], 0)
         self.assertEqual(finished["rejected_actions"], 0)
 
-    def test_training_pairs_vision_with_latest_non_future_body_frame(self):
+    def test_training_motor_ticks_reuse_latest_vision_with_newer_body(self):
+        class Connection:
+            failed = False
+
+            def __init__(self):
+                self.pop_calls = 0
+
+            def clear_terminal_events(self):
+                return None
+
+            def clear_acknowledgements(self):
+                return None
+
+            def request_start_ack(self):
+                return {"status": "accepted", "world_tick": 0}
+
+            def pop_terminal(self):
+                self.pop_calls += 1
+                if self.pop_calls >= 12:
+                    return {"result": "timeout", "world_tick": 6}
+                return None
+
+        class Sensor:
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.frames = [
+                    ProprioceptionFrame(2, 0.0, 0.0, True, False, False),
+                    ProprioceptionFrame(4, 10.0, 0.0, True, True, False),
+                ]
+                self.frames_received = 0
+
+            @property
+            def latest(self):
+                self.frames_received += 1
+                if len(self.frames) > 1:
+                    return self.frames.pop(0)
+                return self.frames[0]
+
+        connection = Connection()
+        vision = _LifecycleVision([
+            _grid(tick=0),
+            _grid(self_x=3, goal_x=10, tick=2),
+        ])
+        sensor = Sensor()
+        joystick = _TrainingAckJoystick(["accepted", "accepted"])
+        model = _RemoteModel()
+        clock_values = iter((0.0, 0.0, 0.01, 0.02, 0.03))
+
+        run_training_episode(
+            connection,
+            model,
+            1,
+            "evaluate",
+            first_lifecycle=True,
+            vision=vision,
+            proprioception=sensor,
+            joystick=joystick,
+            action_hz=120,
+            sleeper=lambda _duration: None,
+            clock=lambda: next(clock_values, 0.04),
+            ack_settle_timeout=0.0,
+            on_started=lambda _message: None,
+        )
+
+        self.assertEqual(model.proprioception_ticks[:2], [2, 4])
+        self.assertEqual(model.control_requested_ids[:2], [2, 4])
+
+    def test_training_pairs_vision_with_causal_body_frame(self):
         class Connection:
             failed = False
 
@@ -475,7 +544,7 @@ class LearnedTrainingLifecycleTests(unittest.TestCase):
             def __init__(self):
                 self.frames = (
                     ProprioceptionFrame(
-                        10, 10.0, 0.0, True, False, False
+                        12, 12.0, 0.0, True, False, False
                     ),
                     ProprioceptionFrame(
                         14, 14.0, 0.0, True, True, False
@@ -518,7 +587,7 @@ class LearnedTrainingLifecycleTests(unittest.TestCase):
 
         self.assertTrue(lifecycle_accepted)
         self.assertEqual(sensor.queries, [12])
-        self.assertEqual(model.proprioception_ticks, [10])
+        self.assertEqual(model.proprioception_ticks, [12])
         self.assertEqual(started[0]["start_world_tick"], 12)
         self.assertEqual(finished["finish_world_tick"], 13)
 
@@ -585,6 +654,65 @@ class LearnedJoystickTests(unittest.TestCase):
                 sleeper=lambda _duration: None,
             ), 0)
         self.assertEqual(joystick.sent, [(True, True)])
+
+    def test_realtime_motor_ticks_can_reuse_latest_vision_frame(self):
+        manifest = PlayerManifest(
+            "session", "player", "actor",
+            Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2),
+        )
+
+        class Vision:
+            failed = False
+            error = None
+            connected = True
+            grids_received = 1
+            latest = _grid(self_x=3, goal_x=10, tick=2)
+
+            def connect(self):
+                return None
+
+            def close(self):
+                return None
+
+        class Sensor:
+            failed = False
+            error = None
+            connected = True
+
+            def __init__(self):
+                self.frames_received = 0
+                self.frames = [
+                    ProprioceptionFrame(2, 0.0, 0.0, True, False, False),
+                    ProprioceptionFrame(4, 10.0, 0.0, True, True, False),
+                ]
+
+            @property
+            def latest(self):
+                self.frames_received += 1
+                if len(self.frames) > 1:
+                    return self.frames.pop(0)
+                return self.frames[0]
+
+            def connect(self):
+                return None
+
+            def close(self):
+                return None
+
+        model = _RemoteModel()
+        joystick = _LifecycleJoystick()
+        clock_values = iter((0.0, 0.0, 0.01, 0.02, 0.03))
+        with redirect_stdout(StringIO()):
+            self.assertEqual(run_player(
+                manifest, model, decisions=2,
+                vision_factory=lambda _manifest: Vision(),
+                proprioception_factory=lambda _manifest: Sensor(),
+                joystick_factory=lambda _manifest: joystick,
+                clock=lambda: next(clock_values, 0.04),
+                sleeper=lambda _duration: None,
+            ), 0)
+        self.assertEqual(model.proprioception_ticks[:2], [2, 4])
+        self.assertEqual(len(joystick.sent), 2)
 
     def test_model_actuation_requires_engine_accepted_joystick_ack(self):
         manifest = PlayerManifest(

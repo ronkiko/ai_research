@@ -127,18 +127,30 @@ class UnpacedTrainingTests(unittest.TestCase):
             )
             steps = dataset.steps()
             self.assertEqual(len(steps), outcome.decisions)
+            decision_ticks = [
+                body.world_tick for body in observed_bodies
+            ]
             self.assertEqual(
                 [step.world_tick for step in steps],
-                observed_ticks,
+                decision_ticks,
             )
             self.assertTrue(all(
                 isinstance(body, ProprioceptionFrame)
                 for body in observed_bodies
             ))
             self.assertEqual(
-                [body.world_tick for body in observed_bodies],
-                observed_ticks,
+                decision_ticks,
+                list(range(0, outcome.finish_world_tick, POLICY_STRIDE_TICKS)),
             )
+            self.assertTrue(all(
+                vision_tick <= body_tick
+                for vision_tick, body_tick
+                in zip(observed_ticks, decision_ticks)
+            ))
+            self.assertTrue(any(
+                left == right
+                for left, right in zip(observed_ticks, observed_ticks[1:])
+            ))
             self.assertTrue(all(
                 step.duration_ticks in {1, POLICY_STRIDE_TICKS}
                 for step in dataset.steps()

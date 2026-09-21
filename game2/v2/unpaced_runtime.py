@@ -19,6 +19,7 @@ from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import load_world
 from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.proprioception import ProprioceptionFrame
+from game2.v2.contracts.vision import VISION_CAPTURE_HZ
 from game2.v2.contracts.training_set import TrainingSetManifest
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.checkpoint import save_checkpoint_set
@@ -259,6 +260,9 @@ def _run_episode(
     model.prepare_episode(mode, seed)
 
     grid = renderer.render(engine.world_state())
+    vision_stride_ticks = max(
+        1, round(engine.physics_config.hz / VISION_CAPTURE_HZ)
+    )
     next_progress_tick = 100
     started = time.monotonic()
     last_progress = started
@@ -336,7 +340,12 @@ def _run_episode(
             control_status=status,
         )
 
-        after_grid = renderer.render(engine.world_state())
+        after_grid = grid
+        if (
+            actor.result is not None
+            or engine.world_tick - grid.world_tick >= vision_stride_ticks
+        ):
+            after_grid = renderer.render(engine.world_state())
         if actor.result is not None:
             terminal_self, terminal_goal = vision_centers(after_grid)
             progress.update_centers(terminal_self, terminal_goal)
