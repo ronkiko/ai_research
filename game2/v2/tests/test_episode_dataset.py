@@ -282,6 +282,70 @@ class EpisodeDatasetTests(unittest.TestCase):
             )
             self.assertIsNotNone(dataset.steps()[2].advantage)
 
+    def test_ppo_replays_latched_plan_from_discarded_realtime_source_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=4, mode="train", source="realtime", seed=4
+            )
+
+            source = _sample(1, 0, 2)
+            source.planner_decision = True
+            source.plan_command = PlanCommand.SET
+            source.plan_policy_sequence = 1
+            source.skill_right_active = True
+            source.skill_jump_active = False
+            source.pad_right = False
+            source.desired_state = ActionDecision(True, False)
+            source.action_decision = ControlCommand(
+                ButtonCommand.PRESS, ButtonCommand.KEEP
+            )
+            # This state-changing Motor command was never actuated and therefore
+            # must not itself become a PPO sample.
+            dataset.upsert_sample(
+                source,
+                duration_ticks=2,
+                actuated=False,
+                control_requested=False,
+            )
+
+            for sequence, tick, self_x in ((2, 2, 3), (3, 4, 4)):
+                sample = _sample(sequence, tick, self_x)
+                sample.planner_decision = False
+                sample.plan_command = PlanCommand.KEEP
+                sample.plan_policy_sequence = 1
+                sample.skill_right_active = True
+                sample.skill_jump_active = False
+                sample.pad_right = True
+                sample.sensor_right_pressed = True
+                sample.desired_state = ActionDecision(True, False)
+                sample.action_decision = ControlCommand(
+                    ButtonCommand.KEEP, ButtonCommand.KEEP
+                )
+                dataset.upsert_sample(
+                    sample,
+                    duration_ticks=2,
+                    actuated=False,
+                    control_requested=False,
+                )
+
+            dataset.finalize(
+                result="timeout",
+                finish_world_tick=6,
+                terminal_reward=0.0,
+                trainable=True,
+            )
+            result = train_episode(build_model(fresh=True), dataset)
+
+            self.assertTrue(result.updated)
+            self.assertEqual(result.metrics["discarded_records"], 1)
+            self.assertEqual(result.metrics["ppo_records"], 2)
+            steps = dataset.steps()
+            self.assertFalse(steps[0].ppo_selected)
+            self.assertTrue(steps[1].ppo_selected)
+            self.assertTrue(steps[2].ppo_selected)
+            self.assertEqual(steps[1].plan_policy_sequence, 1)
+            self.assertEqual(steps[2].plan_policy_sequence, 1)
+
     def test_ppo_replay_uses_saved_proprioception_values(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = EpisodeStore(directory).create(

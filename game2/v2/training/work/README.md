@@ -11,3 +11,14 @@ This directory owns the canonical episode material used by Game2 learning.
 - Rotation keeps matching main/sidecar pairs for the five newest episodes.
 
 The pair of files is the training source of truth for one episode. The main SQLite file is intentionally useful on its own for text/numeric inspection; the Vision sidecar is required only when exact visual replay/training input is needed. Checkpoints remain the persistent model state.
+
+
+### Latched MotorPlan replay
+
+Realtime actuation filtering applies only to PPO policy samples. A Planner row
+that produced a latched MotorPlan remains valid causal replay context even when
+its Motor command was never actuated and is therefore excluded from the PPO
+sample set. PPO resolves each selected Motor row's `plan_policy_sequence`
+against the complete saved episode and replays that Planner observation only as
+context. It does not assign reward/advantage or policy loss to an otherwise
+ineligible source row.

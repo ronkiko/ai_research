@@ -271,18 +271,36 @@ def train_episode(
         [int(step.plan_command) for step in selected_steps],
         dtype=torch.long,
     )
-    sequence_lookup = {
-        step.policy_sequence: index
-        for index, step in enumerate(selected_steps)
+    # A realtime Motor action can be ineligible for PPO because it was never
+    # actuated while its Planner decision still became the latched MotorPlan
+    # used by later eligible Motor decisions.  Keep policy samples strict, but
+    # replay Planner sources from the complete saved episode as causal context.
+    episode_sequence_lookup = {
+        step.policy_sequence: step for step in all_steps
     }
-    plan_source_indexes_list = []
+    plan_source_steps_list: list[EpisodeStep] = []
+    plan_source_index_by_sequence: dict[int, int] = {}
+    plan_source_indexes_list: list[int] = []
     for step in selected_steps:
-        source = sequence_lookup.get(step.plan_policy_sequence)
-        if source is None:
+        source_sequence = int(step.plan_policy_sequence)
+        source_step = episode_sequence_lookup.get(source_sequence)
+        if source_step is None:
             raise ValueError(
-                "PPO selection lost the Planner decision for a latched MotorPlan"
+                "Episode dataset lost the Planner source for a latched MotorPlan"
             )
-        plan_source_indexes_list.append(source)
+        if source_sequence > step.policy_sequence:
+            raise ValueError("latched MotorPlan cannot come from a future policy row")
+        if not source_step.planner_decision:
+            raise ValueError(
+                "latched MotorPlan source is not a Planner decision"
+            )
+        source_index = plan_source_index_by_sequence.get(source_sequence)
+        if source_index is None:
+            source_index = len(plan_source_steps_list)
+            plan_source_index_by_sequence[source_sequence] = source_index
+            plan_source_steps_list.append(source_step)
+        plan_source_indexes_list.append(source_index)
+    plan_source_steps = tuple(plan_source_steps_list)
     plan_source_indexes = torch.tensor(
         plan_source_indexes_list, dtype=torch.long
     )
@@ -294,6 +312,7 @@ def train_episode(
     generator.manual_seed(int(meta["seed"]))
 
     selected_vision = dataset.vision_grids(selected_steps)
+    plan_source_vision = dataset.vision_grids(plan_source_steps)
     shared = (
         hasattr(model.planner, "backbone")
         and hasattr(model.planner, "encode_prepared")
@@ -308,11 +327,22 @@ def train_episode(
             )[0]
             for grid in selected_vision
         ])
+        plan_prepared_vision = torch.stack([
+            model.planner.backbone.prepare(
+                vision_to_tensor(grid).unsqueeze(0)
+            )[0]
+            for grid in plan_source_vision
+        ])
         full_vision = None
+        plan_full_vision = None
     else:
         prepared_vision = None
+        plan_prepared_vision = None
         full_vision = torch.stack([
             vision_to_tensor(grid) for grid in selected_vision
+        ])
+        plan_full_vision = torch.stack([
+            vision_to_tensor(grid) for grid in plan_source_vision
         ])
     velocity_all = torch.tensor(
         [[step.velocity_x, step.velocity_y] for step in selected_steps],
@@ -341,6 +371,18 @@ def train_episode(
                 step.planner_input_jump_active,
             ]
             for step in selected_steps
+        ],
+        dtype=torch.float32,
+    )
+    plan_source_state_all = torch.tensor(
+        [
+            [
+                step.planner_input_goal_dx,
+                step.planner_input_goal_dy,
+                step.planner_input_right_active,
+                step.planner_input_jump_active,
+            ]
+            for step in plan_source_steps
         ],
         dtype=torch.float32,
     )
@@ -374,14 +416,15 @@ def train_episode(
                 current_features = model.planner.encode_prepared(
                     prepared_vision[indexes]
                 )
+                assert plan_prepared_vision is not None
                 plan_features = model.planner.encode_prepared(
-                    prepared_vision[source_indexes]
+                    plan_prepared_vision[source_indexes]
                 )
                 current_plan_state = planner_state_all[indexes].to(
                     dtype=current_features.dtype,
                     device=current_features.device,
                 )
-                source_plan_state = planner_state_all[source_indexes].to(
+                source_plan_state = plan_source_state_all[source_indexes].to(
                     dtype=plan_features.dtype,
                     device=plan_features.device,
                 )
@@ -407,15 +450,16 @@ def train_episode(
                     dtype=full_vision.dtype,
                     device=full_vision.device,
                 )
-                source_plan_state = planner_state_all[source_indexes].to(
-                    dtype=full_vision.dtype,
-                    device=full_vision.device,
+                assert plan_full_vision is not None
+                source_plan_state = plan_source_state_all[source_indexes].to(
+                    dtype=plan_full_vision.dtype,
+                    device=plan_full_vision.device,
                 )
                 current_planner_output = model.planner(
                     full_vision[indexes], current_plan_state
                 )
                 plan_planner_output = model.planner(
-                    full_vision[source_indexes], source_plan_state
+                    plan_full_vision[source_indexes], source_plan_state
                 )
                 current_body_state = body_state_all[indexes].to(
                     dtype=full_vision.dtype,
@@ -568,14 +612,15 @@ def train_episode(
                 current_features = model.planner.encode_prepared(
                     prepared_vision[indexes]
                 )
+                assert plan_prepared_vision is not None
                 plan_features = model.planner.encode_prepared(
-                    prepared_vision[source_indexes]
+                    plan_prepared_vision[source_indexes]
                 )
                 current_plan_state = planner_state_all[indexes].to(
                     dtype=current_features.dtype,
                     device=current_features.device,
                 )
-                source_plan_state = planner_state_all[source_indexes].to(
+                source_plan_state = plan_source_state_all[source_indexes].to(
                     dtype=plan_features.dtype,
                     device=plan_features.device,
                 )
@@ -601,15 +646,16 @@ def train_episode(
                     dtype=full_vision.dtype,
                     device=full_vision.device,
                 )
-                source_plan_state = planner_state_all[source_indexes].to(
-                    dtype=full_vision.dtype,
-                    device=full_vision.device,
+                assert plan_full_vision is not None
+                source_plan_state = plan_source_state_all[source_indexes].to(
+                    dtype=plan_full_vision.dtype,
+                    device=plan_full_vision.device,
                 )
                 current_planner_output = model.planner(
                     full_vision[indexes], current_plan_state
                 )
                 plan_planner_output = model.planner(
-                    full_vision[source_indexes], source_plan_state
+                    plan_full_vision[source_indexes], source_plan_state
                 )
                 current_body_state = body_state_all[indexes].to(
                     dtype=full_vision.dtype,
