@@ -92,6 +92,7 @@ class HostService:
 
     def dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
         kind = request["type"]
+        self._client_id(request)
         if kind == "health":
             with self._state_lock:
                 player_id = self._session.get("player_id") if self._session else None
