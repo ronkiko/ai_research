@@ -60,7 +60,7 @@ future: motor:<new_motor_id>
 `describe_bot()` is the preferred left-panel read model. It returns ordered
 components with `anatomy_anchor`, role, implementation, configuration,
 precision, seed, topology and a human-readable `topology_label` such as
-`5-8-3`.
+`6-8-3`.
 
 `get_component()` and `update_component()` are intended for the right-side
 settings panel. The UI may stage edits locally, but only a valid complete

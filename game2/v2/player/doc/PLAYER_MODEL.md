@@ -60,7 +60,8 @@ For a Jump Motor, valid reflex inputs may include:
 ```text
 MotorGoal.dx / MotorGoal.dy
 relative target error
-motion_x / motion_y
+measured body velocity_x / velocity_y
+grounded/contact state
 current JUMP state
 future contact / body / joint state
 ```

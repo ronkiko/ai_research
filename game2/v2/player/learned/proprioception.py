@@ -14,6 +14,9 @@ from game2.v2.contracts.proprioception import ProprioceptionFrame
 from .contracts import MotorPlan
 
 
+# Current body-model calibration, not map geometry: horizontal max speed and
+# vertical jump-speed reference. Keep these aligned with the physical body
+# limits whenever a new embodiment changes those limits.
 HORIZONTAL_SPEED_SCALE = 340.0
 VERTICAL_SPEED_SCALE = 700.0
 BODY_STATE_FEATURES = 5

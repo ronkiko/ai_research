@@ -335,7 +335,8 @@ A Jump Motor may therefore consume information such as:
 ```text
 active MotorGoal(dx, dy)
 current relative target error
-motion_x / motion_y
+measured body velocity_x / velocity_y
+grounded/contact state
 current JUMP actuator state
 future body/contact/balance proprioception
 ```
@@ -560,6 +561,8 @@ Knowing an enemy is nearby, a gap exists ahead, where the finish is, where the m
 The first body sensor is intentionally minimal: vx, vy, grounded, RIGHT actuator state, and JUMP actuator state.
 
 Motor reflexes receive MotorGoal plus normalized vx/vy, grounded, and their own actuator state. They do not receive semantic world data or the other Motor's actuator bit.
+
+The current learned-controller calibration uses `tanh(vx / 340)` and `tanh(vy / 700)`. The 340 horizontal scale is the current body's maximum horizontal speed and the 700 vertical scale is the current body's jump-speed reference. They are body-model calibration values, not map width, goal distance, gap size, or other world geometry. A future body with different physical limits must change these calibration values explicitly.
 
 Critic receives Vision features plus the complete current v1 body state and the current pre-command MotorPlan. This lets value estimation distinguish a body standing at one visual location from a body passing through the same visual location at high velocity.
 

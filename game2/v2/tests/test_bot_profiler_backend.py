@@ -44,7 +44,7 @@ class BotProfilerBackendTests(unittest.TestCase):
             }
             self.assertEqual(refs["cerebral_cortex"]["anatomy_anchor"], "brain")
             self.assertEqual(refs["spinal_cord"]["anatomy_anchor"], "spinal_cord")
-            self.assertEqual(refs["motor:jump"]["topology_label"], "5-8-3")
+            self.assertEqual(refs["motor:jump"]["topology_label"], "6-8-3")
 
     def test_create_and_update_profile_use_atomic_profile_store(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,7 +96,9 @@ class BotProfilerBackendTests(unittest.TestCase):
             self.assertIn("motor", catalog["roles"])
             option = catalog["roles"]["motor"]["options"][0]
             self.assertEqual(option["configuration"], "button-reflex-6-8-3-v2")
+            self.assertEqual(option["topology"]["inputs"], 6)
             self.assertEqual(option["topology"]["hidden"], [8])
+            self.assertEqual(option["topology"]["outputs"], 3)
 
 
 if __name__ == "__main__":

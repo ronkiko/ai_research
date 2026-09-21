@@ -55,7 +55,7 @@ def _profile(bot_id: str = "player1") -> BotProfile:
                 "configuration": "button-reflex-6-8-3-v2",
                 "precision": "fp32", "seed": 3,
                 "topology": {
-                    "kind": "mlp", "inputs": 5, "hidden": [8],
+                    "kind": "mlp", "inputs": 6, "hidden": [8],
                     "outputs": 3, "summary": "jump reflex",
                 },
             },
