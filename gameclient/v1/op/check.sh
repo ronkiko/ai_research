@@ -16,4 +16,10 @@ python3 -m unittest discover -s gameclient/v1/tests -v
 echo "CHECK real Server -> Host -> CLI smoke"
 python3 gameclient/v1/tests/smoke_runtime.py
 
+echo "CHECK isolated MCP SDK"
+./gameclient/v1/op/mcp-setup.sh
+
+echo "CHECK real Server -> Host -> MCP stdio smoke"
+gameclient/v1/.venv-mcp/bin/python gameclient/v1/tests/smoke_mcp.py
+
 echo "PASS game v1 checks"

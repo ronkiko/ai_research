@@ -132,11 +132,17 @@ class HostClient:
             move_x=move_x,
         )
 
-    def events(self, after_event_id: int = 0) -> dict[str, Any]:
+    def events(
+        self,
+        after_event_id: int = 0,
+        *,
+        limit: int = 50,
+    ) -> dict[str, Any]:
         return self.connection.request(
             "events",
             client_id=self.client_id,
             after_event_id=after_event_id,
+            limit=limit,
         )
 
     def logout(self) -> dict[str, Any]:

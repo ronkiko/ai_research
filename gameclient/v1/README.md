@@ -74,12 +74,17 @@ Optional human GUI:
 ./gameclient/v1/op/gui.sh
 ```
 
-Optional AI MCP Client:
+AI MCP Client:
 
 ```bash
-python -m pip install -r gameclient/v1/requirements-mcp.txt
+./gameclient/v1/op/mcp-setup.sh
 ./gameclient/v1/op/mcp.sh
 ```
+
+The SDK is isolated in the gitignored `gameclient/v1/.venv-mcp` and pinned to
+`mcp==2.2.0`; the launcher does not use the user's global Python packages.
+
+For OpenCode v2 integration see [OpenCode MCP setup](docs/opencode-mcp.md).
 
 The passwordless v1 lobby currently exposes `player1`, `player2`, and `player3`.
 After login the server places the selected identity in `world1 / zone1` alongside
@@ -114,6 +119,8 @@ GUI and CLI can observe the resulting state/event; if GUI then sends
 python -m unittest discover -s gameclient/v1/tests -v
 ```
 
-The tests exercise the Host boundary against a protocol-compatible fake
-Gateway, prove P@100/B@900, shared Host sequencing across multiple Clients,
-multi-request Host TCP connections, and the no-GameServer-import boundary.
+The machine gate exercises the Host boundary against a protocol-compatible fake
+Gateway, proves P@100/B@900, shared Host sequencing, bounded Host memory, and
+multi-request Host TCP connections. It also runs real Server -> Host -> CLI and
+real Server -> Host -> stdio MCP verticals. GUI runtime remains an Operator
+check and is not part of the machine gate.

@@ -5,6 +5,7 @@ import threading
 import unittest
 
 from gameclient.v1.host.protocol import LineReader as HostLineReader, encode_line as host_encode, message as host_message
+from gameclient.v1.host.config import HOST_EVENT_LIMIT, HOST_MAX_ID_CHARS
 from gameclient.v1.host.server import HostService
 from gameclient.v1.protocol import LineReader as GatewayLineReader, encode_line as gateway_encode, message as gateway_message
 from gameclient.v1.clients.base import HostClient
@@ -119,6 +120,49 @@ class HostVerticalTests(unittest.TestCase):
             cli.close()
             mcp.close()
             gui.close()
+
+    def test_event_history_is_memory_bounded_and_page_bounded(self):
+        client = self.client("cli")
+        try:
+            for index in range(HOST_EVENT_LIMIT + 25):
+                self.host._append_event(
+                    "test",
+                    client_id="cli",
+                    sequence=index + 1,
+                    move_x=0,
+                )
+            self.assertEqual(len(self.host._events), HOST_EVENT_LIMIT)
+            page = client.events(0, limit=7)
+            self.assertLessEqual(len(page["events"]), 7)
+            self.assertTrue(page["truncated_before"])
+            self.assertTrue(page["has_more"])
+        finally:
+            client.close()
+
+    def test_client_and_player_ids_are_bounded(self):
+        too_long = "x" * (HOST_MAX_ID_CHARS + 1)
+        client = self.client(too_long)
+        try:
+            with self.assertRaisesRegex(Exception, "client_id must be at most"):
+                client.health()
+        finally:
+            client.close()
+
+        normal = self.client("cli")
+        try:
+            with self.assertRaisesRegex(Exception, "player_id must be at most"):
+                normal.login(too_long)
+        finally:
+            normal.close()
+
+    def test_non_loopback_host_bind_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "loopback only"):
+            HostService(
+                host="0.0.0.0",
+                port=0,
+                gateway_host="127.0.0.1",
+                gateway_port=self.gateway.server_address[1],
+            )
 
     def test_one_client_connection_can_issue_multiple_requests(self):
         host, port = self.host.address

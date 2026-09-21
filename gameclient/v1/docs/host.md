@@ -76,3 +76,19 @@ Host binds only to loopback by default and uses newline-delimited JSON on
 
 The protocol must remain suitable for simultaneous CLI, MCP, GUI, AI, debug,
 and automation Clients.
+
+## Resource and exposure bounds
+
+Host v1 is intentionally local-only and rejects non-loopback binds.
+
+The Host Protocol has explicit resource bounds:
+
+- maximum 16 simultaneous Client connections;
+- maximum 1 MiB newline-delimited JSON message;
+- fixed 256-entry event ring;
+- paginated event reads;
+- maximum 64 characters for local Client IDs and requested player IDs.
+
+These limits keep a slow or buggy local Client from creating unbounded Host
+memory growth. MCP applies stricter context-facing limits on top of this Host
+boundary.

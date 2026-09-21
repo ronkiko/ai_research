@@ -32,8 +32,9 @@ game2/v2/runtime/
 # gameserver/v1: local trace/runtime state
 gameserver/v1/runtime/
 
-# gameclient/v1: local session state
+# gameclient/v1: local session state and isolated MCP SDK
 gameclient/v1/runtime/
+gameclient/v1/.venv-mcp/
 
 # game1: runtime-конфиг настроек (генерируется движком, не пушим)
 game1/game1.conf.json

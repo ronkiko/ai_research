@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     exact.add_argument("--x", type=int, required=True, choices=(-1, 0, 1))
     events = sub.add_parser("events")
     events.add_argument("--after", type=int, default=0)
+    events.add_argument("--limit", type=int, default=50)
     watch = sub.add_parser("watch")
     watch.add_argument("--interval", type=float, default=0.5)
     watch.add_argument("--count", type=int, default=0, help="0 means forever")
@@ -111,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         elif command == "input":
             result = client.input(args.x)
         elif command == "events":
-            result = client.events(args.after)
+            result = client.events(args.after, limit=args.limit)
         elif command == "logout":
             result = client.logout()
         elif command == "watch":
@@ -126,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                     events = client.events(event_id)
                     if events["events"]:
                         _print_events(events)
-                    event_id = events["latest_event_id"]
+                    event_id = events.get("next_after_event_id", event_id)
                 seen += 1
                 if args.count == 0 or seen < args.count:
                     time.sleep(args.interval)

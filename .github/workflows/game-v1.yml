@@ -28,3 +28,7 @@ jobs:
         run: python -m unittest discover -s gameclient/v1/tests -v
       - name: Real Server Host CLI smoke
         run: python gameclient/v1/tests/smoke_runtime.py
+      - name: Setup isolated MCP SDK
+        run: ./gameclient/v1/op/mcp-setup.sh
+      - name: Real Server Host MCP stdio smoke
+        run: gameclient/v1/.venv-mcp/bin/python gameclient/v1/tests/smoke_mcp.py

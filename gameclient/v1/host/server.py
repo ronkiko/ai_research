@@ -10,7 +10,16 @@ import threading
 from typing import Any
 
 from ..config import DEFAULT_HOST as GATEWAY_HOST, DEFAULT_PORT as GATEWAY_PORT, DEFAULT_TIMEOUT
-from .config import HOST_BIND, HOST_EVENT_LIMIT, HOST_PORT, HOST_PROTOCOL_VERSION
+from .config import (
+    HOST_ALLOWED_BINDS,
+    HOST_BIND,
+    HOST_EVENT_LIMIT,
+    HOST_EVENT_PAGE_DEFAULT,
+    HOST_MAX_CONNECTIONS,
+    HOST_MAX_ID_CHARS,
+    HOST_PORT,
+    HOST_PROTOCOL_VERSION,
+)
 from .protocol import HostProtocolError, LineReader, encode_line, message
 from .upstream import GatewayConnection, GatewayConnectionError
 
@@ -29,6 +38,8 @@ class HostService:
         gateway_port: int = GATEWAY_PORT,
         gateway_timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
+        if host not in HOST_ALLOWED_BINDS:
+            raise ValueError("GameClient Host v1 must bind to loopback only")
         self.gateway_host = gateway_host
         self.gateway_port = gateway_port
         self.gateway = GatewayConnection(gateway_host, gateway_port, gateway_timeout)
@@ -50,7 +61,12 @@ class HostService:
         value = request.get("client_id", "unknown")
         if not isinstance(value, str) or not value.strip():
             raise HostProtocolError("client_id must be a non-empty string")
-        return value.strip()
+        value = value.strip()
+        if len(value) > HOST_MAX_ID_CHARS:
+            raise HostProtocolError(
+                f"client_id must be at most {HOST_MAX_ID_CHARS} characters"
+            )
+        return value
 
     def _append_event(self, kind: str, *, client_id: str, **fields: Any) -> dict[str, Any]:
         with self._state_lock:
@@ -131,6 +147,10 @@ class HostService:
         player_id = request.get("player_id")
         if not isinstance(player_id, str) or not player_id:
             raise HostProtocolError("player_id is required")
+        if len(player_id) > HOST_MAX_ID_CHARS:
+            raise HostProtocolError(
+                f"player_id must be at most {HOST_MAX_ID_CHARS} characters"
+            )
         with self._operation_lock:
             with self._state_lock:
                 if self._session is not None:
@@ -194,10 +214,33 @@ class HostService:
         after = request.get("after_event_id", 0)
         if type(after) is not int or after < 0:
             raise HostProtocolError("after_event_id must be a non-negative integer")
+        limit = request.get("limit", HOST_EVENT_PAGE_DEFAULT)
+        if type(limit) is not int or not 1 <= limit <= HOST_EVENT_LIMIT:
+            raise HostProtocolError(
+                f"limit must be an integer within [1,{HOST_EVENT_LIMIT}]"
+            )
         with self._state_lock:
-            events = [dict(event) for event in self._events if event["event_id"] > after]
+            available = [
+                dict(event)
+                for event in self._events
+                if event["event_id"] > after
+            ]
             latest = self._event_id
-        return message("events", after_event_id=after, latest_event_id=latest, events=events)
+            has_events = bool(self._events)
+            oldest = self._events[0]["event_id"] if has_events else latest + 1
+
+        events = available[:limit]
+        next_after = events[-1]["event_id"] if events else after
+        return message(
+            "events",
+            after_event_id=after,
+            next_after_event_id=next_after,
+            latest_event_id=latest,
+            oldest_event_id=oldest,
+            truncated_before=has_events and after < oldest - 1,
+            has_more=len(available) > len(events),
+            events=events,
+        )
 
     def _logout(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)
@@ -240,6 +283,39 @@ class _HostRequestHandler(socketserver.BaseRequestHandler):
 class _HostTcpServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = HOST_MAX_CONNECTIONS
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._slots = threading.BoundedSemaphore(HOST_MAX_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    encode_line(
+                        message(
+                            "error",
+                            error="too many simultaneous GameClient Host connections",
+                        )
+                    )
+                )
+            except OSError:
+                pass
+            finally:
+                request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def main() -> int:

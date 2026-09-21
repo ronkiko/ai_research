@@ -63,3 +63,28 @@ GameClient observes a one-dimensional world that continues independently of the 
 client, sleeping script, human think time, or AI inference may cause many
 server ticks to pass between two snapshots. The client must not attempt to hide
 that latency by pausing the world or by exposing a step-on-demand API.
+
+## MCP safety and context bounds
+
+The MCP Client is a local stdio adapter for agent hosts such as OpenCode. It is
+not allowed to expose the upstream GameServer `session_id`.
+
+Agent-facing output is intentionally bounded:
+
+- `game_state` returns compact P/B state instead of the full Host snapshot;
+- `recent_events` defaults to 20 and is capped at 50 events per call;
+- Host keeps at most 256 events in memory and paginates event reads;
+- Host/Gateway newline-delimited JSON messages are capped at 1 MiB;
+- Host accepts at most 16 simultaneous local Client connections;
+- Host client/player identifiers are capped at 64 characters;
+- GameClient Host v1 binds to loopback only.
+
+The MCP SDK is pinned to `mcp==2.2.0` in a project-local virtual environment.
+Global Python packages are not part of the supported MCP runtime.
+
+Machine acceptance includes a real stdio MCP handshake, exact tool catalog,
+login/state/move/events/logout flow, event bound checks, and a regression that
+MCP results contain no `session_id`.
+
+GUI runtime is explicitly outside the machine acceptance gate and is verified
+by the Operator.
