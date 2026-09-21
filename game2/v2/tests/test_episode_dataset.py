@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 import tempfile
 import unittest
+import zlib
 from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
@@ -101,6 +103,38 @@ def _sample(sequence: int, tick: int, self_x: int):
 
 
 class EpisodeDatasetTests(unittest.TestCase):
+    def test_vision_matrices_are_compressed_on_disk_and_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="unpaced", seed=1
+            )
+            sample = _sample(1, 2, 2)
+            dataset.upsert_sample(sample)
+
+            with sqlite3.connect(dataset.path) as connection:
+                user_version = connection.execute(
+                    "PRAGMA user_version"
+                ).fetchone()[0]
+                stored = connection.execute(
+                    "SELECT coarse_physics, physics, metadata FROM steps"
+                ).fetchone()
+
+            self.assertEqual(user_version, 11)
+            originals = (
+                sample.vision_grid.coarse_physics,
+                sample.vision_grid.physics,
+                sample.vision_grid.metadata,
+            )
+            for compressed, original in zip(stored, originals):
+                payload = bytes(compressed)
+                self.assertLess(len(payload), len(original))
+                self.assertEqual(zlib.decompress(payload), bytes(original))
+
+            restored = dataset.steps()[0].vision_grid
+            self.assertEqual(restored.coarse_physics, sample.vision_grid.coarse_physics)
+            self.assertEqual(restored.physics, sample.vision_grid.physics)
+            self.assertEqual(restored.metadata, sample.vision_grid.metadata)
+
     def test_buffered_writer_publishes_batches_and_flushes_on_interrupt(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = EpisodeStore(directory).create(
@@ -269,7 +303,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 10)
+            self.assertEqual(metadata["schema_version"], 11)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)

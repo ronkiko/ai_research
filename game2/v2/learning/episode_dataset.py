@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+import zlib
 from typing import Any
 
 from game2.v2.contracts.proprioception import ProprioceptionFrame
@@ -24,7 +25,8 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
+VISION_BLOB_COMPRESSION_LEVEL = 1
 
 
 @dataclass(frozen=True)
@@ -201,7 +203,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=10;
+                PRAGMA user_version=11;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -421,9 +423,15 @@ class EpisodeDataset:
             grid.rows,
             grid.tile_size,
             grid.subdivisions,
-            sqlite3.Binary(bytes(grid.coarse_physics)),
-            sqlite3.Binary(bytes(grid.physics)),
-            sqlite3.Binary(bytes(grid.metadata)),
+            sqlite3.Binary(zlib.compress(
+                bytes(grid.coarse_physics), VISION_BLOB_COMPRESSION_LEVEL
+            )),
+            sqlite3.Binary(zlib.compress(
+                bytes(grid.physics), VISION_BLOB_COMPRESSION_LEVEL
+            )),
+            sqlite3.Binary(zlib.compress(
+                bytes(grid.metadata), VISION_BLOB_COMPRESSION_LEVEL
+            )),
             float(getattr(sample, "motion_x", 0.0)),
             float(getattr(sample, "motion_y", 0.0)),
             proprioception.world_tick,
@@ -654,9 +662,27 @@ class EpisodeDataset:
 
     def steps(self) -> tuple[EpisodeStep, ...]:
         with self._connect() as connection:
+            schema_row = connection.execute(
+                "SELECT schema_version FROM episode WHERE singleton=1"
+            ).fetchone()
+            if schema_row is None:
+                raise ValueError("episode dataset has no metadata")
+            schema_version = int(schema_row["schema_version"])
             rows = connection.execute(
                 "SELECT * FROM steps ORDER BY world_tick, policy_sequence"
             ).fetchall()
+
+        def vision_blob(row, name: str) -> bytes:
+            value = bytes(row[name])
+            if schema_version >= 11:
+                try:
+                    return zlib.decompress(value)
+                except zlib.error as exc:
+                    raise ValueError(
+                        f"episode {name} blob is not valid zlib data"
+                    ) from exc
+            return value
+
         return tuple(EpisodeStep(
             id=int(row["id"]),
             policy_sequence=int(row["policy_sequence"]),
@@ -666,9 +692,9 @@ class EpisodeDataset:
             rows=int(row["rows"]),
             tile_size=int(row["tile_size"]),
             subdivisions=int(row["subdivisions"]),
-            coarse_physics=bytes(row["coarse_physics"]),
-            physics=bytes(row["physics"]),
-            metadata=bytes(row["metadata"]),
+            coarse_physics=vision_blob(row, "coarse_physics"),
+            physics=vision_blob(row, "physics"),
+            metadata=vision_blob(row, "metadata"),
             motion_x=float(row["motion_x"]),
             motion_y=float(row["motion_y"]),
             proprioception_world_tick=int(row["proprioception_world_tick"]),
@@ -1004,4 +1030,5 @@ __all__ = [
     "EpisodeStep",
     "EpisodeStore",
     "SCHEMA_VERSION",
+    "VISION_BLOB_COMPRESSION_LEVEL",
 ]
