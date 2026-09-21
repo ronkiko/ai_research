@@ -30,7 +30,7 @@ This deliberately carries forward the strongest Game2 Console rules from
 ## v1 topology
 
 ```text
-future GameClient
+GameClient v1
       |
       v
   Gateway                    public ingress only
@@ -51,7 +51,7 @@ future GameClient
 
 ### Gateway
 
-The only public game endpoint in v1. A future `gameclient.v1` talks to Gateway,
+The only public game endpoint in v1. `gameclient.v1` talks to Gateway,
 not to World, Zone, Mob, Telemetry, or Persistence directly. The first lobby is
 passwordless: `list_players` returns demo player IDs and `login` selects one.
 
@@ -119,9 +119,10 @@ A manual protocol smoke test can be run in another terminal:
 python -m gameserver.v1.tests.smoke
 ```
 
-The future `gameclient.v1` will replace this smoke client with a lobby and the
-first graphical zone. It is intentionally a separate sibling project and must
-not import GameServer internals.
+`gameclient.v1` now provides the passwordless lobby/session and plain CLI game
+client. It is intentionally a separate sibling project, imports no GameServer
+internals, and talks only to Gateway. A graphical human UI can be added later
+without changing this public boundary.
 
 ## Tests
 
@@ -140,4 +141,4 @@ v1 intentionally has one World, one Zone, one mob, local TCP/UDP transport, and
 no passwords. It does not yet implement matchmaking, multiple zones, zone
 transfer, client-side prediction, interest management, a database, a message
 bus, or a standalone replication service. Those should be added only when the
-minimal authoritative vertical is demonstrated with `gameclient.v1`.
+minimal authoritative vertical requires them.

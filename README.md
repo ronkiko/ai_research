@@ -30,11 +30,13 @@ ai_research/
   `README.md`.
 - [`game2/`](game2/) — платформер для исследования управления с фиксированным
   шагом времени: загружаемые карты, окно человека и real-time сокет модели.
-
 - [`gameserver/`](gameserver/) — параллельная MMO-style лаборатория серверной
   архитектуры: автономный authoritative мир, World/Zone/Gateway, серверные
   мобы и 120-Hz telemetry. Она развивается независимо от Game2 Console и
   предназначена как фундамент будущего самостоятельного игрового мира.
+- [`gameclient/`](gameclient/) — независимый CLI-клиент к публичному Gateway
+  GameServer: passwordless lobby, session, snapshots и управление без TUI;
+  текстовый вывод удобем человеку, `--json` — агентам и скриптам.
 
 ## Стек
 
