@@ -120,6 +120,18 @@ class EpisodeDatasetTests(unittest.TestCase):
             dataset.finalize(result="timeout", finish_world_tick=68,
                              terminal_reward=-1, trainable=False)
 
+    def test_dataset_rejects_missing_proprioception_audit_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            sample = _sample(1, 0, 2)
+            del sample.velocity_x
+            with self.assertRaisesRegex(
+                TypeError, "explicit Proprioception fields"
+            ):
+                dataset.upsert_sample(sample, actuated=True)
+
     def test_ppo_excludes_unconfirmed_changes_but_retains_noop_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = EpisodeStore(directory).create(
@@ -149,6 +161,56 @@ class EpisodeDatasetTests(unittest.TestCase):
                 [True, True, True],
             )
             self.assertIsNotNone(dataset.steps()[2].advantage)
+
+    def test_ppo_replay_uses_saved_proprioception_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=9, mode="train", source="realtime", seed=9
+            )
+            for sequence, (tick, self_x) in enumerate(
+                ((0, 2), (2, 3), (4, 4), (6, 5)), start=1
+            ):
+                sample = _sample(sequence, tick, self_x)
+                sample.motion_x = -0.75
+                sample.motion_y = 0.5
+                sample.velocity_x = 123.0
+                sample.velocity_y = -45.0
+                dataset.upsert_sample(
+                    sample, duration_ticks=2, actuated=True
+                )
+            dataset.finalize(
+                result="dead",
+                finish_world_tick=8,
+                terminal_reward=-1.0,
+                trainable=True,
+            )
+
+            model = build_model(fresh=True)
+            captured = []
+            original_forward = model.motor_controller.forward_batch
+
+            def capture(goals, velocities, grounded, pad_states):
+                captured.extend(
+                    (float(row[0]), float(row[1]))
+                    for row in velocities.detach().cpu()
+                )
+                return original_forward(
+                    goals, velocities, grounded, pad_states
+                )
+
+            with mock.patch.object(
+                model.motor_controller,
+                "forward_batch",
+                side_effect=capture,
+            ):
+                result = train_episode(model, dataset)
+
+            self.assertTrue(result.updated)
+            self.assertTrue(captured)
+            self.assertTrue(all(
+                abs(vx - 123.0) < 1e-6 and abs(vy + 45.0) < 1e-6
+                for vx, vy in captured
+            ))
 
     def test_discount_uses_planner_time_not_raw_physics_ticks(self):
         from game2.v2.training.work import PPO_DISCOUNT_TICKS

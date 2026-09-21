@@ -485,21 +485,10 @@ class LearnedPlayer:
     def process_grid(
         self,
         frame: VisionGrid,
-        proprioception: ProprioceptionFrame | None = None,
+        proprioception: ProprioceptionFrame,
     ) -> DecisionSample | None:
         if not isinstance(frame, VisionGrid):
             raise TypeError("LearnedPlayer requires a VisionGrid")
-        if proprioception is None:
-            # Compatibility for direct unit calls only. Production realtime and
-            # unpaced paths always supply the public physical sensor.
-            proprioception = ProprioceptionFrame(
-                frame.world_tick,
-                0.0,
-                0.0,
-                False,
-                self.actuated_state.right,
-                self.actuated_state.jump,
-            )
         if not isinstance(proprioception, ProprioceptionFrame):
             raise TypeError("LearnedPlayer requires ProprioceptionFrame")
         if proprioception.world_tick > frame.world_tick:

@@ -29,7 +29,11 @@ from game2.v2.contracts.training import (
 )
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.model_client import ModelClient
-from game2.v2.player.peripherals import JoystickClient, VisionReceiver
+from game2.v2.player.peripherals import (
+    JoystickClient,
+    ProprioceptionReceiver,
+    VisionReceiver,
+)
 
 from .motion import VisionProgress, vision_centers
 from .runtime import POLICY_STRIDE_TICKS
@@ -163,7 +167,8 @@ def _terminal_after(connection: PlayerConnection, floor_tick: int) -> dict | Non
 
 
 def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: int,
-                 mode: str, *, first_lifecycle: bool, vision, joystick, action_hz: int,
+                 mode: str, *, first_lifecycle: bool, vision, proprioception,
+                 joystick, action_hz: int,
                  sleeper: Callable[[float], None], clock: Callable[[], float],
                  ack_settle_timeout: float,
                  on_started: Callable[[dict], None]) -> tuple[dict, bool, bool]:
@@ -210,7 +215,13 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     while latest_terminal is None:
         _drain_acknowledgements(joystick, ack_statuses)
         _record_accepted_acks(model, sequence_decisions, ack_statuses, actuated_ids)
-        if connection.failed or vision.failed or joystick.failed or model.failed:
+        if (
+            connection.failed
+            or vision.failed
+            or proprioception.failed
+            or joystick.failed
+            or model.failed
+        ):
             dirty = True
             if model.failed:
                 raise ConnectionError("Model runtime failed") from model.error
@@ -236,12 +247,19 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
                     missing_self_after_seen = False
                 elif gameplay_started:
                     missing_self_after_seen = True
-                model.observe(frame)
-                last_policy_tick = frame.world_tick
-                if has_self and started_tick is None:
-                    started_tick = frame.world_tick
-                    on_started(episode_started_message(episode_id, started_tick))
-                    saw_self_frame = True
+                body = (
+                    proprioception.latest_at_or_before(frame.world_tick)
+                    if has_self else None
+                )
+                if body is not None:
+                    model.observe(frame, body)
+                    last_policy_tick = frame.world_tick
+                    if started_tick is None:
+                        started_tick = frame.world_tick
+                        on_started(
+                            episode_started_message(episode_id, started_tick)
+                        )
+                        saw_self_frame = True
 
         model.poll()
         latest_decision = model.latest_decision or latest_decision
@@ -277,7 +295,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
         joystick, sent_sequences, ack_statuses, ack_settle_timeout, sleeper)
     _record_accepted_acks(model, sequence_decisions, ack_statuses, actuated_ids)
     if not complete or started_tick is None or connection.failed \
-            or vision.failed or joystick.failed:
+            or vision.failed or proprioception.failed or joystick.failed:
         dirty = True
     finish_tick = int(latest_terminal["world_tick"])
     if started_tick is None:
@@ -302,7 +320,9 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
 
 def run_training_player(connection: PlayerConnection, trainer_host: str, trainer_port: int,
                         model_host: str, model_port: int, *, action_hz: int = 120,
-                        vision_factory=VisionReceiver, joystick_factory=JoystickClient,
+                        vision_factory=VisionReceiver,
+                        proprioception_factory=ProprioceptionReceiver,
+                        joystick_factory=JoystickClient,
                         peer_factory=TrainingPeer, model_factory=ModelClient,
                         sleeper: Callable[[float], None] = time.sleep,
                         clock: Callable[[], float] = time.monotonic,
@@ -313,6 +333,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
     if manifest is None:
         raise ValueError("Player connection has no attached manifest")
     vision = vision_factory(manifest)
+    proprioception = proprioception_factory(manifest)
     joystick = joystick_factory(manifest)
     peer = peer_factory(trainer_host, trainer_port)
     model = model_factory(model_host, model_port)
@@ -325,6 +346,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
     last_completed_mode: str | None = None
     try:
         vision.connect()
+        proprioception.connect()
         joystick.connect()
         model.connect()
         peer.connect()
@@ -348,7 +370,8 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
                 episode_id = message["episode_id"]
                 finished, trainable, lifecycle_accepted = _run_episode(
                     connection, model, episode_id, prepared["mode"],
-                    first_lifecycle=not actor_started, vision=vision, joystick=joystick,
+                    first_lifecycle=not actor_started, vision=vision,
+                    proprioception=proprioception, joystick=joystick,
                     action_hz=action_hz, sleeper=sleeper, clock=clock,
                     ack_settle_timeout=ack_settle_timeout, on_started=peer.send)
                 peer.send(finished)
@@ -413,6 +436,7 @@ def run_training_player(connection: PlayerConnection, trainer_host: str, trainer
         model.close()
         peer.close()
         vision.close()
+        proprioception.close()
         joystick.close()
 
 

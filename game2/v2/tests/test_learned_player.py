@@ -14,6 +14,7 @@ from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import META_SELF, META_SELF_CENTER, VisionGrid
 from game2.v2.player.learned.main import run_attached_player, run_player
+from game2.v2.player.learned.process import _run_episode as run_training_episode
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.peripherals import JoystickClient
 
@@ -271,6 +272,90 @@ class LearnedLifecycleTests(unittest.TestCase):
                 )
         self.assertEqual(joystick.sent, [])
         self.assertEqual(order, ["start", "detach", "close"])
+
+
+class LearnedTrainingLifecycleTests(unittest.TestCase):
+    def test_training_pairs_vision_with_latest_non_future_body_frame(self):
+        class Connection:
+            failed = False
+
+            def __init__(self):
+                self.pop_calls = 0
+
+            def clear_terminal_events(self):
+                return None
+
+            def clear_acknowledgements(self):
+                return None
+
+            def request_start_ack(self):
+                return {
+                    "status": "accepted",
+                    "world_tick": 8,
+                }
+
+            def pop_terminal(self):
+                self.pop_calls += 1
+                if self.pop_calls >= 2:
+                    return {
+                        "result": "timeout",
+                        "world_tick": 13,
+                    }
+                return None
+
+        class Sensor:
+            failed = False
+            error = None
+
+            def __init__(self):
+                self.frames = (
+                    ProprioceptionFrame(
+                        10, 10.0, 0.0, True, False, False
+                    ),
+                    ProprioceptionFrame(
+                        14, 14.0, 0.0, True, True, False
+                    ),
+                )
+                self.queries = []
+
+            def latest_at_or_before(self, world_tick):
+                self.queries.append(world_tick)
+                for frame in reversed(self.frames):
+                    if frame.world_tick <= world_tick:
+                        return frame
+                return None
+
+        connection = Connection()
+        vision = _LifecycleVision([
+            _grid(self_x=2, tick=8),
+            _grid(self_x=3, tick=12),
+        ])
+        sensor = Sensor()
+        joystick = _LifecycleJoystick()
+        model = _RemoteModel()
+        started = []
+
+        finished, _trainable, lifecycle_accepted = run_training_episode(
+            connection,
+            model,
+            1,
+            "evaluate",
+            first_lifecycle=True,
+            vision=vision,
+            proprioception=sensor,
+            joystick=joystick,
+            action_hz=120,
+            sleeper=lambda _duration: None,
+            clock=lambda: 0.0,
+            ack_settle_timeout=0.0,
+            on_started=started.append,
+        )
+
+        self.assertTrue(lifecycle_accepted)
+        self.assertEqual(sensor.queries, [12])
+        self.assertEqual(model.proprioception_ticks, [10])
+        self.assertEqual(started[0]["start_world_tick"], 12)
+        self.assertEqual(finished["finish_world_tick"], 13)
 
 
 class LearnedJoystickTests(unittest.TestCase):

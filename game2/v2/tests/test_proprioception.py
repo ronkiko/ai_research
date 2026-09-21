@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import unittest
+from types import SimpleNamespace
 
 from game2.v2.console.proprioception.source import frame_from_telemetry
 from game2.v2.contracts.framing import ProtocolError, send_frame
@@ -11,6 +12,7 @@ from game2.v2.contracts.proprioception import (
     recv_proprioception_frame,
 )
 from game2.v2.contracts.vision import VisionGrid
+from game2.v2.player.peripherals import ProprioceptionReceiver
 
 
 class ProprioceptionContractTests(unittest.TestCase):
@@ -73,6 +75,22 @@ class ProprioceptionContractTests(unittest.TestCase):
         )
         self.assertNotIn("other", repr(frame))
         self.assertNotIn("accepted_inputs", repr(frame))
+
+    def test_receiver_selects_latest_non_future_frame(self):
+        manifest = SimpleNamespace(
+            session_id="session",
+            proprioception=SimpleNamespace(host="127.0.0.1", port=1),
+        )
+        receiver = ProprioceptionReceiver(manifest)
+        older = ProprioceptionFrame(
+            10, 1.0, 2.0, True, False, False
+        )
+        future = ProprioceptionFrame(
+            14, 3.0, 4.0, False, True, False
+        )
+        receiver._frames.extend((older, future))
+        self.assertEqual(receiver.latest_at_or_before(12), older)
+        self.assertNotEqual(receiver.latest_at_or_before(12), future)
 
     def test_model_observation_rejects_future_body_measurement(self):
         grid = VisionGrid(

@@ -307,7 +307,12 @@ class LearnedModelTests(unittest.TestCase):
 
         first_ticks = [1, 3, 5, 7, 9, 11]
         samples = [
-            player.process_grid(_grid(6, 5, world_tick=tick))
+            player.process_grid(
+                _grid(6, 5, world_tick=tick),
+                ProprioceptionFrame(
+                    tick, 0.0, 0.0, True, False, False
+                ),
+            )
             for tick in first_ticks
         ]
         self.assertTrue(all(sample is not None for sample in samples))
@@ -323,7 +328,10 @@ class LearnedModelTests(unittest.TestCase):
             planner.plan_command_head.bias.copy_(
                 torch.tensor([10.0, 0.0, 0.0])
             )
-        kept = player.process_grid(_grid(6, 5, world_tick=13))
+        kept = player.process_grid(
+            _grid(6, 5, world_tick=13),
+            ProprioceptionFrame(13, 0.0, 0.0, True, False, False),
+        )
         self.assertIsNotNone(kept)
         assert kept is not None
         self.assertTrue(kept.planner_decision)

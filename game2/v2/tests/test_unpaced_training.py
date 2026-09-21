@@ -21,6 +21,7 @@ from game2.v2.unpaced_runtime import (
     EpisodeResult,
 )
 from game2.v2.contracts.bot_profile import BotProfile
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.training.work import EpisodeStore
 
 
@@ -75,11 +76,13 @@ class UnpacedTrainingTests(unittest.TestCase):
                 episode_id=1, mode="evaluate", source="unpaced", seed=1
             )
             observed_ticks = []
+            observed_bodies = []
             original_process_grid = model.process_grid
 
-            def tracked_process_grid(grid):
+            def tracked_process_grid(grid, body):
                 observed_ticks.append(grid.world_tick)
-                return original_process_grid(grid)
+                observed_bodies.append(body)
+                return original_process_grid(grid, body)
 
             model.process_grid = tracked_process_grid
             outcome = run_episode(
@@ -100,6 +103,14 @@ class UnpacedTrainingTests(unittest.TestCase):
             self.assertEqual(len(steps), outcome.decisions)
             self.assertEqual(
                 [step.world_tick for step in steps],
+                observed_ticks,
+            )
+            self.assertTrue(all(
+                isinstance(body, ProprioceptionFrame)
+                for body in observed_bodies
+            ))
+            self.assertEqual(
+                [body.world_tick for body in observed_bodies],
                 observed_ticks,
             )
             self.assertTrue(all(

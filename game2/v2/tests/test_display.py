@@ -22,6 +22,7 @@ from game2.v2.console.display.vision.preview import (
     TERMINAL_LABELS, TRAIL_COLOR, VisionPreviewRenderer,
 )
 from game2.v2.console.display.vision.renderer import VisionGridRenderer
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import (
     META_GOAL, META_SELF, META_SELF_CENTER,
     PHYSICS_EMPTY, PHYSICS_HAZARD, PHYSICS_SOLID,
@@ -480,6 +481,9 @@ class VisionPreviewRendererTests(unittest.TestCase):
                     old_value=0.0,
                     self_position=(x, y),
                     goal_position=(world.goal.x, world.goal.y),
+                    proprioception=ProprioceptionFrame(
+                        tick, 0.0, 0.0, True, False, False
+                    ),
                 )
                 annotations.append({
                     "id": dataset.steps()[-1].id,

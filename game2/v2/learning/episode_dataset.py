@@ -10,6 +10,7 @@ import sqlite3
 import time
 from typing import Any
 
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import VisionGrid
 from game2.v2.contracts.motor import (
     ActionDecision,
@@ -361,6 +362,23 @@ class EpisodeDataset:
         sequence = int(getattr(sample, "policy_sequence", 0))
         if sequence <= 0:
             raise ValueError("episode sample requires a positive policy_sequence")
+        try:
+            proprioception = ProprioceptionFrame(
+                getattr(sample, "proprioception_world_tick"),
+                getattr(sample, "velocity_x"),
+                getattr(sample, "velocity_y"),
+                getattr(sample, "grounded"),
+                getattr(sample, "sensor_right_pressed"),
+                getattr(sample, "sensor_jump_pressed"),
+            )
+        except AttributeError as exc:
+            raise TypeError(
+                "episode sample requires explicit Proprioception fields"
+            ) from exc
+        if proprioception.world_tick > grid.world_tick:
+            raise ValueError(
+                "episode Proprioception cannot come from a future world tick"
+            )
 
         self_x = self._finite_or_none(getattr(sample, "self_x", None))
         self_y = self._finite_or_none(getattr(sample, "self_y", None))
@@ -408,12 +426,12 @@ class EpisodeDataset:
             sqlite3.Binary(bytes(grid.metadata)),
             float(getattr(sample, "motion_x", 0.0)),
             float(getattr(sample, "motion_y", 0.0)),
-            int(getattr(sample, "proprioception_world_tick", grid.world_tick)),
-            float(getattr(sample, "velocity_x", 0.0)),
-            float(getattr(sample, "velocity_y", 0.0)),
-            int(bool(getattr(sample, "grounded", False))),
-            int(bool(getattr(sample, "sensor_right_pressed", False))),
-            int(bool(getattr(sample, "sensor_jump_pressed", False))),
+            proprioception.world_tick,
+            float(proprioception.velocity_x),
+            float(proprioception.velocity_y),
+            int(proprioception.grounded),
+            int(proprioception.right_pressed),
+            int(proprioception.jump_pressed),
             int(bool(getattr(sample, "pad_right", False))),
             int(bool(getattr(sample, "pad_jump", False))),
             int(action.right),
@@ -569,6 +587,7 @@ class EpisodeDataset:
         old_value: float,
         self_position: tuple[float, float] | None,
         goal_position: tuple[float, float] | None,
+        proprioception: ProprioceptionFrame,
         motor_goal=None,
         prob_right: float | None = None,
         prob_jump: float | None = None,
@@ -581,6 +600,12 @@ class EpisodeDataset:
             vision_grid=grid,
             motion_x=motion_x,
             motion_y=motion_y,
+            proprioception_world_tick=proprioception.world_tick,
+            velocity_x=proprioception.velocity_x,
+            velocity_y=proprioception.velocity_y,
+            grounded=proprioception.grounded,
+            sensor_right_pressed=proprioception.right_pressed,
+            sensor_jump_pressed=proprioception.jump_pressed,
             pad_right=pad_state.right,
             pad_jump=pad_state.jump,
             action_decision=action,
