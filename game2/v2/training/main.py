@@ -39,11 +39,11 @@ def reward_for_result(result: str, progress: Real) -> float:
     if result == "success":
         return 1.0
     if result == "timeout":
-        # Progress shaping already rewards movement toward the goal. A fixed
-        # horizon is still a failed qualification result, but adding -1 here
-        # makes every partial-progress rollout net-negative and teaches the
-        # critic that late/progressed states predict punishment.
-        return 0.0
+        # Timeout is a real training failure, but it must stay smaller than
+        # the +1 full-distance shaping scale.  The old -1 terminal penalty
+        # erased useful partial progress; -0.1 keeps failure undesirable
+        # without teaching the policy to avoid moving toward the goal.
+        return -0.1
     if result == "dead":
         return -1.0
     raise ValueError("unknown terminal result")
