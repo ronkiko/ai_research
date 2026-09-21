@@ -113,8 +113,20 @@ class TrainingDisplay:
                 )
         else:
             passed = event["result"] == "success"
-            label = "Final check" if prefix == "FINAL_EVALUATION" else "Verify"
+            label = (
+                f"Final check {event.get('map_id', '')}".rstrip()
+                if prefix == "FINAL_EVALUATION"
+                else "Verify"
+            )
+            verification_index = event.get("verification_index")
+            verification_required = event.get("verification_required")
+            streak = (
+                f" {verification_index}/{verification_required}"
+                if verification_index is not None
+                and verification_required is not None
+                else ""
+            )
             self.line(
-                f"{label} {event.get('map_id', '')} · {'PASS' if passed else 'FAIL'}"
+                f"{label}{streak} · {'PASS' if passed else 'FAIL'}"
                 f" · goal {100*float(event.get('progress', 0)):.1f}% · learning OFF"
             )

@@ -203,6 +203,49 @@ class TrainerRuntimeTests(unittest.TestCase):
             self.assertEqual(summary.actual_update_count, 0)
             send.assert_not_called()
 
+    def test_training_mastery_requires_three_consecutive_frozen_successes(self):
+        from unittest import mock
+
+        training = {
+            "result": "success",
+            "trainable": True,
+            "progress": 1.0,
+            "accepted_actions": 0,
+            "rejected_actions": 0,
+        }
+        success = {"result": "success", "trainable": True, "progress": 1.0}
+        timeout = {"result": "timeout", "trainable": True, "progress": 0.8}
+
+        for evaluations, expected in (
+            ((success, success, success), True),
+            ((success, success, timeout), False),
+        ):
+            with self.subTest(expected=expected):
+                trainer = Trainer(episodes=1, stop_on_success=True)
+                peer = mock.Mock()
+                update = {
+                    "episode_id": 1,
+                    "updated": True,
+                    "loss": 0.0,
+                    "metrics": {},
+                }
+                with mock.patch.object(
+                        trainer, "_receive_episode",
+                        side_effect=[training, *evaluations]) as receive, \
+                        mock.patch.object(
+                            trainer, "_expect",
+                            side_effect=[{}, update, {}],
+                        ), \
+                        mock.patch(
+                            "game2.v2.training.main.send_training_message"
+                        ):
+                    summary = trainer._run_peer(peer)
+                self.assertEqual(summary.mastered, expected)
+                self.assertEqual(
+                    receive.call_count,
+                    1 + len(evaluations),
+                )
+
     def test_reward_mapping_and_socket_handshake(self):
         self.assertEqual(reward_for_result("success", 0.8), 1.0)
         self.assertEqual(reward_for_result("timeout", 0.4), 0.0)

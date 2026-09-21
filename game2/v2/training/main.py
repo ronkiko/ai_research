@@ -10,7 +10,10 @@ import time
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import Any
-from game2.v2.learning.config import EVALUATION_INTERVAL
+from game2.v2.learning.config import (
+    EVALUATION_INTERVAL,
+    VERIFICATION_SUCCESS_STREAK,
+)
 
 from game2.v2.contracts.training import (
     APPLY_RESULT,
@@ -156,12 +159,20 @@ class Trainer:
                     summary.successes += 1
                 else:
                     summary.failures += 1
-                summary.mastered = summary.successes == summary.attempts
+                summary.mastered = (
+                    summary.attempts == self.episodes
+                    and summary.successes == self.episodes
+                )
                 print("EVALUATION " + json.dumps({
                     "episode_id": episode_id,
                     "result": finished["result"],
+                    "progress": finished.get("progress", 0.0),
                     "trainable": finished["trainable"],
+                    "verification_index": summary.attempts,
+                    "verification_required": self.episodes,
                 }, separators=(",", ":"), sort_keys=True), flush=True)
+                if finished["result"] != "success" or not finished["trainable"]:
+                    break
                 continue
 
             summary.attempts += 1
@@ -235,16 +246,34 @@ class Trainer:
                     or summary.attempts % EVALUATION_INTERVAL == 0
                     or summary.attempts == self.episodes)
                     and finished["trainable"] and updated):
-                evaluation_id = next_episode_id
-                next_episode_id += 1
-                evaluation = self._receive_episode(
-                    peer, evaluation_id, EVALUATE, self.seed + evaluation_id)
-                print("EVALUATION " + json.dumps({
-                    "episode_id": evaluation_id,
-                    "result": evaluation["result"],
-                    "trainable": evaluation["trainable"],
-                }, separators=(",", ":"), sort_keys=True), flush=True)
-                if evaluation["result"] == "success" and evaluation["trainable"]:
+                verified = True
+                for verification_index in range(
+                    1, VERIFICATION_SUCCESS_STREAK + 1
+                ):
+                    evaluation_id = next_episode_id
+                    next_episode_id += 1
+                    evaluation = self._receive_episode(
+                        peer,
+                        evaluation_id,
+                        EVALUATE,
+                        self.seed + evaluation_id,
+                    )
+                    passed = (
+                        evaluation["result"] == "success"
+                        and evaluation["trainable"]
+                    )
+                    print("EVALUATION " + json.dumps({
+                        "episode_id": evaluation_id,
+                        "result": evaluation["result"],
+                        "progress": evaluation.get("progress", 0.0),
+                        "trainable": evaluation["trainable"],
+                        "verification_index": verification_index,
+                        "verification_required": VERIFICATION_SUCCESS_STREAK,
+                    }, separators=(",", ":"), sort_keys=True), flush=True)
+                    if not passed:
+                        verified = False
+                        break
+                if verified:
                     summary.mastered = True
                     summary.stopped_on_success = True
                     break

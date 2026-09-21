@@ -75,6 +75,14 @@ class ManagementTrainingTests(unittest.TestCase):
                 "Final check · all training maps · frozen model",
                 output.getvalue(),
             )
+            display.consume(
+                'EVALUATION {"result":"success","progress":0.941,'
+                '"verification_index":2,"verification_required":3}'
+            )
+            self.assertIn(
+                "Verify 2/3 · PASS · goal 94.1% · learning OFF",
+                output.getvalue(),
+            )
             display.close()
             self.assertFalse(display.active)
             if not tty:

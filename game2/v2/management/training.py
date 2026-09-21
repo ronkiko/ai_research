@@ -39,6 +39,7 @@ from game2.v2.contracts.screen_server import (
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
 from game2.v2.learning.episode_dataset import EpisodeStore
 from game2.v2.learning.checkpoints import CHECKPOINT_NAMES, checkpoint_paths, reset_checkpoints
+from game2.v2.learning.config import VERIFICATION_SUCCESS_STREAK
 from game2.v2.management.training_output import TrainingDisplay
 
 
@@ -430,7 +431,10 @@ class TrainingRun:
                 sys.executable, "-m", "game2.v2.training.main",
                 "--listen-host", "127.0.0.1", "--listen-port", "0",
                 "--mode", "evaluate" if evaluate_only else "train",
-                "--episodes", "1" if evaluate_only else str(max_episodes),
+                "--episodes", (
+                    str(VERIFICATION_SUCCESS_STREAK)
+                    if evaluate_only else str(max_episodes)
+                ),
             ]
             if not evaluate_only:
                 trainer_command.append("--stop-on-success")

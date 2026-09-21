@@ -15,6 +15,8 @@ PPO_HISTORY_STRIDE_TICKS = POLICY_STRIDE_TICKS
 MAX_EPISODE_DATASETS = 5
 # Greedy execution can succeed before a noisy training rollout does.
 EVALUATION_INTERVAL = 5
+# A map is mastered only after this many consecutive frozen successes.
+VERIFICATION_SUCCESS_STREAK = 3
 
 # Controller economy is not part of skill acquisition on Training Maps.
 # Requests are still measured, but they carry no reward cost during Training.

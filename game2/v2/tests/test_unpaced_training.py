@@ -262,6 +262,19 @@ class UnpacedTrainingTests(unittest.TestCase):
                 1, ("flat_run", "short_gap"), 1, 5, 14, 17, 4
             )
             save_checkpoints(model, checkpoint, state)
+            interrupted_verify = EpisodeStore(root / "episodes").create(
+                episode_id=18,
+                mode="evaluate",
+                source="unpaced",
+                seed=18,
+            )
+            interrupted_verify.finalize(
+                result="success",
+                finish_world_tick=2,
+                terminal_reward=1.0,
+                trainable=False,
+                progress=1.0,
+            )
             manifest = SimpleNamespace(
                 training_set_level=1,
                 training_maps=(
@@ -306,6 +319,7 @@ class UnpacedTrainingTests(unittest.TestCase):
                 )
             self.assertEqual(status, 0)
             self.assertEqual(calls[0][:2], ("short_gap", "evaluate"))
+            self.assertEqual(calls[0][2], 19)
             first_training = next(call for call in calls if call[1] == "train")
             self.assertEqual(first_training, ("short_gap", "train", 15))
 
@@ -335,9 +349,9 @@ class UnpacedTrainingTests(unittest.TestCase):
             def episode(_model, path, **kwargs):
                 call = (Path(path).stem, kwargs["mode"], kwargs["seed"])
                 calls.append(call)
-                if len(calls) == 1:
+                if len(calls) <= 3:
                     return success
-                if len(calls) == 2:
+                if len(calls) == 4:
                     return timeout
                 return success
 
@@ -366,8 +380,11 @@ class UnpacedTrainingTests(unittest.TestCase):
                     json_output=True,
                 )
             self.assertEqual(status, 0)
-            self.assertEqual(calls[0][:2], ("flat_run", "evaluate"))
-            self.assertEqual(calls[1][:2], ("short_gap", "evaluate"))
+            self.assertTrue(all(
+                call[:2] == ("flat_run", "evaluate")
+                for call in calls[:3]
+            ))
+            self.assertEqual(calls[3][:2], ("short_gap", "evaluate"))
             first_training = next(call for call in calls if call[1] == "train")
             self.assertEqual(first_training[0], "short_gap")
 
@@ -384,7 +401,7 @@ class UnpacedTrainingTests(unittest.TestCase):
             with mock.patch("game2.v2.unpaced_runtime.load_model"), \
                     mock.patch(
                         "game2.v2.unpaced_runtime.run_episode",
-                        side_effect=[success, success] * 3 + [success] * 3,
+                        return_value=success,
                     ), \
                     mock.patch(
                         "game2.v2.unpaced_runtime.train_episode",
@@ -417,6 +434,64 @@ class UnpacedTrainingTests(unittest.TestCase):
                 output.getvalue(),
             )
 
+    def test_map_mastery_requires_three_consecutive_frozen_successes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = SimpleNamespace(
+                training_set_level=1,
+                training_maps=(
+                    SimpleNamespace(map_id="flat_run", path=FLAT_RUN),
+                ),
+            )
+            success = EpisodeResult("success", 1.0, 2, 1)
+            failure = EpisodeResult("timeout", 0.8, 2, 1)
+            outcomes = [
+                success,              # training attempt 1
+                success, success, failure,  # verify: 2/3 then fail
+                success,              # training attempt 2
+                success, success, success,  # verify: 3/3 -> learned
+                success, success, success,  # final frozen check: 3/3
+            ]
+            output = io.StringIO()
+            with mock.patch(
+                    "game2.v2.unpaced_runtime.TrainingSetManifest.from_file",
+                    return_value=manifest), \
+                    mock.patch("game2.v2.unpaced_runtime.load_model"), \
+                    mock.patch("game2.v2.unpaced_runtime.run_episode",
+                               side_effect=outcomes) as run, \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.train_episode",
+                        return_value=SimpleNamespace(
+                            updated=True, loss=0.0, metrics={}
+                        ),
+                    ), \
+                    mock.patch("game2.v2.unpaced_runtime.save_checkpoints"):
+                status = run_unpaced_training_set(
+                    set_path=root / "set.json",
+                    checkpoint_dir=root / "checkpoints",
+                    episode_store_dir=root / "episodes",
+                    max_episodes=2,
+                    episode_limit=2,
+                    fresh=True,
+                    output=output,
+                    json_output=True,
+                )
+            self.assertEqual(status, 0)
+            self.assertEqual(
+                [call.kwargs["mode"] for call in run.call_args_list].count("train"),
+                2,
+            )
+            evaluations = [
+                json.loads(line.split(" ", 1)[1])
+                for line in output.getvalue().splitlines()
+                if line.startswith("EVALUATION ")
+            ]
+            self.assertEqual(
+                [(item["verification_index"], item["result"]) for item in evaluations],
+                [(1, "success"), (2, "success"), (3, "timeout"),
+                 (1, "success"), (2, "success"), (3, "success")],
+            )
+
     def test_final_model_must_pass_all_maps_without_updates(self):
         for retained, budget in ((True, 1), (False, 1), (True, 6), (False, 6)):
             with self.subTest(retained=retained, budget=budget), tempfile.TemporaryDirectory() as directory:
@@ -428,6 +503,7 @@ class UnpacedTrainingTests(unittest.TestCase):
                 outcomes = ([failure] * attempts + [success]) * 3 + [success if retained else failure, success, success]
                 with mock.patch("game2.v2.unpaced_runtime.load_model"), \
                         mock.patch("game2.v2.unpaced_runtime.EpisodeStore"), \
+                        mock.patch("game2.v2.unpaced_runtime.VERIFICATION_SUCCESS_STREAK", 1), \
                         mock.patch("game2.v2.unpaced_runtime.run_episode", side_effect=outcomes) as run, \
                         mock.patch("game2.v2.unpaced_runtime.train_episode",
                                    return_value=SimpleNamespace(updated=True, loss=0.0, metrics={})) as train, \
@@ -441,7 +517,7 @@ class UnpacedTrainingTests(unittest.TestCase):
                     )
                 self.assertEqual(status, 0 if retained else 1)
                 self.assertEqual(train.call_count, 3 * attempts)
-                self.assertEqual(save.call_count, 3 * attempts)
+                self.assertEqual(save.call_count, 3 * (attempts + 1))
                 self.assertEqual(
                     [call.kwargs["seed"] for call in run.call_args_list
                      if call.kwargs["mode"] == "train"],

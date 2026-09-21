@@ -47,8 +47,11 @@ maps after curriculum updates.
 
 Training rewards progress toward the goal, adds +1 for success and -1 for
 death. A timeout adds no terminal reward; it still fails verification. Controller
-requests are measured but carry no cost during skill acquisition. Verification
-runs after success, every five updates, and at the last permitted attempt.
+requests are measured but carry no cost during skill acquisition. Verification runs after success, every five updates, and at the last permitted
+attempt. A map is mastered only after three consecutive successful frozen
+(learning-OFF) verification runs; the first failure breaks the streak and
+returns control to training. The final frozen set check uses the same 3-in-a-row
+criterion for every map.
 Evaluation episodes do not consume training random seeds in unpaced mode.
 
 The expensive learning acceptance run is separate from default unit tests:

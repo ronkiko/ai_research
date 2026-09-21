@@ -25,7 +25,10 @@ from game2.v2.player.learned.checkpoint import save_checkpoint_set
 from game2.v2.player.learned.contracts import ActionDecision, gate_control_command
 from game2.v2.player.learned.motion import VisionProgress, vision_centers
 from game2.v2.training.main import reward_for_result
-from game2.v2.learning.config import EVALUATION_INTERVAL
+from game2.v2.learning.config import (
+    EVALUATION_INTERVAL,
+    VERIFICATION_SUCCESS_STREAK,
+)
 from game2.v2.training.work import (
     DEFAULT_EPISODE_STORE,
     EpisodeDataset,
@@ -447,6 +450,9 @@ def run_unpaced_training_set(
     )
     episode_id = 0 if resume_state is None else resume_state.episode_id
     training_seed = 0 if resume_state is None else resume_state.training_seed
+    if resume_state is not None:
+        observed_episode_id, _unused_seed = _legacy_resume_counters(episode_store)
+        episode_id = max(episode_id, observed_episode_id)
 
     interactive = bool(
         not json_output
@@ -549,22 +555,32 @@ def run_unpaced_training_set(
             return
         if prefix == "PROGRESS":
             return
-        if prefix == "EVALUATION":
+        if prefix in {"EVALUATION", "FINAL_EVALUATION"}:
             clear_live()
             result = str(payload["result"])
+            verify_index = int(payload["verification_index"])
+            verify_required = int(payload["verification_required"])
+            label = (
+                f"Final check {payload['map_id']}"
+                if prefix == "FINAL_EVALUATION"
+                else "Verify"
+            )
             if result == "success":
+                suffix = (
+                    "map learned"
+                    if verify_index == verify_required
+                    else "qualification continues"
+                )
                 write_line(
-                    f"Verify {int(payload['attempt'])}/"
-                    f"{int(payload['max_attempts'])} PASS · "
-                    "reached goal again with learning OFF · map learned"
+                    f"{label} {verify_index}/{verify_required} PASS · "
+                    "reached goal with learning OFF · " + suffix
                 )
             else:
                 write_line(
-                    f"Verify {int(payload['attempt'])}/"
-                    f"{int(payload['max_attempts'])} FAIL "
+                    f"{label} {verify_index}/{verify_required} FAIL "
                     f"({result.upper()}) · "
                     f"reached {100.0 * float(payload['progress']):.1f}% toward goal · "
-                    "map NOT learned yet · training continues"
+                    "qualification streak broken"
                 )
             return
         write_line(prefix)
@@ -590,52 +606,64 @@ def run_unpaced_training_set(
             })
         return write_ppo
 
-    def verify_map(spec, map_path: Path, attempt: int) -> EpisodeResult:
+    def verify_map(
+        spec,
+        map_path: Path,
+        attempt: int,
+        *,
+        final_check: bool = False,
+    ) -> bool:
         nonlocal episode_id
-        if not json_output:
-            write_line(
-                f"Verify {attempt}/{max_episodes} · learning OFF · "
-                "must reach the goal again to prove this was learned"
+        for verification_index in range(1, VERIFICATION_SUCCESS_STREAK + 1):
+            if should_stop is not None and should_stop():
+                raise KeyboardInterrupt
+            episode_id += 1
+            evaluation_dataset = episode_store.create(
+                episode_id=episode_id,
+                mode="evaluate",
+                source="unpaced",
+                seed=episode_id,
             )
-        episode_id += 1
-        evaluation_dataset = episode_store.create(
-            episode_id=episode_id,
-            mode="evaluate",
-            source="unpaced",
-            seed=episode_id,
-        )
-        evaluation = run_episode(
-            model,
-            map_path,
-            episode_limit=episode_limit,
-            mode="evaluate",
-            seed=episode_id,
-            dataset=evaluation_dataset,
-            should_stop=should_stop,
-            on_progress=progress_writer(episode_id, "evaluate", attempt),
-            player_id=player_id,
-        )
-        evaluation_dataset.finalize(
-            result=evaluation.result,
-            finish_world_tick=evaluation.finish_world_tick,
-            terminal_reward=reward_for_result(
-                evaluation.result, evaluation.progress
-            ),
-            trainable=False,
-            progress=evaluation.progress,
-        )
-        episode_store.rotate()
-        write("EVALUATION", {
-            "mode": "unpaced",
-            "episode_id": episode_id,
-            "result": evaluation.result,
-            "progress": evaluation.progress,
-            "world_ticks": evaluation.finish_world_tick,
-            "decisions": evaluation.decisions,
-            "attempt": attempt,
-            "max_attempts": max_episodes,
-        })
-        return evaluation
+            evaluation = run_episode(
+                model,
+                map_path,
+                episode_limit=episode_limit,
+                mode="evaluate",
+                seed=episode_id,
+                dataset=evaluation_dataset,
+                should_stop=should_stop,
+                on_progress=progress_writer(episode_id, "evaluate", attempt),
+                player_id=player_id,
+            )
+            evaluation_dataset.finalize(
+                result=evaluation.result,
+                finish_world_tick=evaluation.finish_world_tick,
+                terminal_reward=reward_for_result(
+                    evaluation.result, evaluation.progress
+                ),
+                trainable=False,
+                progress=evaluation.progress,
+            )
+            episode_store.rotate()
+            write(
+                "FINAL_EVALUATION" if final_check else "EVALUATION",
+                {
+                    "mode": "unpaced",
+                    "episode_id": episode_id,
+                    "map_id": spec.map_id,
+                    "result": evaluation.result,
+                    "progress": evaluation.progress,
+                    "world_ticks": evaluation.finish_world_tick,
+                    "decisions": evaluation.decisions,
+                    "attempt": attempt,
+                    "max_attempts": max_episodes,
+                    "verification_index": verification_index,
+                    "verification_required": VERIFICATION_SUCCESS_STREAK,
+                },
+            )
+            if evaluation.result != "success":
+                return False
+        return True
 
     map_count = len(manifest.training_maps)
     if resume_state is None and not fresh:
@@ -656,38 +684,13 @@ def run_unpaced_training_set(
             map_path = Path(spec.path)
             if not map_path.is_absolute():
                 map_path = (manifest_path.parent / map_path).resolve()
-            episode_id += 1
-            dataset = episode_store.create(
-                episode_id=episode_id,
-                mode="evaluate",
-                source="unpaced",
-                seed=episode_id,
-            )
-            outcome = run_episode(
-                model,
-                map_path,
-                episode_limit=episode_limit,
-                mode="evaluate",
-                seed=episode_id,
-                dataset=dataset,
-                should_stop=should_stop,
-                player_id=player_id,
-            )
-            dataset.finalize(
-                result=outcome.result,
-                finish_world_tick=outcome.finish_world_tick,
-                terminal_reward=0.0,
-                trainable=False,
-                progress=outcome.progress,
-            )
-            episode_store.rotate()
+            passed = verify_map(spec, map_path, 0)
             write("RESUME_DISCOVERY", {
                 "status": "map",
                 "map_id": spec.map_id,
-                "result": outcome.result,
-                "progress": outcome.progress,
+                "result": "success" if passed else "fail",
             })
-            if outcome.result != "success":
+            if not passed:
                 first_unmastered = index
                 break
         resume_state = TrainingResumeState(
@@ -760,8 +763,8 @@ def run_unpaced_training_set(
             else None
         )
         if pending_verify is not None:
-            evaluation = verify_map(spec, map_path, pending_verify)
-            if evaluation.result == "success":
+            passed = verify_map(spec, map_path, pending_verify)
+            if passed:
                 mastered = True
                 resume_state = TrainingResumeState(
                     manifest.training_set_level,
@@ -912,8 +915,8 @@ def run_unpaced_training_set(
             if not verify_due:
                 continue
 
-            evaluation = verify_map(spec, map_path, attempt)
-            if evaluation.result == "success":
+            passed = verify_map(spec, map_path, attempt)
+            if passed:
                 mastered = True
                 resume_state = TrainingResumeState(
                     manifest.training_set_level,
@@ -982,35 +985,8 @@ def run_unpaced_training_set(
         map_path = Path(spec.path)
         if not map_path.is_absolute():
             map_path = (manifest_path.parent / map_path).resolve()
-        episode_id += 1
-        dataset = episode_store.create(
-            episode_id=episode_id, mode="evaluate", source="unpaced",
-            seed=episode_id,
-        )
-        outcome = run_episode(
-            model, map_path, episode_limit=episode_limit,
-            mode="evaluate", seed=episode_id, dataset=dataset,
-            should_stop=should_stop,
-            on_progress=lambda snapshot: write("ROLLOUT", {
-                "episode_id": episode_id, "mode": "evaluate",
-                "attempt": 0, "max_attempts": max_episodes,
-                "final_check": True, "map_id": spec.map_id, **snapshot,
-            }),
-            player_id=player_id,
-        )
-        dataset.finalize(
-            result=outcome.result, finish_world_tick=outcome.finish_world_tick,
-            terminal_reward=0.0, trainable=False, progress=outcome.progress,
-        )
-        episode_store.rotate()
-        final_passed = final_passed and outcome.result == "success"
-        if json_output:
-            write("FINAL_EVALUATION", {
-                "episode_id": episode_id, "map_id": spec.map_id,
-                "result": outcome.result, "progress": outcome.progress,
-            })
-        else:
-            write_line(f"Final check {spec.map_id}: {outcome.result.upper()}")
+        passed = verify_map(spec, map_path, 0, final_check=True)
+        final_passed = final_passed and passed
     if not final_passed:
         if json_output:
             write("FINAL_CHECK", {
