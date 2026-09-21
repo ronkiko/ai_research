@@ -135,3 +135,18 @@ order and begins PPO at the first map that no longer qualifies. Already-mastered
 maps are never retrained merely because Management restarted. Resume discovery
 uses temporary episode datasets, so it does not rotate or modify the persistent
 training history.
+
+
+### Realtime episode writer
+
+Realtime inference never performs durable SQLite mutations on the Motor hot
+path. ModelRuntime submits immutable decision snapshots and Controller events to
+one ordered episode writer. That writer is the sole owner of the episode's
+buffered SQLite transaction, preserving sample -> control resolution -> request
+-> result -> actuation order while committing bounded batches.
+
+EPISODE_END is a durability barrier: ModelRuntime drains and commits the writer
+before dataset finalize, reward/GAE, PPO, checkpoint publication, or rotation.
+A writer failure fails the episode/model explicitly; PPO never runs over a
+partially persisted episode. Interrupted runtime shutdown still drains queued
+partial experience, but an unfinalized episode is not trainable.

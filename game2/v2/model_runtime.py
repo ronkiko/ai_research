@@ -6,9 +6,11 @@ import hashlib
 from copy import copy
 from dataclasses import replace
 import json
+import queue
 import select
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -188,6 +190,61 @@ class _FrameReader:
         return messages
 
 
+_EPISODE_WRITE_STOP = object()
+
+
+class _EpisodeWriteWorker:
+    """Serialize one episode's durable mutations outside the inference loop."""
+
+    def __init__(self, dataset: EpisodeDataset):
+        self.dataset = dataset
+        self._queue: queue.Queue[object] = queue.Queue()
+        self._error: BaseException | None = None
+        self._closed = False
+        self._ready = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"episode-writer-{dataset.path.stem}",
+            daemon=True,
+        )
+        self._thread.start()
+        if not self._ready.wait(5.0):
+            raise RuntimeError("Episode writer did not start")
+        self.raise_if_failed()
+
+    def _run(self) -> None:
+        try:
+            with self.dataset.buffered_writes():
+                self._ready.set()
+                while True:
+                    operation = self._queue.get()
+                    if operation is _EPISODE_WRITE_STOP:
+                        return
+                    method_name, args, kwargs = operation
+                    getattr(self.dataset, method_name)(*args, **kwargs)
+        except BaseException as exc:
+            self._error = exc
+            self._ready.set()
+
+    def raise_if_failed(self) -> None:
+        error = self._error
+        if error is not None:
+            raise RuntimeError("Episode writer failed") from error
+
+    def submit(self, method_name: str, *args, **kwargs) -> None:
+        self.raise_if_failed()
+        if self._closed:
+            raise RuntimeError("Episode writer is closed")
+        self._queue.put((method_name, args, kwargs))
+
+    def finish(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._queue.put(_EPISODE_WRITE_STOP)
+        self._thread.join()
+        self.raise_if_failed()
+
+
 class ModelRuntime:
     """One sequential model worker with an application-level latest mailbox."""
 
@@ -206,6 +263,7 @@ class ModelRuntime:
         self.inference_delay = float(inference_delay)
         self.episode_store = EpisodeStore(episode_store)
         self._episode_dataset: EpisodeDataset | None = None
+        self._episode_writer: _EpisodeWriteWorker | None = None
         self.bound_address: tuple[str, int] | None = None
         self._decision_id = 0
         self._samples: dict[int, object] = {}
@@ -219,6 +277,26 @@ class ModelRuntime:
         self._episode_actuated_count = 0
         self._episode_observations_received = 0
         self._episode_dropped_observations = 0
+
+    def _require_episode_writer(self) -> _EpisodeWriteWorker:
+        writer = self._episode_writer
+        if writer is None:
+            raise RuntimeError("Model episode has no active dataset writer")
+        writer.raise_if_failed()
+        return writer
+
+    def _queue_episode_write(self, method_name: str, *args, **kwargs) -> None:
+        self._require_episode_writer().submit(method_name, *args, **kwargs)
+
+    def _finish_episode_writer(self) -> None:
+        writer, self._episode_writer = self._episode_writer, None
+        if writer is not None:
+            writer.finish()
+
+    def _check_episode_writer(self) -> None:
+        writer = self._episode_writer
+        if writer is not None:
+            writer.raise_if_failed()
 
     def _save_checkpoints(self) -> str:
         if self._checkpoint_paths is None:
@@ -304,6 +382,9 @@ class ModelRuntime:
         dataset = self._episode_dataset
         if dataset is None:
             raise ProtocolError("EPISODE_END has no active EpisodeDataset")
+        # The terminal boundary is the durability barrier: every sample and
+        # Controller event must be committed before finalize/GAE/PPO can read it.
+        self._finish_episode_writer()
         dataset.finalize(
             result=message["result"],
             finish_world_tick=message["finish_world_tick"],
@@ -370,6 +451,7 @@ class ModelRuntime:
                 seed=message["seed"],
                 policy_stride_ticks=POLICY_STRIDE_TICKS,
             )
+            self._episode_writer = _EpisodeWriteWorker(self._episode_dataset)
             self._episode_id = message["episode_id"]
             self._active = True
             self._samples.clear()
@@ -394,15 +476,17 @@ class ModelRuntime:
         if message_type == CONTROL_REQUESTED:
             sample = self._samples.get(message["decision_id"])
             if sample is not None and self._episode_dataset is not None:
-                self._episode_dataset.mark_control_requested(
-                    sample.policy_sequence
+                self._queue_episode_write(
+                    "mark_control_requested", sample.policy_sequence
                 )
             return pending_observation
         if message_type == CONTROL_RESULT:
             sample = self._samples.get(message["decision_id"])
             if sample is not None and self._episode_dataset is not None:
-                self._episode_dataset.mark_control_result(
-                    sample.policy_sequence, message["status"]
+                self._queue_episode_write(
+                    "mark_control_result",
+                    sample.policy_sequence,
+                    message["status"],
                 )
             return pending_observation
         if message_type == ACTUATED:
@@ -411,8 +495,8 @@ class ModelRuntime:
                 self._episode_actuated_count += 1
                 self.player.record_actuated(sample)
                 if self._episode_dataset is not None:
-                    self._episode_dataset.mark_actuated(
-                        sample.policy_sequence
+                    self._queue_episode_write(
+                        "mark_actuated", sample.policy_sequence
                     )
             return pending_observation
         if message_type == EPISODE_END:
@@ -434,8 +518,13 @@ class ModelRuntime:
             self._episode_decision_count += 1
             if self._episode_dataset is None:
                 raise RuntimeError("Model decision has no active EpisodeDataset")
-            self._episode_dataset.upsert_sample(
-                sample, duration_ticks=POLICY_STRIDE_TICKS
+            # DecisionSample and VisionGrid are immutable snapshots. Durable
+            # persistence is serialized by the episode writer rather than
+            # blocking the 60 Hz Motor inference path.
+            self._queue_episode_write(
+                "upsert_sample",
+                copy(sample),
+                duration_ticks=POLICY_STRIDE_TICKS,
             )
             command = sample.action_decision
             if not isinstance(command, ControlCommand):
@@ -443,7 +532,8 @@ class ModelRuntime:
             if not command.any:
                 return None
             sample, applied_command = self._gate_control_request(sample)
-            self._episode_dataset.update_control_resolution(
+            self._queue_episode_write(
+                "update_control_resolution",
                 sample.policy_sequence,
                 sample.desired_state,
                 sample.suppressed_buttons,
@@ -491,6 +581,7 @@ class ModelRuntime:
                 reader = _FrameReader()
                 pending_observation = None
                 while True:
+                    self._check_episode_writer()
                     try:
                         messages = reader.read_available(peer)
                     except BlockingIOError:
@@ -498,6 +589,7 @@ class ModelRuntime:
                     if not messages:
                         readable, _, _ = select.select([peer], [], [], 0.05)
                         if not readable:
+                            self._check_episode_writer()
                             continue
                         messages = reader.read_available(peer)
                     for message, observation_matrices in messages:
@@ -516,6 +608,12 @@ class ModelRuntime:
                             peer, message, pending_observation, observation_matrices)
                     pending_observation = self._process_pending(peer, pending_observation)
         finally:
+            writer, self._episode_writer = self._episode_writer, None
+            if writer is not None:
+                try:
+                    writer.finish()
+                except RuntimeError:
+                    pass
             listener.close()
 
 

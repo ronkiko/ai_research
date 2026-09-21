@@ -174,9 +174,9 @@ class EpisodeDataset:
                     self._writer = None
 
     @contextmanager
-    def _sample_transaction(self):
+    def _write_transaction(self, *, include_vision: bool = False):
         if self._writer is None:
-            with self._connect(include_vision=True) as connection:
+            with self._connect(include_vision=include_vision) as connection:
                 yield connection
             return
         yield self._writer
@@ -186,6 +186,11 @@ class EpisodeDataset:
             self._writer.commit()
             self._pending_writes = 0
             self._last_commit = now
+
+    @contextmanager
+    def _sample_transaction(self):
+        with self._write_transaction(include_vision=True) as connection:
+            yield connection
 
     @classmethod
     def create(
@@ -693,7 +698,7 @@ class EpisodeDataset:
         )
 
     def mark_control_requested(self, policy_sequence: int) -> None:
-        with self._connect() as connection:
+        with self._write_transaction() as connection:
             connection.execute(
                 "UPDATE steps SET control_requested=1 WHERE policy_sequence=?",
                 (int(policy_sequence),),
@@ -702,7 +707,7 @@ class EpisodeDataset:
     def mark_control_result(self, policy_sequence: int, status: str) -> None:
         if status not in {"accepted", "duplicate", "rejected"}:
             raise ValueError("control status is invalid")
-        with self._connect() as connection:
+        with self._write_transaction() as connection:
             connection.execute(
                 "UPDATE steps SET control_requested=1, control_status=? "
                 "WHERE policy_sequence=?",
@@ -710,7 +715,7 @@ class EpisodeDataset:
             )
 
     def mark_actuated(self, policy_sequence: int) -> None:
-        with self._connect() as connection:
+        with self._write_transaction() as connection:
             connection.execute(
                 "UPDATE steps SET actuated=1 WHERE policy_sequence=?",
                 (int(policy_sequence),),
@@ -724,7 +729,7 @@ class EpisodeDataset:
     ) -> None:
         if not isinstance(desired_state, ActionDecision):
             raise TypeError("desired_state must be an ActionDecision")
-        with self._connect() as connection:
+        with self._write_transaction() as connection:
             cursor = connection.execute(
                 """
                 UPDATE steps SET

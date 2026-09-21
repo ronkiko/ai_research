@@ -46,3 +46,17 @@ reward/GAE, updates the model, publishes the checkpoint, then collection
 continues with the updated policy. A future multi-episode rollout design would
 need an explicit single-policy-version batch contract and episode-bounded GAE;
 it is not the present behavior.
+
+
+## Realtime Experience Writer
+
+The realtime Model runtime separates inference from durability. Inference
+creates immutable DecisionSample/Vision/Proprioception snapshots and enqueues
+all episode mutations to one sequential writer. Controller-resolution,
+request/result, and accepted-actuation mutations use the same queue, so causal
+ordering is preserved without placing SQLite commit latency in the Motor loop.
+
+The terminal boundary is strict: queued experience is drained and committed
+before EpisodeDataset is finalized and before PPO reads it. Storage failure is
+fail-closed and prevents finalization/update rather than silently dropping
+experience.
