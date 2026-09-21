@@ -29,6 +29,9 @@ data/raw/
 # game2/v2: local runtime state and training artifacts
 game2/v2/runtime/
 
+# gameserver/v1: local trace/runtime state
+gameserver/v1/runtime/
+
 # game1: runtime-конфиг настроек (генерируется движком, не пушим)
 game1/game1.conf.json
 
