@@ -1,10 +1,112 @@
 # GameClient v1
 
 GameClient v1 is a plain CLI client for `gameserver.v1`. It is intentionally
-friendly to bov[X[œÈ[™RHYÙ[ÎˆÛÛ[X[™Èš[İX›H[™K[ÜšY[Y^\™H\È›Èİ\œÙ\ËÕRHØÜ™Y[‹›ÈS”ÒH™Y˜]ÈÛÜ[™KZœÛÛ˜^ÜÙ\ÈÛÛ\Xİ›XXÚ[™K\™XYX›H”ÓÓ‹ˆØ]ÚKZœÛÛ˜[Z]ÈÛ™H”ÓÓˆØš™Xİ\ˆ[™H
-”ÓÓ“
-K‚‚•HÛY[\È[ˆ[™\[™[ÚX›[™È›Ú™Xİˆ]Ù\È
-Š››İ
-Šˆ[\Ü˜Ø[Y\Ù\™\‹Š˜[™Û›İÜÈÛ›HHX›XÈØ]]Ø^H›İØÛÛ]LËŒŒŒNŒMÍŒ˜HY˜][‚‚ˆÈÈİ\‚•\›Z[˜[N‚‚˜˜\Ú‹‹ÙØ[Y\Ù\™\‹İŒKÛÜÜÙ\™\‹œÚ˜‚•\›Z[˜[‚‚˜˜\Ú‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ^Y\œÂ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÙÚ[ˆ^Y\ŒB‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÛ˜\Úİ˜‚•H\ÜİÛÜ™\ÜÈŒHØ˜Hİ\œ™[H^ÜÙ\È^Y\ŒX^Y\Œ˜[™^Y\ŒØ‚Y\ˆÙÚ[ˆHÙ\™\ˆXÙ\ÈHÙ[XİYY[]H[ˆÛÜ›HÈ›Û™LX[Û™ÜÚYB˜[ØŒX‚‚ˆÈÈÛÛ[X[™Â‚’[X[‹\™XYX›H^[\\Î‚‚˜˜\Ú‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚX[‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ^Y\œÂ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÙÚ[ˆ^Y\ŒB‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÚØ[ZB‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÛ˜\Úİ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ[İ™HšYÚ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ[İ™H\[Y‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚİÜ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚØ]ÚKZ[\˜[HKXÛİ[B‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚÙÛİ]˜‚‘^XİYÙ[ÜØÜš\ÛÛ›Û\Ù\È^\È[ˆËLK_X‚‚˜˜\Ú‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ[œ]K^HK^H‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ[œ]K^K^H˜‚“XXÚ[™K\™XYX›H[ÙH\ÈHÛØ˜[›YÈXÙY™Y›Ü™HHÛÛ[X[™‚‚˜˜\Ú‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚKZœÛÛˆ^Y\œÂ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚKZœÛÛˆÙÚ[ˆ^Y\ŒB‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚKZœÛÛˆÛ˜\Úİ‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚKZœÛÛˆ[œ]K^HK^H‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚKZœÛÛˆØ]ÚKZ[\˜[ŒHKXÛİ[L˜‚“›Ü›X[ÛÛ[X[™È[Z]^XİHÛ™H”ÓÓˆØš™Xİ[ˆKZœÛÛ˜[ÙKˆØ]Ú[Z]Â’”ÓÓ“™XØ]\ÙH]\È^XÚ]HHİ™X[K‚‚ˆÈÈØØ[Ù\ÜÚ[Û‚‚“ÙÚ[ˆİÜ™\ÈÛ›HX›XÈÙ\ÜÚ[ÛˆY]Y]H[™H]\İÛY[ÛÛ[X[™Ù\]Y[˜ÙBš[‚‚˜^™Ø[YXÛY[İŒKÜ[[YKÜÙ\ÜÚ[Û‹šœÛÛ‚˜‚•Hš[H\ÈØØ[ÛY[İ]K›İ]]Üš]]]™HØ[YHİ]Kˆ[İ™[Y[Ù\]Y[˜ÙB›[X™\œÈ\™H™\Ù\™Y™Y›Ü™H™]ÛÜšÈKÓÈÛÈHÜİ™\ÜÛœÙHØ[››İØ]\ÙHBœÙ\]Y[˜ÙHÈ™H™]\ÙY‚‚’YˆHØ[YTÙ\™\ˆ\È™\İ\YÚ[HHØØ[Ù\ÜÚ[Ûˆš[H™[XZ[œËÛX\ˆÛ›BHİ[HØØ[š[HÚ]‚‚˜˜\Ú‹‹ÙØ[YXÛY[İŒKÛÜØÛY[œÚ›Ü™Ù]\Ù\ÜÚ[Û‚˜‚•\ÈÛÛ[X[™[[[Û˜[HÙ\È›İÛÛXİØ]]Ø^K‚‚ˆÈÈİ]]Ú\B‚•^[ÙH\È[X™\˜][HÚ[\H[™\[™[Û›KˆHÛ˜\ÚİÛÚÜÈZÙN‚‚˜^”ÓTÒÕ›Û™O^›Û™LHXÚÏLLŒÍH\ÚXÜ×ÚLLŒ[]Y\ÏL‚‘S•UHYXXİÜ‹\^Y\ŒHÚ[™\^Y\ˆİÛ™\\^Y\ŒHLŒLŒOLÌŒLNŒOLŒ[İ™OJK
-B‘S•UHY[[ØŒHÚ[™[[ØˆİÛ™\S›Û™HMÌŒOLÌŒKLLŒŒOLŒ[İ™OJLK
-B˜‚•\™H\™H›Èİ\œÛÜˆÛÛ›ÛËY[ˆ[™[ËX›\È™\]Z\š[™È\›Z[˜[ÚYœ›ÙÜ™\ÜÈ[š[X][ÛœËÜˆ[\˜Xİ]™H›Û\Ëˆ[ˆRHYÙ[Ø[ˆ[›ÚÙHÛ™HÛÛ[X[™œ™XYİİ][™XÚYHÚ]ÛÛ[X[™È\ÜİYH™^‚‚ˆÈÈ\İÂ‚˜˜\Úœ]Ûˆ[H[š]\İ\ØÛİ™\ˆ\ÈØ[YXÛY[İŒKİ\İÈ]‚˜‚•H\İÈ^\˜Ú\ÙHHX›XÈØ]]Ø^H›İÈYØZ[œİHÛX[›İØÛÛXÛÛ\]X›B™˜ZÙHØ]]Ø^H[™™\šYH]HÛY[XÚØYÙHÛÛZ[œÈ›ÈØ[YTÙ\™\ˆ[\ÜË‚
+friendly to both humans and AI agents: commands print stable line-oriented text,
+there is no curses/TUI screen, no ANSI redraw loop, and `--json` exposes compact
+machine-readable JSON. `watch --json` emits one JSON object per line (JSONL).
+
+The client is an independent sibling project. It does **not** import
+`gameserver.*` and knows only the public Gateway protocol at `127.0.0.1:17600`
+by default.
+
+## Start
+
+Terminal 1:
+
+```bash
+./gameserver/v1/op/server.sh
+```
+
+Terminal 2:
+
+```bash
+./gameclient/v1/op/client.sh players
+./gameclient/v1/op/client.sh login player1
+./gameclient/v1/op/client.sh snapshot
+```
+
+The passwordless v1 lobby currently exposes `player1`, `player2`, and `player3`.
+After login the server places the selected identity in `world1 / zone1` alongside
+`mob1`.
+
+## Commands
+
+Human-readable examples:
+
+```bash
+./gameclient/v1/op/client.sh health
+./gameclient/v1/op/client.sh players
+./gameclient/v1/op/client.sh login player1
+./gameclient/v1/op/client.sh whoami
+./gameclient/v1/op/client.sh snapshot
+./gameclient/v1/op/client.sh move right
+./gameclient/v1/op/client.sh move up-left
+./gameclient/v1/op/client.sh stop
+./gameclient/v1/op/client.sh watch --interval 0.5 --count 5
+./gameclient/v1/op/client.sh logout
+```
+
+Exact agent/script control uses axes in `{-1,0,1}`:
+
+```bash
+./gameclient/v1/op/client.sh input --x 1 --y 0
+./gameclient/v1/op/client.sh input --x 0 --y 0
+```
+
+Machine-readable mode is a global flag placed before the command:
+
+```bash
+./gameclient/v1/op/client.sh --json players
+./gameclient/v1/op/client.sh --json login player1
+./gameclient/v1/op/client.sh --json snapshot
+./gameclient/v1/op/client.sh --json input --x 1 --y 0
+./gameclient/v1/op/client.sh --json watch --interval 0.1 --count 10
+```
+
+Normal commands emit exactly one JSON object in `--json` mode. `watch` emits
+JSONL because it is explicitly a stream.
+
+## Local session
+
+Login stores only public session metadata and the latest client command sequence
+in:
+
+```text
+gameclient/v1/runtime/session.json
+```
+
+The file is local client state, not authoritative game state. Movement sequence
+numbers are reserved before network I/O so a lost response cannot cause a
+sequence to be reused.
+
+If the GameServer is restarted while a local session file remains, clear only
+the stale local file with:
+
+```bash
+./gameclient/v1/op/client.sh forget-session
+```
+
+This command intentionally does not contact Gateway.
+
+## Output shape
+
+Text mode is deliberately simple and append-only. A snapshot looks like:
+
+```text
+SNAPSHOT zone=zone1 tick=12345 physics_hz=120 entities=2
+ENTITY id=actor-player1 kind=player owner=player1 x=210.000 y=300.000 vx=180.000 vy=0.000 move=(1,0)
+ENTITY id=mob1 kind=mob owner=None x=700.000 y=300.000 vx=-120.000 vy=0.000 move=(-1,0)
+```
+
+There are no cursor controls, hidden panels, tables requiring terminal width,
+progress animations, or interactive prompts. An AI agent can invoke one command,
+read stdout, and decide what command to issue next.
+
+## Tests
+
+```bash
+python -m unittest discover -s gameclient/v1/tests -v
+```
+
+The tests exercise the public Gateway flow against a small protocol-compatible
+fake Gateway and verify that the client package contains no GameServer imports.

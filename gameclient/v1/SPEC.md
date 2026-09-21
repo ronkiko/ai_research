@@ -16,22 +16,22 @@ world tick, or entity lifecycle.
 
 The primary interface is a conventional process-per-command CLI. It must remain
 readable without a terminal emulator and therefore must not require curses,
-TUI widgets, ANSI cursor movement, hidden interactive state, or screen redraw.
+TUI widgets, ANSI cursor movement, hidden interactive state, or screen redraws.
 
 Human text output is line-oriented and stable. `--json` emits machine-readable
 JSON; explicit streaming commands emit JSONL. Errors use a non-zero exit code
-and are printed as `ERROR ...` in text mode or an object with `ok:false in JSON
+and are printed as `ERROR ...` in text mode or an object with `ok:false` in JSON
 mode.
 
 ## Session and input
 
-`Login PLAYER_ID` stores the public session identifiers locally. The local file
+`login PLAYER_ID` stores the public session identifiers locally. The local file
 is not game state. Each movement request uses a positive monotonic sequence.
 The client reserves the next sequence before sending the request; gaps are
 allowed, reuse is not.
 
 `input --x X --y Y` is the canonical agent-facing control command. Human-facing
-`cmove DIRECTION` and `stop` are aliases that resolve to the same axis contract.
+`move DIRECTION` and `stop` are aliases that resolve to the same axis contract.
 Movement describes current intent and remains latched server-side until a later
 input changes it.
 
