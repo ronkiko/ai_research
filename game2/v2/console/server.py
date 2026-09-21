@@ -28,7 +28,8 @@ from ..contracts.manifests import Endpoint, PlayerManifest
 from ..contracts.screen import (CURRENT_SCREEN_SOURCE_PATH, ScreenSourceDiscovery,
                                 publish_screen_source, remove_screen_source)
 from .config import (ControllerManifest, DisplayManifest, EngineManifest,
-                     InternalManifest, ScreenSourceManifest, SessionConfig,
+                     InternalManifest, ProprioceptionSourceManifest,
+                     ScreenSourceManifest, SessionConfig,
                      allocate_endpoint, new_session_id)
 from .protocol import (despawn_message, respawn_message, spawn_message)
 from .transport.control_server import ControlServer
@@ -39,6 +40,7 @@ CONTROLLER_MODULES = {"default": "game2.v2.console.controller.main"}
 DISPLAY_MODULE = "game2.v2.console.display.main"
 VISION_RENDERER_MODULE = "game2.v2.console.display.vision.renderer"
 SCREEN_SOURCE_MODULE = "game2.v2.console.display.screen.source"
+PROPRIOCEPTION_SOURCE_MODULE = "game2.v2.console.proprioception.source"
 
 
 def preflight(config_path: str | Path) -> tuple[SessionConfig, WorldDefinition]:
@@ -52,7 +54,8 @@ def preflight(config_path: str | Path) -> tuple[SessionConfig, WorldDefinition]:
         raise ValueError(f"Unknown controller subsystem: {config.controller}")
     for module_name in (
             "game2.v2.console.engine.main", controller_module, DISPLAY_MODULE,
-            VISION_RENDERER_MODULE, SCREEN_SOURCE_MODULE):
+            VISION_RENDERER_MODULE, SCREEN_SOURCE_MODULE,
+            PROPRIOCEPTION_SOURCE_MODULE):
         module = importlib.import_module(module_name)
         if not callable(getattr(module, "main", None)) and module_name != VISION_RENDERER_MODULE:
             raise ValueError(f"Required subsystem entrypoint is missing: {module_name}")
@@ -178,7 +181,8 @@ class PlayerRuntime:
     directory: Path
     controller: subprocess.Popen
     display: subprocess.Popen
-    logs: tuple[TextIO, TextIO]
+    proprioception: subprocess.Popen
+    logs: tuple[TextIO, TextIO, TextIO]
     spawned: bool = False
 
 
@@ -187,7 +191,8 @@ class ConsoleServer:
 
     def __init__(self, session_id: str, world: WorldDefinition, world_file: Path, run_dir: Path,
                  engine: EngineLifecycleClient, controller_name: str,
-                 engine_state: Endpoint, engine_events: Endpoint):
+                 engine_state: Endpoint, engine_telemetry: Endpoint,
+                 engine_events: Endpoint):
         self.session_id = session_id
         self.world = world
         self.world_file = world_file
@@ -195,6 +200,7 @@ class ConsoleServer:
         self.engine = engine
         self.controller_name = controller_name
         self.engine_state = engine_state
+        self.engine_telemetry = engine_telemetry
         self.engine_events = engine_events
         self.attach = ControlServer("127.0.0.1", 0,
                                     decoder=decode_connection_message,
@@ -268,7 +274,7 @@ class ConsoleServer:
         player_id = f"player-{new_session_id()[:16]}"
         actor_id = f"actor-{new_session_id()[:16]}"
         directory = self.run_dir / "players" / player_id
-        controller = display = None
+        controller = display = proprioception = None
         logs: list[TextIO] = []
         try:
             directory.mkdir(parents=True, exist_ok=False)
@@ -279,16 +285,28 @@ class ConsoleServer:
                 actor_id,
             )
             vision_endpoint = allocate_endpoint()
+            proprioception_endpoint = allocate_endpoint()
             display_manifest = DisplayManifest(
                 self.session_id, self.engine_state, str(self.world_file), "vision",
                 vision_endpoint, actor_id)
+            proprioception_manifest = ProprioceptionSourceManifest(
+                self.session_id,
+                self.engine_telemetry,
+                proprioception_endpoint,
+                actor_id,
+            )
             controller_path = directory / "controller-manifest.json"
             display_path = directory / "display-manifest.json"
+            proprioception_path = directory / "proprioception-manifest.json"
             controller_manifest.write(controller_path)
             display_manifest.write(display_path)
+            proprioception_manifest.write(proprioception_path)
             controller_log = (directory / "controller.log").open("w", encoding="utf-8")
             display_log = (directory / "display.log").open("w", encoding="utf-8")
-            logs = [controller_log, display_log]
+            proprioception_log = (
+                directory / "proprioception.log"
+            ).open("w", encoding="utf-8")
+            logs = [controller_log, display_log, proprioception_log]
             root = str(Path(__file__).resolve().parents[3])
             controller = _launch_ready(
                 [sys.executable, "-m", CONTROLLER_MODULES[self.controller_name],
@@ -296,12 +314,21 @@ class ConsoleServer:
             display = _launch_ready(
                 [sys.executable, "-m", DISPLAY_MODULE, "--manifest", str(display_path)],
                 root, display_log, "Display")
-            manifest = PlayerManifest(self.session_id, player_id, actor_id,
-                                      controller_manifest.joystick,
-                                      vision_endpoint)
-            runtime = PlayerRuntime(connection_id, player_id, actor_id, manifest,
-                                    directory, controller, display,
-                                    (controller_log, display_log))
+            proprioception = _launch_ready(
+                [sys.executable, "-m", PROPRIOCEPTION_SOURCE_MODULE,
+                 "--manifest", str(proprioception_path)],
+                root, proprioception_log, "Proprioception")
+            manifest = PlayerManifest(
+                self.session_id, player_id, actor_id,
+                controller_manifest.joystick,
+                vision_endpoint,
+                proprioception_endpoint,
+            )
+            runtime = PlayerRuntime(
+                connection_id, player_id, actor_id, manifest,
+                directory, controller, display, proprioception,
+                (controller_log, display_log, proprioception_log),
+            )
             with self.lock:
                 disconnected = connection_id in self.closed_connections or self.closing.is_set()
                 self.pending.discard(connection_id)
@@ -327,6 +354,7 @@ class ConsoleServer:
             with self.lock:
                 self.pending.discard(connection_id)
                 self.closed_connections.discard(connection_id)
+            _terminate(proprioception)
             _terminate(display)
             _terminate(controller)
             for log in logs:
@@ -341,7 +369,11 @@ class ConsoleServer:
             with self.lock:
                 if self.connections.get(runtime.connection_id) is not runtime:
                     return
-            if runtime.controller.poll() is not None or runtime.display.poll() is not None:
+            if (
+                runtime.controller.poll() is not None
+                or runtime.display.poll() is not None
+                or runtime.proprioception.poll() is not None
+            ):
                 self._detach(runtime.connection_id, close_client=True)
                 return
             time.sleep(0.05)
@@ -394,6 +426,7 @@ class ConsoleServer:
             except (ConnectionError, OSError, TimeoutError, ValueError):
                 pass
             runtime.spawned = False
+        _terminate(runtime.proprioception)
         _terminate(runtime.controller)
         _terminate(runtime.display)
         for log in runtime.logs:
@@ -582,6 +615,7 @@ def run_server(config_path: str | Path,
             screen_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")
             screen_log.flush()
         assert internal.engine_state is not None
+        assert internal.engine_telemetry is not None
         assert internal.engine_events is not None
         server = ConsoleServer(
             session_id,
@@ -591,6 +625,7 @@ def run_server(config_path: str | Path,
             engine_control,
             config.controller,
             internal.engine_state,
+            internal.engine_telemetry,
             internal.engine_events,
         )
         server.start()

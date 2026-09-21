@@ -182,7 +182,8 @@ class PersistentConsoleSmoke(unittest.TestCase):
         try:
             manifest = connection.connect()
             self.assertEqual(set(manifest.to_dict()), {
-                "session_id", "player_id", "actor_id", "joystick", "vision"})
+                "session_id", "player_id", "actor_id", "joystick", "vision",
+                "proprioception"})
             joystick = socket.create_connection((manifest.joystick.host, manifest.joystick.port),
                                                 timeout=2)
             joystick.close()

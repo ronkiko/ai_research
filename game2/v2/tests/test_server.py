@@ -46,7 +46,8 @@ class PublicConnectionContractTests(unittest.TestCase):
                                   Endpoint("127.0.0.1", 1), Endpoint("127.0.0.1", 2))
         self.assertEqual(PlayerManifest.from_dict(manifest.to_dict()), manifest)
         self.assertEqual(set(manifest.to_dict()), {
-            "session_id", "player_id", "actor_id", "joystick", "vision"})
+            "session_id", "player_id", "actor_id", "joystick", "vision",
+            "proprioception"})
         with self.assertRaises(ValueError):
             PlayerManifest.from_dict({**manifest.to_dict(), "engine_control": {}})
 

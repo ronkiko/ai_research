@@ -374,6 +374,56 @@ class ScreenSourceManifest:
 
 
 @dataclass(frozen=True)
+class ProprioceptionSourceManifest:
+    """Private Console wiring for one public self-body sensor source."""
+
+    session_id: str
+    engine_telemetry: Endpoint
+    proprioception: Endpoint
+    self_actor_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.session_id) is not str or not self.session_id:
+            raise ValueError("session_id must be non-empty")
+        if type(self.self_actor_id) is not str or not self.self_actor_id:
+            raise ValueError("self_actor_id must be non-empty")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "engine_telemetry": self.engine_telemetry.as_dict(),
+            "proprioception": self.proprioception.as_dict(),
+            "self_actor_id": self.self_actor_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProprioceptionSourceManifest":
+        session_id = _manifest_session(
+            data,
+            {
+                "session_id", "engine_telemetry", "proprioception",
+                "self_actor_id",
+            },
+        )
+        return cls(
+            session_id,
+            cast(Endpoint, _manifest_endpoint(data["engine_telemetry"])),
+            cast(Endpoint, _manifest_endpoint(data["proprioception"])),
+            data["self_actor_id"],
+        )
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "ProprioceptionSourceManifest":
+        with Path(path).open(encoding="utf-8") as source:
+            return cls.from_dict(_strict_json(source.read()))
+
+    def write(self, path: str | Path) -> None:
+        Path(path).write_text(
+            json.dumps(self.to_dict(), sort_keys=True), encoding="utf-8"
+        )
+
+
+@dataclass(frozen=True)
 class OperatorControlManifest:
     """Private lifecycle capability for a temporary operator shell."""
 
@@ -416,5 +466,6 @@ def new_session_id() -> str:
 
 
 __all__ = ["COMPATIBILITY_ACTOR_ID", "COMPATIBILITY_PLAYER_ID", "ControllerManifest", "DisplayManifest", "EngineManifest",
-           "InternalManifest", "OperatorControlManifest", "ScreenSourceManifest", "SessionConfig",
+           "InternalManifest", "OperatorControlManifest", "ProprioceptionSourceManifest",
+           "ScreenSourceManifest", "SessionConfig",
            "allocate_endpoint", "new_session_id"]

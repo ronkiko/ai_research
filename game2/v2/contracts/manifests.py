@@ -88,6 +88,7 @@ class PlayerManifest:
     actor_id: str
     joystick: Endpoint
     vision: Endpoint
+    proprioception: Endpoint | None = None
 
     def __post_init__(self) -> None:
         for name in ("session_id", "player_id", "actor_id"):
@@ -100,12 +101,17 @@ class PlayerManifest:
     def to_dict(self) -> dict[str, Any]:
         return {"session_id": self.session_id, "player_id": self.player_id,
                 "actor_id": self.actor_id, "joystick": self.joystick.as_dict(),
-                "vision": self.vision.as_dict()}
+                "vision": self.vision.as_dict(),
+                "proprioception": (
+                    self.proprioception.as_dict()
+                    if self.proprioception else None
+                )}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlayerManifest":
         if not isinstance(data, dict) or set(data) != {
-                "session_id", "player_id", "actor_id", "joystick", "vision"}:
+                "session_id", "player_id", "actor_id", "joystick", "vision",
+                "proprioception"}:
             raise ValueError("Player manifest fields are invalid")
         values = {name: data[name] for name in ("session_id", "player_id", "actor_id")}
         for name, value in values.items():
@@ -115,8 +121,11 @@ class PlayerManifest:
         vision = _manifest_endpoint(data["vision"])
         if joystick is None or vision is None:
             raise ValueError("Player peripheral endpoints are required")
-        return cls(values["session_id"], values["player_id"], values["actor_id"],
-                   joystick, vision)
+        return cls(
+            values["session_id"], values["player_id"], values["actor_id"],
+            joystick, vision,
+            _manifest_endpoint(data["proprioception"], False),
+        )
 
     @classmethod
     def from_file(cls, path: str | Path) -> "PlayerManifest":
