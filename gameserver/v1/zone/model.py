@@ -85,7 +85,7 @@ class ZoneRuntime:
     def enqueue_despawn(self, entity_id: str) -> int:
         with self._lock:
             if entity_id not in self.entities:
-                raise ProtocolError(bunknown entity")
+                raise ProtocolError("unknown entity")
             return self._enqueue("despawn", {"entity_id": entity_id})
 
     def enqueue_input(self, *, entity_id: str, sequence: int, move_x: int, source: str) -> int:
