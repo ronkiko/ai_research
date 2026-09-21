@@ -93,7 +93,7 @@ def _compact_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def health() -> dict:
+def health() -> dict[str, Any]:
     """Check Host readiness without exposing internal session credentials."""
     response = client.health()
     return {
@@ -103,7 +103,7 @@ def health() -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def describe() -> dict:
+def describe() -> dict[str, Any]:
     """Describe the safe agent-facing game contract."""
     response = client.describe()
     return {
@@ -121,7 +121,7 @@ def describe() -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def game_state() -> dict:
+def game_state() -> dict[str, Any]:
     """Return compact shared state: tick, P, B, and current sequence."""
     return _compact_state(client.state())
 
@@ -133,7 +133,7 @@ def players() -> list[str]:
 
 
 @mcp.tool(annotations=WRITE)
-def login(player_id: str = "player1") -> dict:
+def login(player_id: str = "player1") -> dict[str, Any]:
     """Make Host own the selected GameServer player session."""
     response = client.login(player_id)
     return {
@@ -144,13 +144,13 @@ def login(player_id: str = "player1") -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def session() -> dict:
+def session() -> dict[str, Any]:
     """Return public shared-session metadata; session_id is never exposed."""
     return _public_session(client.session())
 
 
 @mcp.tool(annotations=WRITE)
-def move(direction: Literal["left", "right", "stop"]) -> dict:
+def move(direction: Literal["left", "right", "stop"]) -> dict[str, Any]:
     """Set shared player movement intent."""
     move_x = {"left": -1, "right": 1, "stop": 0}[direction]
     response = client.input(move_x)
@@ -165,7 +165,7 @@ def move(direction: Literal["left", "right", "stop"]) -> dict:
 def recent_events(
     after_event_id: int = 0,
     limit: int = MCP_EVENT_DEFAULT,
-) -> dict:
+) -> dict[str, Any]:
     """Read a bounded page of shared Host events; max 50 events per call."""
     if type(limit) is not int or not 1 <= limit <= MCP_EVENT_MAX:
         raise ValueError(f"limit must be within [1,{MCP_EVENT_MAX}]")
@@ -185,7 +185,7 @@ def recent_events(
 
 
 @mcp.tool(annotations=WRITE)
-def logout() -> dict:
+def logout() -> dict[str, Any]:
     """End the shared Host session without exposing Gateway session data."""
     response = client.logout()
     return {

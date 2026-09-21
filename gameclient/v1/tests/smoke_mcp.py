@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 import signal
@@ -69,7 +70,11 @@ def contains_key(value: Any, key: str) -> bool:
     return False
 
 
-async def tool(session: ClientSession, name: str, arguments: dict[str, Any] | None = None) -> Any:
+async def tool(
+    session: ClientSession,
+    name: str,
+    arguments: dict[str, Any] | None = None,
+) -> Any:
     result = await session.call_tool(name, arguments=arguments or {})
     if result.is_error:
         text = " | ".join(
@@ -77,7 +82,17 @@ async def tool(session: ClientSession, name: str, arguments: dict[str, Any] | No
             for block in result.content
         )
         raise AssertionError(f"MCP tool {name} failed: {text}")
-    return result.structured_content
+    if result.structured_content is not None:
+        return result.structured_content
+    for block in result.content:
+        text = getattr(block, "text", None)
+        if not isinstance(text, str):
+            continue
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError(f"MCP tool {name} returned no machine-readable payload")
 
 
 async def run_mcp_flow() -> None:
