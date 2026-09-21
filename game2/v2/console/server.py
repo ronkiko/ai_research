@@ -27,6 +27,12 @@ from ..contracts.framing import encode_frame, recv_frame, send_frame
 from ..contracts.manifests import Endpoint, PlayerManifest
 from ..contracts.screen import (CURRENT_SCREEN_SOURCE_PATH, ScreenSourceDiscovery,
                                 publish_screen_source, remove_screen_source)
+from ..contracts.screen_server import (
+    ScreenServerDiscovery,
+    bind_message,
+    decode_screen_server_status,
+    unbind_message,
+)
 from .config import (ControllerManifest, DisplayManifest, EngineManifest,
                      InternalManifest, ProprioceptionSourceManifest,
                      ScreenSourceManifest, SessionConfig,
@@ -523,11 +529,33 @@ def _check_discovery_directory(path: Path) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _screen_broker_request(
+    discovery_path: str | Path, message: dict
+) -> tuple[dict, ...]:
+    discovery = ScreenServerDiscovery.from_file(discovery_path)
+    sock = socket.create_connection(
+        (discovery.endpoint.host, discovery.endpoint.port), timeout=3
+    )
+    try:
+        sock.settimeout(3)
+        send_frame(sock, message)
+        response = recv_frame(sock)
+        if response.get("type") == "screen_server_error":
+            raise RuntimeError(
+                response.get("message", "Screen broker request failed")
+            )
+        return decode_screen_server_status(response)
+    finally:
+        sock.close()
+
+
 def run_server(config_path: str | Path,
                discovery_path: str | Path = CURRENT_CONSOLE_PATH,
                screen_discovery_path: str | Path | None = None,
                screen_view: str = "screen",
-               screen_episode_store: str | Path | None = None) -> int:
+               screen_episode_store: str | Path | None = None,
+               screen_server_discovery_path: str | Path | None = None,
+               screen_channel: int | None = None) -> int:
     """Run one persistent Console until explicit shutdown or process failure."""
     config_path = Path(config_path).resolve()
     discovery_path = Path(discovery_path)
@@ -535,6 +563,14 @@ def run_server(config_path: str | Path,
         raise ValueError("screen_view must be screen or vision")
     if screen_episode_store is not None and screen_view != "vision":
         raise ValueError("screen_episode_store requires screen_view=vision")
+    if (screen_server_discovery_path is None) != (screen_channel is None):
+        raise ValueError(
+            "screen broker discovery and screen channel must be provided together"
+        )
+    if screen_channel is not None and (
+        type(screen_channel) is not int or screen_channel <= 0
+    ):
+        raise ValueError("screen_channel must be a positive integer")
     if screen_discovery_path is None:
         screen_discovery_path = (
             CURRENT_SCREEN_SOURCE_PATH
@@ -609,10 +645,22 @@ def run_server(config_path: str | Path,
             nonlocal own_screen_source
             process = _launch_ready(
                 screen_command, root, screen_log, "ScreenSource")
-            own_screen_source = ScreenSourceDiscovery(
+            source = ScreenSourceDiscovery(
                 1, session_id, world.map_id, screen_endpoint,
                 world.width, world.height)
-            publish_screen_source(own_screen_source, screen_discovery_path)
+            try:
+                publish_screen_source(source, screen_discovery_path)
+                if screen_channel is not None:
+                    assert screen_server_discovery_path is not None
+                    _screen_broker_request(
+                        screen_server_discovery_path,
+                        bind_message(screen_channel, source),
+                    )
+            except Exception:
+                _terminate(process)
+                remove_screen_source(source, screen_discovery_path)
+                raise
+            own_screen_source = source
             return process
 
         screen_retry_at = 0.0
@@ -656,6 +704,15 @@ def run_server(config_path: str | Path,
             if screen_source is not None and screen_source.poll() is not None:
                 returncode = screen_source.returncode
                 if own_screen_source is not None:
+                    if screen_channel is not None:
+                        try:
+                            assert screen_server_discovery_path is not None
+                            _screen_broker_request(
+                                screen_server_discovery_path,
+                                unbind_message(screen_channel),
+                            )
+                        except (EOFError, OSError, RuntimeError, ValueError):
+                            pass
                     remove_screen_source(own_screen_source, screen_discovery_path)
                     own_screen_source = None
                 screen_source = None
@@ -692,10 +749,23 @@ def run_server(config_path: str | Path,
             server.close()
         if engine_control is not None:
             engine_control.close()
+        # Withdraw the producer before closing its socket. Consumers receive
+        # DETACH as the normal map-transition boundary instead of observing a
+        # truncated frame/EOF from a source that still appears bound.
+        if own_screen_source is not None:
+            if screen_channel is not None:
+                try:
+                    assert screen_server_discovery_path is not None
+                    _screen_broker_request(
+                        screen_server_discovery_path,
+                        unbind_message(screen_channel),
+                    )
+                except (EOFError, OSError, RuntimeError, ValueError):
+                    pass
+            remove_screen_source(own_screen_source, screen_discovery_path)
+            own_screen_source = None
         _terminate(screen_source)
         _terminate(engine)
-        if own_screen_source is not None:
-            remove_screen_source(own_screen_source, screen_discovery_path)
         if own_discovery is not None:
             remove_current_console(own_discovery, discovery_path)
         signal.signal(signal.SIGINT, previous_int)

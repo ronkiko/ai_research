@@ -225,6 +225,10 @@ def main(argv=None) -> int:
                         help="server-only spectator source view")
     parser.add_argument("--screen-episode-store",
                         help="server-only episode dataset directory for the Vision spectator")
+    parser.add_argument("--screen-server-discovery",
+                        help="server-only Screen broker discovery path")
+    parser.add_argument("--screen-channel", type=int,
+                        help="server-only Screen source channel to publish")
     parser.add_argument("--state-capability",
                         help="private embedded-demo STATE capability output path")
     parser.add_argument("--control-capability",
@@ -237,12 +241,19 @@ def main(argv=None) -> int:
             args.screen_discovery,
             args.screen_view,
             args.screen_episode_store,
+            args.screen_server_discovery,
+            args.screen_channel,
         )
-    if (args.discovery is not None or args.screen_discovery is not None
-            or args.screen_view != "screen" or args.screen_episode_store is not None):
+    if (
+        args.discovery is not None
+        or args.screen_discovery is not None
+        or args.screen_view != "screen"
+        or args.screen_episode_store is not None
+        or args.screen_server_discovery is not None
+        or args.screen_channel is not None
+    ):
         parser.error(
-            "--discovery, --screen-discovery, --screen-view and "
-            "--screen-episode-store are only valid with --server"
+            "Screen/Console server options are only valid with --server"
         )
     status, summary = run_session(args.config, args.state_capability,
                                   args.control_capability)

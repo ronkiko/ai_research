@@ -58,7 +58,7 @@ class ScreenServer:
         self.ready = threading.Event()
         self.discovery: ScreenServerDiscovery | None = None
         self.discovery_path: Path | None = None
-        self.registrations: dict[int, ScreenRegistration] = {}
+        self.registrations: dict[int, list[ScreenRegistration]] = {}
         self.sources: dict[int, ScreenSourceDiscovery] = {}
         self.lock = threading.RLock()
 
@@ -72,68 +72,71 @@ class ScreenServer:
     def _status(self) -> dict:
         with self.lock:
             return status_message(
-                self.slots, set(self.registrations), dict(self.sources)
+                self.slots,
+                {number for number, registrations in self.registrations.items()
+                 if registrations},
+                dict(self.sources),
             )
 
     def _register(self, number: int, client: socket.socket) -> ScreenRegistration:
         self._check_screen(number)
+        registration = ScreenRegistration(number, client)
         with self.lock:
-            if number in self.registrations:
-                raise RuntimeError(f"Screen #{number} is already open")
-            registration = ScreenRegistration(number, client)
-            self.registrations[number] = registration
-            self.sources.pop(number, None)
-        registration.send(opened_message(number))
+            self.registrations.setdefault(number, []).append(registration)
+            source = self.sources.get(number)
+        try:
+            registration.send(opened_message(number))
+            if source is not None:
+                registration.send(attach_message(number, source))
+        except (EOFError, OSError, ConnectionError):
+            self._drop_registration(registration)
+            raise RuntimeError(f"Screen #{number} disconnected")
         return registration
 
     def _drop_registration(self, registration: ScreenRegistration) -> None:
         with self.lock:
-            current = self.registrations.get(registration.screen)
-            if current is registration:
-                self.registrations.pop(registration.screen, None)
-                self.sources.pop(registration.screen, None)
+            registrations = self.registrations.get(registration.screen)
+            if registrations is not None:
+                self.registrations[registration.screen] = [
+                    current for current in registrations
+                    if current is not registration
+                ]
+                if not self.registrations[registration.screen]:
+                    self.registrations.pop(registration.screen, None)
         registration.close()
+
+    def _broadcast(self, number: int, message: dict) -> None:
+        with self.lock:
+            registrations = list(self.registrations.get(number, ()))
+        for registration in registrations:
+            try:
+                registration.send(message)
+            except (EOFError, OSError, ConnectionError):
+                self._drop_registration(registration)
 
     def _bind(self, number: int, source: ScreenSourceDiscovery) -> None:
         self._check_screen(number)
         with self.lock:
-            registration = self.registrations.get(number)
-        if registration is None:
-            raise RuntimeError(
-                f"Screen #{number} is not open; run ./game2/v2/op/screen.sh {number}"
-            )
-        try:
-            registration.send(attach_message(number, source))
-        except (EOFError, OSError, ConnectionError):
-            self._drop_registration(registration)
-            raise RuntimeError(f"Screen #{number} disconnected")
-        with self.lock:
-            if self.registrations.get(number) is registration:
-                self.sources[number] = source
+            self.sources[number] = source
+        self._broadcast(number, attach_message(number, source))
 
     def _unbind(self, number: int) -> None:
         self._check_screen(number)
         with self.lock:
-            registration = self.registrations.get(number)
-            self.sources.pop(number, None)
-        if registration is not None:
-            try:
-                registration.send(detach_message(number))
-            except (EOFError, OSError, ConnectionError):
-                self._drop_registration(registration)
+            had_source = self.sources.pop(number, None) is not None
+        if had_source:
+            self._broadcast(number, detach_message(number))
 
     def _close_screen(self, number: int) -> None:
         self._check_screen(number)
         with self.lock:
-            registration = self.registrations.get(number)
-            self.sources.pop(number, None)
-        if registration is None:
-            return
-        try:
-            registration.send(slot_close_message(number))
-        except (EOFError, OSError, ConnectionError):
-            pass
-        self._drop_registration(registration)
+            registrations = list(self.registrations.get(number, ()))
+        for registration in registrations:
+            try:
+                registration.send(slot_close_message(number))
+            except (EOFError, OSError, ConnectionError):
+                pass
+            self._drop_registration(registration)
 
     def _serve_registered(
         self, registration: ScreenRegistration
@@ -245,7 +248,11 @@ class ScreenServer:
                 pass
             self.listener = None
         with self.lock:
-            registrations = list(self.registrations.values())
+            registrations = [
+                registration
+                for group in self.registrations.values()
+                for registration in group
+            ]
             self.registrations.clear()
             self.sources.clear()
         for registration in registrations:

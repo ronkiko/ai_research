@@ -56,7 +56,7 @@ class ScreenServerContractTests(unittest.TestCase):
 
 
 class ScreenServerRuntimeTests(unittest.TestCase):
-    def test_foreground_screen_registers_then_training_only_rebinds_source(self):
+    def test_source_channel_supports_late_and_multiple_consumers(self):
         with tempfile.TemporaryDirectory() as directory:
             discovery_path = Path(directory) / "screen-server.json"
             server = ScreenServer(slots=2)
@@ -73,51 +73,64 @@ class ScreenServerRuntimeTests(unittest.TestCase):
             self.assertTrue(server.ready.wait(2))
             discovery = ScreenServerDiscovery.from_file(discovery_path)
 
-            initial = decode_screen_server_status(
-                _request(discovery, probe_message())
-            )
-            self.assertEqual(initial[0]["state"], "closed")
-
-            viewer = socket.create_connection(
-                (discovery.endpoint.host, discovery.endpoint.port), timeout=1
-            )
-            viewer.settimeout(1)
-            send_frame(viewer, open_message(1))
-            opened = recv_frame(viewer)
-            self.assertEqual(
-                decode_screen_slot_message(opened, 1), SLOT_OPENED
-            )
-
-            waiting = decode_screen_server_status(
-                _request(discovery, probe_message())
-            )
-            self.assertEqual(waiting[0]["state"], "waiting")
-
-            source = ScreenSourceDiscovery(
-                1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
+            first = ScreenSourceDiscovery(
+                1, "session-1", "flat_run",
+                Endpoint("127.0.0.1", 12345), 1280, 768
             )
             bound = decode_screen_server_status(
-                _request(discovery, bind_message(1, source))
+                _request(discovery, bind_message(1, first))
             )
             self.assertEqual(bound[0]["state"], "bound")
-            attach = recv_frame(viewer)
-            self.assertEqual(
-                decode_screen_slot_message(attach, 1), SLOT_ATTACH
+
+            viewers = []
+            for _ in range(2):
+                viewer = socket.create_connection(
+                    (discovery.endpoint.host, discovery.endpoint.port), timeout=1
+                )
+                viewer.settimeout(1)
+                send_frame(viewer, open_message(1))
+                self.assertEqual(
+                    decode_screen_slot_message(recv_frame(viewer), 1),
+                    SLOT_OPENED,
+                )
+                attach = recv_frame(viewer)
+                self.assertEqual(
+                    decode_screen_slot_message(attach, 1), SLOT_ATTACH
+                )
+                self.assertEqual(
+                    ScreenSourceDiscovery.from_dict(attach["source"]), first
+                )
+                viewers.append(viewer)
+
+            second = ScreenSourceDiscovery(
+                1, "session-2", "short_gap",
+                Endpoint("127.0.0.1", 12346), 1280, 768
             )
-            self.assertEqual(
-                ScreenSourceDiscovery.from_dict(attach["source"]), source
+            rebound = decode_screen_server_status(
+                _request(discovery, bind_message(1, second))
             )
+            self.assertEqual(rebound[0]["state"], "bound")
+            for viewer in viewers:
+                attach = recv_frame(viewer)
+                self.assertEqual(
+                    decode_screen_slot_message(attach, 1), SLOT_ATTACH
+                )
+                self.assertEqual(
+                    ScreenSourceDiscovery.from_dict(attach["source"]), second
+                )
 
             unbound = decode_screen_server_status(
                 _request(discovery, unbind_message(1))
             )
             self.assertEqual(unbound[0]["state"], "waiting")
-            detach = recv_frame(viewer)
-            self.assertEqual(
-                decode_screen_slot_message(detach, 1), SLOT_DETACH
-            )
+            for viewer in viewers:
+                self.assertEqual(
+                    decode_screen_slot_message(recv_frame(viewer), 1),
+                    SLOT_DETACH,
+                )
 
-            viewer.close()
+            viewers[0].close()
+            viewers[1].close()
             deadline = time.monotonic() + 2
             state = "waiting"
             while time.monotonic() < deadline:

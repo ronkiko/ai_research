@@ -361,15 +361,28 @@ class ManagementTrainingTests(unittest.TestCase):
             # ConsoleDiscovery validation is not the subject here; inspect the
             # command before that validation returns/raises.
             with self.assertRaises(Exception):
+                control = mock.Mock()
+                control.screen = 1
+                control.discovery_path = root / "screen-server.json"
                 run._start_console(
                     root,
                     Path("game2/v2/training/maps/level-1/flat_run.json").resolve(),
                     1200,
                     "vision",
                     root / "episodes",
+                    control,
                 )
             command = captured[0]
             self.assertIn("--screen-episode-store", command)
+            self.assertEqual(
+                command[command.index("--screen-channel") + 1], "1"
+            )
+            self.assertEqual(
+                Path(command[
+                    command.index("--screen-server-discovery") + 1
+                ]),
+                root / "screen-server.json",
+            )
 
 
 if __name__ == "__main__":

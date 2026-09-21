@@ -28,13 +28,10 @@ from game2.v2.management.bot_runtime import (
 )
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.manifests import PlayerManifest
-from game2.v2.contracts.screen import ScreenSourceDiscovery
 from game2.v2.contracts.screen_server import (
     ScreenServerDiscovery,
-    bind_message,
     decode_screen_server_status,
     probe_message,
-    unbind_message,
 )
 from game2.v2.contracts.training_set import TrainingMapSpec, TrainingSetManifest
 from game2.v2.learning.episode_dataset import EpisodeStore
@@ -166,7 +163,7 @@ def _resolve_map(manifest_path: Path, spec: TrainingMapSpec) -> Path:
 
 
 class ScreenControl:
-    """Optional Management-side binding to an already-running Screen Server."""
+    """Management-side selection/preflight for a Screen broker channel."""
 
     def __init__(self, screen: int, discovery_path: str | Path = DEFAULT_SCREEN_SERVER):
         if type(screen) is not int or screen <= 0:
@@ -198,19 +195,8 @@ class ScreenControl:
             raise TrainingRunError(
                 f"Screen #{self.screen} is outside the Screen Server slot range"
             )
-        slot = status[self.screen - 1]
-        if slot["state"] == "closed":
-            raise TrainingRunError(
-                f"Screen #{self.screen} is not open; "
-                f"run ./game2/v2/op/screen.sh {self.screen} in another terminal"
-            )
-
-    def bind(self, source: ScreenSourceDiscovery) -> None:
-        self._request(bind_message(self.screen, source))
-
-    def unbind(self) -> None:
-        self._request(unbind_message(self.screen))
-
+        # The channel may have zero consumers. Console owns the source and
+        # publishes it independently; viewers can subscribe before or later.
 
 class TrainingRun:
     """Compose process boundaries without importing their runtime implementations."""
@@ -347,8 +333,8 @@ class TrainingRun:
 
     def _start_console(
         self, directory: Path, map_path: Path, episode_limit: int, view: str,
-        episode_store: Path,
-    ) -> tuple[ManagedProcess, Path, Path]:
+        episode_store: Path, screen_control: ScreenControl | None = None,
+    ) -> tuple[ManagedProcess, Path]:
         config_path = directory / "console.json"
         discovery_path = directory / "console-discovery.json"
         screen_source_path = directory / "screen-source.json"
@@ -367,6 +353,13 @@ class TrainingRun:
             console_command.extend([
                 "--screen-episode-store", str(episode_store),
             ])
+        if screen_control is not None:
+            console_command.extend([
+                "--screen-server-discovery",
+                str(screen_control.discovery_path),
+                "--screen-channel",
+                str(screen_control.screen),
+            ])
         console = self._spawn(console_command)
         try:
             ConsoleDiscovery.from_dict(
@@ -374,19 +367,7 @@ class TrainingRun:
             )
         except (TypeError, ValueError) as exc:
             raise TrainingRunError("Console READY is invalid") from exc
-        return console, discovery_path, screen_source_path
-
-    def _wait_screen_source(self, path: Path, timeout: float = 5.0) -> ScreenSourceDiscovery:
-        deadline = time.monotonic() + timeout
-        last_error = None
-        while time.monotonic() < deadline:
-            self._check_stop()
-            try:
-                return ScreenSourceDiscovery.from_file(path)
-            except (FileNotFoundError, OSError, ValueError) as exc:
-                last_error = exc
-                self.sleeper(0.02)
-        raise TrainingRunError("Console did not publish ScreenSource") from last_error
+        return console, discovery_path
 
     def _run_map(
         self,
@@ -406,26 +387,21 @@ class TrainingRun:
     ) -> bool:
         self._write(f"MAP {spec.map_id}: starting")
         processes: list[ManagedProcess] = []
-        screen_bound = False
         try:
-            console, discovery_path, screen_source_path = self._start_console(
+            console, discovery_path = self._start_console(
                 directory,
                 _resolve_map(manifest_path, spec),
                 episode_limit,
                 view,
                 episode_store,
+                screen_control,
             )
             processes.append(console)
 
             if screen_control is not None:
-                try:
-                    screen_control.bind(self._wait_screen_source(screen_source_path))
-                    screen_bound = True
-                    self._write(
-                        f"SCREEN {screen_control.screen}: {spec.map_id} ({view})"
-                    )
-                except (OSError, TimeoutError, ValueError, TrainingRunError) as exc:
-                    self._write(f"SCREEN warning: {exc}; Training continues headless")
+                self._write(
+                    f"SCREEN {screen_control.screen}: {spec.map_id} ({view})"
+                )
 
             trainer_command = [
                 sys.executable, "-m", "game2.v2.training.main",
@@ -523,11 +499,6 @@ class TrainingRun:
             self._write(f"MAP {spec.map_id}: {'PASS' if mastered else 'FAIL'}")
             return mastered
         finally:
-            if screen_control is not None and screen_bound:
-                try:
-                    screen_control.unbind()
-                except (OSError, TimeoutError, ValueError, TrainingRunError):
-                    pass
             self._stop(processes)
 
     def train(

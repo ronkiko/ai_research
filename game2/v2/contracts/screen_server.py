@@ -272,12 +272,12 @@ def status_message(
     screens = []
     for number in range(1, slots + 1):
         source = bound.get(number)
-        if number not in open_screens:
-            state = "closed"
-        elif source is None:
+        if source is not None:
+            state = "bound"
+        elif number in open_screens:
             state = "waiting"
         else:
-            state = "bound"
+            state = "closed"
         screens.append({
             "screen": number,
             "state": state,
