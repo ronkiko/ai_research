@@ -141,6 +141,11 @@ class ManagementTrainingTests(unittest.TestCase):
                 trainable=False,
                 progress=0.0,
             )
+            for database in (dataset.path, dataset.vision_path):
+                for suffix in ("-wal", "-shm", "-journal"):
+                    database.with_name(
+                        database.name + suffix
+                    ).write_bytes(b"stale")
             output = io.StringIO()
             run = TrainingRun(output=output)
 
@@ -160,6 +165,11 @@ class ManagementTrainingTests(unittest.TestCase):
 
             self.assertEqual(status, 0)
             self.assertEqual(list(episode_root.glob("episode-*.sqlite3")), [])
+            self.assertEqual(
+                list((episode_root / "vision").glob("episode-*.sqlite3")), []
+            )
+            for directory in (episode_root, episode_root / "vision"):
+                self.assertEqual(list(directory.glob("*.sqlite3-*")), [])
             self.assertIn("FRESH reset episode datasets", output.getvalue())
             self.assertFalse(log_root.exists())
             self.assertIn("FRESH reset logs", output.getvalue())

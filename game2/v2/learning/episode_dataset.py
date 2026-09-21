@@ -1081,6 +1081,7 @@ class EpisodeStore:
                     path.name.endswith(".sqlite3")
                     or path.name.endswith(".sqlite3-wal")
                     or path.name.endswith(".sqlite3-shm")
+                    or path.name.endswith(".sqlite3-journal")
                 ):
                     path.unlink(missing_ok=True)
 
@@ -1136,12 +1137,16 @@ class EpisodeStore:
             path.unlink(missing_ok=True)
             path.with_name(path.name + "-wal").unlink(missing_ok=True)
             path.with_name(path.name + "-shm").unlink(missing_ok=True)
+            path.with_name(path.name + "-journal").unlink(missing_ok=True)
             vision_path = self.root / "vision" / path.name
             vision_path.unlink(missing_ok=True)
             vision_path.with_name(vision_path.name + "-wal").unlink(
                 missing_ok=True
             )
             vision_path.with_name(vision_path.name + "-shm").unlink(
+                missing_ok=True
+            )
+            vision_path.with_name(vision_path.name + "-journal").unlink(
                 missing_ok=True
             )
 

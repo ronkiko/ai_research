@@ -456,6 +456,12 @@ class EpisodeDatasetTests(unittest.TestCase):
                     trainable=False,
                     progress=0.0,
                 )
+                if episode_id == 1:
+                    for database in (dataset.path, dataset.vision_path):
+                        for suffix in ("-wal", "-shm", "-journal"):
+                            database.with_name(
+                                database.name + suffix
+                            ).write_bytes(b"stale")
                 store.rotate()
 
             paths = sorted(store.root.glob("episode-*.sqlite3"))
@@ -464,6 +470,10 @@ class EpisodeDatasetTests(unittest.TestCase):
             )
             self.assertEqual(len(paths), 5)
             self.assertEqual(len(vision_paths), 5)
+            for directory in (store.root, store.root / "vision"):
+                self.assertEqual(
+                    list(directory.glob("episode-000001.sqlite3-*")), []
+                )
             self.assertEqual(
                 [path.name for path in paths],
                 [
@@ -475,11 +485,19 @@ class EpisodeDatasetTests(unittest.TestCase):
                 ],
             )
 
+            for directory in (store.root, store.root / "vision"):
+                orphan = directory / "episode-orphan.sqlite3"
+                orphan.write_bytes(b"stale")
+                for suffix in ("-wal", "-shm", "-journal"):
+                    orphan.with_name(orphan.name + suffix).write_bytes(b"stale")
+
             store.reset()
             self.assertEqual(list(store.root.glob("episode-*.sqlite3")), [])
             self.assertEqual(
                 list((store.root / "vision").glob("episode-*.sqlite3")), []
             )
+            for directory in (store.root, store.root / "vision"):
+                self.assertEqual(list(directory.glob("*.sqlite3-*")), [])
 
 
 if __name__ == "__main__":
