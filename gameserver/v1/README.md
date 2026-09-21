@@ -54,7 +54,7 @@ move_x    # -1 left, 0 stop, +1 right
 ## v1 topology
 
 ```text
-GameClient v1
+GameClient Host
       |
       v
   Gateway                    public ingress only
@@ -75,7 +75,7 @@ GameClient v1
 
 ### Gateway
 
-The only public game endpoint in v1. `gameclient.v1` talks to Gateway,
+The only public game endpoint in v1. GameClient Host talks to Gateway,
 not to World, Zone, Mob, Telemetry, or Persistence directly. The first lobby is
 passwordless: `list_players` returns demo player IDs and `login` selects one.
 
@@ -143,10 +143,10 @@ A manual protocol smoke test can be run in another terminal:
 python -m gameserver.v1.tests.smoke
 ```
 
-`gameclient.v1` now provides the passwordless lobby/session and plain CLI game
-client. It is intentionally a separate sibling project, imports no GameServer
-internals, and talks only to Gateway. A graphical human UI can be added later
-without changing this public boundary.
+`gameclient.v1` is a separate sibling project. Its GameClient Host is the only
+GameClient entity intended to talk to Gateway. CLI/MCP/GUI/AI Clients attach to
+that Host and remain invisible to GameServer. The current direct CLI gameplay
+path is temporary while gameplay functions are migrated behind Host.
 
 ## Tests
 

@@ -1,13 +1,41 @@
 # GameClient v1
 
-GameClient v1 is a plain CLI client for `gameserver.v1`. It is intentionally
-friendly to both humans and AI agents: commands print stable line-oriented text,
-there is no curses/TUI screen, no ANSI redraw loop, and `--json` exposes compact
-machine-readable JSON. `watch --json` emits one JSON object per line (JSONL).
+GameClient v1 is the independent client-side laboratory for `gameserver.v1`.
+Its target runtime is a long-lived **GameClient Host** with any number of
+attached **Clients**.
 
-The client is an independent sibling project. It does **not** import
-`gameserver.*` and knows only the public Gateway protocol at `127.0.0.1:17600`
-by default.
+Terminology is normative:
+
+- [GameClient Host](docs/host.md) — the one long-lived game-client system;
+- [Clients](docs/clients.md) — CLI Client, MCP Client, GUI Client, AI Client,
+  Debug Client, and other interfaces attached to Host.
+
+The Host is a client toward GameServer and a server toward Clients. Clients do
+not talk to GameServer directly.
+
+The project remains independent from GameServer implementation code and does
+**not** import `gameserver.*`.
+
+## Current migration state
+
+The Host boundary is being introduced before gameplay functions are moved into
+it. The new Host/Client scaffold provides local `health` and `describe`.
+The existing direct CLI gameplay path is retained temporarily for regression
+testing and must not receive new gameplay features.
+
+Target process topology:
+
+```text
+GameServer Gateway
+        ^
+        | long-lived upstream connection
+        |
+ GameClient Host
+   ^     ^     ^
+   |     |     |
+ CLI    MCP   GUI
+Client Client Client
+```
 
 ## Start
 
@@ -17,7 +45,20 @@ Terminal 1:
 ./gameserver/v1/op/server.sh
 ```
 
-Terminal 2:
+Terminal 2 — Host scaffold:
+
+```bash
+./gameclient/v1/op/host.sh
+```
+
+Terminal 3 — CLI Client scaffold:
+
+```bash
+./gameclient/v1/op/cli.sh health
+./gameclient/v1/op/cli.sh describe
+```
+
+Temporary direct gameplay compatibility path:
 
 ```bash
 ./gameclient/v1/op/client.sh players

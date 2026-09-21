@@ -51,7 +51,7 @@ the latched `move_x` intent remains unchanged.
 
 ## Public boundary
 
-GameClient v1 addresses only Gateway. Internal service ports are
+GameClient Host addresses only Gateway. Host-attached Clients do not address GameServer directly. Internal service ports are
 laboratory implementation details. Passwordless demo login is intentionally
 limited to v1 and returns a session, player ID, entity ID, world ID, and zone ID.
 

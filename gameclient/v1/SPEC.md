@@ -2,19 +2,37 @@
 
 Status: normative laboratory contract.
 
+## Entities
+
+The normative client-side entities are:
+
+- [GameClient Host](docs/host.md);
+- [Clients](docs/clients.md).
+
+The GameClient Host is the single GameServer-facing client. CLI Client, MCP
+Client, GUI Client, AI Client, and Debug Client are Host-facing Clients.
+
 ## Boundary
 
-GameClient v1 is independent from GameServer v1. Client Python code must not
-import `gameserver.*`. The only supported gameplay boundary is the public
-newline-delimited JSON Gateway protocol.
+GameClient v1 is independent from GameServer v1. GameClient Python code must not
+import `gameserver.*`.
 
-The client must never address World, Zone, Mob, Telemetry, or Persistence
-services directly and must never claim authority over world position, velocity,
-world tick, or entity lifecycle.
+The target gameplay path is:
 
-## CLI contract
+```text
+Client -> Host Protocol -> GameClient Host -> Gateway Protocol -> GameServer
+```
 
-The primary interface is a conventional process-per-command CLI. It must remain
+Only GameClient Host may own the GameServer-facing session and sequence. Clients
+must not address GameServer services directly and must never claim authority
+over world position, velocity, world tick, or entity lifecycle.
+
+The current direct CLI-to-Gateway path is temporary compatibility during the
+migration to Host and must not be extended with new gameplay features.
+
+## CLI Client contract
+
+The CLI Client is a conventional process-per-command interface. It must remain
 readable without a terminal emulator and therefore must not require curses,
 TUI widgets, ANSI cursor movement, hidden interactive state, or screen redraws.
 
