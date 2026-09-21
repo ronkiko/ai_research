@@ -95,11 +95,17 @@ commands. The demo world is the bounded line `x in [0,1000]`. The player spawns 
 
 ### Mob Server
 
-A server-side NPC decision process. `mob1` is the laboratory mob/bomb (`B`).
-It starts at `x=900`, reads the latest passive telemetry at 10 Hz, and sends
-ordinary movement intent toward the nearest player.
+A server-side NPC intent process. `mob1` is the laboratory mob/bomb (`B`) and
+starts at `x=900`. Until a real vision sensor contract exists, the mob is
+intentionally **blind**: it does not read player coordinates or Telemetry to
+decide movement. It performs a random walk by choosing `move_x=-1/0/+1` about
+once per second and sends that intent to Zone.
+
 It never writes `x` directly. Zone remains authority for the mob exactly as
 it remains authority for human players.
+
+See [Mob Server](docs/mob-server.md) for the sensing boundary and future
+`wander -> seen -> pursue` rule.
 
 ### Telemetry Server
 

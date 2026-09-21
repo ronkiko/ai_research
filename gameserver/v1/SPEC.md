@@ -40,6 +40,17 @@ A process may fail only within its stated responsibility. In particular,
 Telemetry failure must not stop Zone simulation, and Mob failure must not stop
 the world clock.
 
+## Mob perception boundary
+
+Mob Server currently has no perception sensor. Therefore its movement policy
+must not inspect player coordinates, nearest-player distance, or Telemetry
+world truth. The v1 pre-vision behavior is blind random walking: periodically
+choose `move_x` from `{-1,0,1}` and submit that intent to Zone.
+
+When a vision sensor is introduced later, pursuit may depend on what that
+sensor reports. Direct access to authoritative player position remains
+forbidden as a substitute for sensing. See [Mob Server](docs/mob-server.md).
+
 ## Command semantics
 
 A gameplay movement command contains an entity, positive monotonic sequence,

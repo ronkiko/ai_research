@@ -90,11 +90,26 @@ class ZoneRuntimeTests(unittest.TestCase):
 
 
 class MobServiceTests(unittest.TestCase):
-    def test_intent_uses_only_one_dimensional_distance(self):
-        snapshot={"entities":[{"entity_id":"mob1","kind":"mob","x":500.0},{"entity_id":"actor-player1","kind":"player","x":400.0},{"entity_id":"actor-player2","kind":"player","x":900.0}]}
-        self.assertEqual(MobService._intent(snapshot),-1)
-        snapshot["entities"][1]["x"]=503.0
-        self.assertEqual(MobService._intent(snapshot),0)
+    def test_blind_random_walk_uses_only_rng_not_world_snapshot(self):
+        class StubRng:
+            def __init__(self):
+                self.values = iter((-1, 1, 0))
+
+            def choice(self, options):
+                self.last_options = tuple(options)
+                return next(self.values)
+
+        rng = StubRng()
+        service = MobService(rng=rng)
+        self.assertEqual(service.next_intent(), -1)
+        self.assertEqual(service.next_intent(), 1)
+        self.assertEqual(service.next_intent(), 0)
+        self.assertEqual(rng.last_options, (-1, 0, 1))
+        self.assertFalse(hasattr(service, "telemetry_port"))
+
+    def test_wander_rate_must_be_positive(self):
+        with self.assertRaisesRegex(ValueError, "wander_hz must be > 0"):
+            MobService(wander_hz=0)
 
 
 class WorldRegistryTests(unittest.TestCase):
