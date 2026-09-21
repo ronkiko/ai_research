@@ -13,6 +13,8 @@ PPO_TAIL_TICKS = 200
 # preserve a stable control sequence. Keep every policy decision.
 PPO_HISTORY_STRIDE_TICKS = POLICY_STRIDE_TICKS
 MAX_EPISODE_DATASETS = 5
+# Greedy execution can succeed before a noisy training rollout does.
+EVALUATION_INTERVAL = 5
 
 # Controller economy is not part of skill acquisition on Training Maps.
 # Requests are still measured, but they carry no reward cost during Training.

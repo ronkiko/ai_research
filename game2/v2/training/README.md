@@ -45,6 +45,24 @@ piped. Reaching the per-map attempt limit returns failure while preserving the
 latest checkpoint. Set success requires a final frozen pass over all training
 maps after curriculum updates.
 
+Training rewards progress toward the goal, adds +1 for success and -1 for
+death. A timeout adds no terminal reward; it still fails verification. Controller
+requests are measured but carry no cost during skill acquisition. Verification
+runs after success, every five updates, and at the last permitted attempt.
+Evaluation episodes do not consume training random seeds in unpaced mode.
+
+The expensive learning acceptance run is separate from default unit tests:
+
+```bash
+python -m game2.v2.tests.training_smoke --seed 1
+```
+
+It trains from scratch, requires all-map frozen verification, reloads the saved
+checkpoint and checks every training map again. Events and the final result are
+kept under `v2/runtime/training-smoke/seed-1/`. Repeat with other seeds to measure
+initialization sensitivity. Passing these maps is not evidence of generalization
+to an unseen maze or the separate Exam.
+
 Process composition lives in Management:
 
 ```bash

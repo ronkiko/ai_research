@@ -24,10 +24,12 @@ PLAYER_ACTION_HZ = 120
 
 
 def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int | None = None,
-               action_hz: int = PLAYER_ACTION_HZ, vision_factory=None,
+               action_hz: int = PLAYER_ACTION_HZ, vision_factory=None, proprioception_factory=None,
                joystick_factory=None, lifecycle=None, clock=time.monotonic,
                sleeper=time.sleep) -> int:
     kwargs = {"clock": clock, "sleeper": sleeper}
+    if proprioception_factory is not None:
+        kwargs["proprioception_factory"] = proprioception_factory
     if vision_factory is not None:
         kwargs["vision_factory"] = vision_factory
     if joystick_factory is not None:
@@ -38,11 +40,13 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
 
 def run_attached_player(connection: PlayerConnection, model: ModelClient, *,
                         decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
-                        vision_factory=None, joystick_factory=None,
+                        vision_factory=None, joystick_factory=None, proprioception_factory=None,
                         clock=time.monotonic, sleeper=time.sleep) -> int:
     if not isinstance(connection.manifest, PlayerManifest):
         raise ValueError("Player connection has no attached PlayerManifest")
     kwargs = {"clock": clock, "sleeper": sleeper}
+    if proprioception_factory is not None:
+        kwargs["proprioception_factory"] = proprioception_factory
     if vision_factory is not None:
         kwargs["vision_factory"] = vision_factory
     if joystick_factory is not None:

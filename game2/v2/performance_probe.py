@@ -20,6 +20,7 @@ from game2.v2.contracts.vision import (
     VisionGrid,
 )
 from game2.v2.model_runtime import build_model
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.player.learned.contracts import ActionDecision
 from game2.v2.training.main import reward_for_result
 from game2.v2.unpaced_runtime import (
@@ -195,7 +196,10 @@ def run_model_probe(
         decision_started = time.perf_counter()
         for index in range(decisions):
             grid = _synthetic_flat_grid(index * POLICY_STRIDE_TICKS)
-            sample = model.process_grid(grid)
+            sample = model.process_grid(grid, ProprioceptionFrame(
+                grid.world_tick, 0.0, 0.0, True,
+                model.actuated_state.right, model.actuated_state.jump,
+            ))
             if sample is None:
                 raise RuntimeError("model probe produced no policy sample")
             dataset.upsert_sample(

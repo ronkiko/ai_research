@@ -22,7 +22,7 @@ from game2.v2.unpaced_runtime import (
 )
 from game2.v2.contracts.bot_profile import BotProfile
 from game2.v2.contracts.proprioception import ProprioceptionFrame
-from game2.v2.training.work import EpisodeStore
+from game2.v2.training.work import EpisodeStore, train_episode
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -30,6 +30,29 @@ FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.j
 
 
 class UnpacedTrainingTests(unittest.TestCase):
+    def test_ppo_reproduces_collected_likelihood_with_latched_plans(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = load_model(fresh=True, checkpoint_dir=directory)
+            for group in model.optimizer.param_groups:
+                group["lr"] = 0.0
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="unpaced", seed=1
+            )
+            outcome = run_episode(
+                model, FLAT_RUN, episode_limit=120, mode="train",
+                seed=1, dataset=dataset,
+            )
+            dataset.finalize(
+                result=outcome.result, finish_world_tick=outcome.finish_world_tick,
+                terminal_reward=-1.0, trainable=True, progress=outcome.progress,
+            )
+            train_episode(model, dataset)
+            steps = dataset.steps()
+            self.assertTrue(any(step.skill_right_active for step in steps))
+            self.assertTrue(any(not step.planner_decision for step in steps))
+            for step in steps:
+                self.assertAlmostEqual(step.ratio, 1.0, places=5)
+
     def test_human_rollout_line_shows_world_progress_not_internal_best(self):
         line = _rollout_line({
             "episode_id": 3,
@@ -198,12 +221,16 @@ class UnpacedTrainingTests(unittest.TestCase):
             )
 
     def test_final_model_must_pass_all_maps_without_updates(self):
-        for retained in (True, False):
-            with self.subTest(retained=retained), tempfile.TemporaryDirectory() as directory:
+        for retained, budget in ((True, 1), (False, 1), (True, 6), (False, 6)):
+            with self.subTest(retained=retained, budget=budget), tempfile.TemporaryDirectory() as directory:
                 success = EpisodeResult("success", 1.0, 2, 1)
                 failure = EpisodeResult("timeout", 0.0, 2, 1)
-                outcomes = [success] * 6 + [success if retained else failure, success, success]
+                # A stochastic timeout must not prevent the last-budget greedy
+                # evaluation from discovering a successful policy.
+                attempts = min(budget, 5)
+                outcomes = ([failure] * attempts + [success]) * 3 + [success if retained else failure, success, success]
                 with mock.patch("game2.v2.unpaced_runtime.load_model"), \
+                        mock.patch("game2.v2.unpaced_runtime.EpisodeStore"), \
                         mock.patch("game2.v2.unpaced_runtime.run_episode", side_effect=outcomes) as run, \
                         mock.patch("game2.v2.unpaced_runtime.train_episode",
                                    return_value=SimpleNamespace(updated=True, loss=0.0, metrics={})) as train, \
@@ -212,12 +239,17 @@ class UnpacedTrainingTests(unittest.TestCase):
                         set_path=ROOT / "game2/v2/training/sets/level-1.json",
                         checkpoint_dir=Path(directory) / "checkpoints",
                         episode_store_dir=Path(directory) / "episodes",
-                        max_episodes=1, episode_limit=2, fresh=True,
+                        max_episodes=budget, episode_limit=2, fresh=True,
                         output=io.StringIO(), json_output=True,
                     )
                 self.assertEqual(status, 0 if retained else 1)
-                self.assertEqual(train.call_count, 3)
-                self.assertEqual(save.call_count, 3)
+                self.assertEqual(train.call_count, 3 * attempts)
+                self.assertEqual(save.call_count, 3 * attempts)
+                self.assertEqual(
+                    [call.kwargs["seed"] for call in run.call_args_list
+                     if call.kwargs["mode"] == "train"],
+                    list(range(1, 3 * attempts + 1)),
+                )
                 self.assertEqual([call.kwargs["mode"] for call in run.call_args_list[-3:]],
                                  ["evaluate"] * 3)
                 self.assertEqual([Path(call.args[1]).stem for call in run.call_args_list[-3:]],

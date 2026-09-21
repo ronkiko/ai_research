@@ -98,6 +98,7 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 for parameter in player.planner.parameters():
                     parameter.data.zero_()
                 player.planner.skill_head.bias.data[0] = 1.0
+                player.planner.plan_command_head.bias.data[1] = 1.0
                 player.planner.skill_head.bias.data[1] = -1.0
                 for parameter in player.motor_controller.parameters():
                     parameter.data.zero_()

@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import Any
+from game2.v2.learning.config import EVALUATION_INTERVAL
 
 from game2.v2.contracts.training import (
     APPLY_RESULT,
@@ -39,11 +40,9 @@ def reward_for_result(result: str, progress: Real) -> float:
     if result == "success":
         return 1.0
     if result == "timeout":
-        # Timeout is a real training failure, but it must stay smaller than
-        # the +1 full-distance shaping scale.  The old -1 terminal penalty
-        # erased useful partial progress; -0.1 keeps failure undesirable
-        # without teaching the policy to avoid moving toward the goal.
-        return -0.1
+        # The budget ending is not a collision. Dense progress rewards what
+        # was learned; only reaching the goal earns the completion bonus.
+        return 0.0
     if result == "dead":
         return -1.0
     raise ValueError("unknown terminal result")
@@ -231,7 +230,10 @@ class Trainer:
                 progress_payload, separators=(",", ":"), sort_keys=True
             ), flush=True)
 
-            if (self.stop_on_success and finished["result"] == "success"
+            if (self.stop_on_success and (
+                    finished["result"] == "success"
+                    or summary.attempts % EVALUATION_INTERVAL == 0
+                    or summary.attempts == self.episodes)
                     and finished["trainable"] and updated):
                 evaluation_id = next_episode_id
                 next_episode_id += 1

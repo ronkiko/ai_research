@@ -63,8 +63,8 @@ For faster headless collection with live terminal progress:
 
 The live bar shows elapsed world ticks within an attempt; `goal` shows the
 best progress toward the target in that attempt. PPO has a separate batch
-indicator. A successful stochastic attempt is followed by deterministic
-verification without learning. Before the set can pass, the final model must
+indicator. Deterministic verification without learning runs after a successful
+stochastic attempt, every five updates, and at the attempt limit. Before the set can pass, the final model must
 pass every training map again. This is a training-map check, not an Exam.
 
 Ctrl+C stops training and retains the last completed checkpoint. Use `--resume`

@@ -25,6 +25,7 @@ from game2.v2.player.learned.checkpoint import save_checkpoint_set
 from game2.v2.player.learned.contracts import ActionDecision, gate_control_command
 from game2.v2.player.learned.motion import VisionProgress, vision_centers
 from game2.v2.training.main import reward_for_result
+from game2.v2.learning.config import EVALUATION_INTERVAL
 from game2.v2.training.work import (
     DEFAULT_EPISODE_STORE,
     EpisodeDataset,
@@ -309,6 +310,7 @@ def run_unpaced_training_set(
     )
     player_id = profile.player_id if profile is not None else PLAYER_ID
     episode_id = 0
+    training_seed = 0
 
     interactive = bool(
         not json_output
@@ -467,7 +469,7 @@ def run_unpaced_training_set(
             write_line(f"Map {map_index}/{map_count} · {spec.map_id}")
             write_line(
                 "Learning loop: RUN -> UPDATE MODEL -> "
-                "VERIFY after a successful run."
+                "VERIFY after success or every five updates."
             )
             write_line(
                 "A RUN success is only a candidate. "
@@ -487,6 +489,7 @@ def run_unpaced_training_set(
                 raise KeyboardInterrupt
 
             episode_id += 1
+            training_seed += 1
             started = time.monotonic()
             write("LEARNING", {
                 "episode_id": episode_id,
@@ -500,14 +503,14 @@ def run_unpaced_training_set(
                 episode_id=episode_id,
                 mode="train",
                 source="unpaced",
-                seed=episode_id,
+                seed=training_seed,
             )
             outcome = run_episode(
                 model,
                 map_path,
                 episode_limit=episode_limit,
                 mode="train",
-                seed=episode_id,
+                seed=training_seed,
                 dataset=dataset,
                 should_stop=should_stop,
                 on_progress=progress_writer(episode_id, "train", attempt),
@@ -589,7 +592,11 @@ def run_unpaced_training_set(
             previous_train_result = outcome.result
             previous_train_progress = outcome.progress
 
-            if outcome.result != "success" or not training.updated:
+            if not training.updated or not (
+                outcome.result == "success"
+                or attempt % EVALUATION_INTERVAL == 0
+                or attempt == max_episodes
+            ):
                 continue
 
             if not json_output:

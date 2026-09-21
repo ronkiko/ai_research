@@ -500,16 +500,20 @@ class LearnedJoystickTests(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertEqual(model.control_requested_ids, [1, 2])
+        self.assertEqual(len(model.control_requested_ids), 2)
+        rejected_id, accepted_id = model.control_requested_ids
+        self.assertNotEqual(rejected_id, accepted_id)
         self.assertEqual(
             model.control_results,
-            [(1, "rejected"), (2, "accepted")],
+            [(rejected_id, "rejected"), (accepted_id, "accepted")],
         )
-        self.assertEqual(model.actuated_ids, [2])
+        self.assertEqual(model.actuated_ids, [accepted_id])
 
     def test_latched_state_is_not_resent_without_a_new_model_decision(self):
         order = []
-        lifecycle = _Lifecycle(self._manifest(), order)
+        lifecycle = _Lifecycle(PlayerManifest(
+            "session", "player", "actor", Endpoint("127.0.0.1", 1),
+            Endpoint("127.0.0.1", 2)), order)
         sleeps = {"count": 0}
 
         def sleeper(_duration):

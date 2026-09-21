@@ -123,7 +123,7 @@ class PlayerConnection:
             sock.settimeout(min(0.25, remaining))
             sock.sendall(encode_frame(attach_message()))
             expected = {"version", "type", "session_id", "player_id", "actor_id",
-                        "joystick", "vision"}
+                        "joystick", "vision", "proprioception"}
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
