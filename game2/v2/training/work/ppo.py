@@ -10,6 +10,10 @@ import torch
 
 from game2.v2.contracts.motor import PlanCommand
 from game2.v2.learning.vision import vision_to_tensor
+from game2.v2.player.learned.proprioception import (
+    body_state_batch,
+    critic_context_batch,
+)
 
 from .config import (
     TRAINING_CONTROL_REQUEST_PENALTY,
