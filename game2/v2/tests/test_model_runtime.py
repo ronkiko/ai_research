@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from game2.v2.contracts.proprioception import ProprioceptionFrame
@@ -101,15 +102,26 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 for parameter in player.motor_controller.parameters():
                     parameter.data.zero_()
                 player.motor_controller.right_motor.output.bias.data[1] = 1.0
-                runtime._process_pending(
-                    left,
-                    (
-                        _grid(10),
-                        ProprioceptionFrame(
-                            10, 0.0, 0.0, True, False, False
+                dataset = runtime._episode_dataset
+                assert dataset is not None
+                with mock.patch.object(
+                    dataset, "upsert_sample", wraps=dataset.upsert_sample
+                ) as upsert, mock.patch.object(
+                    dataset,
+                    "update_control_resolution",
+                    wraps=dataset.update_control_resolution,
+                ) as resolve:
+                    runtime._process_pending(
+                        left,
+                        (
+                            _grid(10),
+                            ProprioceptionFrame(
+                                10, 0.0, 0.0, True, False, False
+                            ),
                         ),
-                    ),
-                )
+                    )
+                self.assertEqual(upsert.call_count, 1)
+                self.assertEqual(resolve.call_count, 1)
                 self.assertEqual(len(runtime._samples), 1)
                 decision_id = next(iter(runtime._samples))
                 runtime._handle(
@@ -122,13 +134,18 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                     control_result_message(decision_id, "accepted"),
                     None,
                 )
-                runtime._handle(
-                    left,
-                    actuated_message(decision_id),
-                    None,
-                )
-                dataset = runtime._episode_dataset
-                assert dataset is not None
+                with mock.patch.object(
+                    dataset, "upsert_sample", wraps=dataset.upsert_sample
+                ) as upsert, mock.patch.object(
+                    dataset, "mark_actuated", wraps=dataset.mark_actuated
+                ) as mark_actuated:
+                    runtime._handle(
+                        left,
+                        actuated_message(decision_id),
+                        None,
+                    )
+                self.assertEqual(upsert.call_count, 0)
+                self.assertEqual(mark_actuated.call_count, 1)
                 steps = dataset.steps()
                 self.assertEqual(len(steps), 1)
                 self.assertTrue(steps[0].control_requested)

@@ -25,7 +25,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 VISION_BLOB_COMPRESSION_LEVEL = 1
 
 
@@ -139,12 +139,25 @@ class EpisodeDataset:
         self._writer = None
         self._pending_writes = 0
         self._last_commit = 0.0
+        self._vision_compression_cache: dict[str, tuple[bytes, bytes]] = {}
+
+    @property
+    def vision_path(self) -> Path:
+        return self.path.parent / "vision" / self.path.name
 
     @contextmanager
-    def _connect(self):
+    def _connect(self, *, include_vision: bool = False):
         connection = sqlite3.connect(self.path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
+        if include_vision:
+            if not self.vision_path.is_file():
+                connection.close()
+                raise ValueError("episode Vision sidecar is missing")
+            connection.execute(
+                "ATTACH DATABASE ? AS vision",
+                (str(self.vision_path),),
+            )
         try:
             with connection:
                 yield connection
@@ -156,7 +169,7 @@ class EpisodeDataset:
         """Commit bounded batches; flush partial experience even on interruption."""
         if self._writer is not None:
             raise RuntimeError("episode writer is already active")
-        with self._connect() as connection:
+        with self._connect(include_vision=True) as connection:
             self._writer = connection
             self._pending_writes = 0
             self._last_commit = time.monotonic()
@@ -171,7 +184,7 @@ class EpisodeDataset:
     @contextmanager
     def _sample_transaction(self):
         if self._writer is None:
-            with self._connect() as connection:
+            with self._connect(include_vision=True) as connection:
                 yield connection
             return
         yield self._writer
@@ -200,10 +213,11 @@ class EpisodeDataset:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         dataset = cls(path)
+        dataset.vision_path.parent.mkdir(parents=True, exist_ok=True)
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=11;
+                PRAGMA user_version=12;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -231,9 +245,6 @@ class EpisodeDataset:
                     rows INTEGER NOT NULL,
                     tile_size INTEGER NOT NULL,
                     subdivisions INTEGER NOT NULL,
-                    coarse_physics BLOB NOT NULL,
-                    physics BLOB NOT NULL,
-                    metadata BLOB NOT NULL,
                     motion_x REAL NOT NULL,
                     motion_y REAL NOT NULL,
                     proprioception_world_tick INTEGER NOT NULL,
@@ -324,6 +335,18 @@ class EpisodeDataset:
                     int(policy_stride_ticks),
                 ),
             )
+        with sqlite3.connect(dataset.vision_path, timeout=5.0) as connection:
+            connection.executescript(
+                """
+                PRAGMA user_version=1;
+                CREATE TABLE frames (
+                    policy_sequence INTEGER PRIMARY KEY,
+                    coarse_physics BLOB NOT NULL,
+                    physics BLOB NOT NULL,
+                    metadata BLOB NOT NULL
+                );
+                """
+            )
         return dataset
 
     def metadata(self) -> dict[str, Any]:
@@ -339,6 +362,15 @@ class EpisodeDataset:
         else:
             result["metrics"] = {}
         return result
+
+    def _compress_vision_blob(self, name: str, value: bytes) -> bytes:
+        raw = bytes(value)
+        cached = self._vision_compression_cache.get(name)
+        if cached is not None and cached[0] == raw:
+            return cached[1]
+        compressed = zlib.compress(raw, VISION_BLOB_COMPRESSION_LEVEL)
+        self._vision_compression_cache[name] = (raw, compressed)
+        return compressed
 
     @staticmethod
     def _finite_or_none(value) -> float | None:
@@ -423,15 +455,6 @@ class EpisodeDataset:
             grid.rows,
             grid.tile_size,
             grid.subdivisions,
-            sqlite3.Binary(zlib.compress(
-                bytes(grid.coarse_physics), VISION_BLOB_COMPRESSION_LEVEL
-            )),
-            sqlite3.Binary(zlib.compress(
-                bytes(grid.physics), VISION_BLOB_COMPRESSION_LEVEL
-            )),
-            sqlite3.Binary(zlib.compress(
-                bytes(grid.metadata), VISION_BLOB_COMPRESSION_LEVEL
-            )),
             float(getattr(sample, "motion_x", 0.0)),
             float(getattr(sample, "motion_y", 0.0)),
             proprioception.world_tick,
@@ -488,7 +511,6 @@ class EpisodeDataset:
                 INSERT INTO steps(
                     policy_sequence, world_tick, duration_ticks,
                     columns, rows, tile_size, subdivisions,
-                    coarse_physics, physics, metadata,
                     motion_x, motion_y,
                     proprioception_world_tick, velocity_x, velocity_y,
                     grounded, sensor_right_pressed, sensor_jump_pressed,
@@ -509,7 +531,7 @@ class EpisodeDataset:
                     suppressed_buttons, control_requested, control_status,
                     actuated, chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -518,9 +540,6 @@ class EpisodeDataset:
                     rows=excluded.rows,
                     tile_size=excluded.tile_size,
                     subdivisions=excluded.subdivisions,
-                    coarse_physics=excluded.coarse_physics,
-                    physics=excluded.physics,
-                    metadata=excluded.metadata,
                     motion_x=excluded.motion_x,
                     motion_y=excluded.motion_y,
                     proprioception_world_tick=excluded.proprioception_world_tick,
@@ -579,6 +598,29 @@ class EpisodeDataset:
                     chunk_first=excluded.chunk_first
                 """,
                 values,
+            )
+            connection.execute(
+                """
+                INSERT INTO vision.frames(
+                    policy_sequence, coarse_physics, physics, metadata
+                ) VALUES(?,?,?,?)
+                ON CONFLICT(policy_sequence) DO UPDATE SET
+                    coarse_physics=excluded.coarse_physics,
+                    physics=excluded.physics,
+                    metadata=excluded.metadata
+                """,
+                (
+                    sequence,
+                    sqlite3.Binary(self._compress_vision_blob(
+                        "coarse_physics", grid.coarse_physics
+                    )),
+                    sqlite3.Binary(self._compress_vision_blob(
+                        "physics", grid.physics
+                    )),
+                    sqlite3.Binary(self._compress_vision_blob(
+                        "metadata", grid.metadata
+                    )),
+                ),
             )
 
     def append_step(
@@ -660,6 +702,31 @@ class EpisodeDataset:
                 (int(policy_sequence),),
             )
 
+    def update_control_resolution(
+        self,
+        policy_sequence: int,
+        desired_state: ActionDecision,
+        suppressed_buttons: tuple[str, ...],
+    ) -> None:
+        if not isinstance(desired_state, ActionDecision):
+            raise TypeError("desired_state must be an ActionDecision")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE steps SET
+                    desired_right=?, desired_jump=?, suppressed_buttons=?
+                WHERE policy_sequence=?
+                """,
+                (
+                    int(desired_state.right),
+                    int(desired_state.jump),
+                    ",".join(suppressed_buttons),
+                    int(policy_sequence),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("policy_sequence does not identify one step")
+
     def steps(self) -> tuple[EpisodeStep, ...]:
         with self._connect() as connection:
             schema_row = connection.execute(
@@ -671,9 +738,35 @@ class EpisodeDataset:
             rows = connection.execute(
                 "SELECT * FROM steps ORDER BY world_tick, policy_sequence"
             ).fetchall()
+        if schema_version >= 12:
+            if not self.vision_path.is_file():
+                raise ValueError("episode Vision sidecar is missing")
+            with sqlite3.connect(self.vision_path, timeout=5.0) as connection:
+                connection.row_factory = sqlite3.Row
+                vision_rows = connection.execute(
+                    """
+                    SELECT policy_sequence, coarse_physics, physics, metadata
+                    FROM frames
+                    ORDER BY policy_sequence
+                    """
+                ).fetchall()
+            vision_by_sequence = {
+                int(row["policy_sequence"]): row for row in vision_rows
+            }
+        else:
+            vision_by_sequence = {}
 
         def vision_blob(row, name: str) -> bytes:
-            value = bytes(row[name])
+            source = (
+                vision_by_sequence.get(int(row["policy_sequence"]))
+                if schema_version >= 12
+                else row
+            )
+            if source is None:
+                raise ValueError(
+                    "episode Vision sidecar has no matching policy frame"
+                )
+            value = bytes(source[name])
             if schema_version >= 11:
                 try:
                     return zlib.decompress(value)
@@ -800,11 +893,33 @@ class EpisodeDataset:
             "advantage": row["advantage"],
         } for row in rows)
 
+    def step_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM steps"
+            ).fetchone()
+        assert row is not None
+        return int(row["count"])
+
     def compute_progress(self) -> float:
-        distances = [
-            distance for distance in (self._distance(step) for step in self.steps())
-            if distance is not None
-        ]
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT self_x, self_y, goal_x, goal_y
+                FROM steps
+                ORDER BY world_tick, policy_sequence
+                """
+            ).fetchall()
+        distances = []
+        for row in rows:
+            if None in (
+                row["self_x"], row["self_y"], row["goal_x"], row["goal_y"]
+            ):
+                continue
+            distances.append(math.hypot(
+                float(row["self_x"]) - float(row["goal_x"]),
+                float(row["self_y"]) - float(row["goal_y"]),
+            ))
         if not distances or distances[0] <= 0:
             return 0.0
         return max(0.0, min(1.0, (distances[0] - min(distances)) / distances[0]))
@@ -958,13 +1073,16 @@ class EpisodeStore:
     def reset(self) -> None:
         if not self.root.exists():
             return
-        for path in self.root.iterdir():
-            if path.is_file() and (
-                path.name.endswith(".sqlite3")
-                or path.name.endswith(".sqlite3-wal")
-                or path.name.endswith(".sqlite3-shm")
-            ):
-                path.unlink(missing_ok=True)
+        for directory in (self.root, self.root / "vision"):
+            if not directory.exists():
+                continue
+            for path in directory.iterdir():
+                if path.is_file() and (
+                    path.name.endswith(".sqlite3")
+                    or path.name.endswith(".sqlite3-wal")
+                    or path.name.endswith(".sqlite3-shm")
+                ):
+                    path.unlink(missing_ok=True)
 
     def _paths(self) -> list[Path]:
         if not self.root.exists():
@@ -1018,6 +1136,14 @@ class EpisodeStore:
             path.unlink(missing_ok=True)
             path.with_name(path.name + "-wal").unlink(missing_ok=True)
             path.with_name(path.name + "-shm").unlink(missing_ok=True)
+            vision_path = self.root / "vision" / path.name
+            vision_path.unlink(missing_ok=True)
+            vision_path.with_name(vision_path.name + "-wal").unlink(
+                missing_ok=True
+            )
+            vision_path.with_name(vision_path.name + "-shm").unlink(
+                missing_ok=True
+            )
 
     def latest_path(self) -> Path | None:
         paths = self._paths()

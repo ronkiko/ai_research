@@ -103,7 +103,18 @@ def _sample(sequence: int, tick: int, self_x: int):
 
 
 class EpisodeDatasetTests(unittest.TestCase):
-    def test_vision_matrices_are_compressed_on_disk_and_roundtrip(self):
+    def test_progress_and_count_do_not_read_vision_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            dataset.upsert_sample(_sample(1, 0, 2))
+            dataset.upsert_sample(_sample(2, 2, 4))
+            dataset.vision_path.rename(dataset.vision_path.with_suffix(".hidden"))
+            self.assertEqual(dataset.step_count(), 2)
+            self.assertGreater(dataset.compute_progress(), 0.0)
+
+    def test_vision_matrices_live_only_in_compressed_sidecar(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = EpisodeStore(directory).create(
                 episode_id=1, mode="train", source="unpaced", seed=1
@@ -115,11 +126,22 @@ class EpisodeDatasetTests(unittest.TestCase):
                 user_version = connection.execute(
                     "PRAGMA user_version"
                 ).fetchone()[0]
+                step_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(steps)")
+                }
+            self.assertEqual(user_version, 12)
+            self.assertTrue(dataset.vision_path.is_file())
+            self.assertTrue(
+                {"coarse_physics", "physics", "metadata"}.isdisjoint(
+                    step_columns
+                )
+            )
+            with sqlite3.connect(dataset.vision_path) as connection:
                 stored = connection.execute(
-                    "SELECT coarse_physics, physics, metadata FROM steps"
+                    "SELECT coarse_physics, physics, metadata FROM frames"
                 ).fetchone()
 
-            self.assertEqual(user_version, 11)
             originals = (
                 sample.vision_grid.coarse_physics,
                 sample.vision_grid.physics,
@@ -303,7 +325,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 11)
+            self.assertEqual(metadata["schema_version"], 12)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
@@ -437,7 +459,11 @@ class EpisodeDatasetTests(unittest.TestCase):
                 store.rotate()
 
             paths = sorted(store.root.glob("episode-*.sqlite3"))
+            vision_paths = sorted(
+                (store.root / "vision").glob("episode-*.sqlite3")
+            )
             self.assertEqual(len(paths), 5)
+            self.assertEqual(len(vision_paths), 5)
             self.assertEqual(
                 [path.name for path in paths],
                 [
@@ -451,6 +477,9 @@ class EpisodeDatasetTests(unittest.TestCase):
 
             store.reset()
             self.assertEqual(list(store.root.glob("episode-*.sqlite3")), [])
+            self.assertEqual(
+                list((store.root / "vision").glob("episode-*.sqlite3")), []
+            )
 
 
 if __name__ == "__main__":

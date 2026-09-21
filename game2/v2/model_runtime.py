@@ -318,7 +318,7 @@ class ModelRuntime:
         else:
             updated, loss = False, 0.0
             metrics.update({
-                "rollout_records": len(dataset.steps()),
+                "rollout_records": dataset.step_count(),
                 "ppo_records": 0,
                 "optimizer_steps": 0,
             })
@@ -411,10 +411,8 @@ class ModelRuntime:
                 self._episode_actuated_count += 1
                 self.player.record_actuated(sample)
                 if self._episode_dataset is not None:
-                    self._episode_dataset.upsert_sample(
-                        sample,
-                        duration_ticks=POLICY_STRIDE_TICKS,
-                        actuated=True,
+                    self._episode_dataset.mark_actuated(
+                        sample.policy_sequence
                     )
             return pending_observation
         if message_type == EPISODE_END:
@@ -445,8 +443,10 @@ class ModelRuntime:
             if not command.any:
                 return None
             sample, applied_command = self._gate_control_request(sample)
-            self._episode_dataset.upsert_sample(
-                sample, duration_ticks=POLICY_STRIDE_TICKS
+            self._episode_dataset.update_control_resolution(
+                sample.policy_sequence,
+                sample.desired_state,
+                sample.suppressed_buttons,
             )
             if hasattr(self.player, "latest_sample"):
                 self.player.latest_sample = sample

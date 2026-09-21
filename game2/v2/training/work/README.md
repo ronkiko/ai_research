@@ -2,10 +2,12 @@
 
 This directory owns the canonical episode material used by Game2 learning.
 
-- `episodes/` is runtime-only and keeps at most the five newest episode SQLite files.
-- One episode file contains the public Vision matrices, policy inputs and outputs, terminal result, PPO selection, rewards, advantages, returns, and post-update ratings.
-- Vision matrix BLOBs are zlib-compressed inside the SQLite file. Readers transparently restore the exact public Vision bytes, so the file remains an ordinary `.sqlite3` database while taking much less space for transfer and retention.
+- `episodes/episode-*.sqlite3` contains only scalar/text trajectory data: policy inputs and outputs, Proprioception, terminal result, PPO selection, rewards, advantages, returns, and post-update ratings.
+- `episodes/vision/episode-*.sqlite3` is the matching Vision sidecar. It alone stores zlib-compressed `coarse_physics`, `physics`, and `metadata` matrices.
+- The split is deliberate: ordinary SQL inspection of the main episode database can use `SELECT *` without materializing graphical Vision payloads.
+- PPO reaches Vision only through `EpisodeDataset`; scalar operations such as progress, counts, trajectory annotations, and spectator ratings stay on the main database.
 - Realtime and unpaced execution differ only in how quickly they produce rows. Both train through `ppo.py`.
-- `--fresh` clears the episode store before training starts.
+- `--fresh` clears both the main episode files and their Vision sidecars.
+- Rotation keeps matching main/sidecar pairs for the five newest episodes.
 
-The SQLite episode file is the training source of truth. Checkpoints remain the persistent model state.
+The pair of files is the training source of truth for one episode. The main SQLite file is intentionally useful on its own for text/numeric inspection; the Vision sidecar is required only when exact visual replay/training input is needed. Checkpoints remain the persistent model state.
