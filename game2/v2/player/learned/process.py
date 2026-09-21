@@ -104,7 +104,13 @@ class TrainingPeer:
             peer.close()
 
 
-def _drain_acknowledgements(joystick, statuses: dict[int, list[str]]) -> None:
+def _drain_acknowledgements(
+    joystick,
+    statuses: dict[int, list[str]],
+    pending: dict[int, int],
+    model: ModelClient,
+    actuated_ids: set[int],
+) -> None:
     drain = getattr(joystick, "drain_acknowledgements", None)
     if not callable(drain):
         return
@@ -116,25 +122,35 @@ def _drain_acknowledgements(joystick, statuses: dict[int, list[str]]) -> None:
             continue
         sequence = acknowledgement.get("sequence")
         status = acknowledgement.get("status")
-        if type(sequence) is int and status in {"accepted", "rejected", "duplicate"}:
-            statuses.setdefault(sequence, []).append(status)
-
-
-def _record_accepted_acks(model: ModelClient, sequence_decisions: dict[int, int],
-                          statuses: dict[int, list[str]], actuated_ids: set[int]) -> None:
-    for sequence, decision_id in tuple(sequence_decisions.items()):
-        if decision_id in actuated_ids:
+        if type(sequence) is not int or status not in {
+            "accepted", "rejected", "duplicate"
+        }:
             continue
-        if "accepted" in statuses.get(sequence, ()):
+        statuses.setdefault(sequence, []).append(status)
+        decision_id = pending.pop(sequence, None)
+        if decision_id is None:
+            continue
+        model.control_result(decision_id, status)
+        if status == "accepted" and decision_id not in actuated_ids:
             model.actuated(decision_id)
             actuated_ids.add(decision_id)
 
 
-def _settle_acks(joystick, sequences: set[int], statuses: dict[int, list[str]],
-                 timeout: float, sleeper: Callable[[float], None]) -> tuple[int, int, bool]:
+def _settle_acks(
+    joystick,
+    sequences: set[int],
+    statuses: dict[int, list[str]],
+    pending: dict[int, int],
+    model: ModelClient,
+    actuated_ids: set[int],
+    timeout: float,
+    sleeper: Callable[[float], None],
+) -> tuple[int, int, bool]:
     deadline = time.monotonic() + timeout
     while True:
-        _drain_acknowledgements(joystick, statuses)
+        _drain_acknowledgements(
+            joystick, statuses, pending, model, actuated_ids
+        )
         if sequences.issubset(statuses) or time.monotonic() >= deadline:
             break
         sleeper(0.001)
@@ -175,7 +191,11 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     connection.clear_terminal_events()
     connection.clear_acknowledgements()
     ack_statuses: dict[int, list[str]] = {}
-    _drain_acknowledgements(joystick, ack_statuses)
+    pending_actuation: dict[int, int] = {}
+    actuated_ids: set[int] = set()
+    _drain_acknowledgements(
+        joystick, ack_statuses, pending_actuation, model, actuated_ids
+    )
     before_sequence = int(getattr(joystick, "sequence", 0))
     pre_lifecycle_frame = vision.latest
     pre_lifecycle_world_tick = getattr(pre_lifecycle_frame, "world_tick", -1)
@@ -204,8 +224,7 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     send_period = 1 / action_hz
     dirty = False
     sent_sequences: set[int] = set()
-    sequence_decisions: dict[int, int] = {}
-    actuated_ids: set[int] = set()
+    last_sent_decision_id: int | None = None
     latest_decision = None
     progress_tracker = VisionProgress()
     saw_self_frame = False
@@ -213,8 +232,9 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     missing_self_after_seen = False
 
     while latest_terminal is None:
-        _drain_acknowledgements(joystick, ack_statuses)
-        _record_accepted_acks(model, sequence_decisions, ack_statuses, actuated_ids)
+        _drain_acknowledgements(
+            joystick, ack_statuses, pending_actuation, model, actuated_ids
+        )
         if (
             connection.failed
             or vision.failed
@@ -269,22 +289,30 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
             break
         if latest_decision is not None and started_tick is not None:
             gameplay_started = True
-            now = clock()
-            if now >= next_send:
-                state = joystick.send_state(latest_decision.action_decision.right,
-                                            latest_decision.action_decision.jump)
-                sequence = getattr(state, "sequence", None)
-                if type(sequence) is not int:
-                    sequence = int(getattr(joystick, "sequence", before_sequence +
-                                       len(sent_sequences) + 1))
-                sent_sequences.add(sequence)
-                sequence_decisions[sequence] = latest_decision.decision_id
-                _drain_acknowledgements(joystick, ack_statuses)
-                _record_accepted_acks(
-                    model, sequence_decisions, ack_statuses, actuated_ids)
-                next_send += send_period
-                if next_send < now:
-                    next_send = now
+            if latest_decision.decision_id != last_sent_decision_id:
+                now = clock()
+                if now >= next_send:
+                    state = joystick.send_state(
+                        latest_decision.action_decision.right,
+                        latest_decision.action_decision.jump,
+                    )
+                    model.control_requested(latest_decision.decision_id)
+                    sequence = getattr(state, "sequence", None)
+                    if type(sequence) is not int:
+                        sequence = int(getattr(
+                            joystick, "sequence",
+                            before_sequence + len(sent_sequences) + 1,
+                        ))
+                    sent_sequences.add(sequence)
+                    pending_actuation[sequence] = latest_decision.decision_id
+                    last_sent_decision_id = latest_decision.decision_id
+                    _drain_acknowledgements(
+                        joystick, ack_statuses, pending_actuation,
+                        model, actuated_ids,
+                    )
+                    next_send = max(next_send + send_period, now)
+                    if next_send < now:
+                        next_send = now
         if missing_self_after_seen and gameplay_started:
             break
         sleeper(0.001 if latest_decision is not None else 0.005)
@@ -292,8 +320,8 @@ def _run_episode(connection: PlayerConnection, model: ModelClient, episode_id: i
     if latest_terminal is None:
         latest_terminal = {"result": "timeout", "world_tick": max(latest_frame_tick, 0)}
     accepted, rejected, complete = _settle_acks(
-        joystick, sent_sequences, ack_statuses, ack_settle_timeout, sleeper)
-    _record_accepted_acks(model, sequence_decisions, ack_statuses, actuated_ids)
+        joystick, sent_sequences, ack_statuses, pending_actuation,
+        model, actuated_ids, ack_settle_timeout, sleeper)
     if not complete or started_tick is None or connection.failed \
             or vision.failed or proprioception.failed or joystick.failed:
         dirty = True

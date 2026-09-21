@@ -12,23 +12,26 @@ from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.joystick import joystick_ack
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
 from game2.v2.contracts.proprioception import ProprioceptionFrame
-from game2.v2.contracts.vision import META_SELF, META_SELF_CENTER, VisionGrid
+from game2.v2.contracts.vision import META_GOAL, META_SELF, META_SELF_CENTER, VisionGrid
 from game2.v2.player.learned.main import run_attached_player, run_player
 from game2.v2.player.learned.process import _run_episode as run_training_episode
 from game2.v2.player.learned.motion import MotionEstimator
 from game2.v2.player.peripherals import JoystickClient
 
 
-def _grid(*, width=12, height=5, self_x=None, tick=1):
+def _grid(*, width=12, height=5, self_x=None, goal_x=None, tick=1):
     coarse_physics = bytes(width * height)
     fine_width = width * 8
     fine_height = height * 8
     physics = bytes(fine_width * fine_height)
     metadata = bytearray(fine_width * fine_height)
+    fine_y = 2 * 8 + 4
     if self_x is not None:
         fine_x = self_x * 8 + 4
-        fine_y = 2 * 8 + 4
         metadata[fine_y * fine_width + fine_x] = META_SELF | META_SELF_CENTER
+    if goal_x is not None:
+        fine_x = goal_x * 8 + 4
+        metadata[fine_y * fine_width + fine_x] = META_GOAL
     return VisionGrid(
         width, height, 64, coarse_physics, physics, bytes(metadata), tick
     )
@@ -274,7 +277,169 @@ class LearnedLifecycleTests(unittest.TestCase):
         self.assertEqual(order, ["start", "detach", "close"])
 
 
+class _TrainingAckJoystick(_LifecycleJoystick):
+    def __init__(self, statuses, on_send=None):
+        super().__init__(on_send=on_send)
+        self.statuses = list(statuses)
+        self.acks = []
+
+    def send_state(self, right, jump):
+        state = super().send_state(right, jump)
+        if self.statuses:
+            self.acks.append({
+                "sequence": state.sequence,
+                "status": self.statuses.pop(0),
+            })
+        return state
+
+    def drain_acknowledgements(self):
+        result, self.acks = self.acks, []
+        return result
+
+
 class LearnedTrainingLifecycleTests(unittest.TestCase):
+    def test_training_sends_each_model_decision_at_most_once(self):
+        class Connection:
+            failed = False
+
+            def __init__(self):
+                self.pop_calls = 0
+
+            def clear_terminal_events(self):
+                return None
+
+            def clear_acknowledgements(self):
+                return None
+
+            def request_start_ack(self):
+                return {"status": "accepted", "world_tick": 0}
+
+            def pop_terminal(self):
+                self.pop_calls += 1
+                if self.pop_calls >= 8:
+                    return {"result": "timeout", "world_tick": 8}
+                return None
+
+        vision = _LifecycleVision([
+            _grid(tick=0),
+            _grid(self_x=3, goal_x=10, tick=2),
+        ])
+        joystick = _TrainingAckJoystick(["accepted"])
+        model = _RemoteModel()
+
+        finished, trainable, _accepted = run_training_episode(
+            Connection(), model, 1, "train", first_lifecycle=True,
+            vision=vision, proprioception=_LifecycleProprioception(),
+            joystick=joystick, action_hz=120,
+            sleeper=lambda _duration: None, clock=lambda: 0.0,
+            ack_settle_timeout=0.0, on_started=lambda _message: None,
+        )
+
+        self.assertTrue(trainable)
+        self.assertEqual(len(joystick.sent), 1)
+        self.assertEqual(model.control_requested_ids, [2])
+        self.assertEqual(model.control_results, [(2, "accepted")])
+        self.assertEqual(model.actuated_ids, [2])
+        self.assertEqual(finished["accepted_actions"], 1)
+
+    def test_training_reports_rejected_and_duplicate_without_actuation(self):
+        class Connection:
+            failed = False
+
+            def __init__(self):
+                self.pop_calls = 0
+
+            def clear_terminal_events(self):
+                return None
+
+            def clear_acknowledgements(self):
+                return None
+
+            def request_start_ack(self):
+                return {"status": "accepted", "world_tick": 0}
+
+            def pop_terminal(self):
+                self.pop_calls += 1
+                if self.pop_calls >= 10:
+                    return {"result": "timeout", "world_tick": 10}
+                return None
+
+        class Model(_RemoteModel):
+            def observe(self, frame, proprioception):
+                super().observe(frame, proprioception)
+
+        vision = _LifecycleVision([
+            _grid(tick=0),
+            _grid(self_x=3, goal_x=10, tick=2),
+            _grid(self_x=4, goal_x=10, tick=4),
+        ])
+        joystick = _TrainingAckJoystick(["rejected", "duplicate"])
+        model = Model()
+        clock_values = iter((0.0, 0.0, 0.01))
+
+        finished, trainable, _accepted = run_training_episode(
+            Connection(), model, 1, "train", first_lifecycle=True,
+            vision=vision, proprioception=_LifecycleProprioception(),
+            joystick=joystick, action_hz=120,
+            sleeper=lambda _duration: None,
+            clock=lambda: next(clock_values, 0.02),
+            ack_settle_timeout=0.0, on_started=lambda _message: None,
+        )
+
+        self.assertTrue(trainable)
+        self.assertEqual(model.control_requested_ids, [2, 4])
+        self.assertEqual(
+            model.control_results,
+            [(2, "rejected"), (4, "duplicate")],
+        )
+        self.assertEqual(model.actuated_ids, [])
+        self.assertEqual(finished["accepted_actions"], 0)
+        self.assertEqual(finished["rejected_actions"], 2)
+
+    def test_training_terminal_with_unsettled_ack_is_not_trainable(self):
+        class Connection:
+            failed = False
+
+            def __init__(self):
+                self.pop_calls = 0
+
+            def clear_terminal_events(self):
+                return None
+
+            def clear_acknowledgements(self):
+                return None
+
+            def request_start_ack(self):
+                return {"status": "accepted", "world_tick": 0}
+
+            def pop_terminal(self):
+                self.pop_calls += 1
+                if self.pop_calls >= 4:
+                    return {"result": "timeout", "world_tick": 4}
+                return None
+
+        vision = _LifecycleVision([
+            _grid(tick=0),
+            _grid(self_x=3, goal_x=10, tick=2),
+        ])
+        joystick = _TrainingAckJoystick([])
+        model = _RemoteModel()
+
+        finished, trainable, _accepted = run_training_episode(
+            Connection(), model, 1, "train", first_lifecycle=True,
+            vision=vision, proprioception=_LifecycleProprioception(),
+            joystick=joystick, action_hz=120,
+            sleeper=lambda _duration: None, clock=lambda: 0.0,
+            ack_settle_timeout=0.0, on_started=lambda _message: None,
+        )
+
+        self.assertFalse(trainable)
+        self.assertEqual(model.control_requested_ids, [2])
+        self.assertEqual(model.control_results, [])
+        self.assertEqual(model.actuated_ids, [])
+        self.assertEqual(finished["accepted_actions"], 0)
+        self.assertEqual(finished["rejected_actions"], 0)
+
     def test_training_pairs_vision_with_latest_non_future_body_frame(self):
         class Connection:
             failed = False
