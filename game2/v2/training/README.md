@@ -27,7 +27,7 @@ metrics. `training/model_runtime.py` is the standalone Model runtime wrapper.
 
 `--fresh` clears the episode dataset store and the four learned checkpoints
 (`planner.pt`, `motor.pt`, `critic.pt`, `optimizer.pt`) before starting.
-`--resume` requires all four checkpoints.
+`--resume` requires all four checkpoints. In unpaced mode the same atomic generation also stores curriculum position (current map, next attempt, training seed, episode id, and any pending deterministic Verify), so interruption resumes from the last fully published training state instead of restarting at the first map. Legacy generations without curriculum state are migrated by a frozen greedy pass that finds the first unmastered map.
 
 Checkpoint files are published as one complete generation through an atomic
 `.current` pointer; the previous generation is retained. Individual `.pt` paths

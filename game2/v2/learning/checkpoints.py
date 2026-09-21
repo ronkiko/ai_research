@@ -35,13 +35,24 @@ def _sync_directory(path):
         os.close(descriptor)
 
 
-def publish_checkpoints(paths, write):
-    """Write and fsync all files before switching the one generation pointer."""
+def publish_checkpoints(paths, write, *, extra_files=None):
+    """Write and fsync one complete generation before switching its pointer."""
     paths = tuple(Path(path) for path in paths)
     if len(paths) != 4 or len({p.parent for p in paths}) != 1:
         raise ValueError("checkpoint set must contain four files in one directory")
     if len({p.name for p in paths}) != 4:
         raise ValueError("checkpoint filenames must be distinct")
+    extras = dict(extra_files or {})
+    for name, payload in extras.items():
+        if (
+            type(name) is not str
+            or not name
+            or Path(name).name != name
+            or name in {p.name for p in paths}
+        ):
+            raise ValueError("extra checkpoint filename is invalid")
+        if not isinstance(payload, (bytes, bytearray)):
+            raise TypeError("extra checkpoint payloads must be bytes")
     root = paths[0].parent
     current = root / ".current"
     previous = current.resolve(strict=True) if current.is_symlink() else None
@@ -55,7 +66,12 @@ def publish_checkpoints(paths, write):
     try:
         files = tuple(generation / path.name for path in paths)
         write(files)
-        for path in files:
+        extra_paths = []
+        for name, payload in extras.items():
+            extra_path = generation / name
+            extra_path.write_bytes(bytes(payload))
+            extra_paths.append(extra_path)
+        for path in (*files, *extra_paths):
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
         _sync_directory(generation)

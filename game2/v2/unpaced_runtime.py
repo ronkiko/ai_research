@@ -37,6 +37,63 @@ from game2.v2.training.work import (
 
 PLAYER_ID = "unpaced-player"
 ACTOR_ID = "unpaced-actor"
+TRAINING_STATE_NAME = "training-state.json"
+TRAINING_STATE_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class TrainingResumeState:
+    training_set_level: int
+    map_ids: tuple[str, ...]
+    map_index: int
+    next_attempt: int
+    training_seed: int
+    episode_id: int
+    pending_verify_attempt: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.training_set_level) is not int:
+            raise TypeError("training_set_level must be int")
+        if (
+            not isinstance(self.map_ids, tuple)
+            or not self.map_ids
+            or any(type(value) is not str or not value for value in self.map_ids)
+        ):
+            raise ValueError("map_ids must be a non-empty tuple of strings")
+        if (
+            type(self.map_index) is not int
+            or not 0 <= self.map_index <= len(self.map_ids)
+        ):
+            raise ValueError("map_index is outside the training set")
+        if type(self.next_attempt) is not int or self.next_attempt <= 0:
+            raise ValueError("next_attempt must be positive")
+        if type(self.training_seed) is not int or self.training_seed < 0:
+            raise ValueError("training_seed must be non-negative")
+        if type(self.episode_id) is not int or self.episode_id < 0:
+            raise ValueError("episode_id must be non-negative")
+        if (
+            self.pending_verify_attempt is not None
+            and (
+                type(self.pending_verify_attempt) is not int
+                or self.pending_verify_attempt <= 0
+            )
+        ):
+            raise ValueError("pending_verify_attempt must be positive or None")
+
+    def to_bytes(self) -> bytes:
+        return (
+            json.dumps({
+                "schema_version": TRAINING_STATE_SCHEMA_VERSION,
+                "training_set_level": self.training_set_level,
+                "map_ids": list(self.map_ids),
+                "map_index": self.map_index,
+                "next_attempt": self.next_attempt,
+                "training_seed": self.training_seed,
+                "episode_id": self.episode_id,
+                "pending_verify_attempt": self.pending_verify_attempt,
+            }, separators=(",", ":"), sort_keys=True)
+            + "\n"
+        ).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -57,8 +114,83 @@ def _checkpoint_paths(directory: str | Path) -> tuple[Path, Path, Path, Path]:
     )
 
 
-def save_checkpoints(model, directory: str | Path) -> None:
-    save_checkpoint_set(model, _checkpoint_paths(directory))
+def save_checkpoints(
+    model,
+    directory: str | Path,
+    training_state: TrainingResumeState | None = None,
+) -> None:
+    extra_files = (
+        None
+        if training_state is None
+        else {TRAINING_STATE_NAME: training_state.to_bytes()}
+    )
+    save_checkpoint_set(
+        model, _checkpoint_paths(directory), extra_files=extra_files
+    )
+
+
+def _load_training_state(
+    directory: str | Path, manifest: TrainingSetManifest
+) -> TrainingResumeState | None:
+    current = Path(directory) / ".current"
+    if not current.is_symlink():
+        return None
+    path = current.resolve(strict=True) / TRAINING_STATE_NAME
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("could not load training resume state") from exc
+    fields = {
+        "schema_version", "training_set_level", "map_ids", "map_index",
+        "next_attempt", "training_seed", "episode_id",
+        "pending_verify_attempt",
+    }
+    if not isinstance(data, dict) or set(data) != fields:
+        raise ValueError("training resume state fields are invalid")
+    if data["schema_version"] != TRAINING_STATE_SCHEMA_VERSION:
+        raise ValueError("unsupported training resume state schema_version")
+    map_ids = data["map_ids"]
+    if not isinstance(map_ids, list):
+        raise ValueError("training resume map_ids must be an array")
+    state = TrainingResumeState(
+        data["training_set_level"],
+        tuple(map_ids),
+        data["map_index"],
+        data["next_attempt"],
+        data["training_seed"],
+        data["episode_id"],
+        data["pending_verify_attempt"],
+    )
+    expected_ids = tuple(spec.map_id for spec in manifest.training_maps)
+    if (
+        state.training_set_level != manifest.training_set_level
+        or state.map_ids != expected_ids
+    ):
+        raise ValueError("training resume state does not match the training set")
+    return state
+
+
+def _legacy_resume_counters(episode_store: EpisodeStore) -> tuple[int, int]:
+    episode_id = 0
+    training_seed = 0
+    if not episode_store.root.exists():
+        return episode_id, training_seed
+    for path in episode_store.root.glob("episode-*.sqlite3"):
+        if not path.is_file():
+            continue
+        try:
+            meta = EpisodeDataset(path).metadata()
+        except (OSError, ValueError):
+            continue
+        episode = meta.get("episode_id")
+        seed = meta.get("seed")
+        if type(episode) is int:
+            episode_id = max(episode_id, episode)
+        if meta.get("mode") == "train" and type(seed) is int:
+            training_seed = max(training_seed, seed)
+    return episode_id, training_seed
 
 
 def load_model(
@@ -309,8 +441,12 @@ def run_unpaced_training_set(
         fresh=fresh, checkpoint_dir=checkpoint_dir, profile=profile
     )
     player_id = profile.player_id if profile is not None else PLAYER_ID
-    episode_id = 0
-    training_seed = 0
+    map_ids = tuple(spec.map_id for spec in manifest.training_maps)
+    resume_state = None if fresh else _load_training_state(
+        checkpoint_dir, manifest
+    )
+    episode_id = 0 if resume_state is None else resume_state.episode_id
+    training_seed = 0 if resume_state is None else resume_state.training_seed
 
     interactive = bool(
         not json_output
@@ -454,8 +590,135 @@ def run_unpaced_training_set(
             })
         return write_ppo
 
+    def verify_map(spec, map_path: Path, attempt: int) -> EpisodeResult:
+        nonlocal episode_id
+        if not json_output:
+            write_line(
+                f"Verify {attempt}/{max_episodes} · learning OFF · "
+                "must reach the goal again to prove this was learned"
+            )
+        episode_id += 1
+        evaluation_dataset = episode_store.create(
+            episode_id=episode_id,
+            mode="evaluate",
+            source="unpaced",
+            seed=episode_id,
+        )
+        evaluation = run_episode(
+            model,
+            map_path,
+            episode_limit=episode_limit,
+            mode="evaluate",
+            seed=episode_id,
+            dataset=evaluation_dataset,
+            should_stop=should_stop,
+            on_progress=progress_writer(episode_id, "evaluate", attempt),
+            player_id=player_id,
+        )
+        evaluation_dataset.finalize(
+            result=evaluation.result,
+            finish_world_tick=evaluation.finish_world_tick,
+            terminal_reward=reward_for_result(
+                evaluation.result, evaluation.progress
+            ),
+            trainable=False,
+            progress=evaluation.progress,
+        )
+        episode_store.rotate()
+        write("EVALUATION", {
+            "mode": "unpaced",
+            "episode_id": episode_id,
+            "result": evaluation.result,
+            "progress": evaluation.progress,
+            "world_ticks": evaluation.finish_world_tick,
+            "decisions": evaluation.decisions,
+            "attempt": attempt,
+            "max_attempts": max_episodes,
+        })
+        return evaluation
+
     map_count = len(manifest.training_maps)
+    if resume_state is None and not fresh:
+        episode_id, training_seed = _legacy_resume_counters(episode_store)
+        if json_output:
+            write("RESUME_DISCOVERY", {
+                "status": "start", "map_count": map_count,
+            })
+        else:
+            write_line(
+                "Resume · legacy checkpoint has no curriculum state; "
+                "checking learned maps with learning OFF"
+            )
+        first_unmastered = map_count
+        for index, spec in enumerate(manifest.training_maps):
+            if should_stop is not None and should_stop():
+                raise KeyboardInterrupt
+            map_path = Path(spec.path)
+            if not map_path.is_absolute():
+                map_path = (manifest_path.parent / map_path).resolve()
+            episode_id += 1
+            dataset = episode_store.create(
+                episode_id=episode_id,
+                mode="evaluate",
+                source="unpaced",
+                seed=episode_id,
+            )
+            outcome = run_episode(
+                model,
+                map_path,
+                episode_limit=episode_limit,
+                mode="evaluate",
+                seed=episode_id,
+                dataset=dataset,
+                should_stop=should_stop,
+                player_id=player_id,
+            )
+            dataset.finalize(
+                result=outcome.result,
+                finish_world_tick=outcome.finish_world_tick,
+                terminal_reward=0.0,
+                trainable=False,
+                progress=outcome.progress,
+            )
+            episode_store.rotate()
+            write("RESUME_DISCOVERY", {
+                "status": "map",
+                "map_id": spec.map_id,
+                "result": outcome.result,
+                "progress": outcome.progress,
+            })
+            if outcome.result != "success":
+                first_unmastered = index
+                break
+        resume_state = TrainingResumeState(
+            manifest.training_set_level,
+            map_ids,
+            first_unmastered,
+            1,
+            training_seed,
+            episode_id,
+        )
+        save_checkpoints(model, checkpoint_dir, resume_state)
+        if not json_output:
+            if first_unmastered < map_count:
+                write_line(
+                    f"Resume · continuing at "
+                    f"{manifest.training_maps[first_unmastered].map_id}"
+                )
+            else:
+                write_line(
+                    "Resume · all training maps already pass; "
+                    "continuing to final check"
+                )
+
+    assert resume_state is not None or fresh
+    start_map_index = 0 if fresh else resume_state.map_index
+    start_attempt = 1 if fresh else resume_state.next_attempt
+
     for map_index, spec in enumerate(manifest.training_maps, start=1):
+        zero_index = map_index - 1
+        if zero_index < start_map_index:
+            continue
         map_path = Path(spec.path)
         if not map_path.is_absolute():
             map_path = (manifest_path.parent / map_path).resolve()
@@ -484,7 +747,45 @@ def run_unpaced_training_set(
         successes = 0
         previous_train_result: str | None = None
         previous_train_progress: float | None = None
-        for attempt in range(1, max_episodes + 1):
+        first_attempt = (
+            start_attempt if zero_index == start_map_index else 1
+        )
+        pending_verify = (
+            resume_state.pending_verify_attempt
+            if (
+                not fresh
+                and zero_index == start_map_index
+                and resume_state is not None
+            )
+            else None
+        )
+        if pending_verify is not None:
+            evaluation = verify_map(spec, map_path, pending_verify)
+            if evaluation.result == "success":
+                mastered = True
+                resume_state = TrainingResumeState(
+                    manifest.training_set_level,
+                    map_ids,
+                    zero_index + 1,
+                    1,
+                    training_seed,
+                    episode_id,
+                )
+            else:
+                resume_state = TrainingResumeState(
+                    manifest.training_set_level,
+                    map_ids,
+                    zero_index,
+                    first_attempt,
+                    training_seed,
+                    episode_id,
+                )
+            save_checkpoints(model, checkpoint_dir, resume_state)
+
+        for attempt in (
+            range(first_attempt, max_episodes + 1)
+            if not mastered else ()
+        ):
             if should_stop is not None and should_stop():
                 raise KeyboardInterrupt
 
@@ -550,8 +851,24 @@ def run_unpaced_training_set(
                 should_stop=should_stop,
                 on_progress=ppo_writer(episode_id, attempt),
             )
-            if training.updated:
-                save_checkpoints(model, checkpoint_dir)
+            verify_due = (
+                training.updated
+                and (
+                    outcome.result == "success"
+                    or attempt % EVALUATION_INTERVAL == 0
+                    or attempt == max_episodes
+                )
+            )
+            resume_state = TrainingResumeState(
+                manifest.training_set_level,
+                map_ids,
+                zero_index,
+                attempt + 1,
+                training_seed,
+                episode_id,
+                attempt if verify_due else None,
+            )
+            save_checkpoints(model, checkpoint_dir, resume_state)
             episode_store.rotate()
             write("LEARNING", {
                 "episode_id": episode_id,
@@ -592,60 +909,31 @@ def run_unpaced_training_set(
             previous_train_result = outcome.result
             previous_train_progress = outcome.progress
 
-            if not training.updated or not (
-                outcome.result == "success"
-                or attempt % EVALUATION_INTERVAL == 0
-                or attempt == max_episodes
-            ):
+            if not verify_due:
                 continue
 
-            if not json_output:
-                write_line(
-                    f"Verify {attempt}/{max_episodes} · learning OFF · "
-                    "must reach the goal again to prove this was learned"
-                )
-
-            episode_id += 1
-            evaluation_dataset = episode_store.create(
-                episode_id=episode_id,
-                mode="evaluate",
-                source="unpaced",
-                seed=episode_id,
-            )
-            evaluation = run_episode(
-                model,
-                map_path,
-                episode_limit=episode_limit,
-                mode="evaluate",
-                seed=episode_id,
-                dataset=evaluation_dataset,
-                should_stop=should_stop,
-                on_progress=progress_writer(episode_id, "evaluate", attempt),
-                player_id=player_id,
-            )
-            evaluation_dataset.finalize(
-                result=evaluation.result,
-                finish_world_tick=evaluation.finish_world_tick,
-                terminal_reward=reward_for_result(
-                    evaluation.result, evaluation.progress
-                ),
-                trainable=False,
-                progress=evaluation.progress,
-            )
-            episode_store.rotate()
-            write("EVALUATION", {
-                "mode": "unpaced",
-                "episode_id": episode_id,
-                "result": evaluation.result,
-                "progress": evaluation.progress,
-                "world_ticks": evaluation.finish_world_tick,
-                "decisions": evaluation.decisions,
-                "attempt": attempt,
-                "max_attempts": max_episodes,
-            })
+            evaluation = verify_map(spec, map_path, attempt)
             if evaluation.result == "success":
                 mastered = True
+                resume_state = TrainingResumeState(
+                    manifest.training_set_level,
+                    map_ids,
+                    zero_index + 1,
+                    1,
+                    training_seed,
+                    episode_id,
+                )
+                save_checkpoints(model, checkpoint_dir, resume_state)
                 break
+            resume_state = TrainingResumeState(
+                manifest.training_set_level,
+                map_ids,
+                zero_index,
+                attempt + 1,
+                training_seed,
+                episode_id,
+            )
+            save_checkpoints(model, checkpoint_dir, resume_state)
 
         if json_output:
             output.write(

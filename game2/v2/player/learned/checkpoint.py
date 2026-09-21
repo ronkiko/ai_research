@@ -17,7 +17,7 @@ CHECKPOINT_SCHEMA_VERSION = 1
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
 
 
-def save_checkpoint_set(model, paths):
+def save_checkpoint_set(model, paths, *, extra_files=None):
     if model.optimizer is None:
         raise RuntimeError("checkpoint requires a trainable optimizer")
 
@@ -27,7 +27,7 @@ def save_checkpoint_set(model, paths):
         save_critic(model.critic, destinations[2])
         save_optimizer(model.optimizer, destinations[3])
 
-    return publish_checkpoints(paths, write)
+    return publish_checkpoints(paths, write, extra_files=extra_files)
 
 
 def _seed_for(model: torch.nn.Module) -> int:

@@ -14,6 +14,8 @@ from game2.v2.unpaced_runtime import (
     _behavior_trend,
     _progress_bar,
     _rollout_line,
+    _load_training_state,
+    TrainingResumeState,
     load_model,
     run_episode,
     save_checkpoints,
@@ -27,6 +29,7 @@ from game2.v2.training.work import EpisodeStore, train_episode
 
 ROOT = Path(__file__).resolve().parents[3]
 FLAT_RUN = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "flat_run.json"
+SHORT_GAP = ROOT / "game2" / "v2" / "training" / "maps" / "level-1" / "short_gap.json"
 
 
 class UnpacedTrainingTests(unittest.TestCase):
@@ -150,7 +153,18 @@ class UnpacedTrainingTests(unittest.TestCase):
             model = load_model(
                 fresh=True, checkpoint_dir=root, profile=profile
             )
-            save_checkpoints(model, root)
+            manifest = SimpleNamespace(
+                training_set_level=1,
+                training_maps=(
+                    SimpleNamespace(map_id="flat_run"),
+                    SimpleNamespace(map_id="short_gap"),
+                ),
+            )
+            state = TrainingResumeState(
+                1, ("flat_run", "short_gap"), 1, 5, 14, 17
+            )
+            save_checkpoints(model, root, state)
+            self.assertEqual(_load_training_state(root, manifest), state)
             resumed = load_model(
                 fresh=False, checkpoint_dir=root, profile=profile
             )
@@ -173,6 +187,189 @@ class UnpacedTrainingTests(unittest.TestCase):
             resumed = load_model(fresh=False, checkpoint_dir=root, profile=profile)
             self.assertTrue(all(value.equal(resumed.planner.state_dict()[key])
                                 for key, value in model.planner.state_dict().items()))
+
+    def test_resume_continues_saved_map_attempt_and_training_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoints"
+            profile = BotProfile.from_file(
+                ROOT / "game2" / "v2" / "bots" / "player1.json"
+            )
+            model = load_model(
+                fresh=True, checkpoint_dir=checkpoint, profile=profile
+            )
+            state = TrainingResumeState(
+                1, ("flat_run", "short_gap"), 1, 5, 14, 17
+            )
+            save_checkpoints(model, checkpoint, state)
+            manifest = SimpleNamespace(
+                training_set_level=1,
+                training_maps=(
+                    SimpleNamespace(map_id="flat_run", path=FLAT_RUN),
+                    SimpleNamespace(map_id="short_gap", path=SHORT_GAP),
+                ),
+            )
+            success = EpisodeResult("success", 1.0, 2, 1)
+            calls = []
+
+            def episode(_model, path, **kwargs):
+                calls.append((Path(path).stem, kwargs["mode"], kwargs["seed"]))
+                return success
+
+            with mock.patch(
+                    "game2.v2.unpaced_runtime.TrainingSetManifest.from_file",
+                    return_value=manifest), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.run_episode",
+                        side_effect=episode,
+                    ), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.train_episode",
+                        return_value=SimpleNamespace(
+                            updated=True, loss=0.0, metrics={}
+                        ),
+                    ):
+                status = run_unpaced_training_set(
+                    set_path=root / "set.json",
+                    checkpoint_dir=checkpoint,
+                    episode_store_dir=root / "episodes",
+                    max_episodes=5,
+                    episode_limit=2,
+                    fresh=False,
+                    profile=profile,
+                    output=io.StringIO(),
+                    json_output=True,
+                )
+            self.assertEqual(status, 0)
+            training_calls = [call for call in calls if call[1] == "train"]
+            self.assertEqual(training_calls[0], ("short_gap", "train", 15))
+            self.assertFalse(any(
+                name == "flat_run" and mode == "train"
+                for name, mode, _seed in calls
+            ))
+
+    def test_resume_retries_pending_verify_before_more_training(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoints"
+            profile = BotProfile.from_file(
+                ROOT / "game2" / "v2" / "bots" / "player1.json"
+            )
+            model = load_model(
+                fresh=True, checkpoint_dir=checkpoint, profile=profile
+            )
+            state = TrainingResumeState(
+                1, ("flat_run", "short_gap"), 1, 5, 14, 17, 4
+            )
+            save_checkpoints(model, checkpoint, state)
+            manifest = SimpleNamespace(
+                training_set_level=1,
+                training_maps=(
+                    SimpleNamespace(map_id="flat_run", path=FLAT_RUN),
+                    SimpleNamespace(map_id="short_gap", path=SHORT_GAP),
+                ),
+            )
+            success = EpisodeResult("success", 1.0, 2, 1)
+            timeout = EpisodeResult("timeout", 0.4, 2, 1)
+            calls = []
+
+            def episode(_model, path, **kwargs):
+                call = (Path(path).stem, kwargs["mode"], kwargs["seed"])
+                calls.append(call)
+                if len(calls) == 1:
+                    return timeout
+                return success
+
+            with mock.patch(
+                    "game2.v2.unpaced_runtime.TrainingSetManifest.from_file",
+                    return_value=manifest), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.run_episode",
+                        side_effect=episode,
+                    ), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.train_episode",
+                        return_value=SimpleNamespace(
+                            updated=True, loss=0.0, metrics={}
+                        ),
+                    ):
+                status = run_unpaced_training_set(
+                    set_path=root / "set.json",
+                    checkpoint_dir=checkpoint,
+                    episode_store_dir=root / "episodes",
+                    max_episodes=5,
+                    episode_limit=2,
+                    fresh=False,
+                    profile=profile,
+                    output=io.StringIO(),
+                    json_output=True,
+                )
+            self.assertEqual(status, 0)
+            self.assertEqual(calls[0][:2], ("short_gap", "evaluate"))
+            first_training = next(call for call in calls if call[1] == "train")
+            self.assertEqual(first_training, ("short_gap", "train", 15))
+
+    def test_legacy_resume_discovers_first_unmastered_map(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoints"
+            profile = BotProfile.from_file(
+                ROOT / "game2" / "v2" / "bots" / "player1.json"
+            )
+            model = load_model(
+                fresh=True, checkpoint_dir=checkpoint, profile=profile
+            )
+            # Old generations have weights/Adam but no curriculum state.
+            save_checkpoints(model, checkpoint)
+            manifest = SimpleNamespace(
+                training_set_level=1,
+                training_maps=(
+                    SimpleNamespace(map_id="flat_run", path=FLAT_RUN),
+                    SimpleNamespace(map_id="short_gap", path=SHORT_GAP),
+                ),
+            )
+            success = EpisodeResult("success", 1.0, 2, 1)
+            timeout = EpisodeResult("timeout", 0.4, 2, 1)
+            calls = []
+
+            def episode(_model, path, **kwargs):
+                call = (Path(path).stem, kwargs["mode"], kwargs["seed"])
+                calls.append(call)
+                if len(calls) == 1:
+                    return success
+                if len(calls) == 2:
+                    return timeout
+                return success
+
+            with mock.patch(
+                    "game2.v2.unpaced_runtime.TrainingSetManifest.from_file",
+                    return_value=manifest), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.run_episode",
+                        side_effect=episode,
+                    ), \
+                    mock.patch(
+                        "game2.v2.unpaced_runtime.train_episode",
+                        return_value=SimpleNamespace(
+                            updated=True, loss=0.0, metrics={}
+                        ),
+                    ):
+                status = run_unpaced_training_set(
+                    set_path=root / "set.json",
+                    checkpoint_dir=checkpoint,
+                    episode_store_dir=root / "episodes",
+                    max_episodes=1,
+                    episode_limit=2,
+                    fresh=False,
+                    profile=profile,
+                    output=io.StringIO(),
+                    json_output=True,
+                )
+            self.assertEqual(status, 0)
+            self.assertEqual(calls[0][:2], ("flat_run", "evaluate"))
+            self.assertEqual(calls[1][:2], ("short_gap", "evaluate"))
+            first_training = next(call for call in calls if call[1] == "train")
+            self.assertEqual(first_training[0], "short_gap")
 
     def test_json_progress_exposes_training_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
