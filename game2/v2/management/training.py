@@ -538,6 +538,7 @@ class TrainingRun:
         max_episodes: int,
         fresh: bool,
         episode_limit: int,
+        verify: bool = False,
         screen: int | None = None,
         screen_server: str | Path = DEFAULT_SCREEN_SERVER,
         view: str = "screen",
@@ -559,6 +560,12 @@ class TrainingRun:
             raise ValueError("view must be screen or vision")
         if mode not in {"realtime", "unpaced"}:
             raise ValueError("mode must be realtime or unpaced")
+        if type(verify) is not bool:
+            raise ValueError("verify must be boolean")
+        if verify and fresh:
+            raise ValueError("verify cannot be combined with fresh training")
+        if verify and mode != "realtime":
+            raise ValueError("--verify uses realtime frozen evaluation")
         if mode == "unpaced" and (screen is not None or view != "screen"):
             raise ValueError("unpaced training is headless; omit --screen and --view vision")
         if mode == "realtime" and view != "screen" and screen is None:
@@ -613,8 +620,51 @@ class TrainingRun:
             or not optimizer.is_file()
         ):
             raise TrainingRunError(
-                "resume requires planner.pt, motor.pt, critic.pt, and optimizer.pt"
+                "resume/verify requires planner.pt, motor.pt, critic.pt, and optimizer.pt"
             )
+
+        if verify:
+            self._write(f"PLAYER {profile.bot_id}")
+            self._write(
+                f"VERIFY TRAINING SET {manifest.training_set_level}: "
+                f"frozen model, {VERIFICATION_SUCCESS_STREAK} consecutive passes required"
+                + (
+                    f", screen={screen}, view={view}"
+                    if screen is not None else ", headless"
+                )
+            )
+            with tempfile.TemporaryDirectory(
+                prefix="game2-v2-verify-"
+            ) as temporary:
+                root = Path(temporary)
+                verify_episode_store = root / "episodes"
+                for index, spec in enumerate(manifest.training_maps):
+                    directory = root / f"{index + 1:02d}-{spec.map_id}"
+                    directory.mkdir()
+                    passed = self._run_map(
+                        manifest_path=manifest_path,
+                        spec=spec,
+                        checkpoint_dir=checkpoint_path,
+                        fresh=False,
+                        max_episodes=VERIFICATION_SUCCESS_STREAK,
+                        episode_limit=episode_limit,
+                        directory=directory,
+                        screen_control=screen_control,
+                        view=view,
+                        episode_store=verify_episode_store,
+                        profile_path=profile_path,
+                        evaluate_only=True,
+                    )
+                    if not passed:
+                        self._write(
+                            f"VERIFY TRAINING SET {manifest.training_set_level}: "
+                            f"FAIL at {spec.map_id}"
+                        )
+                        return 1
+            self._write(
+                f"VERIFY TRAINING SET {manifest.training_set_level}: PASS"
+            )
+            return 0
 
         if mode == "unpaced":
             if json_output:
@@ -713,9 +763,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--screen-server", default=str(DEFAULT_SCREEN_SERVER))
     parser.add_argument("--episode-store")
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--fresh", action="store_true")
-    mode.add_argument("--resume", action="store_true")
+    run_mode = parser.add_mutually_exclusive_group(required=True)
+    run_mode.add_argument("--fresh", action="store_true")
+    run_mode.add_argument("--resume", action="store_true")
+    run_mode.add_argument(
+        "--verify",
+        action="store_true",
+        help="read-only frozen 3-pass verification of saved checkpoints",
+    )
     return parser
 
 
@@ -731,6 +786,7 @@ def main(argv=None) -> int:
             max_episodes=args.max_episodes_per_map,
             fresh=args.fresh,
             episode_limit=args.episode_limit,
+            verify=args.verify,
             screen=args.screen,
             screen_server=args.screen_server,
             view=args.view,

@@ -79,6 +79,18 @@ Continue existing checkpoints:
 ./game2/v2/op/train.sh --resume
 ```
 
+Read-only qualification of the saved model, with no PPO/update/checkpoint save:
+
+```bash
+./game2/v2/op/screen.sh 1
+./game2/v2/op/train.sh --player player1 --verify --screen 1 --view vision
+```
+
+`--verify` loads the saved checkpoint and runs every Training Set map with
+learning OFF. Each map must pass three consecutive frozen runs. Verification
+uses a temporary episode store, so the persistent training datasets and
+curriculum checkpoint state are not modified.
+
 Observe Training on an already-open Screen with the normal human render:
 
 ```bash

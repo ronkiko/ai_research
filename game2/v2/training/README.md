@@ -71,6 +71,19 @@ Process composition lives in Management:
 ```bash
 ./game2/v2/op/train.sh --fresh
 ./game2/v2/op/train.sh --resume
+./game2/v2/op/train.sh --verify
+```
+
+`--verify` is read-only qualification of existing checkpoints: no PPO,
+checkpoint publication, or curriculum-state mutation. It runs each map in
+frozen evaluate mode and requires three consecutive successes. Verification
+episodes use a temporary store so normal training episode history is untouched.
+
+To visually inspect the exact frozen policy through Grid Vision:
+
+```bash
+./game2/v2/op/screen.sh 1
+./game2/v2/op/train.sh --player player1 --verify --screen 1 --view vision
 ```
 
 To observe realtime training:

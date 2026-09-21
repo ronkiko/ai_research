@@ -11,6 +11,7 @@ from game2.v2.management.training import (
     TrainingRun,
     TrainingRunError,
     _endpoint_ready,
+    _parser,
     _strict_object,
 )
 from game2.v2.training.work import EpisodeStore
@@ -229,6 +230,72 @@ class ManagementTrainingTests(unittest.TestCase):
                 Path(kwargs["episode_store_dir"]), expected / "episodes"
             )
             self.assertEqual(Path(kwargs["profile_path"]).name, "player1.json")
+
+    def test_verify_is_frozen_and_uses_temporary_episode_store(self):
+        run = TrainingRun(output=io.StringIO())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoints"
+            checkpoint.mkdir()
+            for name in ("planner.pt", "motor.pt", "critic.pt", "optimizer.pt"):
+                (checkpoint / name).write_bytes(b"saved")
+            persistent_store = root / "episodes"
+            persistent_store.mkdir()
+            sentinel = persistent_store / "keep.txt"
+            sentinel.write_text("do not touch", encoding="utf-8")
+
+            with mock.patch.object(
+                    run, "_run_map", side_effect=[True, True, True]
+                ) as maps:
+                status = run.train(
+                    set_path=DEFAULT_SET,
+                    checkpoint_dir=checkpoint,
+                    max_episodes=50,
+                    fresh=False,
+                    verify=True,
+                    episode_limit=1200,
+                    mode="realtime",
+                    episode_store=persistent_store,
+                )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(maps.call_count, 3)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "do not touch")
+            for call in maps.call_args_list:
+                kwargs = call.kwargs
+                self.assertTrue(kwargs["evaluate_only"])
+                self.assertFalse(kwargs["fresh"])
+                self.assertEqual(kwargs["max_episodes"], 3)
+                self.assertNotEqual(
+                    Path(kwargs["episode_store"]).resolve(),
+                    persistent_store.resolve(),
+                )
+                self.assertFalse(Path(kwargs["episode_store"]).exists())
+
+    def test_verify_cli_is_mutually_exclusive_and_realtime_only(self):
+        args = _parser().parse_args([
+            "--verify", "--screen", "1", "--view", "vision"
+        ])
+        self.assertTrue(args.verify)
+        self.assertFalse(args.fresh)
+        self.assertFalse(args.resume)
+        self.assertEqual(args.mode, "realtime")
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "checkpoints"
+            checkpoint.mkdir()
+            for name in ("planner.pt", "motor.pt", "critic.pt", "optimizer.pt"):
+                (checkpoint / name).write_bytes(b"saved")
+            with self.assertRaises(ValueError):
+                TrainingRun(output=io.StringIO()).train(
+                    set_path=DEFAULT_SET,
+                    checkpoint_dir=checkpoint,
+                    max_episodes=1,
+                    fresh=False,
+                    verify=True,
+                    episode_limit=20,
+                    mode="unpaced",
+                )
 
     def test_unpaced_mode_rejects_screen_and_vision_view(self):
         run = TrainingRun(output=io.StringIO())
