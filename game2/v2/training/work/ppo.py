@@ -293,6 +293,7 @@ def train_episode(
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(meta["seed"]))
 
+    selected_vision = dataset.vision_grids(selected_steps)
     shared = (
         hasattr(model.planner, "backbone")
         and hasattr(model.planner, "encode_prepared")
@@ -303,15 +304,15 @@ def train_episode(
     if shared:
         prepared_vision = torch.stack([
             model.planner.backbone.prepare(
-                vision_to_tensor(step.vision_grid).unsqueeze(0)
+                vision_to_tensor(grid).unsqueeze(0)
             )[0]
-            for step in selected_steps
+            for grid in selected_vision
         ])
         full_vision = None
     else:
         prepared_vision = None
         full_vision = torch.stack([
-            vision_to_tensor(step.vision_grid) for step in selected_steps
+            vision_to_tensor(grid) for grid in selected_vision
         ])
     velocity_all = torch.tensor(
         [[step.velocity_x, step.velocity_y] for step in selected_steps],

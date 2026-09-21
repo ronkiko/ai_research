@@ -1,7 +1,7 @@
 """SQLite episode datasets: the persistent source of truth for training."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from contextlib import contextmanager
 import json
 import math
@@ -25,7 +25,8 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
+VISION_SCHEMA_VERSION = 2
 VISION_BLOB_COMPRESSION_LEVEL = 1
 
 
@@ -39,9 +40,6 @@ class EpisodeStep:
     rows: int
     tile_size: int
     subdivisions: int
-    coarse_physics: bytes
-    physics: bytes
-    metadata: bytes
     motion_x: float
     motion_y: float
     proprioception_world_tick: int
@@ -117,22 +115,14 @@ class EpisodeStep:
     def action(self) -> ControlCommand:
         return ControlCommand(self.action_right, self.action_jump)
 
-    @property
-    def vision_grid(self) -> VisionGrid:
-        return VisionGrid(
-            self.columns,
-            self.rows,
-            self.tile_size,
-            self.coarse_physics,
-            self.physics,
-            self.metadata,
-            self.world_tick,
-            self.subdivisions,
-        )
+
+EPISODE_STEP_COLUMNS = tuple(
+    field.name for field in dataclass_fields(EpisodeStep)
+)
 
 
 class EpisodeDataset:
-    """One self-contained episode file."""
+    """Structured episode log paired with an explicit Vision sidecar."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -217,7 +207,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=12;
+                PRAGMA user_version=13;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -338,11 +328,19 @@ class EpisodeDataset:
         with sqlite3.connect(dataset.vision_path, timeout=5.0) as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
+                CREATE TABLE vision_static (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    columns INTEGER NOT NULL,
+                    rows INTEGER NOT NULL,
+                    tile_size INTEGER NOT NULL,
+                    subdivisions INTEGER NOT NULL,
+                    coarse_physics BLOB NOT NULL,
+                    physics BLOB NOT NULL
+                );
                 CREATE TABLE frames (
                     policy_sequence INTEGER PRIMARY KEY,
-                    coarse_physics BLOB NOT NULL,
-                    physics BLOB NOT NULL,
+                    world_tick INTEGER NOT NULL,
                     metadata BLOB NOT NULL
                 );
                 """
@@ -601,22 +599,36 @@ class EpisodeDataset:
             )
             connection.execute(
                 """
-                INSERT INTO vision.frames(
-                    policy_sequence, coarse_physics, physics, metadata
-                ) VALUES(?,?,?,?)
-                ON CONFLICT(policy_sequence) DO UPDATE SET
-                    coarse_physics=excluded.coarse_physics,
-                    physics=excluded.physics,
-                    metadata=excluded.metadata
+                INSERT OR IGNORE INTO vision.vision_static(
+                    singleton, columns, rows, tile_size, subdivisions,
+                    coarse_physics, physics
+                ) VALUES(1,?,?,?,?,?,?)
                 """,
                 (
-                    sequence,
+                    grid.columns,
+                    grid.rows,
+                    grid.tile_size,
+                    grid.subdivisions,
                     sqlite3.Binary(self._compress_vision_blob(
                         "coarse_physics", grid.coarse_physics
                     )),
                     sqlite3.Binary(self._compress_vision_blob(
                         "physics", grid.physics
                     )),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO vision.frames(
+                    policy_sequence, world_tick, metadata
+                ) VALUES(?,?,?)
+                ON CONFLICT(policy_sequence) DO UPDATE SET
+                    world_tick=excluded.world_tick,
+                    metadata=excluded.metadata
+                """,
+                (
+                    sequence,
+                    int(grid.world_tick),
                     sqlite3.Binary(self._compress_vision_blob(
                         "metadata", grid.metadata
                     )),
@@ -728,54 +740,12 @@ class EpisodeDataset:
                 raise ValueError("policy_sequence does not identify one step")
 
     def steps(self) -> tuple[EpisodeStep, ...]:
+        columns = ",".join(EPISODE_STEP_COLUMNS)
         with self._connect() as connection:
-            schema_row = connection.execute(
-                "SELECT schema_version FROM episode WHERE singleton=1"
-            ).fetchone()
-            if schema_row is None:
-                raise ValueError("episode dataset has no metadata")
-            schema_version = int(schema_row["schema_version"])
             rows = connection.execute(
-                "SELECT * FROM steps ORDER BY world_tick, policy_sequence"
+                f"SELECT {columns} FROM steps "
+                "ORDER BY world_tick, policy_sequence"
             ).fetchall()
-        if schema_version >= 12:
-            if not self.vision_path.is_file():
-                raise ValueError("episode Vision sidecar is missing")
-            with sqlite3.connect(self.vision_path, timeout=5.0) as connection:
-                connection.row_factory = sqlite3.Row
-                vision_rows = connection.execute(
-                    """
-                    SELECT policy_sequence, coarse_physics, physics, metadata
-                    FROM frames
-                    ORDER BY policy_sequence
-                    """
-                ).fetchall()
-            vision_by_sequence = {
-                int(row["policy_sequence"]): row for row in vision_rows
-            }
-        else:
-            vision_by_sequence = {}
-
-        def vision_blob(row, name: str) -> bytes:
-            source = (
-                vision_by_sequence.get(int(row["policy_sequence"]))
-                if schema_version >= 12
-                else row
-            )
-            if source is None:
-                raise ValueError(
-                    "episode Vision sidecar has no matching policy frame"
-                )
-            value = bytes(source[name])
-            if schema_version >= 11:
-                try:
-                    return zlib.decompress(value)
-                except zlib.error as exc:
-                    raise ValueError(
-                        f"episode {name} blob is not valid zlib data"
-                    ) from exc
-            return value
-
         return tuple(EpisodeStep(
             id=int(row["id"]),
             policy_sequence=int(row["policy_sequence"]),
@@ -785,9 +755,6 @@ class EpisodeDataset:
             rows=int(row["rows"]),
             tile_size=int(row["tile_size"]),
             subdivisions=int(row["subdivisions"]),
-            coarse_physics=vision_blob(row, "coarse_physics"),
-            physics=vision_blob(row, "physics"),
-            metadata=vision_blob(row, "metadata"),
             motion_x=float(row["motion_x"]),
             motion_y=float(row["motion_y"]),
             proprioception_world_tick=int(row["proprioception_world_tick"]),
@@ -859,6 +826,187 @@ class EpisodeDataset:
             new_skill_right_probability=row["new_skill_right_probability"],
             new_skill_jump_probability=row["new_skill_jump_probability"],
         ) for row in rows)
+
+    @staticmethod
+    def _decode_vision_blob(value, label: str) -> bytes:
+        try:
+            return zlib.decompress(bytes(value))
+        except zlib.error as exc:
+            raise ValueError(
+                f"episode {label} blob is not valid zlib data"
+            ) from exc
+
+    def vision_grids(
+        self, steps: tuple[EpisodeStep, ...] | list[EpisodeStep]
+    ) -> tuple[VisionGrid, ...]:
+        requested = tuple(steps)
+        if not requested:
+            return ()
+        schema_version = int(self.metadata()["schema_version"])
+        sequences = [int(step.policy_sequence) for step in requested]
+        if schema_version <= 11:
+            legacy = {}
+            with self._connect() as connection:
+                for start in range(0, len(sequences), 900):
+                    chunk = sequences[start:start + 900]
+                    placeholders = ",".join("?" for _ in chunk)
+                    for row in connection.execute(
+                        f"""
+                        SELECT policy_sequence,
+                               coarse_physics, physics, metadata
+                        FROM steps
+                        WHERE policy_sequence IN ({placeholders})
+                        """,
+                        chunk,
+                    ):
+                        if schema_version >= 11:
+                            legacy[int(row["policy_sequence"])] = (
+                                self._decode_vision_blob(
+                                    row["coarse_physics"], "coarse_physics"
+                                ),
+                                self._decode_vision_blob(
+                                    row["physics"], "physics"
+                                ),
+                                self._decode_vision_blob(
+                                    row["metadata"], "metadata"
+                                ),
+                            )
+                        else:
+                            legacy[int(row["policy_sequence"])] = (
+                                bytes(row["coarse_physics"]),
+                                bytes(row["physics"]),
+                                bytes(row["metadata"]),
+                            )
+            result = []
+            for step in requested:
+                frame = legacy.get(step.policy_sequence)
+                if frame is None:
+                    raise ValueError("episode is missing a Vision frame")
+                result.append(VisionGrid(
+                    step.columns,
+                    step.rows,
+                    step.tile_size,
+                    frame[0],
+                    frame[1],
+                    frame[2],
+                    step.world_tick,
+                    step.subdivisions,
+                ))
+            return tuple(result)
+
+        if not self.vision_path.is_file():
+            raise ValueError("episode Vision sidecar is missing")
+        with sqlite3.connect(self.vision_path, timeout=5.0) as connection:
+            connection.row_factory = sqlite3.Row
+            if schema_version >= 13:
+                static = connection.execute(
+                    """
+                    SELECT columns, rows, tile_size, subdivisions,
+                           coarse_physics, physics
+                    FROM vision_static WHERE singleton=1
+                    """
+                ).fetchone()
+                if static is None:
+                    raise ValueError("episode Vision sidecar has no static frame")
+                geometry = (
+                    int(static["columns"]),
+                    int(static["rows"]),
+                    int(static["tile_size"]),
+                    int(static["subdivisions"]),
+                )
+                coarse = self._decode_vision_blob(
+                    static["coarse_physics"], "coarse_physics"
+                )
+                physics = self._decode_vision_blob(
+                    static["physics"], "physics"
+                )
+                frames = {}
+                for start in range(0, len(sequences), 900):
+                    chunk = sequences[start:start + 900]
+                    placeholders = ",".join("?" for _ in chunk)
+                    for row in connection.execute(
+                        f"""
+                        SELECT policy_sequence, world_tick, metadata
+                        FROM frames
+                        WHERE policy_sequence IN ({placeholders})
+                        """,
+                        chunk,
+                    ):
+                        frames[int(row["policy_sequence"])] = (
+                            int(row["world_tick"]),
+                            self._decode_vision_blob(
+                                row["metadata"], "metadata"
+                            ),
+                        )
+                result = []
+                for step in requested:
+                    frame = frames.get(step.policy_sequence)
+                    if frame is None:
+                        raise ValueError(
+                            "episode Vision sidecar has no matching policy frame"
+                        )
+                    if frame[0] != step.world_tick:
+                        raise ValueError(
+                            "episode Vision sidecar world_tick does not match step"
+                        )
+                    if geometry != (
+                        step.columns, step.rows, step.tile_size, step.subdivisions
+                    ):
+                        raise ValueError(
+                            "episode Vision sidecar geometry does not match step"
+                        )
+                    result.append(VisionGrid(
+                        geometry[0],
+                        geometry[1],
+                        geometry[2],
+                        coarse,
+                        physics,
+                        frame[1],
+                        step.world_tick,
+                        geometry[3],
+                    ))
+                return tuple(result)
+
+            frames = {}
+            for start in range(0, len(sequences), 900):
+                chunk = sequences[start:start + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                for row in connection.execute(
+                    f"""
+                    SELECT policy_sequence, coarse_physics, physics, metadata
+                    FROM frames
+                    WHERE policy_sequence IN ({placeholders})
+                    """,
+                    chunk,
+                ):
+                    frames[int(row["policy_sequence"])] = (
+                        self._decode_vision_blob(
+                            row["coarse_physics"], "coarse_physics"
+                        ),
+                        self._decode_vision_blob(row["physics"], "physics"),
+                        self._decode_vision_blob(row["metadata"], "metadata"),
+                    )
+        result = []
+        for step in requested:
+            frame = frames.get(step.policy_sequence)
+            if frame is None:
+                raise ValueError(
+                    "episode Vision sidecar has no matching policy frame"
+                )
+            result.append(VisionGrid(
+                step.columns,
+                step.rows,
+                step.tile_size,
+                frame[0],
+                frame[1],
+                frame[2],
+                step.world_tick,
+                step.subdivisions,
+            ))
+        return tuple(result)
+
+    def vision_grid(self, step: EpisodeStep) -> VisionGrid:
+        return self.vision_grids((step,))[0]
 
     @staticmethod
     def _distance(step: EpisodeStep) -> float | None:
@@ -1115,7 +1263,8 @@ class EpisodeStore:
         index = max(indexes, default=0) + 1
         while True:
             path = self.root / f"episode-{index:06d}.sqlite3"
-            if not path.exists():
+            vision_path = self.root / "vision" / path.name
+            if not path.exists() and not vision_path.exists():
                 break
             index += 1
         dataset = EpisodeDataset.create(
@@ -1161,5 +1310,6 @@ __all__ = [
     "EpisodeStep",
     "EpisodeStore",
     "SCHEMA_VERSION",
+    "VISION_SCHEMA_VERSION",
     "VISION_BLOB_COMPRESSION_LEVEL",
 ]

@@ -121,6 +121,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             )
             sample = _sample(1, 2, 2)
             dataset.upsert_sample(sample)
+            dataset.upsert_sample(_sample(2, 4, 3))
 
             with sqlite3.connect(dataset.path) as connection:
                 user_version = connection.execute(
@@ -130,7 +131,7 @@ class EpisodeDatasetTests(unittest.TestCase):
                     row[1]
                     for row in connection.execute("PRAGMA table_info(steps)")
                 }
-            self.assertEqual(user_version, 12)
+            self.assertEqual(user_version, 13)
             self.assertTrue(dataset.vision_path.is_file())
             self.assertTrue(
                 {"coarse_physics", "physics", "metadata"}.isdisjoint(
@@ -138,24 +139,71 @@ class EpisodeDatasetTests(unittest.TestCase):
                 )
             )
             with sqlite3.connect(dataset.vision_path) as connection:
-                stored = connection.execute(
-                    "SELECT coarse_physics, physics, metadata FROM frames"
+                vision_version = connection.execute(
+                    "PRAGMA user_version"
+                ).fetchone()[0]
+                static_count = connection.execute(
+                    "SELECT COUNT(*) FROM vision_static"
+                ).fetchone()[0]
+                frame_count = connection.execute(
+                    "SELECT COUNT(*) FROM frames"
+                ).fetchone()[0]
+                static = connection.execute(
+                    "SELECT coarse_physics, physics FROM vision_static"
                 ).fetchone()
+                frame = connection.execute(
+                    "SELECT metadata FROM frames WHERE policy_sequence=1"
+                ).fetchone()
+            self.assertEqual(vision_version, 2)
+            self.assertEqual(static_count, 1)
+            self.assertEqual(frame_count, 2)
 
             originals = (
                 sample.vision_grid.coarse_physics,
                 sample.vision_grid.physics,
                 sample.vision_grid.metadata,
             )
+            stored = (static[0], static[1], frame[0])
             for compressed, original in zip(stored, originals):
                 payload = bytes(compressed)
                 self.assertLess(len(payload), len(original))
                 self.assertEqual(zlib.decompress(payload), bytes(original))
 
-            restored = dataset.steps()[0].vision_grid
+            step = dataset.steps()[0]
+            self.assertFalse(hasattr(step, "metadata"))
+            self.assertFalse(hasattr(step, "physics"))
+            restored = dataset.vision_grid(step)
             self.assertEqual(restored.coarse_physics, sample.vision_grid.coarse_physics)
             self.assertEqual(restored.physics, sample.vision_grid.physics)
             self.assertEqual(restored.metadata, sample.vision_grid.metadata)
+
+    def test_vision_sidecar_rejects_mismatched_tick(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="unpaced", seed=1
+            )
+            dataset.upsert_sample(_sample(1, 2, 2))
+            with sqlite3.connect(dataset.vision_path) as connection:
+                connection.execute(
+                    "UPDATE frames SET world_tick=999 WHERE policy_sequence=1"
+                )
+            with self.assertRaisesRegex(ValueError, "world_tick"):
+                dataset.vision_grid(dataset.steps()[0])
+
+    def test_steps_do_not_open_or_decompress_vision_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = EpisodeStore(directory).create(
+                episode_id=1, mode="train", source="unpaced", seed=1
+            )
+            dataset.upsert_sample(_sample(1, 2, 2))
+            hidden = dataset.vision_path.with_suffix(".hidden")
+            dataset.vision_path.rename(hidden)
+            try:
+                steps = dataset.steps()
+                self.assertEqual(len(steps), 1)
+                self.assertEqual(steps[0].world_tick, 2)
+            finally:
+                hidden.rename(dataset.vision_path)
 
     def test_buffered_writer_publishes_batches_and_flushes_on_interrupt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -325,7 +373,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 12)
+            self.assertEqual(metadata["schema_version"], 13)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
