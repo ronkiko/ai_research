@@ -50,6 +50,60 @@ class ZoneRuntimeTests(unittest.TestCase):
         again_x = next(e for e in again["entities"] if e["entity_id"] == "actor-player1")["x"]
         self.assertAlmostEqual(stopped_x, again_x)
 
+    def test_boundary_collision_zeroes_blocked_velocity_but_keeps_latched_intent(self):
+        cases = (
+            ("right", 999.0, 300.0, 1, 0, 1000.0, 300.0, 0.0, 0.0),
+            ("left", 1.0, 300.0, -1, 0, 0.0, 300.0, 0.0, 0.0),
+            ("down", 500.0, 599.0, 0, 1, 500.0, 600.0, 0.0, 0.0),
+            ("up", 500.0, 1.0, 0, -1, 500.0, 0.0, 0.0, 0.0),
+        )
+        for name, x, y, move_x, move_y, expected_x, expected_y, expected_vx, expected_vy in cases:
+            with self.subTest(name=name):
+                runtime = ZoneRuntime()
+                runtime.enqueue_spawn(
+                    entity_id="actor-player1", owner_id="player1", x=x, y=y
+                )
+                runtime.tick()
+                runtime.enqueue_input(
+                    entity_id="actor-player1",
+                    sequence=1,
+                    move_x=move_x,
+                    move_y=move_y,
+                    source="player",
+                )
+                snapshot = runtime.tick()
+                entity = next(
+                    item for item in snapshot["entities"]
+                    if item["entity_id"] == "actor-player1"
+                )
+                self.assertAlmostEqual(entity["x"], expected_x)
+                self.assertAlmostEqual(entity["y"], expected_y)
+                self.assertAlmostEqual(entity["vx"], expected_vx)
+                self.assertAlmostEqual(entity["vy"], expected_vy)
+                self.assertEqual(entity["move_x"], move_x)
+                self.assertEqual(entity["move_y"], move_y)
+
+    def test_boundary_collision_preserves_tangential_velocity(self):
+        runtime = ZoneRuntime()
+        runtime.enqueue_spawn(
+            entity_id="actor-player1", owner_id="player1", x=999.5, y=300.0
+        )
+        runtime.tick()
+        runtime.enqueue_input(
+            entity_id="actor-player1", sequence=1,
+            move_x=1, move_y=1, source="player"
+        )
+        snapshot = runtime.tick()
+        entity = next(
+            item for item in snapshot["entities"]
+            if item["entity_id"] == "actor-player1"
+        )
+        self.assertEqual(entity["x"], runtime.arena.width)
+        self.assertEqual(entity["vx"], 0.0)
+        self.assertGreater(entity["y"], 300.0)
+        self.assertGreater(entity["vy"], 0.0)
+        self.assertEqual((entity["move_x"], entity["move_y"]), (1, 1))
+
     def test_sequence_must_increase(self):
         runtime = ZoneRuntime()
         runtime.enqueue_input(entity_id="mob1", sequence=1,

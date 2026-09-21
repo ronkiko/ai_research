@@ -35,7 +35,10 @@ until a later sequence changes it. Commands do not contain target ticks,
 durations, future action lists, positions, velocities, or physics results.
 
 Zone applies queued commands at a tick boundary before advancing entities.
-Sorted entity IDs define deterministic update order.
+Sorted entity IDs define deterministic update order. Arena bounds are physical
+constraints: when motion would cross a boundary, authoritative position is
+clamped to that boundary and the blocked velocity component becomes zero while
+the latched input intent remains unchanged. Tangential velocity is preserved.
 
 ## Public boundary
 

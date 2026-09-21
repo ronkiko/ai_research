@@ -185,8 +185,26 @@ class ZoneRuntime:
                     entity.vy = entity.speed * entity.move_y / length
                 else:
                     entity.vx = entity.vy = 0.0
-                entity.x = min(self.arena.width, max(0.0, entity.x + entity.vx * self.dt))
-                entity.y = min(self.arena.height, max(0.0, entity.y + entity.vy * self.dt))
+                next_x = entity.x + entity.vx * self.dt
+                next_y = entity.y + entity.vy * self.dt
+
+                if entity.vx > 0.0 and next_x >= self.arena.width:
+                    entity.x = self.arena.width
+                    entity.vx = 0.0
+                elif entity.vx < 0.0 and next_x <= 0.0:
+                    entity.x = 0.0
+                    entity.vx = 0.0
+                else:
+                    entity.x = next_x
+
+                if entity.vy > 0.0 and next_y >= self.arena.height:
+                    entity.y = self.arena.height
+                    entity.vy = 0.0
+                elif entity.vy < 0.0 and next_y <= 0.0:
+                    entity.y = 0.0
+                    entity.vy = 0.0
+                else:
+                    entity.y = next_y
             self._latest_snapshot = self._snapshot(tuple(applied))
             return self._latest_snapshot
 
