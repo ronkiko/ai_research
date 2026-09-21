@@ -1,0 +1,288 @@
+"""Long-lived GameClient Host: one GameServer session, many local Clients."""
+from __future__ import annotations
+
+import argparse
+from collections import deque
+import json
+import signal
+import socketserver
+import threading
+from typing import Any
+
+from ..config import DEFAULT_HOST as GATEWAY_HOST, DEFAULT_PORT as GATEWAY_PORT, DEFAULT_TIMEOUT
+from .config import HOST_BIND, HOST_EVENT_LIMIT, HOST_PORT, HOST_PROTOCOL_VERSION
+from .protocol import HostProtocolError, LineReader, encode_line, message
+from .upstream import GatewayConnection, GatewayConnectionError
+
+
+class HostStateError(RuntimeError):
+    pass
+
+
+class HostService:
+    def __init__(
+        self,
+        *,
+        host: str = HOST_BIND,
+        port: int = HOST_PORT,
+        gateway_host: str = GATEWAY_HOST,
+        gateway_port: int = GATEWAY_PORT,
+        gateway_timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        self.gateway_host = gateway_host
+        self.gateway_port = gateway_port
+        self.gateway = GatewayConnection(gateway_host, gateway_port, gateway_timeout)
+        self.server = _HostTcpServer((host, port), _HostRequestHandler)
+        self.server.service = self  # type: ignore[attr-defined]
+        self._state_lock = threading.RLock()
+        self._operation_lock = threading.Lock()
+        self._session: dict[str, Any] | None = None
+        self._sequence = 0
+        self._event_id = 0
+        self._events: deque[dict[str, Any]] = deque(maxlen=HOST_EVENT_LIMIT)
+
+    @property
+    def address(self) -> tuple[str, int]:
+        host, port = self.server.server_address
+        return str(host), int(port)
+
+    def _client_id(self, request: dict[str, Any]) -> str:
+        value = request.get("client_id", "unknown")
+        if not isinstance(value, str) or not value.strip():
+            raise HostProtocolError("client_id must be a non-empty string")
+        return value.strip()
+
+    def _append_event(self, kind: str, *, client_id: str, **fields: Any) -> dict[str, Any]:
+        with self._state_lock:
+            self._event_id += 1
+            event = {
+                "event_id": self._event_id,
+                "kind": kind,
+                "client_id": client_id,
+                **fields,
+            }
+            self._events.append(event)
+            return dict(event)
+
+    def _session_copy(self) -> dict[str, Any]:
+        with self._state_lock:
+            if self._session is None:
+                raise HostStateError("GameClient Host is not logged in")
+            return {**self._session, "sequence": self._sequence}
+
+    def _last_event(self) -> dict[str, Any] | None:
+        with self._state_lock:
+            return dict(self._events[-1]) if self._events else None
+
+    def dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
+        kind = request["type"]
+        if kind == "health":
+            with self._state_lock:
+                player_id = self._session.get("player_id") if self._session else None
+            return message(
+                "health",
+                component="gameclient_host",
+                status="ready",
+                gameplay_ready=True,
+                logged_in=player_id is not None,
+                player_id=player_id,
+            )
+        if kind == "describe":
+            return message(
+                "describe",
+                entity="GameClient Host",
+                role_to_gameserver="client",
+                role_to_clients="server",
+                host_protocol_version=HOST_PROTOCOL_VERSION,
+                gameplay_ready=True,
+                capabilities=["players", "login", "session", "state", "input", "events", "logout"],
+                upstream={
+                    "entity": "GameServer Gateway",
+                    "host": self.gateway_host,
+                    "port": self.gateway_port,
+                    "connection": "persistent_tcp",
+                },
+                downstream={
+                    "entity": "Clients",
+                    "host": self.address[0],
+                    "port": self.address[1],
+                    "protocol": "Host Protocol",
+                },
+            )
+        if kind == "players":
+            response = self.gateway.request("list_players")
+            return message("players", players=response.get("players", []))
+        if kind == "login":
+            return self._login(request)
+        if kind == "session":
+            return message("session", session=self._session_copy())
+        if kind == "state":
+            return self._state()
+        if kind == "input":
+            return self._input(request)
+        if kind == "events":
+            return self._events_since(request)
+        if kind == "logout":
+            return self._logout(request)
+        raise HostProtocolError(f"unknown Host request: {kind}")
+
+    def _login(self, request: dict[str, Any]) -> dict[str, Any]:
+        client_id = self._client_id(request)
+        player_id = request.get("player_id")
+        if not isinstance(player_id, str) or not player_id:
+            raise HostProtocolError("player_id is required")
+        with self._operation_lock:
+            with self._state_lock:
+                if self._session is not None:
+                    if self._session.get("player_id") == player_id:
+                        return message("login", session=self._session_copy(), reused=True)
+                    raise HostStateError(
+                        f"Host already owns player {self._session.get('player_id')}; logout first"
+                    )
+            response = self.gateway.request("login", player_id=player_id)
+            session = {
+                key: response[key]
+                for key in ("session_id", "player_id", "entity_id", "world_id", "zone_id")
+            }
+            with self._state_lock:
+                self._session = session
+                self._sequence = 0
+            event = self._append_event("login", client_id=client_id, player_id=player_id)
+            return message("login", session={**session, "sequence": 0}, reused=False, event=event)
+
+    def _state(self) -> dict[str, Any]:
+        session = self._session_copy()
+        response = self.gateway.request("snapshot", session_id=session["session_id"])
+        snapshot = response.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise GatewayConnectionError("GameServer Gateway returned an invalid snapshot")
+        return message(
+            "state",
+            session=session,
+            snapshot=snapshot,
+            last_event=self._last_event(),
+        )
+
+    def _input(self, request: dict[str, Any]) -> dict[str, Any]:
+        client_id = self._client_id(request)
+        move_x = request.get("move_x")
+        if type(move_x) is not int or move_x not in {-1, 0, 1}:
+            raise HostProtocolError("move_x must be -1, 0, or 1")
+        with self._operation_lock:
+            session = self._session_copy()
+            with self._state_lock:
+                self._sequence += 1
+                sequence = self._sequence
+            response = self.gateway.request(
+                "input",
+                session_id=session["session_id"],
+                sequence=sequence,
+                move_x=move_x,
+            )
+            event = self._append_event(
+                "input",
+                client_id=client_id,
+                player_id=session["player_id"],
+                sequence=sequence,
+                move_x=move_x,
+                command_id=response.get("command_id"),
+                queued_at_tick=response.get("world_tick"),
+            )
+            return message("input", sequence=sequence, move_x=move_x, event=event)
+
+    def _events_since(self, request: dict[str, Any]) -> dict[str, Any]:
+        after = request.get("after_event_id", 0)
+        if type(after) is not int or after < 0:
+            raise HostProtocolError("after_event_id must be a non-negative integer")
+        with self._state_lock:
+            events = [dict(event) for event in self._events if event["event_id"] > after]
+            latest = self._event_id
+        return message("events", after_event_id=after, latest_event_id=latest, events=events)
+
+    def _logout(self, request: dict[str, Any]) -> dict[str, Any]:
+        client_id = self._client_id(request)
+        with self._operation_lock:
+            session = self._session_copy()
+            response = self.gateway.request("logout", session_id=session["session_id"])
+            event = self._append_event("logout", client_id=client_id, player_id=session["player_id"])
+            with self._state_lock:
+                self._session = None
+                self._sequence = 0
+            return message("logout", response=response, event=event)
+
+    def serve_forever(self) -> None:
+        self.server.serve_forever()
+
+    def shutdown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.gateway.close()
+
+
+class _HostRequestHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        reader = LineReader()
+        service: HostService = self.server.service  # type: ignore[attr-defined]
+        while True:
+            try:
+                request = reader.recv(self.request)
+                response = service.dispatch(request)
+            except EOFError:
+                return
+            except (HostProtocolError, HostStateError, GatewayConnectionError, ValueError, KeyError) as exc:
+                response = message("error", error=str(exc))
+            try:
+                self.request.sendall(encode_line(response))
+            except OSError:
+                return
+
+
+class _HostTcpServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="GameClient Host")
+    parser.add_argument("--host", default=HOST_BIND)
+    parser.add_argument("--port", type=int, default=HOST_PORT)
+    parser.add_argument("--gateway-host", default=GATEWAY_HOST)
+    parser.add_argument("--gateway-port", type=int, default=GATEWAY_PORT)
+    parser.add_argument("--gateway-timeout", type=float, default=DEFAULT_TIMEOUT)
+    args = parser.parse_args()
+
+    service = HostService(
+        host=args.host,
+        port=args.port,
+        gateway_host=args.gateway_host,
+        gateway_port=args.gateway_port,
+        gateway_timeout=args.gateway_timeout,
+    )
+    stopped = threading.Event()
+
+    def request_stop(_signum=None, _frame=None) -> None:
+        if stopped.is_set():
+            return
+        stopped.set()
+        threading.Thread(target=service.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+    print(json.dumps({
+        "component": "gameclient_host",
+        "status": "READY",
+        "host": service.address[0],
+        "port": service.address[1],
+        "gameplay_ready": True,
+    }, sort_keys=True), flush=True)
+    try:
+        service.serve_forever()
+    finally:
+        if not stopped.is_set():
+            service.server.server_close()
+            service.gateway.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
