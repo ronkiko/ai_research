@@ -2,4 +2,4 @@
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
-exec "${PYTHON:-python3}" -m gameclient.v1.clients.cli "$@"
+exec "${PYTHON:-python3}" -m gameclient.v1.host.server "$@"

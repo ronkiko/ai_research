@@ -27,8 +27,8 @@ Only GameClient Host may own the GameServer-facing session and sequence. Clients
 must not address GameServer services directly and must never claim authority
 over world position, velocity, world tick, or entity lifecycle.
 
-The current direct CLI-to-Gateway path is temporary compatibility during the
-migration to Host and must not be extended with new gameplay features.
+There is no supported Client-to-Gateway gameplay path. CLI, GUI, and MCP
+Clients use Host Protocol; GameClient Host alone uses Gateway Protocol.
 
 ## CLI Client contract
 
@@ -43,10 +43,13 @@ mode.
 
 ## Session and input
 
-`login PLAYER_ID` stores the public session identifiers locally. The local file
-is not game state. Each movement request uses a positive monotonic sequence.
-The client reserves the next sequence before sending the request; gaps are
-allowed, reuse is not.
+GameClient Host owns at most one active GameServer session in v1. Host also owns
+the positive monotonic GameServer command sequence. Host-facing Clients do not
+store or allocate that sequence.
+
+Multiple Clients may issue movement commands. Host serializes accepted commands
+under one operation boundary, assigns sequence numbers in receive order, sends
+them to Gateway, and publishes an attributed Host event.
 
 The canonical agent-facing control command is `input --x X`, where `X` is
 one of `-1`, `0`, or `1`. Human-facing `move left`, `move right`, and

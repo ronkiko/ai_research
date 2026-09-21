@@ -34,9 +34,9 @@ runtime state. As game functions move behind the Host, it owns:
 
 Clients do not allocate GameServer command sequence numbers.
 
-The target upstream connection is long-lived. Reconnect semantics will be
-defined when gameplay functions are migrated into the Host; the scaffold does
-not fake them.
+The upstream Gateway connection is long-lived and reused across requests.
+After an I/O failure Host discards the socket; it does not silently replay an
+ambiguous mutation. The next explicit request may reconnect.
 
 ## Shared control
 
@@ -69,11 +69,10 @@ Clients communicate with the Host through a separate **Host Protocol**. It is
 not the GameServer Gateway Protocol and must not expose internal GameServer
 service addresses.
 
-The initial scaffold binds only to loopback and uses newline-delimited JSON on
-`127.0.0.1:17700`. Its first operations are intentionally non-gameplay
-`health` and `describe`. Gameplay commands, state subscription, event
-subscription, login, and session operations will be implemented next through
-this boundary.
+Host binds only to loopback by default and uses newline-delimited JSON on
+`127.0.0.1:17700`. The implemented v1 operations are `health`, `describe`,
+`players`, `login`, `session`, `state`, `input`, `events`, and
+`logout`.
 
 The protocol must remain suitable for simultaneous CLI, MCP, GUI, AI, debug,
 and automation Clients.

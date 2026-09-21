@@ -16,12 +16,19 @@ not talk to GameServer directly.
 The project remains independent from GameServer implementation code and does
 **not** import `gameserver.*`.
 
-## Current migration state
+## Current runtime
 
-The Host boundary is being introduced before gameplay functions are moved into
-it. The new Host/Client scaffold provides local `health` and `describe`.
-The existing direct CLI gameplay path is retained temporarily for regression
-testing and must not receive new gameplay features.
+GameClient Host is the only gameplay-facing client. It owns the shared
+GameServer session, one persistent TCP connection to Gateway, the monotonic
+GameServer input sequence, and the shared Host event stream.
+
+Three first-class Host-facing Clients are implemented:
+
+- [CLI Client](docs/clients/cli.md) — human/automation text interface;
+- [GUI Client](docs/clients/gui.md) — human graphical interface;
+- [MCP Client](docs/clients/mcp.md) — AI-facing MCP tools.
+
+All three observe and control the same player session.
 
 Target process topology:
 
@@ -45,25 +52,33 @@ Terminal 1:
 ./gameserver/v1/op/server.sh
 ```
 
-Terminal 2 — Host scaffold:
+Terminal 2 — GameClient Host:
 
 ```bash
 ./gameclient/v1/op/host.sh
 ```
 
-Terminal 3 — CLI Client scaffold:
+Terminal 3 — CLI Client:
 
 ```bash
-./gameclient/v1/op/cli.sh health
-./gameclient/v1/op/cli.sh describe
+./gameclient/v1/op/cli.sh players
+./gameclient/v1/op/cli.sh login player1
+./gameclient/v1/op/cli.sh state
+./gameclient/v1/op/cli.sh move right
+./gameclient/v1/op/cli.sh events
 ```
 
-Temporary direct gameplay compatibility path:
+Optional human GUI:
 
 ```bash
-./gameclient/v1/op/client.sh players
-./gameclient/v1/op/client.sh login player1
-./gameclient/v1/op/client.sh snapshot
+./gameclient/v1/op/gui.sh
+```
+
+Optional AI MCP Client:
+
+```bash
+python -m pip install -r gameclient/v1/requirements-mcp.txt
+./gameclient/v1/op/mcp.sh
 ```
 
 The passwordless v1 lobby currently exposes `player1`, `player2`, and `player3`.
@@ -76,79 +91,22 @@ GameClient v1 intentionally exposes only the single world axis `x`. There are
 no up/down/diagonal commands and no jump. The world is a line; the useful
 movement vocabulary is `left`, `right`, and `stop`.
 
-## Commands
+## Shared one-dimensional world
 
-Human-readable examples:
-
-```bash
-./gameclient/v1/op/client.sh health
-./gameclient/v1/op/client.sh players
-./gameclient/v1/op/client.sh login player1
-./gameclient/v1/op/client.sh whoami
-./gameclient/v1/op/client.sh snapshot
-./gameclient/v1/op/client.sh move right
-./gameclient/v1/op/client.sh move left
-./gameclient/v1/op/client.sh stop
-./gameclient/v1/op/client.sh watch --interval 0.5 --count 5
-./gameclient/v1/op/client.sh logout
-```
-
-Exact agent/script control is one-dimensional:
-
-```bash
-./gameclient/v1/op/client.sh input --x 1
-./gameclient/v1/op/client.sh input --x 0
-./gameclient/v1/op/client.sh input --x -1
-```
-
-Machine-readable mode is a global flag placed before the command:
-
-```bash
-./gameclient/v1/op/client.sh --json players
-./gameclient/v1/op/client.sh --json login player1
-./gameclient/v1/op/client.sh --json snapshot
-./gameclient/v1/op/client.sh --json input --x 1
-./gameclient/v1/op/client.sh --json watch --interval 0.1 --count 10
-```
-
-Normal commands emit exactly one JSON object in `--json` mode. `watch` emits
-JSONL because it is explicitly a stream.
-
-## Local session
-
-Login stores only public session metadata and the latest client command sequence
-in:
+The canonical laboratory world is:
 
 ```text
-gameclient/v1/runtime/session.json
+0 -------- P ------------------------------------------------ B -------- 1000
+          x=100                                            x=900
 ```
 
-The file is local client state, not authoritative game state. Movement sequence
-numbers are reserved before network I/O so a lost response cannot cause a
-sequence to be reused.
+`P` is the shared player controlled through Host. `B` is `mob1`, the
+server-side mob/bomb. GameServer remains authoritative and world time continues
+without waiting for Host or any Client.
 
-If the GameServer is restarted while a local session file remains, clear only
-the stale local file with:
-
-```bash
-./gameclient/v1/op/client.sh forget-session
-```
-
-This command intentionally does not contact Gateway.
-
-## Output shape
-
-Text mode is deliberately simple and append-only. A snapshot looks like:
-
-```text
-SNAPSHOT zone=zone1 tick=12345 physics_hz=120 line_length=1000.0 entities=2
-ENTITY id=actor-player1 kind=player owner=player1 x=210.000 vx=180.000 move=1
-ENTITY id=mob1 kind=mob owner=None x=700.000 vx=-120.000 move=-1
-```
-
-There are no cursor controls, hidden panels, tables requiring terminal width,
-progress animations, or interactive prompts. An AI agent can invoke one command,
-read stdout, and decide what command to issue next.
+CLI, GUI, and MCP do not own separate sessions. If MCP sends `move right`,
+GUI and CLI can observe the resulting state/event; if GUI then sends
+`move left`, MCP can observe that event in the same Host stream.
 
 ## Tests
 
@@ -156,5 +114,6 @@ read stdout, and decide what command to issue next.
 python -m unittest discover -s gameclient/v1/tests -v
 ```
 
-The tests exercise the public Gateway flow against a small protocol-compatible
-fake Gateway and verify that the client package contains no GameServer imports.
+The tests exercise the Host boundary against a protocol-compatible fake
+Gateway, prove P@100/B@900, shared Host sequencing across multiple Clients,
+multi-request Host TCP connections, and the no-GameServer-import boundary.

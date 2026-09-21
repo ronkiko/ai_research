@@ -59,13 +59,11 @@ session ID.
 GameServer does not need to know which local Client produced a command unless a
 future protocol explicitly introduces that information.
 
-## CLI Client
+## Implemented v1 Clients
 
-The CLI Client must remain AI-readable even though it is also usable by a
-human: no curses, no TUI, no ANSI redraw loop, and no hidden interactive
-screen state. Machine output should remain JSON/JSONL.
+- [CLI Client](clients/cli.md)
+- [GUI Client](clients/gui.md)
+- [MCP Client](clients/mcp.md)
 
-The initial Host scaffold provides CLI Client commands for Host `health` and
-`describe`. Existing gameplay commands remain on the temporary direct CLI
-compatibility path until they are migrated behind Host; that path must not be
-extended with new gameplay features.
+All three use the same Host Protocol and shared Host session. None connects
+directly to GameServer.
