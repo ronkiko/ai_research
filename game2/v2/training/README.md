@@ -40,6 +40,36 @@ interruption. An interrupted episode is not used as a completed rollout.
 Realtime PPO excludes unconfirmed state-changing commands and observations at
 or beyond the terminal tick; no-op policy decisions remain eligible.
 
+
+### Realtime execution and backpressure
+
+The current control hierarchy has three different timing scales:
+
+```text
+Console physics      120 Hz
+Motor target cadence  60 Hz = every 2 world ticks
+Planner cadence        10 Hz = every 12 world ticks
+```
+
+Planner emits KEEP/SET/STOP over a persistent MotorPlan. Motors continue their
+physical feedback loop between Planner decisions. Realtime observation delivery
+is latest-value, not a historical FIFO: Player/Model IPC may coalesce
+intermediate observations under load so the Model acts on fresher state rather
+than draining stale frames later. Dropped-observation counters are therefore
+backpressure diagnostics. They do not excuse a slow reflex loop; actual
+decision world-tick spacing must still be inspected against the two-tick Motor
+target.
+
+The executable actuator contract is one new model decision to at most one
+Controller request, followed by `control_requested`, Controller ACK,
+`control_result`, and `actuated` only for an accepted request. Training and
+ordinary realtime Player execution are required to use the same semantics.
+
+Current PPO is on-policy per completed trainable episode: one episode is
+finalized, reward/GAE are computed within that episode, then one PPO update is
+performed before the next training episode. There is no current multi-episode
+rollout batch and GAE never crosses an episode boundary.
+
 Management renders live progress from child events even though child output is
 piped. Reaching the per-map attempt limit returns failure while preserving the
 latest checkpoint. Set success requires a final frozen pass over all training

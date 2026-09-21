@@ -455,10 +455,12 @@ Keep these concepts distinct:
 architecture role != model implementation != configuration != checkpoint
 ```
 
-For example, the role `Motor Controller` may have an `MLP` implementation,
-configuration `5-8-2`, and checkpoint `X`. The role `Planner` may have a
-`CNN+RNN` implementation and checkpoint `Y`. Strategist may compare and select
-candidates without knowing their weight structure.
+For example, the current role `Motor Controller` has independent
+`6 -> 8 -> 3` RIGHT/JUMP reflex networks, while a later candidate may use a
+different MLP/SNN/whole-body implementation. The role `Planner` currently uses
+a CNN-backed implementation and may later use CNN+RNN, SNN, Transformer, or
+another candidate. Strategist may compare and select candidates without knowing
+their weight structure.
 
 The model/component owns its representation, inference state, learning state,
 and checkpoint mechanics. Training owns learning orchestration, episode
@@ -501,12 +503,18 @@ independent processes through formal contracts or tool boundaries and does not
 import Player or Training runtime internals. The Console remains unaware of
 the research plane.
 
-## Deferred Implementation
+## Current Implementation Versus Deferred Research
 
-This architecture patch does not add PyTorch, MLP, CNN, SNN, LLM, an agent
-loop, MCP server, Trainer runtime, model or checkpoint registry, executable
-`StrategyGuidance`, `MotorGoal`, or `ActionDecision` schemas, sockets, UI,
-chat, Console endpoints, Vision metadata, or Engine changes.
+The current executable stack already includes PyTorch Planner/Motors/Critic,
+MotorGoal/MotorPlan/ActionDecision contracts, realtime Model IPC, PPO training,
+checkpointing, public Vision and Proprioception, and Trainer/Management
+orchestration.
+
+Still deferred are the Research Strategist/LLM control plane, executable
+StrategyGuidance, candidate/model registry, richer humanoid body/joint
+actuation, dedicated Motor Skill pretraining tools, Exam capability, and full
+Free Play continual-learning policy. Deferred research must preserve the
+sensor, hierarchy, realtime, and fairness boundaries defined above.
 
 ### Persistent Planner commands
 

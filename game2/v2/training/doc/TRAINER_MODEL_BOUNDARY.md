@@ -25,3 +25,24 @@ second replay buffer or trajectory log.
 
 The model architecture remains replaceable. Planner, Motor Controller, Critic,
 and later candidates may change without creating another episode-data path.
+
+
+## Realtime Mailbox And Update Boundary
+
+Realtime Player/Model transport is intentionally latest-value under inference
+backpressure. Newer observations may replace queued intermediate observations;
+the system prefers fresh body/world state over a backlog of stale decisions.
+The dropped-observation metrics quantify that load shedding. They are not a
+request to replay dropped frames later.
+
+This transport rule is independent from policy cadence. Current targets are
+120 Hz physics, 60 Hz Motors, and 10 Hz Planner. If effective Motor decisions
+arrive much slower than every two world ticks, that is a realtime performance
+problem even when mailbox drops are expected.
+
+Current online PPO does not pool multiple policy versions or several episodes.
+After one trainable episode is finalized, PPO computes that episode's
+reward/GAE, updates the model, publishes the checkpoint, then collection
+continues with the updated policy. A future multi-episode rollout design would
+need an explicit single-policy-version batch contract and episode-bounded GAE;
+it is not the present behavior.

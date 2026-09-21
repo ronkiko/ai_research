@@ -12,25 +12,30 @@ Start the background Screen broker once:
 ./game2/v2/op/screen_server.sh
 ```
 
-In a second terminal, open Screen #1 **before** starting Training:
+A Screen window is a consumer and may be opened either before or after a source
+exists:
 
 ```bash
 ./game2/v2/op/screen.sh 1
 ```
 
-That command is foreground by design. It owns the native Pygame window and stays
-running until you close the window or press Esc. Initially it shows
-`Waiting for source...`.
+That command is foreground by design. It owns one native Pygame consumer window
+and stays running until you close the window or press Esc. With no producer it
+shows `Waiting for source...`. Multiple consumers may subscribe to the same
+numbered channel.
 
-In a third terminal start Training:
+Start Training independently:
 
 ```bash
 ./game2/v2/op/train.sh --fresh --screen 1
 ```
 
-Training never launches a graphical process. It only asks Screen Server to bind
-the current Console `ScreenSource` to the already-open Screen #1. On map changes
-the same window stays open while the source is rebound.
+Training never owns a graphical consumer. It selects the Screen channel/view
+when launching Console; Console owns the current `ScreenSource` and publishes
+that source into Screen Server. Screen Server keeps one current source per
+channel and fans attach/detach discovery out to zero or more consumers. On map
+changes the old Console withdraws its source before shutdown and the new Console
+publishes the replacement.
 
 Useful broker commands:
 
@@ -108,9 +113,10 @@ The Vision spectator renders fine physics and metadata from the public
 pixel rulers starting at world origin `0,0`, and a compact Grid Vision legend.
 It does not display private Engine `x/y/vx/vy` telemetry.
 
-If `--screen N` is supplied but Screen N is not already open, Training fails
-preflight with a clear operator instruction. Once Training has started, losing
-the Screen remains spectator-only and does not affect the learning topology.
+`--screen N` requires the Screen Server broker to be reachable, but it does
+not require a consumer window to be open. Consumers may attach later. Losing or
+closing a Screen consumer remains spectator-only and does not affect the
+learning topology.
 
 ## Boundaries
 

@@ -107,6 +107,14 @@ useful subproblem. For example, Level 1 may use `flat_run`, `short_gap`,
 `long_gap`, and basic combinations. These maps are not a different physics
 world: they are scenes using the same World mechanics.
 
+A future Motor Skill Curriculum may isolate physical reflex competence even
+further: run/accelerate/brake, jump takeoff/hold/release, landing/stabilization,
+and perturbation recovery can be trained as Motor-local skills before Planner
+is asked to compose them. A likely progression is dedicated Motor pretraining,
+freeze/hold competent Motors while Planner learns composition, then optional
+joint fine-tuning. This is a curriculum direction, not permission to hide
+runtime execution/cadence bugs behind easier maps.
+
 ## Exam Map
 
 Each Training Set Level has exactly one Exam Map. It is an integrated map that
@@ -236,7 +244,7 @@ experiment. It directly consumed the three Player-side Vision features and
 produced `RIGHT` / `JUMP`; it did not have a separate Planner or Motor
 Controller boundary.
 
-The next implementation target is the first full learned hierarchy:
+The current executable learned hierarchy is:
 
 ```text
 Public Vision
@@ -247,7 +255,7 @@ CNN Planner
    MotorGoal
       |
       v
-MLP 5-8-2 Motor Controller
+Dual RIGHT/JUMP 6-8-3 reflex Motors
       |
  ActionDecision
       |
@@ -257,8 +265,8 @@ Joystick
     Console
 ```
 
-This is the first complete implementation of the target architecture, not a
-new Console contract.
+This is the current first complete implementation of the target hierarchy; it
+does not change the public Console actuator contract.
 
 ### CNN Planner
 
@@ -268,14 +276,17 @@ consumes the allowed Player-side visual/sensory representation and produces a
 below. The exact CNN topology is deliberately not normative; a later candidate
 may use CNN+RNN, SNN, or another policy implementation.
 
-### MLP Motor Controller
+### Reflex Motor Controller
 
-The first Motor Controller implementation is the MLP configuration `5-8-2`.
-In this hierarchy it is not the collapsed direct-action baseline, even though
-the shape is the same. It receives `MotorGoal` plus fast allowed
-sensory/motion information and produces `ActionDecision`. The final
-`MotorGoal` schema is deferred. The MLP is the first Motor Controller
-configuration, not the definition of the Motor Controller role.
+The current Motor Controller is a dual reflex controller with independent RIGHT
+and JUMP Button Motors. Each Button Motor uses `6 -> 8 -> 3`:
+MotorGoal dx/dy, normalized measured vx/vy, grounded, and that Motor's own
+actuator state -> KEEP/PRESS/RELEASE logits. The two Motors share the physical
+goal but do not receive each other's actuator bit.
+
+This topology is an implementation, not the definition of the Motor role. The
+role remains physical target + measurable body state -> fast actuator
+correction, without high-level map semantics.
 
 ## Fresh Model Semantics
 
@@ -287,9 +298,9 @@ Fresh model does not mean zero weights. A Fresh candidate means:
 - no prior training has been applied;
 - no learned checkpoint or optimizer continuation state is loaded.
 
-Zero weights are not a semantic requirement. The first full stack may start
-Fresh with a CNN Planner candidate and a Fresh MLP `5-8-2` Motor Controller
-candidate. Resume is a separate operation that explicitly loads a prior
+Zero weights are not a semantic requirement. The current full stack may start
+Fresh with a CNN Planner candidate and Fresh dual `6 -> 8 -> 3` Button Motors.
+Resume is a separate operation that explicitly loads a prior
 candidate/checkpoint.
 
 ## Trainer Process And Ownership
