@@ -28,8 +28,7 @@ def _entity_line(entity: dict[str, Any]) -> str:
     return (
         f"ENTITY id={entity.get('entity_id')} kind={entity.get('kind')} "
         f"owner={entity.get('owner_id')} x={float(entity.get('x', 0.0)):.3f} "
-        f"y={float(entity.get('y', 0.0)):.3f} vx={float(entity.get('vx', 0.0)):.3f} "
-        f"vy={float(entity.get('vy', 0.0)):.3f} move=({entity.get('move_x')},{entity.get('move_y')})"
+        f"vx={float(entity.get('vx', 0.0)):.3f} move={entity.get('move_x')}"
     )
 
 
@@ -39,7 +38,8 @@ def _print_snapshot(snapshot: dict[str, Any]) -> None:
         entities = []
     print(
         f"SNAPSHOT zone={snapshot.get('zone_id')} tick={snapshot.get('world_tick')} "
-        f"physics_hz={snapshot.get('physics_hz')} entities={len(entities)}"
+        f"physics_hz={snapshot.get('physics_hz')} line_length={snapshot.get('line_length')} "
+        f"entities={len(entities)}"
     )
     for entity in entities:
         if isinstance(entity, dict):
@@ -73,14 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("snapshot", help="read the latest authoritative zone snapshot")
 
-    exact = sub.add_parser("input", help="send exact movement axes; intended for agents and scripts")
+    exact = sub.add_parser("input", help="send exact one-dimensional movement; intended for agents and scripts")
     exact.add_argument("--x", dest="move_x", type=int, required=True, choices=(-1, 0, 1))
-    exact.add_argument("--y", dest="move_y", type=int, required=True, choices=(-1, 0, 1))
 
     move = sub.add_parser("move", help="human-friendly movement alias")
     move.add_argument("direction", choices=tuple(name for name in DIRECTIONS if name != "stop"))
 
-    sub.add_parser("stop", help="set both movement axes to zero")
+    sub.add_parser("stop", help="set movement intent to zero")
     sub.add_parser("logout", help="logout from Gateway and remove the local session")
     sub.add_parser(
         "forget-session",
@@ -161,7 +160,7 @@ def run(args: argparse.Namespace) -> int:
 
     if command in {"input", "move", "stop"}:
         if command == "input":
-            result = client.input(args.move_x, args.move_y)
+            result = client.input(args.move_x)
         elif command == "move":
             result = client.move(args.direction)
         else:
@@ -171,7 +170,7 @@ def run(args: argparse.Namespace) -> int:
         else:
             response = result["response"]
             print(
-                f"INPUT sequence={result['sequence']} move=({result['move_x']},{result['move_y']}) "
+                f"INPUT sequence={result['sequence']} move={result['move_x']} "
                 f"status={response.get('type')} queued_at_tick={response.get('world_tick')} "
                 f"command_id={response.get('command_id')}"
             )

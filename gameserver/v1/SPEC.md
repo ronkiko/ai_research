@@ -11,6 +11,15 @@ entity position or velocity directly.
 The current zone clock is fixed at 120 Hz. A zone is valid with zero connected
 players and continues advancing independently of external consumers.
 
+## Spatial contract
+
+GameServer v1 is intentionally one-dimensional. The complete normative spatial
+state is `x`, `vx`, and latched `move_x` in `{-1,0,1}` on the bounded
+interval `x in [0,1000]`.
+
+There is no `y` axis in v1. Vertical movement, gravity, jumping, platforms,
+diagonal movement, and 2D physics are outside the v1 contract.
+
 ## Process boundaries
 
 The v1 runtime processes are:
@@ -30,19 +39,19 @@ the world clock.
 ## Command semantics
 
 A gameplay movement command contains an entity, positive monotonic sequence,
-and current `move_x/move_y` axes in `{-1,0,1}`. Accepted state stays latched
-until a later sequence changes it. Commands do not contain target ticks,
-durations, future action lists, positions, velocities, or physics results.
+and current `move_x` in `{-1,0,1}`. Accepted state stays latched until a
+later sequence changes it. Commands do not contain target ticks, durations,
+future action lists, positions, velocities, or physics results.
 
 Zone applies queued commands at a tick boundary before advancing entities.
-Sorted entity IDs define deterministic update order. Arena bounds are physical
-constraints: when motion would cross a boundary, authoritative position is
-clamped to that boundary and the blocked velocity component becomes zero while
-the latched input intent remains unchanged. Tangential velocity is preserved.
+Sorted entity IDs define deterministic update order. The line bounds are
+physical constraints: when motion would cross `x=0` or `x=1000`,
+authoritative `x` is clamped to that boundary and `vx` becomes zero while
+the latched `move_x` intent remains unchanged.
 
 ## Public boundary
 
-A future GameClient addresses only Gateway. Internal service ports are
+GameClient v1 addresses only Gateway. Internal service ports are
 laboratory implementation details. Passwordless demo login is intentionally
 limited to v1 and returns a session, player ID, entity ID, world ID, and zone ID.
 

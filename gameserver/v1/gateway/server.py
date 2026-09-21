@@ -55,7 +55,6 @@ class GatewayService:
                 entity_id=session["entity_id"],
                 sequence=request.get("sequence"),
                 move_x=request.get("move_x"),
-                move_y=request.get("move_y"),
                 source="player",
             ))
         if kind == "snapshot":

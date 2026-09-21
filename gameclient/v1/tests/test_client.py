@@ -49,8 +49,7 @@ class _Gateway:
                     "zone_snapshot", zone_id="zone1", world_tick=self.tick, physics_hz=120,
                     entities=[{
                         "entity_id": "actor-player1", "kind": "player", "owner_id": "player1",
-                        "x": self.x, "y": 300.0, "vx": 0.0, "vy": 0.0,
-                        "move_x": 0, "move_y": 0,
+                        "x": self.x, "vx": 0.0, "move_x": 0,
                     }], commands_applied=[]
                 )
             )
@@ -109,17 +108,18 @@ class ClientTests(unittest.TestCase):
         self.assertGreater(after["entities"][0]["x"], before["entities"][0]["x"])
         stopped = self.client.move("stop")
         self.assertEqual(stopped["sequence"], 2)
+        self.assertEqual(stopped["move_x"], 0)
         self.client.logout()
         self.assertFalse(self.session_path.exists())
 
     def test_sequence_is_reserved_before_rpc_and_persists(self):
         self.client.login("player1")
-        self.client.input(1, 0)
+        self.client.input(1)
         again = GameClient(
             host="127.0.0.1", port=self.server.server_address[1], timeout=1.0,
             session_file=self.session_path,
         )
-        result = again.input(0, 1)
+        result = again.input(0)
         self.assertEqual(result["sequence"], 2)
         stored = json.loads(self.session_path.read_text(encoding="utf-8"))
         self.assertEqual(stored["sequence"], 2)
@@ -132,6 +132,18 @@ class ClientTests(unittest.TestCase):
     def test_snapshot_requires_login(self):
         with self.assertRaisesRegex(SessionError, "not logged in"):
             self.client.snapshot()
+
+    def test_client_surface_is_one_dimensional(self):
+        self.client.login("player1")
+        result = self.client.input(-1)
+        self.assertEqual(result["move_x"], -1)
+        self.assertNotIn("move_y", result)
+        snapshot = self.client.snapshot()
+        self.assertNotIn("y", snapshot["entities"][0])
+        self.assertNotIn("vy", snapshot["entities"][0])
+        self.assertNotIn("move_y", snapshot["entities"][0])
+        with self.assertRaisesRegex(ValueError, "unknown direction"):
+            self.client.move("up")
 
 
 class SessionStoreTests(unittest.TestCase):

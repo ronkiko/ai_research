@@ -1,4 +1,4 @@
-"""Mob Server: server-side NPC intent producer, never authoritative state owner."""
+"""Mob Server: server-side one-dimensional NPC intent producer."""
 from __future__ import annotations
 
 import argparse
@@ -18,20 +18,16 @@ class MobService:
         self.sequence = 0
 
     @staticmethod
-    def _intent(snapshot: dict) -> tuple[int, int]:
+    def _intent(snapshot: dict) -> int:
         entities = snapshot.get("entities", [])
         mob = next((item for item in entities if item.get("entity_id") == "mob1"), None)
         players = [item for item in entities if item.get("kind") == "player"]
         if mob is None or not players:
-            return 0, 0
-        target = min(players, key=lambda item: (item["x"] - mob["x"]) ** 2 +
-                                              (item["y"] - mob["y"]) ** 2)
+            return 0
+        target = min(players, key=lambda item: abs(item["x"] - mob["x"]))
         dx = target["x"] - mob["x"]
-        dy = target["y"] - mob["y"]
         deadband = 4.0
-        move_x = 0 if abs(dx) <= deadband else (1 if dx > 0 else -1)
-        move_y = 0 if abs(dy) <= deadband else (1 if dy > 0 else -1)
-        return move_x, move_y
+        return 0 if abs(dx) <= deadband else (1 if dx > 0 else -1)
 
     def run(self) -> None:
         print('{"component":"mob","status":"READY","mob_id":"mob1"}', flush=True)
@@ -43,11 +39,11 @@ class MobService:
                              message("latest", zone_id=ZONE_ID), timeout=0.5)
                 snapshot = latest.get("snapshot")
                 if isinstance(snapshot, dict):
-                    move_x, move_y = self._intent(snapshot)
+                    move_x = self._intent(snapshot)
                     self.sequence += 1
                     rpc(self.host, self.zone_port, message(
                         "input", entity_id="mob1", sequence=self.sequence,
-                        move_x=move_x, move_y=move_y, source="mob"
+                        move_x=move_x, source="mob"
                     ), timeout=0.5)
             except OSError:
                 pass

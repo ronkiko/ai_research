@@ -1,14 +1,13 @@
-"""Authoritative fixed-step state for one GameServer v1 zone."""
+"""Authoritative fixed-step state for one one-dimensional GameServer v1 zone."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 import queue
 import threading
 from typing import Any
 
-from ..common.config import ARENA, PHYSICS_HZ, ZONE_ID, ArenaConfig
-from ..common.protocol import ProtocolError, axis
+from ..common.config import LINE, PHYSICS_HZ, ZONE_ID, LineConfig
+from ..common.protocol import ProtocolError, axis, finite_number
 
 
 @dataclass
@@ -17,12 +16,9 @@ class Entity:
     kind: str
     owner_id: str | None
     x: float
-    y: float
     speed: float
     vx: float = 0.0
-    vy: float = 0.0
     move_x: int = 0
-    move_y: int = 0
     last_sequence: int = 0
 
     def snapshot(self) -> dict[str, Any]:
@@ -31,11 +27,8 @@ class Entity:
             "kind": self.kind,
             "owner_id": self.owner_id,
             "x": self.x,
-            "y": self.y,
             "vx": self.vx,
-            "vy": self.vy,
             "move_x": self.move_x,
-            "move_y": self.move_y,
         }
 
 
@@ -48,7 +41,7 @@ class ZoneCommand:
 
 @dataclass
 class ZoneRuntime:
-    """The sole mutable authority for one zone.
+    """The sole mutable authority for one one-dimensional zone.
 
     Network threads may enqueue commands, but only ``tick`` mutates entity state.
     This keeps the 120 Hz causal boundary explicit and deterministic.
@@ -56,7 +49,7 @@ class ZoneRuntime:
 
     zone_id: str = ZONE_ID
     physics_hz: int = PHYSICS_HZ
-    arena: ArenaConfig = ARENA
+    line: LineConfig = LINE
     world_tick: int = 0
     entities: dict[str, Entity] = field(default_factory=dict)
 
@@ -67,21 +60,29 @@ class ZoneRuntime:
         self._last_submitted_sequence: dict[str, int] = {}
         self._pending_spawn: set[str] = set()
         self._latest_snapshot = self._snapshot(())
-        self._spawn_immediate("mob1", "mob", None, 760.0, 300.0, self.arena.mob_speed)
+        self._spawn_immediate("mob1", "mob", None, 760.0, self.line.mob_speed)
         self._latest_snapshot = self._snapshot(())
 
     @property
     def dt(self) -> float:
         return 1.0 / self.physics_hz
 
-    def _spawn_immediate(self, entity_id: str, kind: str, owner_id: str | None,
-                         x: float, y: float, speed: float) -> None:
-        self.entities[entity_id] = Entity(entity_id, kind, owner_id, x, y, speed)
+    def _spawn_immediate(
+        self,
+        entity_id: str,
+        kind: str,
+        owner_id: str | None,
+        x: float,
+        speed: float,
+    ) -> None:
+        self.entities[entity_id] = Entity(entity_id, kind, owner_id, x, speed)
 
-    def enqueue_spawn(self, *, entity_id: str, owner_id: str, x: float = 180.0,
-                      y: float = 300.0) -> int:
+    def enqueue_spawn(self, *, entity_id: str, owner_id: str, x: float = 180.0) -> int:
         if not entity_id or not owner_id:
             raise ProtocolError("spawn identity is missing")
+        x = finite_number("x", x)
+        if not 0.0 <= x <= self.line.length:
+            raise ProtocolError(f"x must be within [0,{self.line.length:g}]")
         with self._lock:
             if entity_id in self.entities or entity_id in self._pending_spawn:
                 raise ProtocolError("entity already exists")
@@ -89,8 +90,7 @@ class ZoneRuntime:
             return self._enqueue("spawn", {
                 "entity_id": entity_id,
                 "owner_id": owner_id,
-                "x": float(x),
-                "y": float(y),
+                "x": x,
             })
 
     def enqueue_despawn(self, entity_id: str) -> int:
@@ -99,12 +99,17 @@ class ZoneRuntime:
                 raise ProtocolError("unknown entity")
             return self._enqueue("despawn", {"entity_id": entity_id})
 
-    def enqueue_input(self, *, entity_id: str, sequence: int, move_x: int,
-                      move_y: int, source: str) -> int:
+    def enqueue_input(
+        self,
+        *,
+        entity_id: str,
+        sequence: int,
+        move_x: int,
+        source: str,
+    ) -> int:
         if type(sequence) is not int or sequence <= 0:
             raise ProtocolError("sequence must be a positive integer")
         move_x = axis("move_x", move_x)
-        move_y = axis("move_y", move_y)
         if source not in {"player", "mob"}:
             raise ProtocolError("source must be player or mob")
         with self._lock:
@@ -123,7 +128,6 @@ class ZoneRuntime:
                 "entity_id": entity_id,
                 "sequence": sequence,
                 "move_x": move_x,
-                "move_y": move_y,
                 "source": source,
             })
 
@@ -149,8 +153,11 @@ class ZoneRuntime:
                     status = "rejected"
                 else:
                     self._spawn_immediate(
-                        entity_id, "player", payload["owner_id"], payload["x"],
-                        payload["y"], self.arena.player_speed,
+                        entity_id,
+                        "player",
+                        payload["owner_id"],
+                        payload["x"],
+                        self.line.player_speed,
                     )
             elif command.kind == "despawn":
                 entity = self.entities.pop(payload["entity_id"], None)
@@ -164,7 +171,6 @@ class ZoneRuntime:
                 else:
                     entity.last_sequence = payload["sequence"]
                     entity.move_x = payload["move_x"]
-                    entity.move_y = payload["move_y"]
             applied.append({
                 "command_id": command.command_id,
                 "kind": command.kind,
@@ -179,17 +185,11 @@ class ZoneRuntime:
             applied = self._drain_commands()
             for entity_id in sorted(self.entities):
                 entity = self.entities[entity_id]
-                length = math.hypot(entity.move_x, entity.move_y)
-                if length:
-                    entity.vx = entity.speed * entity.move_x / length
-                    entity.vy = entity.speed * entity.move_y / length
-                else:
-                    entity.vx = entity.vy = 0.0
+                entity.vx = entity.speed * entity.move_x if entity.move_x else 0.0
                 next_x = entity.x + entity.vx * self.dt
-                next_y = entity.y + entity.vy * self.dt
 
-                if entity.vx > 0.0 and next_x >= self.arena.width:
-                    entity.x = self.arena.width
+                if entity.vx > 0.0 and next_x >= self.line.length:
+                    entity.x = self.line.length
                     entity.vx = 0.0
                 elif entity.vx < 0.0 and next_x <= 0.0:
                     entity.x = 0.0
@@ -197,14 +197,6 @@ class ZoneRuntime:
                 else:
                     entity.x = next_x
 
-                if entity.vy > 0.0 and next_y >= self.arena.height:
-                    entity.y = self.arena.height
-                    entity.vy = 0.0
-                elif entity.vy < 0.0 and next_y <= 0.0:
-                    entity.y = 0.0
-                    entity.vy = 0.0
-                else:
-                    entity.y = next_y
             self._latest_snapshot = self._snapshot(tuple(applied))
             return self._latest_snapshot
 
@@ -215,6 +207,7 @@ class ZoneRuntime:
             "zone_id": self.zone_id,
             "world_tick": self.world_tick,
             "physics_hz": self.physics_hz,
+            "line_length": self.line.length,
             "entities": [self.entities[key].snapshot() for key in sorted(self.entities)],
             "commands_applied": list(commands),
         }

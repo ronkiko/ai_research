@@ -15,7 +15,7 @@ def main() -> int:
     time.sleep(0.05)
     before = rpc(HOST, GATEWAY_PORT, message("snapshot", session_id=session_id))
     rpc(HOST, GATEWAY_PORT, message(
-        "input", session_id=session_id, sequence=1, move_x=1, move_y=0
+        "input", session_id=session_id, sequence=1, move_x=1
     ))
     time.sleep(0.1)
     after = rpc(HOST, GATEWAY_PORT, message("snapshot", session_id=session_id))

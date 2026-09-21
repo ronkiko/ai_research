@@ -14,16 +14,10 @@ class GatewayError(RuntimeError):
     pass
 
 
-DIRECTIONS: dict[str, tuple[int, int]] = {
-    "left": (-1, 0),
-    "right": (1, 0),
-    "up": (0, -1),
-    "down": (0, 1),
-    "up-left": (-1, -1),
-    "up-right": (1, -1),
-    "down-left": (-1, 1),
-    "down-right": (1, 1),
-    "stop": (0, 0),
+DIRECTIONS: dict[str, int] = {
+    "left": -1,
+    "right": 1,
+    "stop": 0,
 }
 
 
@@ -81,27 +75,24 @@ class GameClient:
             raise GatewayError("Gateway returned an invalid snapshot")
         return snapshot
 
-    def input(self, move_x: int, move_y: int) -> dict[str, Any]:
+    def input(self, move_x: int) -> dict[str, Any]:
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise ValueError("move_x must be -1, 0, or 1")
-        if type(move_y) is not int or move_y not in {-1, 0, 1}:
-            raise ValueError("move_y must be -1, 0, or 1")
         session, sequence = self.sessions.reserve_sequence()
         response = self._request(
             "input",
             session_id=session["session_id"],
             sequence=sequence,
             move_x=move_x,
-            move_y=move_y,
         )
-        return {"sequence": sequence, "move_x": move_x, "move_y": move_y, "response": response}
+        return {"sequence": sequence, "move_x": move_x, "response": response}
 
     def move(self, direction: str) -> dict[str, Any]:
         try:
-            move_x, move_y = DIRECTIONS[direction]
+            move_x = DIRECTIONS[direction]
         except KeyError as exc:
             raise ValueError(f"unknown direction: {direction}") from exc
-        return self.input(move_x, move_y)
+        return self.input(move_x)
 
     def logout(self) -> dict[str, Any]:
         session = self.sessions.require()

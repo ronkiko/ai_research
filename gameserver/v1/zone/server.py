@@ -1,4 +1,4 @@
-"""120 Hz authoritative Zone Server."""
+"""120 Hz authoritative one-dimensional Zone Server."""
 from __future__ import annotations
 
 import argparse
@@ -30,8 +30,7 @@ class ZoneService:
             command_id = self.runtime.enqueue_spawn(
                 entity_id=str(request.get("entity_id", "")),
                 owner_id=str(request.get("owner_id", "")),
-                x=float(request.get("x", 180.0)),
-                y=float(request.get("y", 300.0)),
+                x=request.get("x", 180.0),
             )
             return message("command_queued", command_id=command_id,
                            world_tick=self.runtime.world_tick)
@@ -44,7 +43,6 @@ class ZoneService:
                 entity_id=str(request.get("entity_id", "")),
                 sequence=request.get("sequence"),
                 move_x=request.get("move_x"),
-                move_y=request.get("move_y"),
                 source=str(request.get("source", "")),
             )
             return message("command_queued", command_id=command_id,

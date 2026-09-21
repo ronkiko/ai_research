@@ -18,11 +18,10 @@ TELEMETRY_RING_TICKS = PHYSICS_HZ
 
 
 @dataclass(frozen=True)
-class ArenaConfig:
-    width: float = 1000.0
-    height: float = 600.0
+class LineConfig:
+    length: float = 1000.0
     player_speed: float = 180.0
     mob_speed: float = 120.0
 
 
-ARENA = ArenaConfig()
+LINE = LineConfig()

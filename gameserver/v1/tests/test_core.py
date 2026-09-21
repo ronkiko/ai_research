@@ -4,6 +4,7 @@ import socket
 import unittest
 
 from gameserver.v1.common.protocol import LineReader, ProtocolError, encode_line, message
+from gameserver.v1.mob.server import MobService
 from gameserver.v1.telemetry.server import TelemetryRing
 from gameserver.v1.world.server import WorldRegistry
 from gameserver.v1.zone.model import ZoneRuntime
@@ -36,39 +37,34 @@ class ZoneRuntimeTests(unittest.TestCase):
         runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1")
         runtime.tick()
         runtime.enqueue_input(entity_id="actor-player1", sequence=1,
-                              move_x=1, move_y=0, source="player")
+                              move_x=1, source="player")
         first = runtime.tick()
         first_x = next(e for e in first["entities"] if e["entity_id"] == "actor-player1")["x"]
         second = runtime.tick()
         second_x = next(e for e in second["entities"] if e["entity_id"] == "actor-player1")["x"]
         self.assertGreater(second_x, first_x)
         runtime.enqueue_input(entity_id="actor-player1", sequence=2,
-                              move_x=0, move_y=0, source="player")
+                              move_x=0, source="player")
         stopped = runtime.tick()
         stopped_x = next(e for e in stopped["entities"] if e["entity_id"] == "actor-player1")["x"]
         again = runtime.tick()
         again_x = next(e for e in again["entities"] if e["entity_id"] == "actor-player1")["x"]
         self.assertAlmostEqual(stopped_x, again_x)
 
-    def test_boundary_collision_zeroes_blocked_velocity_but_keeps_latched_intent(self):
+    def test_line_boundaries_zero_velocity_but_keep_latched_intent(self):
         cases = (
-            ("right", 999.0, 300.0, 1, 0, 1000.0, 300.0, 0.0, 0.0),
-            ("left", 1.0, 300.0, -1, 0, 0.0, 300.0, 0.0, 0.0),
-            ("down", 500.0, 599.0, 0, 1, 500.0, 600.0, 0.0, 0.0),
-            ("up", 500.0, 1.0, 0, -1, 500.0, 0.0, 0.0, 0.0),
+            ("right", 999.0, 1, 1000.0),
+            ("left", 1.0, -1, 0.0),
         )
-        for name, x, y, move_x, move_y, expected_x, expected_y, expected_vx, expected_vy in cases:
+        for name, x, move_x, expected_x in cases:
             with self.subTest(name=name):
                 runtime = ZoneRuntime()
-                runtime.enqueue_spawn(
-                    entity_id="actor-player1", owner_id="player1", x=x, y=y
-                )
+                runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1", x=x)
                 runtime.tick()
                 runtime.enqueue_input(
                     entity_id="actor-player1",
                     sequence=1,
                     move_x=move_x,
-                    move_y=move_y,
                     source="player",
                 )
                 snapshot = runtime.tick()
@@ -77,40 +73,46 @@ class ZoneRuntimeTests(unittest.TestCase):
                     if item["entity_id"] == "actor-player1"
                 )
                 self.assertAlmostEqual(entity["x"], expected_x)
-                self.assertAlmostEqual(entity["y"], expected_y)
-                self.assertAlmostEqual(entity["vx"], expected_vx)
-                self.assertAlmostEqual(entity["vy"], expected_vy)
+                self.assertEqual(entity["vx"], 0.0)
                 self.assertEqual(entity["move_x"], move_x)
-                self.assertEqual(entity["move_y"], move_y)
 
-    def test_boundary_collision_preserves_tangential_velocity(self):
+    def test_snapshot_is_strictly_one_dimensional(self):
         runtime = ZoneRuntime()
-        runtime.enqueue_spawn(
-            entity_id="actor-player1", owner_id="player1", x=999.5, y=300.0
-        )
-        runtime.tick()
-        runtime.enqueue_input(
-            entity_id="actor-player1", sequence=1,
-            move_x=1, move_y=1, source="player"
-        )
+        runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1")
         snapshot = runtime.tick()
-        entity = next(
-            item for item in snapshot["entities"]
-            if item["entity_id"] == "actor-player1"
-        )
-        self.assertEqual(entity["x"], runtime.arena.width)
-        self.assertEqual(entity["vx"], 0.0)
-        self.assertGreater(entity["y"], 300.0)
-        self.assertGreater(entity["vy"], 0.0)
-        self.assertEqual((entity["move_x"], entity["move_y"]), (1, 1))
+        self.assertEqual(snapshot["line_length"], 1000.0)
+        for entity in snapshot["entities"]:
+            self.assertEqual(
+                set(entity),
+                {"entity_id", "kind", "owner_id", "x", "vx", "move_x"},
+            )
+
+    def test_spawn_rejects_position_outside_line(self):
+        runtime = ZoneRuntime()
+        with self.assertRaisesRegex(ProtocolError, "x must be within"):
+            runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1", x=1001.0)
 
     def test_sequence_must_increase(self):
         runtime = ZoneRuntime()
         runtime.enqueue_input(entity_id="mob1", sequence=1,
-                              move_x=-1, move_y=0, source="mob")
+                              move_x=-1, source="mob")
         with self.assertRaisesRegex(ProtocolError, "sequence must increase"):
             runtime.enqueue_input(entity_id="mob1", sequence=1,
-                                  move_x=1, move_y=0, source="mob")
+                                  move_x=1, source="mob")
+
+
+class MobServiceTests(unittest.TestCase):
+    def test_intent_uses_only_one_dimensional_distance(self):
+        snapshot = {
+            "entities": [
+                {"entity_id": "mob1", "kind": "mob", "x": 500.0},
+                {"entity_id": "actor-player1", "kind": "player", "x": 400.0},
+                {"entity_id": "actor-player2", "kind": "player", "x": 900.0},
+            ]
+        }
+        self.assertEqual(MobService._intent(snapshot), -1)
+        snapshot["entities"][1]["x"] = 503.0
+        self.assertEqual(MobService._intent(snapshot), 0)
 
 
 class WorldRegistryTests(unittest.TestCase):

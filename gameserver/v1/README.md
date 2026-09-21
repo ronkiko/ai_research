@@ -27,6 +27,30 @@ This deliberately carries forward the strongest Game2 Console rules from
 - causal tick numbers and monotonic command sequences are explicit contracts;
 - model/trainer logic is outside the game-server authority.
 
+## v1 spatial model: intentionally one-dimensional
+
+GameServer v1 deliberately uses a one-dimensional world. Spatial state is a
+single coordinate `x` on a bounded line:
+
+```text
+0 -------------------------------------------------------------- 1000
+
+        player                                      mob
+```
+
+The v1 laboratory polishes realtime authority, command sequencing, latency,
+sessions, telemetry, mobs, and client/server causality before adding another
+spatial dimension. Vertical movement, gravity, jumping, platforms, diagonal
+movement, and 2D physics are outside v1 scope.
+
+Authoritative entity motion state is:
+
+```text
+x
+vx
+move_x    # -1 left, 0 stop, +1 right
+```
+
 ## v1 topology
 
 ```text
@@ -63,17 +87,17 @@ assigns a distinct entity ID such as `actor-player1`.
 
 ### Zone Server
 
-Owns the authoritative mutable state of `zone1`: entities, positions,
-velocities, latched movement state, and global `world_tick`. The zone loop is
-120 Hz. Only the tick loop mutates entities; network threads enqueue commands.
-The demo world is a bounded 1000x600 arena containing `mob1` plus any logged-in
-players.
+Owns the authoritative mutable state of `zone1`: entities, one-dimensional
+position/velocity, latched movement state, and global `world_tick`. The zone
+loop is 120 Hz. Only the tick loop mutates entities; network threads enqueue
+commands. The demo world is the bounded line `x in [0,1000]` containing
+`mob1` plus any logged-in players.
 
 ### Mob Server
 
 A server-side NPC decision process. It reads the latest passive telemetry at
 10 Hz and sends ordinary movement intent for `mob1` toward the nearest player.
-It never writes `x/y` directly. Zone remains authority for the mob exactly as
+It never writes `x` directly. Zone remains authority for the mob exactly as
 it remains authority for human players.
 
 ### Telemetry Server
@@ -137,8 +161,10 @@ Telemetry ring both rotates at 120 ticks and detects missing ticks.
 
 ## Scope of v1
 
-v1 intentionally has one World, one Zone, one mob, local TCP/UDP transport, and
-no passwords. It does not yet implement matchmaking, multiple zones, zone
-transfer, client-side prediction, interest management, a database, a message
-bus, or a standalone replication service. Those should be added only when the
-minimal authoritative vertical requires them.
+v1 intentionally has one World, one one-dimensional Zone, one mob, local
+TCP/UDP transport, and no passwords. It intentionally has no `y` coordinate,
+jumping, gravity, platforms, diagonal movement, or 2D physics. It does not yet
+implement matchmaking, multiple zones, zone transfer, client-side prediction,
+interest management, a database, a message bus, or a standalone replication
+service. Those should be added only when the polished 1D authoritative vertical
+requires them.

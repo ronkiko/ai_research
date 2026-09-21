@@ -30,14 +30,15 @@ is not game state. Each movement request uses a positive monotonic sequence.
 The client reserves the next sequence before sending the request; gaps are
 allowed, reuse is not.
 
-`input --x X --y Y` is the canonical agent-facing control command. Human-facing
-`move DIRECTION` and `stop` are aliases that resolve to the same axis contract.
-Movement describes current intent and remains latched server-side until a later
-input changes it.
+The canonical agent-facing control command is `input --x X`, where `X` is
+one of `-1`, `0`, or `1`. Human-facing `move left`, `move right`, and
+`stop` resolve to the same contract. There is no `y` control, diagonal
+movement, or jump in v1. Movement describes current intent and remains latched
+server-side until a later input changes it.
 
 ## Realtime semantics
 
-GameClient observes a world that continues independently of the client. A slow
+GameClient observes a one-dimensional world that continues independently of the client. A slow
 client, sleeping script, human think time, or AI inference may cause many
 server ticks to pass between two snapshots. The client must not attempt to hide
 that latency by pausing the world or by exposing a step-on-demand API.
