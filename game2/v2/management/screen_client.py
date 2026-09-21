@@ -23,6 +23,7 @@ from game2.v2.contracts.screen_server import (
 INITIAL_WIDTH = 1280
 INITIAL_HEIGHT = 768
 WAITING_REDRAW_MS = 250
+SOURCE_RECONNECT_MS = 250
 
 
 class ScreenReceiver:
@@ -98,6 +99,7 @@ class ScreenWindow:
         self.source: ScreenSourceDiscovery | None = None
         self.last_tick = -1
         self.status = "Waiting for source..."
+        self.next_source_reconnect_ms = 0
         self.window = None
         self.pygame = None
         self.font = None
@@ -149,13 +151,12 @@ class ScreenWindow:
         if receiver is not None:
             receiver.close()
         self.source = None
+        self.next_source_reconnect_ms = 0
         self.last_tick = -1
         self.status = status
         self._draw_status()
 
-    def _attach_source(self, source: ScreenSourceDiscovery) -> None:
-        self._detach_source(f"Connecting: {source.map_id}")
-        self.source = source
+    def _connect_source(self, source: ScreenSourceDiscovery) -> bool:
         if self.window.get_size() != (source.width, source.height):
             self.window = self.pygame.display.set_mode((source.width, source.height))
             self.pygame.display.set_caption(f"Game2 Screen #{self.screen_number}")
@@ -163,11 +164,33 @@ class ScreenWindow:
         try:
             receiver.connect()
         except OSError as exc:
-            self.status = f"Source connection failed: {exc}"
+            self.receiver = None
+            self.next_source_reconnect_ms = (
+                self.pygame.time.get_ticks() + SOURCE_RECONNECT_MS
+            )
+            self.status = f"Source reconnecting: {exc}"
             self._draw_status()
-            return
+            return False
         self.receiver = receiver
+        self.next_source_reconnect_ms = 0
         self.status = f"Connected: {source.map_id}"
+        self._draw_status()
+        return True
+
+    def _attach_source(self, source: ScreenSourceDiscovery) -> None:
+        self._detach_source(f"Connecting: {source.map_id}")
+        self.source = source
+        self._connect_source(source)
+
+    def _source_disconnected(self, detail: str) -> None:
+        receiver, self.receiver = self.receiver, None
+        if receiver is not None:
+            receiver.close()
+        self.last_tick = -1
+        self.next_source_reconnect_ms = (
+            self.pygame.time.get_ticks() + SOURCE_RECONNECT_MS
+        )
+        self.status = "Source disconnected; reconnecting: " + detail[:70]
         self._draw_status()
 
     def _handle_commands(self) -> bool:
@@ -218,10 +241,19 @@ class ScreenWindow:
                 receiver = self.receiver
                 if receiver is None:
                     now_ms = pygame.time.get_ticks()
-                    if now_ms - last_waiting_redraw >= WAITING_REDRAW_MS:
+                    if (
+                        self.source is not None
+                        and now_ms >= self.next_source_reconnect_ms
+                    ):
+                        self._connect_source(self.source)
+                        receiver = self.receiver
+                    if (
+                        receiver is None
+                        and now_ms - last_waiting_redraw >= WAITING_REDRAW_MS
+                    ):
                         self._draw_status()
                         last_waiting_redraw = now_ms
-                else:
+                if receiver is not None:
                     with receiver.condition:
                         frame = receiver.latest
                     if frame is not None and frame.world_tick > self.last_tick:
@@ -243,7 +275,7 @@ class ScreenWindow:
                             str(receiver.error).strip()
                             if receiver.error is not None else "source closed"
                         )
-                        self._detach_source("Source disconnected: " + detail[:80])
+                        self._source_disconnected(detail)
                 clock.tick(60)
         finally:
             self.close()

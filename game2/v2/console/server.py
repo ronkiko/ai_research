@@ -596,24 +596,32 @@ def run_server(config_path: str | Path,
             root, engine_log, "Engine")
         engine_control = EngineLifecycleClient(internal.engine_control)
         engine_control.connect()
-        try:
-            screen_command = [
-                sys.executable, "-m", SCREEN_SOURCE_MODULE,
-                "--manifest", str(screen_manifest_path),
-            ]
-            if screen_episode_store is not None:
-                screen_command.extend([
-                    "--episode-store", str(screen_episode_store),
-                ])
-            screen_source = _launch_ready(
+        screen_command = [
+            sys.executable, "-m", SCREEN_SOURCE_MODULE,
+            "--manifest", str(screen_manifest_path),
+        ]
+        if screen_episode_store is not None:
+            screen_command.extend([
+                "--episode-store", str(screen_episode_store),
+            ])
+
+        def start_screen_source():
+            nonlocal own_screen_source
+            process = _launch_ready(
                 screen_command, root, screen_log, "ScreenSource")
             own_screen_source = ScreenSourceDiscovery(
                 1, session_id, world.map_id, screen_endpoint,
                 world.width, world.height)
             publish_screen_source(own_screen_source, screen_discovery_path)
+            return process
+
+        screen_retry_at = 0.0
+        try:
+            screen_source = start_screen_source()
         except (OSError, RuntimeError) as exc:
             screen_log.write(f"UNAVAILABLE {type(exc).__name__}: {exc}\n")
             screen_log.flush()
+            screen_retry_at = time.monotonic() + 0.5
         assert internal.engine_state is not None
         assert internal.engine_telemetry is not None
         assert internal.engine_events is not None
@@ -646,10 +654,31 @@ def run_server(config_path: str | Path,
                 status = 0 if engine.returncode == 0 else 1
                 break
             if screen_source is not None and screen_source.poll() is not None:
+                returncode = screen_source.returncode
                 if own_screen_source is not None:
                     remove_screen_source(own_screen_source, screen_discovery_path)
                     own_screen_source = None
                 screen_source = None
+                screen_retry_at = time.monotonic() + 0.25
+                screen_log.write(
+                    f"RESTART ScreenSource exited returncode={returncode}\n"
+                )
+                screen_log.flush()
+            if (
+                screen_source is None
+                and not interrupted.is_set()
+                and time.monotonic() >= screen_retry_at
+            ):
+                try:
+                    screen_source = start_screen_source()
+                    screen_log.write("RESTART ScreenSource ready\n")
+                    screen_log.flush()
+                except (OSError, RuntimeError) as exc:
+                    screen_log.write(
+                        f"RESTART failed {type(exc).__name__}: {exc}\n"
+                    )
+                    screen_log.flush()
+                    screen_retry_at = time.monotonic() + 0.5
             server.drain_commands()
             time.sleep(0.005)
         if interrupted.is_set():

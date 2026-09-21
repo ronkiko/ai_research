@@ -4,13 +4,78 @@ import socket
 import threading
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from game2.v2.contracts.manifests import Endpoint
+from game2.v2.management.screen_client import ScreenWindow
 from game2.v2.contracts.screen import (
     ScreenFrame, ScreenSourceDiscovery, publish_screen_source,
     recv_screen_frame, send_screen_frame,
 )
+
+
+class ScreenWindowReconnectTests(unittest.TestCase):
+    def test_source_disconnect_keeps_discovery_for_retry(self):
+        server = type("Server", (), {"slots": 1})()
+        window = ScreenWindow(1, server)
+        source = ScreenSourceDiscovery(
+            1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
+        )
+        receiver = mock.Mock()
+        window.source = source
+        window.receiver = receiver
+        window.pygame = mock.Mock()
+        window.pygame.time.get_ticks.return_value = 1000
+        window._draw_status = mock.Mock()
+
+        window._source_disconnected("peer closed")
+
+        receiver.close.assert_called_once_with()
+        self.assertIs(window.source, source)
+        self.assertIsNone(window.receiver)
+        self.assertGreater(window.next_source_reconnect_ms, 1000)
+        self.assertIn("reconnecting", window.status)
+
+    def test_failed_source_connect_schedules_retry_without_forgetting_source(self):
+        server = type("Server", (), {"slots": 1})()
+        window = ScreenWindow(1, server)
+        source = ScreenSourceDiscovery(
+            1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
+        )
+        window.source = source
+        window.window = mock.Mock()
+        window.window.get_size.return_value = (1280, 768)
+        window.pygame = mock.Mock()
+        window.pygame.time.get_ticks.return_value = 2000
+        window._draw_status = mock.Mock()
+        receiver = mock.Mock()
+        receiver.connect.side_effect = OSError("source unavailable")
+
+        with mock.patch(
+            "game2.v2.management.screen_client.ScreenReceiver",
+            return_value=receiver,
+        ):
+            self.assertFalse(window._connect_source(source))
+
+        self.assertIs(window.source, source)
+        self.assertIsNone(window.receiver)
+        self.assertGreater(window.next_source_reconnect_ms, 2000)
+        self.assertIn("reconnecting", window.status)
+
+    def test_explicit_detach_cancels_source_retry(self):
+        server = type("Server", (), {"slots": 1})()
+        window = ScreenWindow(1, server)
+        window.source = ScreenSourceDiscovery(
+            1, "session", "pit", Endpoint("127.0.0.1", 12345), 1280, 768
+        )
+        window.next_source_reconnect_ms = 123
+        window._draw_status = mock.Mock()
+
+        window._detach_source()
+
+        self.assertIsNone(window.source)
+        self.assertEqual(window.next_source_reconnect_ms, 0)
 
 
 class ScreenContractTests(unittest.TestCase):
