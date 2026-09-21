@@ -42,17 +42,17 @@ def _profile(bot_id: str = "player1") -> BotProfile:
             {
                 "motor_id": "right", "enabled": True, "role": "motor",
                 "implementation": "mlp",
-                "configuration": "button-reflex-5-8-3-v1",
+                "configuration": "button-reflex-6-8-3-v2",
                 "precision": "fp32", "seed": 2,
                 "topology": {
-                    "kind": "mlp", "inputs": 5, "hidden": [8],
+                    "kind": "mlp", "inputs": 6, "hidden": [8],
                     "outputs": 3, "summary": "right reflex",
                 },
             },
             {
                 "motor_id": "jump", "enabled": True, "role": "motor",
                 "implementation": "mlp",
-                "configuration": "button-reflex-5-8-3-v1",
+                "configuration": "button-reflex-6-8-3-v2",
                 "precision": "fp32", "seed": 3,
                 "topology": {
                     "kind": "mlp", "inputs": 5, "hidden": [8],

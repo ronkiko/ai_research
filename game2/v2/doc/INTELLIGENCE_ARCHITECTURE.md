@@ -541,3 +541,28 @@ This is internal controller state, not Engine truth and not proprioception. It
 does not expose velocity, contact, map semantics, or hidden physics. Runtime and
 PPO replay must use the same pre-command MotorPlan state; EpisodeDataset stores
 that exact Planner input for reproducibility.
+
+## Embodiment Reality Rule
+
+Game2 is a proving ground for a controller intended to remain meaningful when a humanoid is embodied in hardware. Sensor capabilities are therefore designed from the robot outward, not from convenient simulator internals inward.
+
+For Proprioception, every exposed value must satisfy both conditions:
+
+1. It describes the humanoid's own physical body or actuator state.
+2. There is a plausible contemporary physical instrument that could measure the equivalent value on hardware.
+
+Examples include IMU-derived velocity/orientation, joint encoders, actuator feedback, force/load cells, and foot/contact sensors.
+
+Knowing an enemy is nearby, a gap exists ahead, where the finish is, where the map ends, or what collision will happen next is not Proprioception. Such facts must be perceived through explicit exteroceptive sensors such as Vision, never injected from Engine truth.
+
+### Proprioception v1
+
+The first body sensor is intentionally minimal: vx, vy, grounded, RIGHT actuator state, and JUMP actuator state.
+
+Motor reflexes receive MotorGoal plus normalized vx/vy, grounded, and their own actuator state. They do not receive semantic world data or the other Motor's actuator bit.
+
+Critic receives Vision features plus the complete current v1 body state and the current pre-command MotorPlan. This lets value estimation distinguish a body standing at one visual location from a body passing through the same visual location at high velocity.
+
+Planner remains deliberately separated: its additional non-Vision input is its own current MotorPlan, not raw body Proprioception. Experiments may change that later only with an explicit architectural reason.
+
+The same rule scales to hardware: later body orientation, angular velocity, joint angle/rate, foot contacts, load/force, and actuator feedback are admissible only when they correspond to real measurable body quantities.

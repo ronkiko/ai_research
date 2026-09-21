@@ -7,6 +7,7 @@ from numbers import Real
 from typing import Any
 
 from .framing import PROTOCOL_VERSION, ProtocolError, decode_frame, encode_frame
+from .proprioception import ProprioceptionFrame
 from .vision import (
     VISION_MAX_CELLS,
     VISION_MAX_COLUMNS,
@@ -88,12 +89,24 @@ def prepare_message(episode_id: int, mode: str, seed: int) -> dict[str, Any]:
     return _message(PREPARE, episode_id=episode_id, mode=mode, seed=seed)
 
 
-def observe_message(grid: VisionGrid) -> dict[str, Any]:
+def observe_message(
+    grid: VisionGrid, proprioception: ProprioceptionFrame
+) -> dict[str, Any]:
     if not isinstance(grid, VisionGrid):
         raise TypeError("observe_message requires a VisionGrid")
+    if not isinstance(proprioception, ProprioceptionFrame):
+        raise TypeError("observe_message requires ProprioceptionFrame")
+    if proprioception.world_tick > grid.world_tick:
+        raise ProtocolError("Proprioception cannot come from a future world tick")
     return _message(
         OBSERVE,
         observation_world_tick=grid.world_tick,
+        proprioception_world_tick=proprioception.world_tick,
+        proprioception_vx=float(proprioception.velocity_x),
+        proprioception_vy=float(proprioception.velocity_y),
+        proprioception_grounded=proprioception.grounded,
+        proprioception_right_pressed=proprioception.right_pressed,
+        proprioception_jump_pressed=proprioception.jump_pressed,
         columns=grid.columns,
         rows=grid.rows,
         tile_size=grid.tile_size,
@@ -104,12 +117,14 @@ def observe_message(grid: VisionGrid) -> dict[str, Any]:
     )
 
 
-def observation_packet(grid: VisionGrid) -> bytes:
-    """Encode one OBSERVE header followed by all three logical matrices."""
+def observation_packet(
+    grid: VisionGrid, proprioception: ProprioceptionFrame
+) -> bytes:
+    """Encode synchronized Vision + self-body state and the Vision matrices."""
     if not isinstance(grid, VisionGrid):
         raise TypeError("observation_packet requires a VisionGrid")
     return (
-        encode_frame(observe_message(grid))
+        encode_frame(observe_message(grid, proprioception))
         + grid.coarse_physics
         + grid.physics
         + grid.metadata
@@ -203,8 +218,11 @@ def saved_message() -> dict[str, Any]:
 _FIELDS = {
     PREPARE: frozenset(("version", "type", "episode_id", "mode", "seed")),
     OBSERVE: frozenset((
-        "version", "type", "observation_world_tick", "columns", "rows",
-        "tile_size", "subdivisions", "coarse_physics_length",
+        "version", "type", "observation_world_tick",
+        "proprioception_world_tick", "proprioception_vx",
+        "proprioception_vy", "proprioception_grounded",
+        "proprioception_right_pressed", "proprioception_jump_pressed",
+        "columns", "rows", "tile_size", "subdivisions", "coarse_physics_length",
         "physics_length", "metadata_length",
     )),
     ACTUATED: frozenset(("version", "type", "decision_id")),
@@ -299,6 +317,22 @@ def _validate_observation_header(message: dict[str, Any]) -> None:
         raise ProtocolError("observation subdivisions are invalid")
     if type(world_tick) is not int or world_tick < 0:
         raise ProtocolError("observation tick is invalid")
+    sensor_tick = message.get("proprioception_world_tick")
+    if (
+        type(sensor_tick) is not int
+        or sensor_tick < 0
+        or sensor_tick > world_tick
+    ):
+        raise ProtocolError("Proprioception tick is invalid or from the future")
+    _finite_number("proprioception_vx", message.get("proprioception_vx"))
+    _finite_number("proprioception_vy", message.get("proprioception_vy"))
+    for field in (
+        "proprioception_grounded",
+        "proprioception_right_pressed",
+        "proprioception_jump_pressed",
+    ):
+        if type(message.get(field)) is not bool:
+            raise ProtocolError(f"{field} must be boolean")
     fine_cells = cells * VISION_SUBDIVISIONS * VISION_SUBDIVISIONS
     if message.get("coarse_physics_length") != cells:
         raise ProtocolError("observation coarse physics length does not match dimensions")
@@ -334,8 +368,27 @@ def observation_from_message(
     )
 
 
-def send_model_observation(sock: socket.socket, grid: VisionGrid) -> None:
-    sock.sendall(observation_packet(grid))
+def proprioception_from_message(
+    message: dict[str, Any],
+) -> ProprioceptionFrame:
+    if decode_model_message(message)["type"] != OBSERVE:
+        raise ProtocolError("message is not an observation")
+    return ProprioceptionFrame(
+        message["proprioception_world_tick"],
+        message["proprioception_vx"],
+        message["proprioception_vy"],
+        message["proprioception_grounded"],
+        message["proprioception_right_pressed"],
+        message["proprioception_jump_pressed"],
+    )
+
+
+def send_model_observation(
+    sock: socket.socket,
+    grid: VisionGrid,
+    proprioception: ProprioceptionFrame,
+) -> None:
+    sock.sendall(observation_packet(grid, proprioception))
 
 
 __all__ = [
@@ -345,7 +398,7 @@ __all__ = [
     "actuated_message", "control_requested_message", "control_result_message",
     "decode_model_message", "decision_message",
     "episode_end_message", "message_frame", "observe_message", "observation_from_message",
-    "observation_packet", "prepare_message", "ready_message", "recv_model_message",
+    "observation_packet", "proprioception_from_message", "prepare_message", "ready_message", "recv_model_message",
     "save_message", "saved_message", "send_model_message", "send_model_observation",
     "update_result_message",
 ]

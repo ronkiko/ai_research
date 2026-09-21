@@ -30,6 +30,7 @@ from game2.v2.contracts.model import (
     decode_model_message,
     decision_message,
     observation_from_message,
+    proprioception_from_message,
     ready_message,
     saved_message,
     send_model_message,
@@ -386,7 +387,10 @@ class ModelRuntime:
             self._episode_observations_received += 1
             if pending_observation is not None:
                 self._episode_dropped_observations += 1
-            return observation_from_message(message, observation_matrices)
+            return (
+                observation_from_message(message, observation_matrices),
+                proprioception_from_message(message),
+            )
         if message_type == CONTROL_REQUESTED:
             sample = self._samples.get(message["decision_id"])
             if sample is not None and self._episode_dataset is not None:
@@ -424,10 +428,10 @@ class ModelRuntime:
                          pending_observation: object | None) -> object | None:
         if pending_observation is None or not self._active:
             return pending_observation
-        frame = pending_observation
+        frame, proprioception = pending_observation
         if self.inference_delay:
             time.sleep(self.inference_delay)
-        sample = self.player.process_grid(frame)
+        sample = self.player.process_grid(frame, proprioception)
         if sample is not None:
             self._episode_decision_count += 1
             if self._episode_dataset is None:

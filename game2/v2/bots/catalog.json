@@ -57,19 +57,19 @@
           "enabled": true,
           "role": "motor",
           "implementation": "mlp",
-          "configuration": "button-reflex-5-8-3-v1",
+          "configuration": "button-reflex-6-8-3-v2",
           "precisions": [
             "fp32"
           ],
           "runtime_supported": true,
           "topology": {
             "kind": "mlp",
-            "inputs": 5,
+            "inputs": 6,
             "hidden": [
               8
             ],
             "outputs": 3,
-            "summary": "MotorGoal[2] + motion[2] + actuator state -> KEEP/PRESS/RELEASE"
+            "summary": "MotorGoal[2] + measured velocity[2] + grounded + own actuator state -> KEEP/PRESS/RELEASE"
           }
         }
       ]

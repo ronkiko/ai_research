@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.model import (
     actuated_message,
     control_requested_message,
@@ -54,13 +55,23 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                     prepare_message(1, "evaluate", 1),
                     None,
                 )
-                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(
+                    left,
+                    (
+                        _grid(10),
+                        ProprioceptionFrame(
+                            10, 0.0, 0.0, True, False, False
+                        ),
+                    ),
+                )
                 dataset = runtime._episode_dataset
                 self.assertIsNotNone(dataset)
                 assert dataset is not None
                 steps = dataset.steps()
                 self.assertEqual(len(steps), 1)
                 self.assertEqual(steps[0].world_tick, 10)
+                self.assertEqual(steps[0].proprioception_world_tick, 10)
+                self.assertTrue(steps[0].grounded)
                 self.assertEqual(
                     steps[0].duration_ticks,
                     POLICY_STRIDE_TICKS,
@@ -90,7 +101,15 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                 for parameter in player.motor_controller.parameters():
                     parameter.data.zero_()
                 player.motor_controller.right_motor.output.bias.data[1] = 1.0
-                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(
+                    left,
+                    (
+                        _grid(10),
+                        ProprioceptionFrame(
+                            10, 0.0, 0.0, True, False, False
+                        ),
+                    ),
+                )
                 self.assertEqual(len(runtime._samples), 1)
                 decision_id = next(iter(runtime._samples))
                 runtime._handle(
@@ -131,7 +150,15 @@ class ModelRuntimeDatasetTests(unittest.TestCase):
                     prepare_message(3, "evaluate", 3),
                     None,
                 )
-                runtime._process_pending(left, _grid(10))
+                runtime._process_pending(
+                    left,
+                    (
+                        _grid(10),
+                        ProprioceptionFrame(
+                            10, 0.0, 0.0, True, False, False
+                        ),
+                    ),
+                )
                 dataset_path = runtime._episode_dataset.path
                 runtime._handle(
                     left,

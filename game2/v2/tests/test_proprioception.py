@@ -4,11 +4,13 @@ import socket
 import unittest
 
 from game2.v2.console.proprioception.source import frame_from_telemetry
-from game2.v2.contracts.framing import send_frame
+from game2.v2.contracts.framing import ProtocolError, send_frame
+from game2.v2.contracts.model import observe_message
 from game2.v2.contracts.proprioception import (
     ProprioceptionFrame,
     recv_proprioception_frame,
 )
+from game2.v2.contracts.vision import VisionGrid
 
 
 class ProprioceptionContractTests(unittest.TestCase):
@@ -71,6 +73,20 @@ class ProprioceptionContractTests(unittest.TestCase):
         )
         self.assertNotIn("other", repr(frame))
         self.assertNotIn("accepted_inputs", repr(frame))
+
+    def test_model_observation_rejects_future_body_measurement(self):
+        grid = VisionGrid(
+            1, 1, 64,
+            bytes([0]),
+            bytes(64),
+            bytes(64),
+            world_tick=10,
+        )
+        body = ProprioceptionFrame(
+            11, 0.0, 0.0, True, False, False
+        )
+        with self.assertRaises(ProtocolError):
+            observe_message(grid, body)
 
     def test_wire_contract_is_strict(self):
         left, right = socket.socketpair()

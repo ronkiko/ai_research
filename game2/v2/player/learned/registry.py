@@ -84,7 +84,7 @@ def validate_runtime_profile(profile: BotProfile) -> None:
         topology = motor.component.topology
         if (
             topology.kind != "mlp"
-            or topology.inputs != 5
+            or topology.inputs != 6
             or topology.hidden != (8,)
             or topology.outputs != 3
         ):

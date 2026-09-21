@@ -31,6 +31,7 @@ from game2.v2.contracts.model import (
     prepare_message,
     save_message,
 )
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import VisionGrid
 from game2.v2.player.learned.contracts import ActionDecision
 
@@ -253,9 +254,11 @@ class ModelClient:
         self._observations_submitted = 0
         self._dropped_observations = 0
 
-    def observe(self, frame: VisionGrid) -> None:
+    def observe(
+        self, frame: VisionGrid, proprioception: ProprioceptionFrame
+    ) -> None:
         self._require_socket()
-        encoded = observation_packet(frame)
+        encoded = observation_packet(frame, proprioception)
         self._observations_submitted += 1
         if self._pending_observation is None and self._current_out is None \
                 and not self._control_out:

@@ -7,6 +7,7 @@ from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import (
     META_GOAL,
     META_SELF,
@@ -57,6 +58,12 @@ def _sample(sequence: int, tick: int, self_x: int):
         motor_goal=MotorGoal(1.0, 0.0),
         motion_x=0.0,
         motion_y=-0.25 if sequence == 2 else 0.0,
+        proprioception_world_tick=tick,
+        velocity_x=120.0 if sequence > 1 else 0.0,
+        velocity_y=-100.0 if sequence == 2 else 0.0,
+        grounded=True,
+        sensor_right_pressed=sequence > 1,
+        sensor_jump_pressed=False,
         action_decision=ControlCommand(
             ButtonCommand.PRESS if sequence == 1 else ButtonCommand.KEEP,
             ButtonCommand.KEEP,
@@ -200,7 +207,7 @@ class EpisodeDatasetTests(unittest.TestCase):
             self.assertEqual(metadata["source"], "realtime")
             self.assertEqual(metadata["result"], "dead")
             self.assertEqual(metadata["updated"], 1)
-            self.assertEqual(metadata["schema_version"], 9)
+            self.assertEqual(metadata["schema_version"], 10)
             self.assertEqual(metadata["metrics"]["rollout_records"], 4)
             self.assertEqual(metadata["metrics"]["ppo_records"], 4)
             self.assertEqual(metadata["metrics"]["planner_decisions"], 1)
@@ -248,6 +255,9 @@ class EpisodeDatasetTests(unittest.TestCase):
             )
             steps = dataset.steps()
             self.assertEqual(steps[1].motion_y, -0.25)
+            self.assertEqual(steps[1].velocity_x, 120.0)
+            self.assertTrue(steps[1].grounded)
+            self.assertTrue(steps[1].sensor_right_pressed)
             self.assertAlmostEqual(steps[0].prob_jump_keep, 0.6)
             self.assertAlmostEqual(steps[0].prob_jump_press, 0.3)
             self.assertAlmostEqual(steps[0].prob_jump_release, 0.1)

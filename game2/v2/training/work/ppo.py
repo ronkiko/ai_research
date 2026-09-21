@@ -309,13 +309,23 @@ def train_episode(
         full_vision = torch.stack([
             vision_to_tensor(step.vision_grid) for step in selected_steps
         ])
-    motion_all = torch.tensor(
-        [[step.motion_x, step.motion_y] for step in selected_steps],
+    velocity_all = torch.tensor(
+        [[step.velocity_x, step.velocity_y] for step in selected_steps],
         dtype=torch.float32,
     )
-    pad_all = torch.tensor(
-        [[step.pad_right, step.pad_jump] for step in selected_steps],
+    grounded_all = torch.tensor(
+        [step.grounded for step in selected_steps],
         dtype=torch.float32,
+    )
+    sensor_pad_all = torch.tensor(
+        [
+            [step.sensor_right_pressed, step.sensor_jump_pressed]
+            for step in selected_steps
+        ],
+        dtype=torch.float32,
+    )
+    body_state_all = body_state_batch(
+        velocity_all, grounded_all, sensor_pad_all
     )
     planner_state_all = torch.tensor(
         [
@@ -376,7 +386,16 @@ def train_episode(
                 plan_planner_output = model.planner.forward_features(
                     plan_features, source_plan_state
                 )
-                values = model.critic.forward_features(current_features)
+                current_body_state = body_state_all[indexes].to(
+                    dtype=current_features.dtype,
+                    device=current_features.device,
+                )
+                critic_context = critic_context_batch(
+                    current_body_state, current_plan_state
+                )
+                values = model.critic.forward_features(
+                    current_features, critic_context
+                )
             else:
                 assert full_vision is not None
                 current_plan_state = planner_state_all[indexes].to(
@@ -393,7 +412,16 @@ def train_episode(
                 plan_planner_output = model.planner(
                     full_vision[source_indexes], source_plan_state
                 )
-                values = model.critic(full_vision[indexes])
+                current_body_state = body_state_all[indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                critic_context = critic_context_batch(
+                    current_body_state, current_plan_state
+                )
+                values = model.critic(
+                    full_vision[indexes], critic_context
+                )
             if (
                 current_planner_output.ndim != 2
                 or current_planner_output.shape[1] != 7
@@ -407,11 +435,18 @@ def train_episode(
             goals = plan_planner_output[:, :2]
             plan_command_logits = current_planner_output[:, 2:5]
             skill_logits = current_planner_output[:, 5:7]
-            motion = motion_all[indexes].to(
+            velocity = velocity_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
-            pad = pad_all[indexes].to(dtype=goals.dtype, device=goals.device)
-            logits = model.motor_controller.forward_batch(goals, motion, pad)
+            grounded = grounded_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            sensor_pad = sensor_pad_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            logits = model.motor_controller.forward_batch(
+                goals, velocity, grounded, sensor_pad
+            )
             if logits.ndim != 2 or logits.shape[1] != 6:
                 raise ValueError("Motor Controller must return six command logits")
             command_logits = logits.reshape(-1, 2, 3)
@@ -545,7 +580,16 @@ def train_episode(
                 plan_planner_output = model.planner.forward_features(
                     plan_features, source_plan_state
                 )
-                values = model.critic.forward_features(current_features)
+                current_body_state = body_state_all[indexes].to(
+                    dtype=current_features.dtype,
+                    device=current_features.device,
+                )
+                critic_context = critic_context_batch(
+                    current_body_state, current_plan_state
+                )
+                values = model.critic.forward_features(
+                    current_features, critic_context
+                )
             else:
                 assert full_vision is not None
                 current_plan_state = planner_state_all[indexes].to(
@@ -562,15 +606,31 @@ def train_episode(
                 plan_planner_output = model.planner(
                     full_vision[source_indexes], source_plan_state
                 )
-                values = model.critic(full_vision[indexes])
+                current_body_state = body_state_all[indexes].to(
+                    dtype=full_vision.dtype,
+                    device=full_vision.device,
+                )
+                critic_context = critic_context_batch(
+                    current_body_state, current_plan_state
+                )
+                values = model.critic(
+                    full_vision[indexes], critic_context
+                )
             goals = plan_planner_output[:, :2]
             plan_command_logits = current_planner_output[:, 2:5]
             skill_logits = current_planner_output[:, 5:7]
-            motion = motion_all[indexes].to(
+            velocity = velocity_all[indexes].to(
                 dtype=goals.dtype, device=goals.device
             )
-            pad = pad_all[indexes].to(dtype=goals.dtype, device=goals.device)
-            logits = model.motor_controller.forward_batch(goals, motion, pad)
+            grounded = grounded_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            sensor_pad = sensor_pad_all[indexes].to(
+                dtype=goals.dtype, device=goals.device
+            )
+            logits = model.motor_controller.forward_batch(
+                goals, velocity, grounded, sensor_pad
+            )
             command_logits = logits.reshape(-1, 2, 3)
             probabilities = torch.softmax(command_logits, dim=2)
             motor_log_probabilities = torch.log_softmax(command_logits, dim=2)

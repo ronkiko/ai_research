@@ -7,6 +7,7 @@ import math
 import torch
 
 from game2.v2.contracts.joystick import JoystickState
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import VisionGrid
 from game2.v2.learning.config import (
     PLANNER_STRIDE_TICKS,
@@ -23,8 +24,13 @@ from .contracts import (
     apply_control_command,
 )
 from .critic import CNNCritic
-from .motion import MotionEstimator, vision_centers
+from .motion import vision_centers
 from .motor import inactive_command
+from .proprioception import (
+    critic_context_tensor,
+    normalize_velocity_x,
+    normalize_velocity_y,
+)
 from .vision import vision_to_tensor
 
 
@@ -62,6 +68,12 @@ class DecisionSample:
     prob_right: float | None = None
     prob_jump: float | None = None
     motion_y: float = 0.0
+    proprioception_world_tick: int = 0
+    velocity_x: float = 0.0
+    velocity_y: float = 0.0
+    grounded: bool = False
+    sensor_right_pressed: bool = False
+    sensor_jump_pressed: bool = False
     right_probabilities: tuple[float, float, float] | None = None
     jump_probabilities: tuple[float, float, float] | None = None
     self_x: float | None = None
@@ -96,7 +108,7 @@ class LearnedPlayer:
         planner,
         motor_controller,
         critic=None,
-        motion_estimator: MotionEstimator | None = None,
+        motion_estimator=None,
         learning_rate: float = PPO_LEARNING_RATE,
     ):
         if not hasattr(planner, "decide"):
@@ -119,8 +131,8 @@ class LearnedPlayer:
         ):
             self.critic.backbone = planner_backbone
 
-        self.motion_estimator = motion_estimator or MotionEstimator()
-        self.vertical_motion_estimator = MotionEstimator()
+        # Kept only as a constructor compatibility slot. Learned control no
+        # longer derives body motion from Vision.
         self.latest_goal: MotorGoal | None = None
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
@@ -155,8 +167,6 @@ class LearnedPlayer:
         return self._episode_mode
 
     def _reset_episode_local(self) -> None:
-        self.motion_estimator.reset()
-        self.vertical_motion_estimator.reset()
         self.latest_goal = None
         self.latest_decision = ActionDecision(False, False)
         self.actuated_state = ActionDecision(False, False)
@@ -196,13 +206,15 @@ class LearnedPlayer:
     def _process_model_grid(
         self,
         frame: VisionGrid,
-        motion_x: float,
-        motion_y: float,
+        proprioception: ProprioceptionFrame,
         self_position: tuple[float, float] | None,
         policy_sequence: int,
     ) -> DecisionSample:
         vision = vision_to_tensor(frame).unsqueeze(0)
-        pad_state = self.actuated_state
+        pad_state = ActionDecision(
+            proprioception.right_pressed,
+            proprioception.jump_pressed,
+        )
         planner_decision = (
             self._active_plan is None
             or self._active_plan_tick is None
@@ -246,12 +258,22 @@ class LearnedPlayer:
                 and getattr(self.planner, "backbone", None)
                 is getattr(self.critic, "backbone", None)
             )
+            critic_context = critic_context_tensor(
+                proprioception,
+                planner_input_plan,
+                dtype=vision.dtype,
+                device=vision.device,
+            )
             if shared:
                 current_features = self.planner.encode(vision)
-                value = float(self.critic.forward_features(current_features)[0])
+                value = float(
+                    self.critic.forward_features(
+                        current_features, critic_context
+                    )[0]
+                )
             else:
                 current_features = None
-                value = float(self.critic(vision)[0])
+                value = float(self.critic(vision, critic_context)[0])
 
             if planner_decision:
                 planner_output = (
@@ -358,10 +380,11 @@ class LearnedPlayer:
             )
             motor_logits = self.motor_controller.forward_goal(
                 goal_tensor,
-                motion_x,
-                motion_y,
-                pad_state.right,
-                pad_state.jump,
+                proprioception.velocity_x,
+                proprioception.velocity_y,
+                proprioception.grounded,
+                proprioception.right_pressed,
+                proprioception.jump_pressed,
             )
 
         if motor_logits.ndim != 1 or motor_logits.shape[0] != 6:
@@ -407,7 +430,7 @@ class LearnedPlayer:
             frame.world_tick,
             frame,
             self._active_plan.goal,
-            motion_x,
+            normalize_velocity_x(proprioception.velocity_x),
             command,
             log_prob,
             pad_state.right,
@@ -422,7 +445,13 @@ class LearnedPlayer:
                 float(motor_probabilities[1, motor_choices[1]])
                 if jump_active else 1.0
             ),
-            motion_y=motion_y,
+            motion_y=normalize_velocity_y(proprioception.velocity_y),
+            proprioception_world_tick=proprioception.world_tick,
+            velocity_x=float(proprioception.velocity_x),
+            velocity_y=float(proprioception.velocity_y),
+            grounded=proprioception.grounded,
+            sensor_right_pressed=proprioception.right_pressed,
+            sensor_jump_pressed=proprioception.jump_pressed,
             right_probabilities=tuple(
                 float(item) for item in motor_probabilities[0]
             ),
@@ -453,29 +482,41 @@ class LearnedPlayer:
             plan_policy_sequence=self._active_plan_policy_sequence,
         )
 
-    def process_grid(self, frame: VisionGrid) -> DecisionSample | None:
+    def process_grid(
+        self,
+        frame: VisionGrid,
+        proprioception: ProprioceptionFrame | None = None,
+    ) -> DecisionSample | None:
         if not isinstance(frame, VisionGrid):
             raise TypeError("LearnedPlayer requires a VisionGrid")
+        if proprioception is None:
+            # Compatibility for direct unit calls only. Production realtime and
+            # unpaced paths always supply the public physical sensor.
+            proprioception = ProprioceptionFrame(
+                frame.world_tick,
+                0.0,
+                0.0,
+                False,
+                self.actuated_state.right,
+                self.actuated_state.jump,
+            )
+        if not isinstance(proprioception, ProprioceptionFrame):
+            raise TypeError("LearnedPlayer requires ProprioceptionFrame")
+        if proprioception.world_tick > frame.world_tick:
+            raise ValueError("Proprioception cannot come from a future tick")
+
         self_position, goal_position = vision_centers(frame)
-        motion_x = self.motion_estimator.update_center(
-            frame,
-            None if self_position is None else self_position[0],
-        )
-        motion_y = self.vertical_motion_estimator.update_center(
-            frame,
-            None if self_position is None else self_position[1],
-        )
-        if (
-            not self.motion_estimator.last_observation_usable
-            or not self.vertical_motion_estimator.last_observation_usable
-        ):
+        if self_position is None:
             return None
 
+        self.actuated_state = ActionDecision(
+            proprioception.right_pressed,
+            proprioception.jump_pressed,
+        )
         self._policy_sequence += 1
         sample = self._process_model_grid(
             frame,
-            motion_x,
-            motion_y,
+            proprioception,
             self_position,
             self._policy_sequence,
         )
@@ -488,7 +529,6 @@ class LearnedPlayer:
             goal_y=(
                 None if goal_position is None else float(goal_position[1])
             ),
-            motion_y=motion_y,
         )
 
         desired_state = sample.desired_state

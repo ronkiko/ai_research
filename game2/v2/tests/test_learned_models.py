@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import (
     META_GOAL,
     META_OTHER_ACTOR,
@@ -32,11 +33,12 @@ from game2.v2.player.learned.contracts import (
 )
 from game2.v2.player.learned.critic import CNNCritic
 from game2.v2.player.learned.motor import (
-    ButtonMotor583,
+    ButtonMotor683,
     DualMotorController,
     motor_input,
 )
 from game2.v2.player.learned.planner import CNNPlanner
+from game2.v2.player.learned.proprioception import critic_context_tensor
 from game2.v2.player.learned.runtime import (
     DecisionSample,
     LearnedPlayer,
@@ -142,16 +144,46 @@ class LearnedContractTests(unittest.TestCase):
             len({id(parameter) for parameter in optimizer_parameters}),
         )
 
-    def test_each_motor_input_is_intent_motion_and_own_button_state(self):
+    def test_each_motor_input_is_intent_and_measurable_body_state(self):
         goal = MotorGoal(0.5, -0.5)
-        right = motor_input(goal, 0.25, -0.75, False)
-        jump = motor_input(goal, 0.25, -0.75, True)
-        self.assertTrue(torch.equal(
-            right, torch.tensor([0.5, -0.5, 0.25, -0.75, 0.0])
+        right = motor_input(goal, 340.0, -700.0, True, False)
+        jump = motor_input(goal, 340.0, -700.0, True, True)
+        expected_vx = math.tanh(1.0)
+        expected_vy = math.tanh(-1.0)
+        self.assertTrue(torch.allclose(
+            right,
+            torch.tensor([
+                0.5, -0.5, expected_vx, expected_vy, 1.0, 0.0
+            ]),
         ))
-        self.assertTrue(torch.equal(
-            jump, torch.tensor([0.5, -0.5, 0.25, -0.75, 1.0])
+        self.assertTrue(torch.allclose(
+            jump,
+            torch.tensor([
+                0.5, -0.5, expected_vx, expected_vy, 1.0, 1.0
+            ]),
         ))
+
+    def test_critic_can_distinguish_same_vision_with_different_body_velocity(self):
+        planner = CNNPlanner.fresh(1)
+        critic = CNNCritic.fresh(3, planner.backbone)
+        vision = vision_to_tensor(_grid(6, 5)).unsqueeze(0)
+        features = planner.encode(vision)
+        plan = MotorPlan(MotorGoal(0.0, 0.0), True, False)
+        still = critic_context_tensor(
+            ProprioceptionFrame(1, 0.0, 0.0, True, True, False),
+            plan,
+        )
+        moving = critic_context_tensor(
+            ProprioceptionFrame(1, 340.0, 0.0, True, True, False),
+            plan,
+        )
+        with torch.no_grad():
+            critic.value_head.weight.zero_()
+            critic.value_head.bias.zero_()
+            critic.value_head.weight[0, 32] = 1.0
+            still_value = critic.forward_features(features, still)
+            moving_value = critic.forward_features(features, moving)
+        self.assertLess(float(still_value[0]), float(moving_value[0]))
 
 
 class LearnedModelTests(unittest.TestCase):
@@ -208,33 +240,40 @@ class LearnedModelTests(unittest.TestCase):
         controller.jump_motor = jump
         controller.forward_goal(
             torch.tensor([0.25, -0.5]),
-            motion_x=0.75,
-            motion_y=-0.25,
+            velocity_x=340.0,
+            velocity_y=-700.0,
+            grounded=True,
             current_right=True,
             current_jump=False,
         )
-        self.assertTrue(torch.equal(
-            right.last, torch.tensor([0.25, -0.5, 0.75, -0.25, 1.0])
+        vx = math.tanh(1.0)
+        vy = math.tanh(-1.0)
+        self.assertTrue(torch.allclose(
+            right.last, torch.tensor([0.25, -0.5, vx, vy, 1.0, 1.0])
         ))
-        self.assertTrue(torch.equal(
-            jump.last, torch.tensor([0.25, -0.5, 0.75, -0.25, 0.0])
+        self.assertTrue(torch.allclose(
+            jump.last, torch.tensor([0.25, -0.5, vx, vy, 1.0, 0.0])
         ))
 
-    def test_vertical_motion_estimator_is_independent_from_horizontal_motion(self):
+    def test_player_uses_proprioception_instead_of_vision_motion(self):
         player = LearnedPlayer(CNNPlanner.fresh(1), DualMotorController.fresh(2))
         player.prepare_episode("evaluate", 7)
-        first = _grid(6, 5, world_tick=1)
-        second = _grid(6, 5, world_tick=2)
-        # The general MotionEstimator instances are distinct state machines;
-        # vertical feedback must never reuse horizontal history.
-        player.process_grid(first)
-        self.assertIsNot(
-            player.motion_estimator,
-            player.vertical_motion_estimator,
+        frame = _grid(6, 5, world_tick=2)
+        still = player.process_grid(
+            frame,
+            ProprioceptionFrame(2, 0.0, 0.0, True, False, False),
         )
-        player.process_grid(second)
-        self.assertTrue(player.motion_estimator.last_observation_usable)
-        self.assertTrue(player.vertical_motion_estimator.last_observation_usable)
+        moving = player.process_grid(
+            frame,
+            ProprioceptionFrame(2, 340.0, -700.0, True, False, False),
+        )
+        self.assertIsNotNone(still)
+        self.assertIsNotNone(moving)
+        assert still is not None and moving is not None
+        self.assertEqual(still.velocity_x, 0.0)
+        self.assertEqual(moving.velocity_x, 340.0)
+        self.assertNotEqual(still.motion_x, moving.motion_x)
+        self.assertNotEqual(still.motion_y, moving.motion_y)
 
     def test_planner_conditioning_includes_current_motor_plan(self):
         planner = CNNPlanner.fresh(1)
@@ -299,15 +338,16 @@ class LearnedModelTests(unittest.TestCase):
         controller = DualMotorController.fresh(12)
         plan = MotorPlan(MotorGoal(0.5, 0.0), False, False)
         command = controller.decide(
-            plan, 0.0, 0.0, current_right=True, current_jump=False
+            plan, 0.0, 0.0, True,
+            current_right=True, current_jump=False
         )
         self.assertEqual(command.right, ButtonCommand.RELEASE)
         self.assertEqual(command.jump, ButtonCommand.KEEP)
 
-    def test_right_and_jump_are_independent_5_8_3_reflex_motors(self):
+    def test_right_and_jump_are_independent_6_8_3_reflex_motors(self):
         controller = DualMotorController.fresh(12)
-        self.assertIsInstance(controller.right_motor, ButtonMotor583)
-        self.assertIsInstance(controller.jump_motor, ButtonMotor583)
+        self.assertIsInstance(controller.right_motor, ButtonMotor683)
+        self.assertIsInstance(controller.jump_motor, ButtonMotor683)
         self.assertIsNot(
             controller.right_motor.hidden.weight,
             controller.jump_motor.hidden.weight,
@@ -315,7 +355,7 @@ class LearnedModelTests(unittest.TestCase):
         for motor in (controller.right_motor, controller.jump_motor):
             self.assertEqual(
                 (motor.hidden.in_features, motor.hidden.out_features),
-                (5, 8),
+                (6, 8),
             )
             self.assertEqual(
                 (motor.output.in_features, motor.output.out_features),
@@ -324,7 +364,7 @@ class LearnedModelTests(unittest.TestCase):
         self.assertIsInstance(
             controller.decide(
                 MotorPlan(MotorGoal(0.1, -0.2), True, True),
-                0.3, -0.4, True, False
+                0.3, -0.4, True, True, False
             ),
             ControlCommand,
         )

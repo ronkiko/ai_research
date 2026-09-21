@@ -95,7 +95,7 @@ class BotProfilerBackendTests(unittest.TestCase):
             self.assertEqual(catalog["schema_version"], 1)
             self.assertIn("motor", catalog["roles"])
             option = catalog["roles"]["motor"]["options"][0]
-            self.assertEqual(option["configuration"], "button-reflex-5-8-3-v1")
+            self.assertEqual(option["configuration"], "button-reflex-6-8-3-v2")
             self.assertEqual(option["topology"]["hidden"], [8])
 
 

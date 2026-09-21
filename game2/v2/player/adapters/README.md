@@ -1,6 +1,5 @@
 # Player Adapters
 
-Player-side placeholders for future observation transformations. These adapters
-are outside Console and do not grant a Player privileged Engine access.
+Player-side adapters transform approved public observations. They are outside Console and cannot import or expose raw Engine state.
 
-There is no runnable entrypoint. Local documentation: `doc/`.
+Proprioception is now a real public peripheral contract rather than a future placeholder. Learned-model normalization/calibration is kept Player-side so changing neural input scales does not widen the Console capability.

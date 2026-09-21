@@ -7,7 +7,11 @@ import time
 from game2.v2.contracts.manifests import PlayerManifest
 from game2.v2.player.connection import PlayerConnection
 from game2.v2.player.model_client import ModelClient
-from game2.v2.player.peripherals import JoystickClient, VisionReceiver
+from game2.v2.player.peripherals import (
+    JoystickClient,
+    ProprioceptionReceiver,
+    VisionReceiver,
+)
 
 from .learned.motion import self_center_x
 from game2.v2.learning.config import POLICY_STRIDE_TICKS
@@ -39,6 +43,7 @@ def _apply_control_acks(joystick, pending: dict[int, int],
 
 def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int | None = None,
                action_hz: int = PLAYER_ACTION_HZ, vision_factory=VisionReceiver,
+               proprioception_factory=ProprioceptionReceiver,
                joystick_factory=JoystickClient, lifecycle=None, clock=time.monotonic,
                sleeper=time.sleep) -> int:
     if not isinstance(manifest, PlayerManifest):
@@ -49,6 +54,7 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
         raise ValueError("action_hz must be a positive integer")
 
     vision = vision_factory(manifest)
+    proprioception = proprioception_factory(manifest)
     joystick = joystick_factory(manifest)
     sent = 0
     latest_world_tick: int | None = None
@@ -63,8 +69,13 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
     missing_self_after_seen = False
     try:
         vision.connect()
+        proprioception.connect()
         joystick.connect()
-        if not vision.connected or not joystick.connected:
+        if (
+            not vision.connected
+            or not proprioception.connected
+            or not joystick.connected
+        ):
             raise ConnectionError("learned Player peripheral connection failed")
         if not model.connected:
             model.connect()
@@ -82,6 +93,10 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 raise ConnectionError("Vision receiver failed") from vision.error
             if joystick.failed:
                 raise ConnectionError("Joystick client failed") from joystick.error
+            if proprioception.failed:
+                raise ConnectionError(
+                    "Proprioception receiver failed"
+                ) from proprioception.error
             if model.failed:
                 raise ConnectionError("Model runtime failed") from model.error
             if lifecycle is not None:
@@ -108,9 +123,11 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                     or frame.world_tick - last_model_observation_tick
                     >= POLICY_STRIDE_TICKS
                 )
-                if should_observe:
-                    model.observe(frame)
-                    last_model_observation_tick = frame.world_tick
+                if should_observe and has_self:
+                    body = proprioception.latest_at_or_before(frame.world_tick)
+                    if body is not None:
+                        model.observe(frame, body)
+                        last_model_observation_tick = frame.world_tick
 
             model.poll()
             if model.latest_decision is not None:
@@ -158,24 +175,30 @@ def run_player(manifest: PlayerManifest, model: ModelClient, *, decisions: int |
                 next_send = now
     finally:
         vision.close()
+        proprioception.close()
         joystick.close()
         print(f"DIAGNOSTICS accepted_actions={joystick.accepted_count} "
               f"rejected_actions={joystick.rejected_count} "
               f"duplicate_actions={joystick.duplicate_count} "
-              f"vision_grids={vision.grids_received}", flush=True)
+              f"vision_grids={vision.grids_received} "
+              f"proprioception_frames={proprioception.frames_received}", flush=True)
     return 0
 
 
 def run_attached_player(connection: PlayerConnection, model: ModelClient, *,
                         decisions: int | None = None, action_hz: int = PLAYER_ACTION_HZ,
-                        vision_factory=VisionReceiver, joystick_factory=JoystickClient,
+                        vision_factory=VisionReceiver,
+                        proprioception_factory=ProprioceptionReceiver,
+                        joystick_factory=JoystickClient,
                         clock=time.monotonic, sleeper=time.sleep) -> int:
     manifest = connection.manifest
     if not isinstance(manifest, PlayerManifest):
         raise ValueError("Player connection has no attached PlayerManifest")
     try:
         result = run_player(manifest, model, decisions=decisions, action_hz=action_hz,
-                            vision_factory=vision_factory, joystick_factory=joystick_factory,
+                            vision_factory=vision_factory,
+                            proprioception_factory=proprioception_factory,
+                            joystick_factory=joystick_factory,
                             lifecycle=connection, clock=clock, sleeper=sleeper)
         event = connection.latest_event
         if isinstance(event, dict) and event.get("event") == "terminal":

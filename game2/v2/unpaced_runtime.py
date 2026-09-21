@@ -18,6 +18,7 @@ from game2.v2.console.engine.engine import Engine
 from game2.v2.console.protocol import InputStateCommand
 from game2.v2.console.world import load_world
 from game2.v2.contracts.bot_profile import BotProfile
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.training_set import TrainingSetManifest
 from game2.v2.model_runtime import build_model
 from game2.v2.player.learned.checkpoint import save_checkpoint_set
@@ -130,7 +131,16 @@ def _run_episode(
         if should_stop is not None and should_stop():
             raise KeyboardInterrupt
 
-        sample = model.process_grid(grid)
+        state = engine.actor_state(ACTOR_ID)
+        body = ProprioceptionFrame(
+            engine.world_tick,
+            state.vx,
+            state.vy,
+            state.grounded,
+            state.input_right,
+            state.input_jump,
+        )
+        sample = model.process_grid(grid, body)
         if sample is None:
             raise RuntimeError("unpaced Vision observation is unusable")
         desired = sample.desired_state

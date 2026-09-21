@@ -615,3 +615,13 @@ Trainer processes or launchers, multiprocessing, dataset writers, replay
 buffers, PNG exporters, model/checkpoint registries, Training Set schemas, map
 selectors, Exam runners, Strategist tools, MCP, new Engine modes, Console
 endpoints, `WorldDefinition` renames, or physics changes.
+
+## Sensor-Reproducible PPO
+
+EpisodeDataset stores the raw public Proprioception snapshot used for every policy decision: sensor tick, vx/vy, grounded, and the two actuator states. PPO replay uses those stored values directly; it never reconstructs velocity from Vision and never re-queries Engine.
+
+Motor training input is MotorGoal[2] + normalized measured vx/vy + grounded + own actuator state, giving a 6→8→3 reflex network.
+
+Critic value input is shared Vision features plus normalized vx/vy, grounded, RIGHT/JUMP actuator state, pre-command MotorGoal dx/dy, and pre-command RIGHT/JUMP skill state. This body+plan context is nine scalar features.
+
+The extra Critic state exists to improve physical credit assignment, notably RELEASE/STOP under inertia, without exposing map semantics or hidden world state.

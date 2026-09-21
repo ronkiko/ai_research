@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from game2.v2.contracts.framing import recv_frame, send_frame
 from game2.v2.contracts.joystick import joystick_ack
 from game2.v2.contracts.manifests import Endpoint, PlayerManifest
+from game2.v2.contracts.proprioception import ProprioceptionFrame
 from game2.v2.contracts.vision import META_SELF, META_SELF_CENTER, VisionGrid
 from game2.v2.player.learned.main import run_attached_player, run_player
 from game2.v2.player.learned.motion import MotionEstimator
@@ -114,6 +115,27 @@ class _LifecycleVision:
         return None
 
 
+class _LifecycleProprioception:
+    failed = False
+    error = None
+    connected = True
+
+    def __init__(self):
+        self.frames_received = 0
+
+    def connect(self):
+        return None
+
+    def latest_at_or_before(self, world_tick):
+        self.frames_received += 1
+        return ProprioceptionFrame(
+            world_tick, 0.0, 0.0, True, False, False
+        )
+
+    def close(self):
+        return None
+
+
 class _LifecycleJoystick:
     def __init__(self, on_send=None):
         self.sequence = 0
@@ -154,8 +176,10 @@ class _RemoteModel:
         self.control_results = []
         self.actuated_ids = []
         self.episode_end_calls = []
+        self.proprioception_ticks = []
 
-    def observe(self, frame):
+    def observe(self, frame, _proprioception):
+        self.proprioception_ticks.append(_proprioception.world_tick)
         if not any(value & META_SELF for value in frame.metadata):
             return
         self.latest_decision = SimpleNamespace(
@@ -192,6 +216,7 @@ class LearnedLifecycleTests(unittest.TestCase):
             result = run_attached_player(
                 lifecycle, model, decisions=decisions,
                 vision_factory=lambda _manifest: vision,
+                proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                 joystick_factory=lambda _manifest: joystick,
                 clock=lambda: 0.0,
                 sleeper=lambda _duration: None,
@@ -205,6 +230,7 @@ class LearnedLifecycleTests(unittest.TestCase):
             lifecycle, [_grid(tick=1), _grid(self_x=3, tick=2)])
         self.assertEqual(result, 0)
         self.assertEqual(joystick.sent, [(True, True)])
+        self.assertTrue(_model.proprioception_ticks)
         self.assertEqual(order, ["start", "detach", "close"])
 
     def test_terminal_event_stops_stale_gameplay_emission(self):
@@ -238,6 +264,7 @@ class LearnedLifecycleTests(unittest.TestCase):
                 run_attached_player(
                     lifecycle, _RemoteModel(), decisions=1,
                     vision_factory=lambda _manifest: vision,
+                    proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                     joystick_factory=lambda _manifest: joystick,
                     clock=lambda: 0.0,
                     sleeper=lambda _duration: None,
@@ -302,6 +329,7 @@ class LearnedJoystickTests(unittest.TestCase):
             self.assertEqual(run_player(
                 manifest, _RemoteModel(), decisions=1,
                 vision_factory=lambda _manifest: vision,
+                proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                 joystick_factory=lambda _manifest: joystick,
                 clock=lambda: 0.0,
                 sleeper=lambda _duration: None,
@@ -380,6 +408,7 @@ class LearnedJoystickTests(unittest.TestCase):
                     model,
                     decisions=2,
                     vision_factory=lambda _manifest: Vision(),
+                    proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                     joystick_factory=lambda _manifest: Joystick(),
                     clock=lambda: next(clock_ticks, 1.0),
                     sleeper=lambda _duration: None,
@@ -414,6 +443,7 @@ class LearnedJoystickTests(unittest.TestCase):
                 model,
                 decisions=10,
                 vision_factory=lambda _manifest: vision,
+                proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                 joystick_factory=lambda _manifest: joystick,
                 lifecycle=lifecycle,
                 clock=lambda: 1.0,
@@ -427,7 +457,7 @@ class LearnedJoystickTests(unittest.TestCase):
                                   Endpoint("127.0.0.1", 2))
 
         class BrokenModel(_RemoteModel):
-            def observe(self, _frame):
+            def observe(self, _frame, _proprioception):
                 raise RuntimeError("broken model")
 
         class Vision:
@@ -468,6 +498,7 @@ class LearnedJoystickTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "broken model"):
             run_player(manifest, BrokenModel(), decisions=1,
                        vision_factory=lambda _manifest: Vision(manifest),
+                       proprioception_factory=lambda _manifest: _LifecycleProprioception(),
                        joystick_factory=lambda _manifest: joystick,
                        clock=lambda: 0.0, sleeper=lambda _duration: None)
         self.assertEqual(joystick.sent, [])

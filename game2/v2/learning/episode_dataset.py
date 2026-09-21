@@ -23,7 +23,7 @@ from .config import MAX_EPISODE_DATASETS, POLICY_STRIDE_TICKS
 
 
 DEFAULT_EPISODE_STORE = Path(__file__).resolve().parents[1] / "training" / "work" / "episodes"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,12 @@ class EpisodeStep:
     metadata: bytes
     motion_x: float
     motion_y: float
+    proprioception_world_tick: int
+    velocity_x: float
+    velocity_y: float
+    grounded: bool
+    sensor_right_pressed: bool
+    sensor_jump_pressed: bool
     pad_right: bool
     pad_jump: bool
     action_right: ButtonCommand
@@ -194,7 +200,7 @@ class EpisodeDataset:
         with dataset._connect() as connection:
             connection.executescript(
                 """
-                PRAGMA user_version=9;
+                PRAGMA user_version=10;
                 CREATE TABLE episode (
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     schema_version INTEGER NOT NULL,
@@ -227,6 +233,12 @@ class EpisodeDataset:
                     metadata BLOB NOT NULL,
                     motion_x REAL NOT NULL,
                     motion_y REAL NOT NULL,
+                    proprioception_world_tick INTEGER NOT NULL,
+                    velocity_x REAL NOT NULL,
+                    velocity_y REAL NOT NULL,
+                    grounded INTEGER NOT NULL,
+                    sensor_right_pressed INTEGER NOT NULL,
+                    sensor_jump_pressed INTEGER NOT NULL,
                     pad_right INTEGER NOT NULL,
                     pad_jump INTEGER NOT NULL,
                     action_right INTEGER NOT NULL,
@@ -396,6 +408,12 @@ class EpisodeDataset:
             sqlite3.Binary(bytes(grid.metadata)),
             float(getattr(sample, "motion_x", 0.0)),
             float(getattr(sample, "motion_y", 0.0)),
+            int(getattr(sample, "proprioception_world_tick", grid.world_tick)),
+            float(getattr(sample, "velocity_x", 0.0)),
+            float(getattr(sample, "velocity_y", 0.0)),
+            int(bool(getattr(sample, "grounded", False))),
+            int(bool(getattr(sample, "sensor_right_pressed", False))),
+            int(bool(getattr(sample, "sensor_jump_pressed", False))),
             int(bool(getattr(sample, "pad_right", False))),
             int(bool(getattr(sample, "pad_jump", False))),
             int(action.right),
@@ -445,7 +463,10 @@ class EpisodeDataset:
                     policy_sequence, world_tick, duration_ticks,
                     columns, rows, tile_size, subdivisions,
                     coarse_physics, physics, metadata,
-                    motion_x, motion_y, pad_right, pad_jump,
+                    motion_x, motion_y,
+                    proprioception_world_tick, velocity_x, velocity_y,
+                    grounded, sensor_right_pressed, sensor_jump_pressed,
+                    pad_right, pad_jump,
                     action_right, action_jump, desired_right, desired_jump,
                     old_log_prob, old_value, motor_goal_dx, motor_goal_dy,
                     skill_right_active, skill_jump_active,
@@ -462,7 +483,7 @@ class EpisodeDataset:
                     suppressed_buttons, control_requested, control_status,
                     actuated, chunk_index, chunk_offset, chunk_first
                 ) VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
                 )
                 ON CONFLICT(policy_sequence) DO UPDATE SET
                     world_tick=excluded.world_tick,
@@ -476,6 +497,12 @@ class EpisodeDataset:
                     metadata=excluded.metadata,
                     motion_x=excluded.motion_x,
                     motion_y=excluded.motion_y,
+                    proprioception_world_tick=excluded.proprioception_world_tick,
+                    velocity_x=excluded.velocity_x,
+                    velocity_y=excluded.velocity_y,
+                    grounded=excluded.grounded,
+                    sensor_right_pressed=excluded.sensor_right_pressed,
+                    sensor_jump_pressed=excluded.sensor_jump_pressed,
                     pad_right=excluded.pad_right,
                     pad_jump=excluded.pad_jump,
                     action_right=excluded.action_right,
@@ -619,6 +646,12 @@ class EpisodeDataset:
             metadata=bytes(row["metadata"]),
             motion_x=float(row["motion_x"]),
             motion_y=float(row["motion_y"]),
+            proprioception_world_tick=int(row["proprioception_world_tick"]),
+            velocity_x=float(row["velocity_x"]),
+            velocity_y=float(row["velocity_y"]),
+            grounded=bool(row["grounded"]),
+            sensor_right_pressed=bool(row["sensor_right_pressed"]),
+            sensor_jump_pressed=bool(row["sensor_jump_pressed"]),
             pad_right=bool(row["pad_right"]),
             pad_jump=bool(row["pad_jump"]),
             action_right=ButtonCommand(int(row["action_right"])),

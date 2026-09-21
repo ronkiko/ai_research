@@ -192,3 +192,13 @@ different active plans may correctly lead to different Planner commands.
 Episode replay stores this pre-command state and supplies it back to Planner
 during PPO, so training does not reconstruct a different decision context from
 the one used during inference.
+
+## Physical Proprioception Path
+
+Realtime Console exposes Proprioception as a dedicated Player peripheral. ProprioceptionSource subscribes to private Engine TELEMETRY, filters one attached Actor, and emits only the public body-sensor whitelist. The Player never receives raw multi-Actor TELEMETRY.
+
+Vision and Proprioception travel independently up to the Player. Before sending one Model OBSERVE, Player pairs them causally: sensor.world_tick must be less than or equal to vision.world_tick.
+
+The latest non-future sensor snapshot is serialized into the same Model OBSERVE header as the Vision matrices. Model inference and EpisodeDataset therefore see one reproducible observation. Unpaced execution constructs the identical public ProprioceptionFrame from the Actor at the exact current Engine tick.
+
+No future sensor frame may be back-paired with an earlier image.
