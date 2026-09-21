@@ -42,3 +42,12 @@ On normal Console shutdown/map transition, the producer withdraws the channel
 from the broker before closing the ScreenSource socket. Consumers therefore see
 a normal DETACH/ATTACH handoff instead of an EOF while the stale source is still
 advertised.
+
+
+## Vision spectator performance
+
+The Vision overlay is diagnostic and must not participate in realtime pacing.
+Episode action/PPO annotations are polled at 5 Hz, while movement frames remain
+30 Hz. Trace reads use a zero-wait SQLite connection: if the training writer is
+busy, the overlay keeps its previous annotations and retries later instead of
+stalling ScreenSource. Engine STATE, Player control, and training are unaffected.

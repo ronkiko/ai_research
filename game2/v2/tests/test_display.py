@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
@@ -37,7 +38,7 @@ from game2.v2.player.learned.contracts import (
     ControlCommand,
     apply_control_command,
 )
-from game2.v2.training.work import EpisodeStore
+from game2.v2.training.work import EpisodeDataset, EpisodeStore
 
 from pathlib import Path
 
@@ -431,6 +432,32 @@ class VisionPreviewRendererTests(unittest.TestCase):
             self.assertNotEqual(tuple(surface.get_at(midpoint))[:3], TRAIL_COLOR)
         finally:
             preview.close()
+
+    def test_preview_ignores_busy_episode_database(self):
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        import pygame
+        world = load_world(PIT)
+        surface = pygame.Surface((world.width, world.height))
+        with tempfile.TemporaryDirectory() as directory:
+            store = EpisodeStore(Path(directory) / "episodes")
+            dataset = store.create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            preview = VisionPreviewRenderer(
+                world,
+                target_surface=surface,
+                pygame_module=pygame,
+                episode_store=store.root,
+            )
+            try:
+                with mock.patch.object(
+                    EpisodeDataset,
+                    "trace_snapshot",
+                    side_effect=sqlite3.OperationalError("database is locked"),
+                ):
+                    self.assertFalse(preview.refresh_episode_data(force=True))
+            finally:
+                preview.close()
 
     def test_preview_draws_episode_dataset_action_and_rating_ticks(self):
         os.environ["SDL_VIDEODRIVER"] = "dummy"

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import sqlite3
+import time
 
 from ....contracts.vision import (
     META_GOAL,
@@ -39,6 +41,9 @@ RULER_BACKGROUND = (5, 9, 14, 190)
 RULER_TEXT = (242, 246, 248)
 HUD_BACKGROUND = (5, 9, 14, 210)
 HUD_TEXT = (242, 246, 248)
+EPISODE_REFRESH_HZ = 5
+EPISODE_REFRESH_INTERVAL = 1.0 / EPISODE_REFRESH_HZ
+
 TERMINAL_LABELS = {
     "success": "VICTORY",
     "dead": "DEAD",
@@ -70,6 +75,7 @@ class VisionPreviewRenderer:
         self._trail_epoch: int | None = None
         self._trail_tick = -1
         self._dataset_stamp: tuple[str, int, int] | None = None
+        self._next_episode_refresh_at = 0.0
         self._trajectory_episode: int | None = None
         self._rated_episode: int | None = None
         self._action_ticks: dict[int, tuple[int, int]] = {}
@@ -185,10 +191,14 @@ class VisionPreviewRenderer:
         self._action_ticks.clear()
         self._rated_ticks.clear()
 
-    def refresh_episode_data(self) -> bool:
-        """Refresh policy ticks and PPO ratings from the newest episode SQLite."""
+    def refresh_episode_data(self, *, force: bool = False) -> bool:
+        """Refresh diagnostics without letting SQLite stall the render loop."""
         if self.episode_store is None:
             return False
+        now = time.monotonic()
+        if not force and now < self._next_episode_refresh_at:
+            return False
+        self._next_episode_refresh_at = now + EPISODE_REFRESH_INTERVAL
         path = self.episode_store.latest_path()
         if path is None:
             if self._dataset_stamp is None:
@@ -206,7 +216,10 @@ class VisionPreviewRenderer:
 
         try:
             episode_id, rows = EpisodeDataset(path).trace_snapshot()
-        except (OSError, ValueError):
+        except (OSError, ValueError, sqlite3.OperationalError):
+            # Training owns the writer.  A busy database only means the
+            # diagnostic overlay stays one refresh behind; movement rendering
+            # must continue from the latest Engine STATE.
             return False
 
         action_ticks: dict[int, tuple[int, int]] = {}
@@ -446,6 +459,7 @@ class VisionPreviewRenderer:
         self._trail_epoch = None
         self._trail_tick = -1
         self._dataset_stamp = None
+        self._next_episode_refresh_at = 0.0
         self._reset_episode_annotations()
 
 

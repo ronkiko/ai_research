@@ -136,8 +136,10 @@ class EpisodeDataset:
         return self.path.parent / "vision" / self.path.name
 
     @contextmanager
-    def _connect(self, *, include_vision: bool = False):
-        connection = sqlite3.connect(self.path, timeout=5.0)
+    def _connect(
+        self, *, include_vision: bool = False, timeout: float = 5.0
+    ):
+        connection = sqlite3.connect(self.path, timeout=float(timeout))
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         if include_vision:
@@ -1018,9 +1020,16 @@ class EpisodeDataset:
         )
 
     def trace_snapshot(self) -> tuple[int, tuple[dict[str, Any], ...]]:
-        """Return lightweight policy/rating rows for the Vision spectator."""
-        meta = self.metadata()
-        with self._connect() as connection:
+        """Return a non-blocking lightweight snapshot for the Vision spectator."""
+        # Diagnostics must never stall the realtime render loop behind the
+        # training writer.  Read metadata and trace rows in one connection and
+        # fail immediately if SQLite is temporarily busy/locked.
+        with self._connect(timeout=0.0) as connection:
+            meta = connection.execute(
+                "SELECT episode_id FROM episode WHERE singleton=1"
+            ).fetchone()
+            if meta is None:
+                raise ValueError("episode dataset has no metadata")
             rows = connection.execute(
                 """
                 SELECT

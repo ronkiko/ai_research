@@ -103,6 +103,22 @@ def _sample(sequence: int, tick: int, self_x: int):
 
 
 class EpisodeDatasetTests(unittest.TestCase):
+    def test_trace_snapshot_never_waits_for_training_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = EpisodeStore(Path(directory) / "episodes")
+            dataset = store.create(
+                episode_id=1, mode="train", source="realtime", seed=1
+            )
+            with mock.patch(
+                "game2.v2.learning.episode_dataset.sqlite3.connect",
+                wraps=sqlite3.connect,
+            ) as connect:
+                episode_id, rows = dataset.trace_snapshot()
+            self.assertEqual(episode_id, 1)
+            self.assertEqual(rows, ())
+            self.assertEqual(connect.call_args.kwargs["timeout"], 0.0)
+
+
     def test_progress_and_count_do_not_read_vision_sidecar(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = EpisodeStore(directory).create(
