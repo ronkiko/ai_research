@@ -35,7 +35,7 @@ single coordinate `x` on a bounded line:
 ```text
 0 -------------------------------------------------------------- 1000
 
-        player                                      mob
+      P player                                          B mob/bomb
 ```
 
 The v1 laboratory polishes realtime authority, command sequencing, latency,
@@ -90,13 +90,14 @@ assigns a distinct entity ID such as `actor-player1`.
 Owns the authoritative mutable state of `zone1`: entities, one-dimensional
 position/velocity, latched movement state, and global `world_tick`. The zone
 loop is 120 Hz. Only the tick loop mutates entities; network threads enqueue
-commands. The demo world is the bounded line `x in [0,1000]` containing
-`mob1` plus any logged-in players.
+commands. The demo world is the bounded line `x in [0,1000]`. The player spawns at
+`x=100`; `mob1`, rendered to humans as the bomb marker `B`, starts at `x=900`.
 
 ### Mob Server
 
-A server-side NPC decision process. It reads the latest passive telemetry at
-10 Hz and sends ordinary movement intent for `mob1` toward the nearest player.
+A server-side NPC decision process. `mob1` is the laboratory mob/bomb (`B`).
+It starts at `x=900`, reads the latest passive telemetry at 10 Hz, and sends
+ordinary movement intent toward the nearest player.
 It never writes `x` directly. Zone remains authority for the mob exactly as
 it remains authority for human players.
 

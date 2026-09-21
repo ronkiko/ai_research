@@ -8,6 +8,7 @@ from gameserver.v1.mob.server import MobService
 from gameserver.v1.telemetry.server import TelemetryRing
 from gameserver.v1.world.server import WorldRegistry
 from gameserver.v1.zone.model import ZoneRuntime
+from gameserver.v1.zone.server import ZoneService
 
 
 class ProtocolTests(unittest.TestCase):
@@ -27,92 +28,73 @@ class ZoneRuntimeTests(unittest.TestCase):
     def test_world_clock_advances_without_players(self):
         runtime = ZoneRuntime()
         self.assertEqual(runtime.world_tick, 0)
-        for _ in range(12):
-            runtime.tick()
+        for _ in range(12): runtime.tick()
         self.assertEqual(runtime.world_tick, 12)
         self.assertEqual([e["entity_id"] for e in runtime.latest_snapshot()["entities"]], ["mob1"])
 
-    def test_latched_input_moves_player_until_changed(self):
-        runtime = ZoneRuntime()
-        runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1")
-        runtime.tick()
-        runtime.enqueue_input(entity_id="actor-player1", sequence=1,
-                              move_x=1, source="player")
-        first = runtime.tick()
-        first_x = next(e for e in first["entities"] if e["entity_id"] == "actor-player1")["x"]
-        second = runtime.tick()
-        second_x = next(e for e in second["entities"] if e["entity_id"] == "actor-player1")["x"]
-        self.assertGreater(second_x, first_x)
-        runtime.enqueue_input(entity_id="actor-player1", sequence=2,
-                              move_x=0, source="player")
-        stopped = runtime.tick()
-        stopped_x = next(e for e in stopped["entities"] if e["entity_id"] == "actor-player1")["x"]
-        again = runtime.tick()
-        again_x = next(e for e in again["entities"] if e["entity_id"] == "actor-player1")["x"]
-        self.assertAlmostEqual(stopped_x, again_x)
-
-    def test_line_boundaries_zero_velocity_but_keep_latched_intent(self):
-        cases = (
-            ("right", 999.0, 1, 1000.0),
-            ("left", 1.0, -1, 0.0),
-        )
-        for name, x, move_x, expected_x in cases:
-            with self.subTest(name=name):
-                runtime = ZoneRuntime()
-                runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1", x=x)
-                runtime.tick()
-                runtime.enqueue_input(
-                    entity_id="actor-player1",
-                    sequence=1,
-                    move_x=move_x,
-                    source="player",
-                )
-                snapshot = runtime.tick()
-                entity = next(
-                    item for item in snapshot["entities"]
-                    if item["entity_id"] == "actor-player1"
-                )
-                self.assertAlmostEqual(entity["x"], expected_x)
-                self.assertEqual(entity["vx"], 0.0)
-                self.assertEqual(entity["move_x"], move_x)
-
-    def test_snapshot_is_strictly_one_dimensional(self):
+    def test_demo_world_starts_player_at_100_and_mob_at_900(self):
         runtime = ZoneRuntime()
         runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1")
         snapshot = runtime.tick()
-        self.assertEqual(snapshot["line_length"], 1000.0)
+        entities = {item["entity_id"]: item for item in snapshot["entities"]}
+        self.assertEqual(entities["actor-player1"]["x"], 100.0)
+        self.assertEqual(entities["mob1"]["x"], 900.0)
+
+    def test_zone_network_spawn_default_is_player_x_100(self):
+        service = ZoneService(port=0, telemetry_port=9)
+        try:
+            service.dispatch(message("spawn", entity_id="actor-player1", owner_id="player1"))
+            snapshot = service.runtime.tick()
+            player = next(item for item in snapshot["entities"] if item["entity_id"] == "actor-player1")
+            self.assertEqual(player["x"], 100.0)
+        finally:
+            service.server.server_close()
+            service._telemetry.close()
+
+    def test_latched_input_moves_player_until_changed(self):
+        runtime = ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1"); runtime.tick()
+        runtime.enqueue_input(entity_id="actor-player1", sequence=1, move_x=1, source="player")
+        first=runtime.tick(); second=runtime.tick()
+        fx=next(e for e in first["entities"] if e["entity_id"]=="actor-player1")["x"]
+        sx=next(e for e in second["entities"] if e["entity_id"]=="actor-player1")["x"]
+        self.assertGreater(sx,fx)
+        runtime.enqueue_input(entity_id="actor-player1", sequence=2, move_x=0, source="player")
+        stopped=runtime.tick(); again=runtime.tick()
+        stx=next(e for e in stopped["entities"] if e["entity_id"]=="actor-player1")["x"]
+        ax=next(e for e in again["entities"] if e["entity_id"]=="actor-player1")["x"]
+        self.assertAlmostEqual(stx,ax)
+
+    def test_line_boundaries_zero_velocity_but_keep_latched_intent(self):
+        for name,x,move_x,expected_x in (("right",999.0,1,1000.0),("left",1.0,-1,0.0)):
+            with self.subTest(name=name):
+                runtime=ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1",x=x); runtime.tick()
+                runtime.enqueue_input(entity_id="actor-player1",sequence=1,move_x=move_x,source="player")
+                snapshot=runtime.tick(); entity=next(item for item in snapshot["entities"] if item["entity_id"]=="actor-player1")
+                self.assertAlmostEqual(entity["x"],expected_x); self.assertEqual(entity["vx"],0.0); self.assertEqual(entity["move_x"],move_x)
+
+    def test_snapshot_is_strictly_one_dimensional(self):
+        runtime=ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1"); snapshot=runtime.tick()
+        self.assertEqual(snapshot["line_length"],1000.0)
         for entity in snapshot["entities"]:
-            self.assertEqual(
-                set(entity),
-                {"entity_id", "kind", "owner_id", "x", "vx", "move_x"},
-            )
+            self.assertEqual(set(entity),{"entity_id","kind","owner_id","x","vx","move_x"})
 
     def test_spawn_rejects_position_outside_line(self):
-        runtime = ZoneRuntime()
-        with self.assertRaisesRegex(ProtocolError, "x must be within"):
-            runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1", x=1001.0)
+        runtime=ZoneRuntime()
+        with self.assertRaisesRegex(ProtocolError,"x must be within"):
+            runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1",x=1001.0)
 
     def test_sequence_must_increase(self):
-        runtime = ZoneRuntime()
-        runtime.enqueue_input(entity_id="mob1", sequence=1,
-                              move_x=-1, source="mob")
-        with self.assertRaisesRegex(ProtocolError, "sequence must increase"):
-            runtime.enqueue_input(entity_id="mob1", sequence=1,
-                                  move_x=1, source="mob")
+        runtime=ZoneRuntime(); runtime.enqueue_input(entity_id="mob1",sequence=1,move_x=-1,source="mob")
+        with self.assertRaisesRegex(ProtocolError,"sequence must increase"):
+            runtime.enqueue_input(entity_id="mob1",sequence=1,move_x=1,source="mob")
 
 
 class MobServiceTests(unittest.TestCase):
     def test_intent_uses_only_one_dimensional_distance(self):
-        snapshot = {
-            "entities": [
-                {"entity_id": "mob1", "kind": "mob", "x": 500.0},
-                {"entity_id": "actor-player1", "kind": "player", "x": 400.0},
-                {"entity_id": "actor-player2", "kind": "player", "x": 900.0},
-            ]
-        }
-        self.assertEqual(MobService._intent(snapshot), -1)
-        snapshot["entities"][1]["x"] = 503.0
-        self.assertEqual(MobService._intent(snapshot), 0)
+        snapshot={"entities":[{"entity_id":"mob1","kind":"mob","x":500.0},{"entity_id":"actor-player1","kind":"player","x":400.0},{"entity_id":"actor-player2","kind":"player","x":900.0}]}
+        self.assertEqual(MobService._intent(snapshot),-1)
+        snapshot["entities"][1]["x"]=503.0
+        self.assertEqual(MobService._intent(snapshot),0)
 
 
 class WorldRegistryTests(unittest.TestCase):

@@ -30,7 +30,7 @@ class ZoneService:
             command_id = self.runtime.enqueue_spawn(
                 entity_id=str(request.get("entity_id", "")),
                 owner_id=str(request.get("owner_id", "")),
-                x=request.get("x", 180.0),
+                x=request.get("x", 100.0),
             )
             return message("command_queued", command_id=command_id,
                            world_tick=self.runtime.world_tick)

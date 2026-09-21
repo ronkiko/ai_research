@@ -20,6 +20,10 @@ interval `x in [0,1000]`.
 There is no `y` axis in v1. Vertical movement, gravity, jumping, platforms,
 diagonal movement, and 2D physics are outside the v1 contract.
 
+The canonical v1 laboratory initial placement is player `P` at `x=100` and
+mob/bomb `B` (`mob1`) at `x=900`. These are server-authoritative spawn
+positions, not Client defaults.
+
 ## Process boundaries
 
 The v1 runtime processes are:
@@ -51,7 +55,7 @@ the latched `move_x` intent remains unchanged.
 
 ## Public boundary
 
-GameClient Host addresses only Gateway. Host-attached Clients do not address GameServer directly. Internal service ports are
+GameClient Host addresses only Gateway. Host-attached CLI/GUI/MCP Clients do not address GameServer directly. Internal service ports are
 laboratory implementation details. Passwordless demo login is intentionally
 limited to v1 and returns a session, player ID, entity ID, world ID, and zone ID.
 
