@@ -43,7 +43,7 @@ class ZoneCommand:
 class ZoneRuntime:
     """The sole mutable authority for one one-dimensional zone.
 
-    Network threads may enqueue commands, but only ``tick`` mutates entity state.
+    Network threads may enqueue commands, but only tick mutates entity state.
     This keeps the 120 Hz causal boundary explicit and deterministic.
     """
 
@@ -67,10 +67,23 @@ class ZoneRuntime:
     def dt(self) -> float:
         return 1.0 / self.physics_hz
 
-    def _spawn_immediate(self, entity_id: str, kind: str, owner_id: str | None, x: float, speed: float) -> None:
+    def _spawn_immediate(
+        self,
+        entity_id: str,
+        kind: str,
+        owner_id: str | None,
+        x: float,
+        speed: float,
+    ) -> None:
         self.entities[entity_id] = Entity(entity_id, kind, owner_id, x, speed)
 
-    def enqueue_spawn(self, *, entity_id: str, owner_id: str, x: float = 100.0) -> int:
+    def enqueue_spawn(
+        self,
+        *,
+        entity_id: str,
+        owner_id: str,
+        x: float = 100.0,
+    ) -> int:
         if not entity_id or not owner_id:
             raise ProtocolError("spawn identity is missing")
         x = finite_number("x", x)
@@ -80,7 +93,14 @@ class ZoneRuntime:
             if entity_id in self.entities or entity_id in self._pending_spawn:
                 raise ProtocolError("entity already exists")
             self._pending_spawn.add(entity_id)
-            return self._enqueue("spawn", {"entity_id": entity_id, "owner_id": owner_id, "x": x})
+            return self._enqueue(
+                "spawn",
+                {
+                    "entity_id": entity_id,
+                    "owner_id": owner_id,
+                    "x": x,
+                },
+            )
 
     def enqueue_despawn(self, entity_id: str) -> int:
         with self._lock:
@@ -88,7 +108,14 @@ class ZoneRuntime:
                 raise ProtocolError("unknown entity")
             return self._enqueue("despawn", {"entity_id": entity_id})
 
-    def enqueue_input(self, *, entity_id: str, sequence: int, move_x: int, source: str) -> int:
+    def enqueue_input(
+        self,
+        *,
+        entity_id: str,
+        sequence: int,
+        move_x: int,
+        source: str,
+    ) -> int:
         if type(sequence) is not int or sequence <= 0:
             raise ProtocolError("sequence must be a positive integer")
         move_x = axis("move_x", move_x)
@@ -97,16 +124,24 @@ class ZoneRuntime:
         with self._lock:
             entity = self.entities.get(entity_id)
             if entity is None:
-                raise ProtocolError(unknown entity")
+                raise ProtocolError("unknown entity")
             if source == "player" and entity.kind != "player":
-                raise ProtocolError(player input cannot control this entity")
+                raise ProtocolError("player input cannot control this entity")
             if source == "mob" and entity.kind != "mob":
-                raise ProtocolError(mob input cannot control this entity")
+                raise ProtocolError("mob input cannot control this entity")
             last = self._last_submitted_sequence.get(entity_id, entity.last_sequence)
             if sequence <= last:
-                raise ProtocolError(sequence must increase)
+                raise ProtocolError("sequence must increase")
             self._last_submitted_sequence[entity_id] = sequence
-            return self._enqueue("input", {"entity_id": entity_id, "sequence": sequence, "move_x": move_x, "source": source})
+            return self._enqueue(
+                "input",
+                {
+                    "entity_id": entity_id,
+                    "sequence": sequence,
+                    "move_x": move_x,
+                    "source": source,
+                },
+            )
 
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> int:
         command_id = self._next_command_id
@@ -121,38 +156,56 @@ class ZoneRuntime:
                 command = self._commands.get_nowait()
             except queue.Empty:
                 break
+
             payload = command.payload
-            status = accepted
-            if command.kind == spawn:
-                entity_id = payload[entity_id]
+            status = "accepted"
+
+            if command.kind == "spawn":
+                entity_id = payload["entity_id"]
                 self._pending_spawn.discard(entity_id)
                 if entity_id in self.entities:
-                    status = rejected
+                    status = "rejected"
                 else:
-                    self._spawn_immediate(entity_id, player, payload[owner_id], payload[x], self.line.player_speed)
-            elif command.kind == despawn:
-                entity = self.entities.pop(payload[entity_id], None)
+                    self._spawn_immediate(
+                        entity_id,
+                        "player",
+                        payload["owner_id"],
+                        payload["x"],
+                        self.line.player_speed,
+                    )
+            elif command.kind == "despawn":
+                entity = self.entities.pop(payload["entity_id"], None)
                 if entity is None:
-                    status = rejected
-                self._last_submitted_sequence.pop(payload[entity_id], None)
-            elif command.kind == input:
-                entity = self.entities.get(payload[entity_id])
-                if entity is None or payload[sequence] <= entity.last_sequence:
-                    status = rejected
+                    status = "rejected"
+                self._last_submitted_sequence.pop(payload["entity_id"], None)
+            elif command.kind == "input":
+                entity = self.entities.get(payload["entity_id"])
+                if entity is None or payload["sequence"] <= entity.last_sequence:
+                    status = "rejected"
                 else:
-                    entity.last_sequence = payload[sequence]
-                    entity.move_x = payload[move_x]
-            applied.append({"command_id": command.command_id, "kind": command.kind, "status": status, **payload})
+                    entity.last_sequence = payload["sequence"]
+                    entity.move_x = payload["move_x"]
+
+            applied.append(
+                {
+                    "command_id": command.command_id,
+                    "kind": command.kind,
+                    "status": status,
+                    **payload,
+                }
+            )
         return applied
 
     def tick(self) -> dict[str, Any]:
         with self._lock:
             self.world_tick += 1
             applied = self._drain_commands()
+
             for entity_id in sorted(self.entities):
                 entity = self.entities[entity_id]
                 entity.vx = entity.speed * entity.move_x if entity.move_x else 0.0
                 next_x = entity.x + entity.vx * self.dt
+
                 if entity.vx > 0.0 and next_x >= self.line.length:
                     entity.x = self.line.length
                     entity.vx = 0.0
@@ -161,6 +214,7 @@ class ZoneRuntime:
                     entity.vx = 0.0
                 else:
                     entity.x = next_x
+
             self._latest_snapshot = self._snapshot(tuple(applied))
             return self._latest_snapshot
 
@@ -172,10 +226,23 @@ class ZoneRuntime:
             "world_tick": self.world_tick,
             "physics_hz": self.physics_hz,
             "line_length": self.line.length,
-            "entities": [self.entities[key].snapshot() for key in sorted(self.entities)],
+            "entities": [
+                self.entities[key].snapshot()
+                for key in sorted(self.entities)
+            ],
             "commands_applied": list(commands),
         }
 
     def latest_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return {**self._latest_snapshot, "entities": [dict(item) for item in self._latest_snapshot["entities"]], "commands_applied": [dict(item) for item in self._latest_snapshot["commands_applied"]]}
+            return {
+                **self._latest_snapshot,
+                "entities": [
+                    dict(item)
+                    for item in self._latest_snapshot["entities"]
+                ],
+                "commands_applied": [
+                    dict(item)
+                    for item in self._latest_snapshot["commands_applied"]
+                ],
+            }

@@ -14,7 +14,12 @@ class HostClientError(RuntimeError):
 
 
 class HostConnection:
-    def __init__(self, host: str = HOST_BIND, port: int = HOST_PORT, timeout: float = HOST_DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        host: str = HOST_BIND,
+        port: int = HOST_PORT,
+        timeout: float = HOST_DEFAULT_TIMEOUT,
+    ) -> None:
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -47,7 +52,9 @@ class HostConnection:
                 try:
                     self._connect()
                 except OSError as exc:
-                    raise HostClientError(f"cannot connect to GameClient Host: {exc}") from exc
+                    raise HostClientError(
+                        f"cannot connect to GameClient Host: {exc}"
+                    ) from exc
             assert self._socket is not None
             assert self._reader is not None
             try:
@@ -55,9 +62,16 @@ class HostConnection:
                 response = self._reader.recv(self._socket)
             except (OSError, EOFError, HostProtocolError) as exc:
                 self._close_unlocked()
-                raise HostClientError(f"GameClient Host request failed: {exc}") from exc
+                raise HostClientError(
+                    f"GameClient Host request failed: {exc}"
+                ) from exc
             if response.get("type") == "error":
-                raise HostClientError(str(response.get("error") or "GameClient Host rejected request"))
+                raise HostClientError(
+                    str(
+                        response.get("error")
+                        or "GameClient Host rejected request"
+                    )
+                )
             return response
 
 
@@ -68,7 +82,7 @@ class HostClient:
         *,
         host: str = HOST_BIND,
         port: int = HOST_PORT,
-        timeout: float = HOST_DEFAUL_TIMEOUT,
+        timeout: float = HOST_DEFAULT_TIMEOUT,
     ) -> None:
         if not client_id:
             raise ValueError("client_id must be non-empty")
@@ -84,18 +98,27 @@ class HostClient:
     def describe(self) -> dict[str, Any]:
         return self.connection.request("describe", client_id=self.client_id)
 
-    def players8self) -> list[str]:
+    def players(self) -> list[str]:
         response = self.connection.request("players", client_id=self.client_id)
         players = response.get("players")
-        if not isinstance(players, list) or not all(isinstance(item, str) for item in players):
+        if not isinstance(players, list) or not all(
+            isinstance(item, str) for item in players
+        ):
             raise HostClientError("Host returned an invalid player list")
         return list(players)
 
     def login(self, player_id: str) -> dict[str, Any]:
-        return self.connection.request("login", client_id=self.client_id, player_id=player_id)
+        return self.connection.request(
+            "login",
+            client_id=self.client_id,
+            player_id=player_id,
+        )
 
     def session(self) -> dict[str, Any]:
-        return self.connection.request("session", client_id=self.client_id)["session"]
+        return self.connection.request(
+            "session",
+            client_id=self.client_id,
+        )["session"]
 
     def state(self) -> dict[str, Any]:
         return self.connection.request("state", client_id=self.client_id)
@@ -103,14 +126,18 @@ class HostClient:
     def input(self, move_x: int) -> dict[str, Any]:
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise ValueError("move_x must be -1, 0, or 1")
-        return self.connection.request("input", client_id=self.client_id, move_x=move_x)
+        return self.connection.request(
+            "input",
+            client_id=self.client_id,
+            move_x=move_x,
+        )
 
     def events(self, after_event_id: int = 0) -> dict[str, Any]:
         return self.connection.request(
             "events",
             client_id=self.client_id,
             after_event_id=after_event_id,
-         )
+        )
 
     def logout(self) -> dict[str, Any]:
         return self.connection.request("logout", client_id=self.client_id)
