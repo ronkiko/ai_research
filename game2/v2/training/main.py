@@ -38,7 +38,13 @@ def reward_for_result(result: str, progress: Real) -> float:
         raise ValueError("progress must be finite and in [0.0, 1.0]")
     if result == "success":
         return 1.0
-    if result in {"timeout", "dead"}:
+    if result == "timeout":
+        # Progress shaping already rewards movement toward the goal. A fixed
+        # horizon is still a failed qualification result, but adding -1 here
+        # makes every partial-progress rollout net-negative and teaches the
+        # critic that late/progressed states predict punishment.
+        return 0.0
+    if result == "dead":
         return -1.0
     raise ValueError("unknown terminal result")
 

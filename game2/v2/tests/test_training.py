@@ -205,7 +205,7 @@ class TrainerRuntimeTests(unittest.TestCase):
 
     def test_reward_mapping_and_socket_handshake(self):
         self.assertEqual(reward_for_result("success", 0.8), 1.0)
-        self.assertEqual(reward_for_result("timeout", 0.4), -1.0)
+        self.assertEqual(reward_for_result("timeout", 0.4), 0.0)
         self.assertEqual(reward_for_result("dead", 0.4), -1.0)
 
         trainer = Trainer(listen_port=0, episodes=1, seed=100)
