@@ -676,7 +676,44 @@ class TrainingRun:
         )
         with tempfile.TemporaryDirectory(prefix="game2-v2-training-") as temporary:
             root = Path(temporary)
+            start_index = 0
+            if not fresh:
+                # Realtime child processes do not own durable curriculum state.
+                # Discover the first unmastered map with the same frozen 3-pass
+                # criterion, using temporary datasets so resume does not rotate
+                # or mutate the persistent training episode history.
+                self._write("RESUME: checking mastered maps with learning OFF")
+                discovery_store = root / "resume-discovery-episodes"
+                start_index = len(manifest.training_maps)
+                for index, spec in enumerate(manifest.training_maps):
+                    directory = root / f"resume-{index + 1:02d}-{spec.map_id}"
+                    directory.mkdir()
+                    passed = self._run_map(
+                        manifest_path=manifest_path,
+                        spec=spec,
+                        checkpoint_dir=checkpoint_path,
+                        fresh=False,
+                        max_episodes=VERIFICATION_SUCCESS_STREAK,
+                        episode_limit=episode_limit,
+                        directory=directory,
+                        screen_control=screen_control,
+                        view=view,
+                        episode_store=discovery_store,
+                        profile_path=profile_path,
+                        evaluate_only=True,
+                    )
+                    if not passed:
+                        start_index = index
+                        self._write(f"RESUME: continuing at {spec.map_id}")
+                        break
+                if start_index == len(manifest.training_maps):
+                    self._write(
+                        "RESUME: all maps already pass frozen qualification"
+                    )
+
             for index, spec in enumerate(manifest.training_maps):
+                if index < start_index:
+                    continue
                 directory = root / f"{index + 1:02d}-{spec.map_id}"
                 directory.mkdir()
                 passed = self._run_map(

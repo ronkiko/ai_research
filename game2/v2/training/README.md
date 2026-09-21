@@ -98,3 +98,10 @@ PPO ratings. There is no separate trajectory JSONL.
 
 Training remains external to Console. A Training Episode never owns or resets
 the Console global `world_tick`.
+
+
+Realtime `--resume` first runs frozen three-pass qualification in curriculum
+order and begins PPO at the first map that no longer qualifies. Already-mastered
+maps are never retrained merely because Management restarted. Resume discovery
+uses temporary episode datasets, so it does not rotate or modify the persistent
+training history.

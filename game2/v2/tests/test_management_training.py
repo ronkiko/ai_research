@@ -297,6 +297,61 @@ class ManagementTrainingTests(unittest.TestCase):
                     mode="unpaced",
                 )
 
+    def test_realtime_resume_skips_maps_that_still_pass_frozen_verification(self):
+        run = TrainingRun(output=io.StringIO())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoints"
+            checkpoint.mkdir()
+            for name in ("planner.pt", "motor.pt", "critic.pt", "optimizer.pt"):
+                (checkpoint / name).write_bytes(b"saved")
+            persistent_store = root / "episodes"
+            persistent_store.mkdir()
+            sentinel = persistent_store / "keep.txt"
+            sentinel.write_text("training history", encoding="utf-8")
+            calls = []
+
+            def run_map(**kwargs):
+                calls.append((
+                    kwargs["spec"].map_id,
+                    kwargs["evaluate_only"],
+                    Path(kwargs["episode_store"]),
+                ))
+                if kwargs["evaluate_only"]:
+                    return kwargs["spec"].map_id == "flat_run"
+                return False
+
+            with mock.patch.object(run, "_run_map", side_effect=run_map):
+                status = run.train(
+                    set_path=DEFAULT_SET,
+                    checkpoint_dir=checkpoint,
+                    max_episodes=50,
+                    fresh=False,
+                    episode_limit=1200,
+                    mode="realtime",
+                    episode_store=persistent_store,
+                )
+
+            self.assertEqual(status, 1)
+            self.assertEqual(
+                [(name, evaluate) for name, evaluate, _store in calls[:3]],
+                [
+                    ("flat_run", True),
+                    ("short_gap", True),
+                    ("short_gap", False),
+                ],
+            )
+            self.assertNotIn(
+                ("flat_run", False),
+                [(name, evaluate) for name, evaluate, _store in calls],
+            )
+            self.assertNotEqual(calls[0][2], persistent_store)
+            self.assertNotEqual(calls[1][2], persistent_store)
+            self.assertEqual(calls[2][2], persistent_store)
+            self.assertEqual(
+                sentinel.read_text(encoding="utf-8"), "training history"
+            )
+
     def test_unpaced_mode_rejects_screen_and_vision_view(self):
         run = TrainingRun(output=io.StringIO())
         with tempfile.TemporaryDirectory() as directory:
