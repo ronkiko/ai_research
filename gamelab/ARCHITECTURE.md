@@ -3,6 +3,52 @@
 The MMO research line consists of GameServer, GameClient Host, GameLab and
 GameTable. Game1/Game2 are separate legacy experiments, not dependencies.
 
+## Primary goal: a composite artificial organism
+
+The primary goal of this laboratory is not a procedural agent with a large
+decision table and not one omniscient model pretending to be a whole person.
+It is a composite artificial organism: multiple AI models act as different
+human-like subsystems, operate at different rates, observe different slices of
+reality, disagree, adapt to consequences, and together produce one continuous
+individual.
+
+The architecture specifies organs, information boundaries, communication
+channels, clocks, memory and learning conditions. It must not prescribe the
+finished personality through rules such as `trust > threshold -> affection`.
+Human-like behavior is the research outcome only when it emerges from the
+interaction and history of limited specialized models.
+
+The currently implemented physical hierarchy establishes this principle with a
+slow LLM Brain, a temporal CNN Spine and a fast MLP Motor. Future affective
+subsystems—including desire and boundary integrity—must follow the same rule:
+each is a model with its own inputs, state, cadence, uncertainty, strengths and
+failure modes. An LLM may appraise and verbalize their signals, but it must not
+replace them with a scripted answer.
+
+The laboratory therefore treats these as separate causal stages:
+
+1. perception and semantic appraisal;
+2. internal drives and competing subsystem positions;
+3. decision;
+4. physical or conversational action;
+5. external outcome;
+6. each subsystem's later appraisal and learning.
+
+Desire is not consent, decision is not action, action is not outcome, and an
+outcome does not dictate a positive or negative internal response. Preserving
+these separations is a primary architectural requirement, not optional
+character decoration.
+
+### Model boundary test
+
+A new human-like subsystem belongs in the organism only when it has a distinct
+responsibility, bounded information, persistent or learned state, an explicit
+cadence, feedback from consequences, and the ability to disagree or fail. A
+counter renamed as an emotion, a timed personality phase, or a deterministic
+`if/else` reaction does not satisfy the research goal. Procedural machinery is
+still allowed for transport, scheduling, measurement, safety, persistence and
+scientific verification; it must not secretly supply the behavior being studied.
+
 ## Responsibility and clock
 
 | Component | Responsibility | Nominal rate |

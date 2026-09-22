@@ -1,7 +1,10 @@
 # GameLab
 
-GameLab is a separate research laboratory for learned hierarchical motor control.
-It uses the existing realtime GameServer v1 world through the official
+GameLab is a laboratory for a composite artificial organism. Its primary goal
+is to study how limited AI models representing different human-like subsystems
+can jointly produce one coherent individual without a procedural behavior
+script. Learned hierarchical motor control is the first implemented vertical.
+GameLab uses the existing realtime GameServer v1 world through the official
 GameClient Host client API.
 
 The unified timing, sensing, evidence and upgrade contract is in
