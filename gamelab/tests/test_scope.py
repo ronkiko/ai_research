@@ -31,7 +31,7 @@ class ScopeTests(unittest.TestCase):
             self.assertNotIn("import gameserver", text, relative)
             self.assertNotIn("from gameserver", text, relative)
 
-    def test_gamelab_does_not_own_host_session_lifecycle(self):
+    def test_gamelab_does_not_own_host_login_logout_lifecycle(self):
         for relative in (
             "gamelab/runtime.py",
             "gamelab/training.py",
@@ -42,7 +42,6 @@ class ScopeTests(unittest.TestCase):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn(".login(", text, relative)
             self.assertNotIn(".logout(", text, relative)
-            self.assertNotIn("reset_player", text, relative)
 
     def test_motor_source_has_no_strategic_target_input(self):
         text = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")

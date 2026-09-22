@@ -7,6 +7,7 @@ import json
 import signal
 import socketserver
 import threading
+import time
 from typing import Any
 
 from ..config import DEFAULT_HOST as GATEWAY_HOST, DEFAULT_PORT as GATEWAY_PORT, DEFAULT_TIMEOUT
@@ -167,6 +168,27 @@ class HostService:
                 key: response[key]
                 for key in ("session_id", "player_id", "entity_id", "world_id", "zone_id")
             }
+
+            deadline = time.monotonic() + 2.0
+            while True:
+                snapshot_response = self.gateway.request(
+                    "snapshot",
+                    session_id=session["session_id"],
+                )
+                snapshot = snapshot_response.get("snapshot")
+                entities = snapshot.get("entities", []) if isinstance(snapshot, dict) else []
+                if any(
+                    isinstance(entity, dict)
+                    and entity.get("entity_id") == session["entity_id"]
+                    for entity in entities
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    raise HostStateError(
+                        "GameServer player entity did not become visible after login"
+                    )
+                time.sleep(0.01)
+
             with self._state_lock:
                 self._session = session
                 self._sequence = 0
