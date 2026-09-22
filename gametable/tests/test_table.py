@@ -117,6 +117,7 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_run_start",
             "gamelab_v1_run_status",
             "gamelab_v1_run_cancel",
+            "gamelab_v1_run_update_goal",
         ):
             self.assertIn(tool, text)
 

@@ -2,6 +2,9 @@
 
 Status: first hierarchical learned-control experiment.
 
+The cross-component timing and evidence contract is specified in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Hypothesis
 
 A slow strategic model should be able to issue a durable physical goal while a
@@ -82,7 +85,8 @@ The learned policy succeeds only when:
 - target error is within configured tolerance;
 - measured velocity is zero;
 - latched movement intent is zero;
-- that state remains stable for the configured hold period.
+- that state remains stable for the configured physical hold period, supported
+  by fresh server ticks and unchanged applied sequence; repeated reads do not count.
 
 A post-terminal safety stop is not part of success classification.
 
@@ -91,8 +95,8 @@ A post-terminal safety stop is not part of success classification.
 The supported LLM-facing boundary is a complete laboratory service, not direct
 shell access to training scripts.
 
-GameLab is an ordinary downstream client of the same GameClient Host hub and
-active player session used by GUI, CLI, and `game_v1`. Its MCP surface is:
+GameLab is an ordinary downstream client of the selected GameClient Host hub.
+By default it shares the active player with GUI, CLI and `game_v1`. Its MCP surface is:
 
 ```text
 health
@@ -113,6 +117,7 @@ verify_cancel
 run_start
 run_status
 run_cancel
+run_update_goal
 ```
 
 Only one long-running laboratory operation may be active at a time. Training,

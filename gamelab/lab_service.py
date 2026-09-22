@@ -17,7 +17,9 @@ from .config import (
     WORLD_MIN_X,
 )
 from .host import HostClient, HostError
-from .models import SpineMotorPolicy, load_checkpoint, save_checkpoint
+from .models import SpineMotorPolicy, load_checkpoint, save_checkpoint, policy_id
+from .control import GoalMailbox
+from .journal import Journal
 from .reward import RewardConfig, RewardStore
 from .runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
 from .training import collect_episode, ppo_update
@@ -37,6 +39,8 @@ class Laboratory:
         self._thread: threading.Thread | None = None
         self._active_kind: str | None = None
         self._cancel = threading.Event()
+        self._goals: GoalMailbox | None = None
+        self._journal: Journal | None = None
         self._records: dict[str, dict[str, Any]] = {
             "training": {"status": "idle"},
             "verify": {"status": "idle"},
@@ -62,6 +66,7 @@ class Laboratory:
             "goal_interface": "target_x",
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
+            "policy_id": policy_id(model),
         }
 
     def _require_attached_player(self, host_id: str) -> str:
@@ -103,25 +108,13 @@ class Laboratory:
     ) -> dict[str, Any]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                active_status = (
-                    self._records.get(self._active_kind or "", {})
-                    .get("status")
-                )
-                terminal = {
-                    "completed",
-                    "cancelled",
-                    "failed",
-                    "passed",
-                    "reached",
-                    "timeout",
-                }
-                if active_status not in terminal:
-                    raise LaboratoryBusyError(
-                        f"laboratory is busy with {self._active_kind}"
-                    )
+                raise LaboratoryBusyError(f"laboratory is busy with {self._active_kind}")
             self._cancel = threading.Event()
             self._active_kind = kind
             record = {"status": "starting", **initial}
+            self._journal = Journal(checkpoint_path(), kind, initial)
+            record["experiment_id"] = self._journal.experiment_id
+            self._goals = GoalMailbox(initial["target_x"]) if kind == "run" else None
             self._records[kind] = record
             thread = threading.Thread(
                 target=self._guarded_worker,
@@ -144,9 +137,30 @@ class Laboratory:
         finally:
             current = threading.current_thread()
             with self._lock:
+                if self._journal is not None:
+                    try:
+                        self._journal.append("finished", self._records[kind])
+                    except OSError as exc:
+                        self._records[kind].update(status="failed", error=f"evidence write failed: {exc}")
                 if self._thread is current:
                     self._active_kind = None
                     self._thread = None
+
+    def update_goal(self, target_x: float) -> dict[str, Any]:
+        target = self._target(target_x)
+        if target is None:
+            raise ValueError("target_x is required")
+        with self._lock:
+            if self.active_operation() != "run" or self._goals is None:
+                raise LaboratoryBusyError("no active live run")
+            if self._records["run"].get("status") not in {"starting", "active"}:
+                raise LaboratoryBusyError("live run is finishing")
+            revision = self._goals.update(target)
+            response = dict(accepted=True, target_x=target, requested_goal_revision=revision,
+                            experiment_id=self._records["run"]["experiment_id"])
+            if self._journal is not None:
+                self._journal.append("goal_update", response)
+            return response
 
     def status(self, kind: str) -> dict[str, Any]:
         with self._lock:
@@ -243,9 +257,6 @@ class Laboratory:
         random.seed(seed)
         torch.manual_seed(seed)
         path = checkpoint_path()
-        if fresh and path.exists():
-            path.unlink()
-
         model = SpineMotorPolicy.fresh(seed)
         optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
         prior = 0
@@ -291,8 +302,25 @@ class Laboratory:
                     reward_config=reward,
                     cancel=self._cancel,
                 )
+                before_policy = policy_id(model)
+                if self._journal is not None:
+                    self._journal.append("rollout", {
+                        "episode": episode_number, "policy_id": before_policy,
+                        "target_x": target, "evidence": result.evidence,
+                        "transitions": [{
+                            "tick": t.tick, "next_tick": t.next_tick,
+                            "elapsed_steps": t.elapsed_steps, "action": t.action,
+                            "history": t.history.tolist(),
+                            "proprioception": t.proprioception.tolist(),
+                            "old_log_prob": t.old_log_prob, "old_value": t.old_value,
+                            "sequence": t.sequence, "command_id": t.command_id,
+                            "applied_tick": t.applied_tick, "reward": t.reward,
+                        } for t in result.transitions],
+                    })
                 if result.result == "cancelled":
                     break
+                if result.result not in {"success", "timeout"}:
+                    raise RuntimeError(f"invalid rollout: {result.result}")
 
                 metrics = ppo_update(model, optimizer, result.transitions)
                 completed += 1
@@ -315,7 +343,12 @@ class Laboratory:
                     "policy_loss": metrics["policy_loss"],
                     "value_loss": metrics["value_loss"],
                     "entropy": metrics["entropy"],
+                    "policy_id": policy_id(model),
+                    "timing": result.evidence,
+                    "diagnostics": metrics,
                 }
+                if self._journal is not None:
+                    self._journal.append("update", summary)
                 recent.append(summary)
                 with self._lock:
                     record = dict(self._records["training"])
@@ -392,6 +425,8 @@ class Laboratory:
         model = SpineMotorPolicy()
         load_checkpoint(checkpoint_path(), model)
         model.eval()
+        with self._lock:
+            self._records["verify"]["policy_id"] = policy_id(model)
         client = HostClient("gamelab-mcp-verify", host_id=host_id)
         results: list[dict[str, Any]] = []
         passed = 0
@@ -412,6 +447,10 @@ class Laboratory:
                 passed += int(ok)
                 item = {"run": index, "pass": ok, **result}
                 results.append(item)
+                if self._journal is not None:
+                    self._journal.append("verify_run", {
+                        "policy_id": policy_id(model), **item,
+                    })
                 with self._lock:
                     record = dict(self._records["verify"])
                     record.update(
@@ -486,6 +525,8 @@ class Laboratory:
         model.eval()
         client = HostClient("gamelab-mcp-run", host_id=host_id)
         try:
+            with self._lock:
+                self._records["run"]["policy_id"] = policy_id(model)
             runner = GoalRunner(model, client, player_id=player_id)
 
             def update(status: dict[str, Any]) -> None:
@@ -500,9 +541,10 @@ class Laboratory:
                 max_seconds=max_seconds,
                 cancel=self._cancel,
                 on_status=update,
+                goals=self._goals,
             )
             with self._lock:
-                self._records["run"] = dict(result)
+                self._records["run"].update(result)
         finally:
             client.close()
 

@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+import os
+import tempfile
+import hashlib
+import shutil
 from typing import Any
 
 import torch
@@ -74,6 +78,12 @@ class SensorHistory:
     def tensor(self) -> torch.Tensor:
         return torch.stack(tuple(self._frames), dim=1)
 
+    def set_target(self, target_x: float) -> None:
+        """Preserve measurements while replacing the strategic command channel."""
+        for frame in self._frames:
+            x = (float(frame[0]) + 1.0) * WORLD_MAX_X / 2.0
+            frame[3] = _bounded((target_x - x) / WORLD_MAX_X)
+
 
 class SpineCNN(nn.Module):
     """Slow learned spinal model: temporal sensor history -> latent motor goal."""
@@ -116,7 +126,7 @@ class SpineCNN(nn.Module):
 
 
 class MotorMLP(nn.Module):
-    """Fast learned one-leg Motor: latent goal + proprioception -> L/S/R logits."""
+    """Fast learned axis actuator: latent goal + proprioception -> L/S/R logits."""
 
     INPUTS = MOTOR_GOAL_SIZE + MOTOR_STATE_SIZE
 
@@ -205,7 +215,30 @@ def save_checkpoint(
     }
     if optimizer is not None:
         payload["optimizer"] = optimizer.state_dict()
-    torch.save(payload, path)
+    if path.is_file():
+        archive = path.parent / "checkpoints"
+        archive.mkdir(exist_ok=True)
+        previous = archive / (hashlib.sha256(path.read_bytes()).hexdigest() + ".pt")
+        if not previous.exists():
+            shutil.copyfile(path, previous)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            torch.save(payload, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def policy_id(model: SpineMotorPolicy) -> str:
+    digest = hashlib.sha256()
+    for name, value in sorted(model.state_dict().items()):
+        digest.update(name.encode())
+        digest.update(value.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
 
 
 def load_checkpoint(

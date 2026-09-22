@@ -196,6 +196,10 @@ class HostService:
             return message("login", session={**session, "sequence": 0}, reused=False, event=event)
 
     def _state(self) -> dict[str, Any]:
+        with self._operation_lock:
+            return self._state_locked()
+
+    def _state_locked(self) -> dict[str, Any]:
         session = self._session_copy()
         response = self.gateway.request("snapshot", session_id=session["session_id"])
         snapshot = response.get("snapshot")

@@ -77,6 +77,11 @@ strict `N -> N+1` continuity per zone and keeps the most recent 120 snapshots.
 Its durable JSONL trace is diagnostic evidence, not authoritative game state.
 Zone never waits for Telemetry acknowledgement.
 
+Snapshots include a Zone process epoch and persistent per-entity input/reset
+application acknowledgements. Telemetry records forward gaps and continues
+accepting newer ticks; duplicates/backwards ticks are rejected. A new epoch
+starts a new continuity interval, discarding the old epoch's buffered frames.
+
 ## Relationship to Game2 Console
 
 GameServer v1 is independent of `game2/v2/console`; neither imports the other.

@@ -12,8 +12,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   status, but it must not perform the realtime left/right/stop loop.
 - GameLab is a normal downstream GameClient Host client. Use the official
   `gameclient.v1.clients.base.HostClient` API; never access GameServer internals directly.
-- GameLab must not login, logout, or replace the Host-owned player session.
-  It behaves like another joystick attached to the already active player.
+- Explicit setup login through MCP may create/reuse the selected Host session.
+  The control loop never logs in, logs out, or replaces that session. Deleting
+  an owned extra Host is a separate advanced lifecycle operation.
 - TRAIN/VERIFY episode boundaries use Host's non-destructive physical reset
   (spawn x=100, vx=0, move_x=0) while preserving session and sequence. RUN must
   not reset.
@@ -23,6 +24,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   safety stop are laboratory infrastructure, not learned control.
 - VERIFY means frozen weights. A procedural fallback must never make VERIFY
   pass.
+- Use the shared `control.py` executor for TRAIN/VERIFY/RUN. Require fresh
+  world ticks and applied-command evidence; reject contaminated rollouts.
+- Keep the architecture and timing/evidence contract in `ARCHITECTURE.md`.
 - Machine-friendly interfaces only. Do not test or automate GUI here.
 - The MCP laboratory service is the supported agent-facing boundary for training, reward configuration, VERIFY, and live model runs; operator scripts are maintenance/CI entry points, not the GameTable assistant API.
 - Before declaring a patch ready, run the real `./gamelab/op/check.sh`

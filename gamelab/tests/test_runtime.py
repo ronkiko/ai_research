@@ -15,6 +15,7 @@ class _HubClient:
         self.x = 321.0
         self.vx = 180.0
         self.move_x = 1
+        self.tick = 0
 
     def session(self):
         if self._session is None:
@@ -22,17 +23,22 @@ class _HubClient:
         return dict(self._session)
 
     def state(self):
+        self.tick += 1
         if self._session is None:
             raise HostError("GameClient Host is not logged in")
         return {
             "session": dict(self._session),
             "snapshot": {
+                "world_tick": self.tick,
+                "epoch": "test",
                 "entities": [
                     {
                         "entity_id": self._session["entity_id"],
                         "x": self.x,
                         "vx": self.vx,
                         "move_x": self.move_x,
+                        "last_reset_command_id": self.reset_calls,
+                        "last_reset_tick": self.tick if self.reset_calls else 0,
                     }
                 ]
             },
@@ -43,7 +49,8 @@ class _HubClient:
         self.x = 100.0
         self.vx = 0.0
         self.move_x = 0
-        return {"sequence": self._session["sequence"], "x": 100.0}
+        return {"sequence": self._session["sequence"], "x": 100.0,
+                "event": {"command_id": self.reset_calls}}
 
     def login(self, player_id: str):
         self.login_calls += 1
@@ -105,6 +112,20 @@ class RuntimeHubTests(unittest.TestCase):
             ensure_player(client, "player1")
         self.assertEqual(client.login_calls, 0)
         self.assertEqual(client.logout_calls, 0)
+
+    def test_old_spawn_snapshot_is_not_reset_acknowledgement(self):
+        client = _HubClient({"player_id": "player1", "entity_id": "p", "sequence": 4})
+        client.x, client.vx, client.move_x = 100, 0, 0
+        original = client.state
+
+        def stale_reset_ack():
+            state = original()
+            state["snapshot"]["entities"][0]["last_reset_command_id"] = 0
+            return state
+
+        client.state = stale_reset_ack
+        with self.assertRaisesRegex(HostError, "reset did not settle"):
+            reset_player_state(client, "player1", timeout=0.02)
 
 
 if __name__ == "__main__":

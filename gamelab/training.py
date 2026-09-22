@@ -3,18 +3,15 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import math
 from pathlib import Path
 import random
 import threading
-import time
 
 import torch
 from torch.distributions import Categorical
 from torch.nn import functional as F
 
 from .config import (
-    MOTOR_HZ,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_ENTROPY_COEF,
@@ -24,34 +21,21 @@ from .config import (
     PPO_LEARNING_RATE,
     PPO_MAX_GRAD_NORM,
     PPO_VALUE_COEF,
-    SPINE_PERIOD_MOTOR_STEPS,
-    SUCCESS_HOLD_STEPS,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
     WORLD_MAX_X,
 )
 from .host import HostClient, player_from_state
 from .models import (
-    SensorHistory,
     SpineMotorPolicy,
     load_checkpoint,
-    motor_state,
     save_checkpoint,
-    sensor_frame,
 )
-from .reward import RewardConfig, RewardStore, step_reward
+from .reward import RewardConfig, RewardStore
 from .runtime import checkpoint_path, ensure_player, reset_player_state
 
 
-@dataclass
-class Transition:
-    history: torch.Tensor
-    proprioception: torch.Tensor
-    action: int
-    old_log_prob: float
-    old_value: float
-    reward: float
-    done: bool
+from .control import Decision as Transition, control_loop
 
 
 @dataclass
@@ -64,6 +48,7 @@ class EpisodeResult:
     motor_steps: int
     controller_requests: int
     transitions: list[Transition]
+    evidence: dict
 
 
 def collect_episode(
@@ -76,149 +61,26 @@ def collect_episode(
     reward_config: RewardConfig | None = None,
     cancel: threading.Event | None = None,
 ) -> EpisodeResult:
-    model.eval()
-    reward_config = (reward_config or RewardConfig()).validated()
     state = reset_player_state(client, player_id)
-    player = player_from_state(state)
-    history = SensorHistory(
-        sensor_frame(
-            x=player["x"],
-            vx=player["vx"],
-            move_x=player["move_x"],
-            target_x=target_x,
-        )
-    )
-
     transitions: list[Transition] = []
-    latched_history = history.tensor()
-    start = time.monotonic()
-    deadline = start
-    step = 0
-    hold = 0
-    total_reward = 0.0
-    requests = 0
-    final_player = player
-
-    try:
-        while True:
-            if cancel is not None and cancel.is_set():
-                return EpisodeResult(
-                    target_x=float(target_x),
-                    result="cancelled",
-                    final_x=float(final_player["x"]),
-                    final_error=float(target_x) - float(final_player["x"]),
-                    reward=float(total_reward),
-                    motor_steps=step,
-                    controller_requests=requests,
-                    transitions=transitions,
-                )
-            player = player_from_state(state)
-            frame = sensor_frame(
-                x=player["x"],
-                vx=player["vx"],
-                move_x=player["move_x"],
-                target_x=target_x,
-            )
-            history.push(frame)
-            if step % SPINE_PERIOD_MOTOR_STEPS == 0:
-                latched_history = history.tensor().clone()
-
-            proprioception = motor_state(
-                vx=player["vx"],
-                move_x=player["move_x"],
-            )
-            with torch.no_grad():
-                goal, hidden = model.spine(latched_history)
-                logits = model.motor(goal, proprioception)
-                value = model.critic(hidden, proprioception)
-                distribution = Categorical(logits=logits)
-                action_tensor = distribution.sample()
-                action = int(action_tensor.item())
-                old_log_prob = float(distribution.log_prob(action_tensor).item())
-                old_value = float(value.item())
-
-            move_x = model.action_to_move(action)
-            if move_x != int(player["move_x"]):
-                client.input(move_x)
-                requests += 1
-
-            before_distance = abs(float(target_x) - float(player["x"]))
-
-            step += 1
-            deadline += 1.0 / MOTOR_HZ
-            delay = deadline - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-
-            next_state = client.state()
-            next_player = player_from_state(next_state)
-            after_distance = abs(float(target_x) - float(next_player["x"]))
-
-            if (
-                after_distance <= SUCCESS_TOLERANCE
-                and abs(float(next_player["vx"])) < 1e-9
-                and int(next_player["move_x"]) == 0
-            ):
-                hold += 1
-            else:
-                hold = 0
-
-            result = "running"
-            done = False
-            success = hold >= SUCCESS_HOLD_STEPS
-            timeout = time.monotonic() - start >= max_seconds
-            if success:
-                result = "success"
-                done = True
-            elif timeout:
-                result = "timeout"
-                done = True
-
-            reward = step_reward(
-                reward_config,
-                before_distance=before_distance,
-                after_distance=after_distance,
-                next_vx=float(next_player["vx"]),
-                next_move_x=int(next_player["move_x"]),
-                success=success,
-                timeout=timeout and not success,
-            )
-
-            transitions.append(
-                Transition(
-                    history=latched_history.clone(),
-                    proprioception=proprioception.clone(),
-                    action=action,
-                    old_log_prob=old_log_prob,
-                    old_value=old_value,
-                    reward=float(reward),
-                    done=done,
-                )
-            )
-            total_reward += reward
-            final_player = next_player
-            state = next_state
-
-            if done:
-                return EpisodeResult(
-                    target_x=float(target_x),
-                    result=result,
-                    final_x=float(final_player["x"]),
-                    final_error=float(target_x) - float(final_player["x"]),
-                    reward=float(total_reward),
-                    motor_steps=step,
-                    controller_requests=requests,
-                    transitions=transitions,
-                )
-    finally:
-        # Episode-boundary safety only; never contributes to success/reward.
-        try:
-            state = client.state()
-            player = player_from_state(state)
-            if int(player["move_x"]) != 0:
-                client.input(0)
-        except Exception:
-            pass
+    result = control_loop(
+        model, client, state, target_x=target_x, tolerance=SUCCESS_TOLERANCE,
+        max_seconds=max_seconds, sampled=True, reward_config=reward_config,
+        cancel=cancel, on_transition=transitions.append,
+    )
+    outcome = "success" if result["status"] == "reached" else result["status"]
+    # Never optimize incomplete, stale, externally controlled or unconfirmed data.
+    if outcome not in {"success", "timeout"}:
+        transitions.clear()
+    elif transitions:
+        transitions[-1].done = True
+    final_x = float(result.get("x", player_from_state(state)["x"]))
+    return EpisodeResult(
+        target_x=float(target_x), result=outcome, final_x=final_x,
+        final_error=float(target_x)-final_x, reward=result["reward"],
+        motor_steps=result["motor_steps"], controller_requests=result["controller_requests"],
+        transitions=transitions, evidence=result,
+    )
 
 
 def _advantages(transitions: list[Transition]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -229,8 +91,10 @@ def _advantages(transitions: list[Transition]) -> tuple[torch.Tensor, torch.Tens
     next_value = 0.0
     for index in range(len(transitions) - 1, -1, -1):
         mask = 0.0 if transitions[index].done else 1.0
-        delta = rewards[index] + PPO_GAMMA * next_value * mask - values[index]
-        gae = delta + PPO_GAMMA * PPO_GAE_LAMBDA * mask * gae
+        duration = transitions[index].elapsed_steps
+        gamma = PPO_GAMMA ** duration
+        delta = rewards[index] + gamma * next_value * mask - values[index]
+        gae = delta + (PPO_GAMMA * PPO_GAE_LAMBDA) ** duration * mask * gae
         advantages[index] = gae
         next_value = values[index]
     advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
@@ -262,7 +126,10 @@ def ppo_update(
     advantages, returns = _advantages(transitions)
 
     model.train()
-    metrics = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0}
+    metrics = {key: 0.0 for key in (
+        "loss", "policy_loss", "value_loss", "entropy", "approx_kl",
+        "clip_fraction", "grad_norm", "value_mae",
+    )}
     updates = 0
     count = len(transitions)
 
@@ -294,19 +161,31 @@ def ppo_update(
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), PPO_MAX_GRAD_NORM)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), PPO_MAX_GRAD_NORM)
             optimizer.step()
 
             metrics["loss"] += float(loss.detach())
             metrics["policy_loss"] += float(policy_loss.detach())
             metrics["value_loss"] += float(value_loss.detach())
             metrics["entropy"] += float(entropy.detach())
+            with torch.no_grad():
+                metrics["approx_kl"] += float(((ratio - 1) - (log_probs - old_log_probs[indexes])).mean())
+                metrics["clip_fraction"] += float(((ratio - 1).abs() > PPO_CLIP_EPS).float().mean())
+                metrics["grad_norm"] += float(grad_norm)
+                metrics["value_mae"] += float((values - returns[indexes]).abs().mean())
             updates += 1
 
     if updates:
         for key in metrics:
             metrics[key] /= updates
     model.eval()
+    with torch.no_grad():
+        _, predicted, _ = model.evaluate(histories, proprioception)
+        variance = returns.var(unbiased=False)
+        metrics["explained_variance"] = (
+            float(1 - (returns - predicted).var(unbiased=False) / variance)
+            if float(variance) > 1e-8 else 0.0
+        )
     return metrics
 
 
@@ -327,13 +206,11 @@ def main(argv: list[str] | None = None) -> int:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     path = checkpoint_path()
-    if args.fresh and path.exists():
-        path.unlink()
 
     model = SpineMotorPolicy.fresh(args.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
     completed = 0
-    if path.exists():
+    if path.exists() and not args.fresh:
         extra = load_checkpoint(path, model, optimizer=optimizer)
         completed = int(extra.get("episodes", 0))
 
@@ -356,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
                 target_x=target,
                 reward_config=reward_config,
             )
+            if result.result not in {"success", "timeout"}:
+                raise RuntimeError(f"invalid episode: {result.result}")
             metrics = ppo_update(model, optimizer, result.transitions)
             save_checkpoint(
                 path,

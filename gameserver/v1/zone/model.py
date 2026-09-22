@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import queue
 import threading
+import uuid
 from typing import Any
 
 from ..common.config import LINE, PHYSICS_HZ, ZONE_ID, LineConfig
@@ -20,6 +21,10 @@ class Entity:
     vx: float = 0.0
     move_x: int = 0
     last_sequence: int = 0
+    last_input_command_id: int = 0
+    last_input_tick: int = 0
+    last_reset_command_id: int = 0
+    last_reset_tick: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -29,6 +34,11 @@ class Entity:
             "x": self.x,
             "vx": self.vx,
             "move_x": self.move_x,
+            "last_sequence": self.last_sequence,
+            "last_input_command_id": self.last_input_command_id,
+            "last_input_tick": self.last_input_tick,
+            "last_reset_command_id": self.last_reset_command_id,
+            "last_reset_tick": self.last_reset_tick,
         }
 
 
@@ -54,6 +64,7 @@ class ZoneRuntime:
     entities: dict[str, Entity] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.epoch = uuid.uuid4().hex
         self._commands: queue.SimpleQueue[ZoneCommand] = queue.SimpleQueue()
         self._lock = threading.RLock()
         self._next_command_id = 1
@@ -202,6 +213,8 @@ class ZoneRuntime:
                 else:
                     entity.last_sequence = payload["sequence"]
                     entity.move_x = payload["move_x"]
+                    entity.last_input_command_id = command.command_id
+                    entity.last_input_tick = self.world_tick
 
             elif command.kind == "reset":
                 entity = self.entities.get(payload["entity_id"])
@@ -211,6 +224,8 @@ class ZoneRuntime:
                     entity.x = payload["x"]
                     entity.vx = 0.0
                     entity.move_x = 0
+                    entity.last_reset_command_id = command.command_id
+                    entity.last_reset_tick = self.world_tick
             applied.append(
                 {
                     "command_id": command.command_id,
@@ -249,6 +264,7 @@ class ZoneRuntime:
             "type": "zone_snapshot",
             "zone_id": self.zone_id,
             "world_tick": self.world_tick,
+            "epoch": self.epoch,
             "physics_hz": self.physics_hz,
             "line_length": self.line.length,
             "entities": [

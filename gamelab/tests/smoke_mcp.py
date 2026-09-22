@@ -40,6 +40,7 @@ EXPECTED_TOOLS = {
     "run_start",
     "run_status",
     "run_cancel",
+    "run_update_goal",
 }
 
 
@@ -355,6 +356,9 @@ async def run_flow(
                 raise AssertionError(f"model run did not start: {run}")
 
             await asyncio.sleep(0.1)
+            updated = await tool(session, "run_update_goal", {"target_x": 800.0})
+            if updated.get("requested_goal_revision") != 2:
+                raise AssertionError(f"live goal update failed: {updated}")
             live = await tool(session, "run_status")
             payloads.append(live)
             if live.get("status") not in {"starting", "active", "reached", "timeout"}:
@@ -429,6 +433,22 @@ async def run_flow(
             if deleted.get("deleted") is not True:
                 raise AssertionError(f"laboratory Host deletion failed: {deleted}")
 
+            final_run = await tool(session, "run_status")
+            for key in ("experiment_id", "policy_id", "host_id", "player_id"):
+                if not final_run.get(key):
+                    raise AssertionError(f"terminal run lost {key}: {final_run}")
+            journals = list((checkpoint.parent / "experiments").glob("*.jsonl"))
+            if len(journals) != 3:
+                raise AssertionError(f"expected TRAIN/VERIFY/RUN journals: {journals}")
+            records = [json.loads(line) for path in journals for line in path.read_text().splitlines()]
+            if sum(r["kind"] == "finished" for r in records) != 3:
+                raise AssertionError("terminal experiment evidence missing")
+            rollouts = [r for r in records if r["kind"] == "rollout"]
+            if not rollouts or not rollouts[0].get("policy_id"):
+                raise AssertionError("rollout policy identity missing")
+            if not any(r["kind"] == "goal_update" for r in records):
+                raise AssertionError("goal update evidence missing")
+
             for payload in payloads:
                 if contains_key(payload, "session_id"):
                     raise AssertionError(f"GameLab MCP leaked session_id: {payload}")
@@ -470,7 +490,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP smoke tools=18 default_host_protected=yes extra_host=yes episode_reset=yes")
+                print("PASS gamelab MCP smoke tools=19 default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
                 return 0
             except Exception:
                 server_log.flush()

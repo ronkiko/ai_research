@@ -11,6 +11,11 @@
 
 ## Структура
 
+Текущая линия realtime-исследования — `gameserver`, `gameclient`, `gamelab`,
+`gametable`: LLM Brain, temporal CNN Spine и MLP Motor. Единый архитектурный
+контракт: [gamelab/ARCHITECTURE.md](gamelab/ARCHITECTURE.md).
+`game1` и `game2` сохраняются как отдельные прежние исследования.
+
 ```
 ai_research/
 ├── README.md          ← этот файл: общая идея и стек

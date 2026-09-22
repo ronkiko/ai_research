@@ -149,6 +149,9 @@ def host_create(host_id: str) -> dict[str, Any]:
 def host_delete(host_id: str) -> dict[str, Any]:
     """Delete a laboratory-owned Host; the game-owned default Host is protected."""
     try:
+        active = laboratory.active_operation()
+        if host_id != DEFAULT_HOST_ID and active and laboratory.status(active).get("host_id") == host_id:
+            return {"deleted": False, "error": {"code": "HOST_BUSY", "host_id": host_id}}
         return host_catalog.delete(host_id)
     except LabHostPermissionDenied as exc:
         return {
@@ -205,11 +208,13 @@ def describe() -> dict[str, Any]:
             "observe bounded training progress",
             "start/cancel frozen verification",
             "run/cancel the current model in the live game",
+            "update the active run goal without resetting the body",
             "observe bounded experiment results",
         ],
         "operations_are_asynchronous": True,
         "one_lab_operation_at_a_time": True,
         "goal_interface": "target_x",
+        "evidence": "experiment_id and policy_id identify persisted experiment evidence",
     }
 
 
@@ -327,6 +332,15 @@ def run_start(
 def run_status() -> dict[str, Any]:
     """Read status of the last live model run."""
     return _public(laboratory.status("run"))
+
+
+@mcp.tool(annotations=WRITE)
+def run_update_goal(target_x: float) -> dict[str, Any]:
+    """Replace the active run's goal without resetting its body or sensor history.
+
+    The run's original timeout still applies. Status reports the applied revision.
+    """
+    return _public(laboratory.update_goal(target_x))
 
 
 @mcp.tool(annotations=WRITE)

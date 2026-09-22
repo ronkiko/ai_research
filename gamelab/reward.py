@@ -103,6 +103,7 @@ def step_reward(
     next_move_x: int,
     success: bool,
     timeout: bool,
+    elapsed_steps: float = 1.0,
 ) -> float:
     """Calculate reward from measured state only; no steering logic lives here."""
     config = config.validated()
@@ -111,14 +112,14 @@ def step_reward(
         * (float(before_distance) - float(after_distance))
         / WORLD_MAX_X
     )
-    reward -= config.step_cost
+    reward -= config.step_cost * elapsed_steps
 
     if (
         float(after_distance) <= config.near_goal_radius
         and abs(float(next_vx)) < 1e-9
         and int(next_move_x) == 0
     ):
-        reward += config.stopped_near_goal_bonus
+        reward += config.stopped_near_goal_bonus * elapsed_steps
 
     if success:
         reward += config.success_bonus

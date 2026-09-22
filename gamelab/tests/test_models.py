@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -82,6 +83,18 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(extra["episodes"], 3)
             for left, right in zip(model.parameters(), restored.parameters()):
                 self.assertTrue(torch.equal(left, right))
+
+    def test_failed_save_preserves_previous_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "model.pt"
+            model = SpineMotorPolicy.fresh(1)
+            save_checkpoint(path, model)
+            original = path.read_bytes()
+            with patch("gamelab.models.torch.save", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    save_checkpoint(path, SpineMotorPolicy.fresh(2))
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(len(list((path.parent / "checkpoints").glob("*.pt"))), 1)
 
 
 if __name__ == "__main__":

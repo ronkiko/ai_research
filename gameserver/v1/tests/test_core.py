@@ -76,7 +76,11 @@ class ZoneRuntimeTests(unittest.TestCase):
         runtime=ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1"); snapshot=runtime.tick()
         self.assertEqual(snapshot["line_length"],1000.0)
         for entity in snapshot["entities"]:
-            self.assertEqual(set(entity),{"entity_id","kind","owner_id","x","vx","move_x"})
+            self.assertEqual(set(entity),{
+                "entity_id","kind","owner_id","x","vx","move_x",
+                "last_sequence", "last_input_command_id", "last_input_tick",
+                "last_reset_command_id", "last_reset_tick",
+            })
 
     def test_spawn_rejects_position_outside_line(self):
         runtime=ZoneRuntime()
@@ -187,8 +191,20 @@ class TelemetryRingTests(unittest.TestCase):
     def test_tick_gap_is_detected(self):
         ring = TelemetryRing()
         ring.append({"zone_id": "zone1", "world_tick": 10, "entities": []})
-        with self.assertRaisesRegex(ProtocolError, "expected 11, got 12"):
-            ring.append({"zone_id": "zone1", "world_tick": 12, "entities": []})
+        gap = ring.append({"zone_id": "zone1", "world_tick": 12, "entities": []})
+        self.assertIn("expected 11, got 12", gap)
+        self.assertIsNone(ring.append({"zone_id": "zone1", "world_tick": 13, "entities": []}))
+        self.assertEqual(ring.latest()["world_tick"], 13)
+
+    def test_restart_and_old_packet(self):
+        ring = TelemetryRing()
+        for tick, epoch in ((40, "a"), (1, "b"), (2, "b")):
+            ring.append(dict(zone_id="zone1", world_tick=tick, epoch=epoch, entities=[]))
+        with self.assertRaisesRegex(ProtocolError, "retired"):
+            ring.append(dict(zone_id="zone1", world_tick=41, epoch="a", entities=[]))
+        with self.assertRaisesRegex(ProtocolError, "out-of-order"):
+            ring.append(dict(zone_id="zone1", world_tick=1, epoch="b", entities=[]))
+        self.assertEqual([f["world_tick"] for f in ring.frames()], [1, 2])
 
 
 if __name__ == "__main__":

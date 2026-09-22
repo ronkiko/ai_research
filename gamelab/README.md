@@ -4,6 +4,9 @@ GameLab is a separate research laboratory for learned hierarchical motor control
 It uses the existing realtime GameServer v1 world through the official
 GameClient Host client API.
 
+The unified timing, sensing, evidence and upgrade contract is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 The first experiment asks one concrete question:
 
 > Can a slow strategic agent provide only a target position while a learned
@@ -88,7 +91,7 @@ Default success condition:
 abs(target_x - x) <= 1
 vx == 0
 move_x == 0
-held for 6 Motor decisions
+held for 0.1 seconds of fresh server-tick evidence
 ```
 
 The terminal safety stop that runs after success/timeout/cancel is cleanup only.
@@ -172,10 +175,14 @@ verify_cancel
 run_start
 run_status
 run_cancel
+run_update_goal
 ```
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
 Start tools return immediately; status tools expose bounded progress/results.
+`run_update_goal(target_x)` changes the active RUN goal without resetting body
+or measured history; status confirms the applied revision. Its original timeout
+still applies. Invalid/stale/externally controlled rollouts are not optimized.
 GameLab can explicitly create or reuse a player session on a selected
 `host_id`. `game-v1-default` is the default and belongs to the game system;
 GameLab can list and use it but `host_delete(game-v1-default)` returns

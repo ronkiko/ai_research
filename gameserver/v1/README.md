@@ -1,14 +1,13 @@
 # GameServer v1
 
-GameServer v1 is an MMO-style server laboratory developed **in parallel with**
-Game2 V2 Console. It is not a refactor of Console and does not import Game2.
+GameServer v1 is the MMO-style foundation of the current research laboratory.
+It is not a refactor of Console and does not import Game2.
 Both projects provide the same fundamental experimental property: an external
 human, bot, or learning system interacts with a real-time world that exists on
 its own clock and **does not wait for the player**.
 
-The Console remains the active Game2 laboratory. GameServer v1 explores a more
-conventional multiplayer/server decomposition so that a future persistent game
-world can be built on the architecture directly.
+GameLab and GameTable build hierarchical realtime AI research on this boundary.
+See `gamelab/ARCHITECTURE.md` for the complete laboratory contract.
 
 ## Core rule
 
@@ -164,8 +163,7 @@ python -m gameserver.v1.tests.smoke
 
 `gameclient.v1` is a separate sibling project. Its GameClient Host is the only
 GameClient entity intended to talk to Gateway. CLI/MCP/GUI/AI Clients attach to
-that Host and remain invisible to GameServer. The current direct CLI gameplay
-path is temporary while gameplay functions are migrated behind Host.
+that Host and remain invisible to GameServer. CLI gameplay uses Host Protocol.
 
 ## Tests
 

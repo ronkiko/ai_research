@@ -27,9 +27,9 @@ runtime state. As game functions move behind the Host, it owns:
 - the GameServer Gateway connection;
 - login/session lifecycle;
 - monotonic gameplay command sequencing;
-- the latest server state and local state cache;
+- reading current server state (v1 uses synchronous Gateway requests, not a cache);
 - the ordered command/event stream;
-- fan-out of state and events to all attached Clients;
+- state and paginated events available to all attached Clients;
 - serialization of simultaneous commands from different Clients.
 
 Clients do not allocate GameServer command sequence numbers.

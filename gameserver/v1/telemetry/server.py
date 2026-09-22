@@ -22,9 +22,11 @@ class TelemetryRing:
         self.capacity = capacity
         self._frames: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._last_tick_by_zone: dict[str, int] = {}
+        self._epoch_by_zone: dict[str, str | None] = {}
+        self._retired_epochs: dict[str, deque] = {}
         self._lock = threading.RLock()
 
-    def append(self, snapshot: dict[str, Any]) -> None:
+    def append(self, snapshot: dict[str, Any]) -> str | None:
         zone_id = snapshot.get("zone_id")
         tick = snapshot.get("world_tick")
         if not isinstance(zone_id, str) or not zone_id:
@@ -35,13 +37,32 @@ class TelemetryRing:
         if not isinstance(entities, list):
             raise ProtocolError("snapshot entities are invalid")
         with self._lock:
+            epoch = snapshot.get("epoch")
+            if epoch is not None and not isinstance(epoch, str):
+                raise ProtocolError("snapshot epoch is invalid")
+            retired = self._retired_epochs.setdefault(zone_id, deque(maxlen=16))
+            if epoch in retired:
+                raise ProtocolError("snapshot belongs to retired epoch")
+            old_epoch = self._epoch_by_zone.get(zone_id)
+            if zone_id in self._epoch_by_zone and epoch != old_epoch:
+                retired.append(old_epoch)
+                self._last_tick_by_zone.pop(zone_id, None)
+                self._frames = deque(
+                    (f for f in self._frames if f["zone_id"] != zone_id),
+                    maxlen=self.capacity,
+                )
+            self._epoch_by_zone[zone_id] = epoch
             previous = self._last_tick_by_zone.get(zone_id)
+            if previous is not None and tick <= previous:
+                raise ProtocolError("duplicate or out-of-order snapshot")
+            gap = None
             if previous is not None and tick != previous + 1:
-                raise ProtocolError(
+                gap = (
                     f"zone {zone_id} tick discontinuity: expected {previous + 1}, got {tick}"
                 )
             self._last_tick_by_zone[zone_id] = tick
             self._frames.append(dict(snapshot))
+            return gap
 
     def latest(self, zone_id: str | None = None) -> dict[str, Any] | None:
         with self._lock:
@@ -109,7 +130,10 @@ class TelemetryService:
                     snapshot = json.loads(packet.decode("utf-8"))
                     if not isinstance(snapshot, dict) or snapshot.get("type") != "zone_snapshot":
                         raise ProtocolError("invalid zone snapshot")
-                    self.ring.append(snapshot)
+                    gap = self.ring.append(snapshot)
+                    if gap:
+                        self.validation_errors += 1
+                        self._record({"type": "tick_gap", "valid": False, "error": gap})
                     self._record({"type": "snapshot", "valid": True, **snapshot})
                 except (UnicodeDecodeError, json.JSONDecodeError, ProtocolError) as exc:
                     self.validation_errors += 1
