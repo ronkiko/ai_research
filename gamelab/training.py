@@ -39,6 +39,7 @@ from .models import (
     save_checkpoint,
     sensor_frame,
 )
+from .reward import RewardConfig, RewardStore, step_reward
 from .runtime import checkpoint_path, reset_player
 
 
@@ -72,8 +73,11 @@ def collect_episode(
     player_id: str,
     target_x: float,
     max_seconds: float = TRAIN_EPISODE_SECONDS,
+    reward_config: RewardConfig | None = None,
+    cancel: threading.Event | None = None,
 ) -> EpisodeResult:
     model.eval()
+    reward_config = (reward_config or RewardConfig()).validated()
     state = reset_player(client, player_id)
     player = player_from_state(state)
     history = SensorHistory(
@@ -150,9 +154,6 @@ def collect_episode(
             next_player = player_from_state(next_state)
             after_distance = abs(float(target_x) - float(next_player["x"]))
 
-            reward = (before_distance - after_distance) / WORLD_MAX_X
-            reward -= 0.0005
-
             if (
                 after_distance <= SUCCESS_TOLERANCE
                 and abs(float(next_player["vx"])) < 1e-9
@@ -164,14 +165,24 @@ def collect_episode(
 
             result = "running"
             done = False
-            if hold >= SUCCESS_HOLD_STEPS:
-                reward += 1.0
+            success = hold >= SUCCESS_HOLD_STEPS
+            timeout = time.monotonic() - start >= max_seconds
+            if success:
                 result = "success"
                 done = True
-            elif time.monotonic() - start >= max_seconds:
-                reward -= 0.25
+            elif timeout:
                 result = "timeout"
                 done = True
+
+            reward = step_reward(
+                reward_config,
+                before_distance=before_distance,
+                after_distance=after_distance,
+                next_vx=float(next_player["vx"]),
+                next_move_x=int(next_player["move_x"]),
+                success=success,
+                timeout=timeout and not success,
+            )
 
             transitions.append(
                 Transition(
@@ -326,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         extra = load_checkpoint(path, model, optimizer=optimizer)
         completed = int(extra.get("episodes", 0))
 
+    reward_config = RewardStore().load()
     client = HostClient("gamelab-train")
     try:
         players = client.players()
@@ -344,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
                 client,
                 player_id=args.player,
                 target_x=target,
+                reward_config=reward_config,
             )
             metrics = ppo_update(model, optimizer, result.transitions)
             save_checkpoint(
