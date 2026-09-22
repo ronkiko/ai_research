@@ -57,6 +57,13 @@ class GatewayService:
                 move_x=request.get("move_x"),
                 source="player",
             ))
+        if kind == "reset":
+            session = self._session(request.get("session_id"))
+            return rpc(self.host, self.zone_port, message(
+                "reset",
+                entity_id=session["entity_id"],
+                x=100.0,
+            ))
         if kind == "snapshot":
             session = self._session(request.get("session_id"))
             snapshot = rpc(self.host, self.zone_port, message("snapshot"))

@@ -72,11 +72,15 @@ Motor solve the strategic task directly.
 Spine and Motor are optimized jointly with PPO. No demonstration or scripted
 action labels are used.
 
-Training episodes start from the current authoritative player state; GameLab
-does not reset, login, or logout the shared Host session. Targets may be sampled
-across the one-dimensional world. Reward is based on measured progress toward
-the target, with terminal success only when the learned policy gets within
-tolerance and has actually stopped.
+Each TRAIN episode begins with a non-destructive Host episode reset to
+`x=100, vx=0, move_x=0`. VERIFY performs the same reset before every run.
+The reset preserves the active Host/GameServer session and Host command
+sequence; GameLab never uses logout/login for episode boundaries. A live RUN
+does not reset and begins from the player's actual current state.
+
+Targets may be sampled across the one-dimensional world. Reward is based on
+measured progress toward the target, with terminal success only when the
+learned policy gets within tolerance and has actually stopped.
 
 Default success condition:
 
@@ -169,7 +173,9 @@ run_cancel
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
 Start tools return immediately; status tools expose bounded progress/results.
 They require an already active Host player session. GameLab never creates,
-replaces, resets, or logs out that shared session.
+replaces, or logs out that shared session. TRAIN and VERIFY may reset only the
+player's physical episode state through Host while preserving session identity
+and sequence; RUN does not reset.
 
 Reward configuration is persisted under the ignored `gamelab/runtime/` area
 and applies to subsequent training episodes. The configurable measured signals
@@ -215,6 +221,7 @@ The gate verifies:
 - use of the official GameClient Host client API with no direct GameServer access;
 - Motor source has no strategic target input;
 - real fresh-model inference as a second joystick through the shared GameClient Host;
-- real stdio MCP laboratory flow without login/logout/session reset.
+- real stdio MCP laboratory flow with non-destructive TRAIN/VERIFY resets,
+  preserved session/sequence, and no GameLab login/logout.
 
 GUI runtime is outside GameLab and is not part of this gate.

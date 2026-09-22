@@ -108,6 +108,23 @@ class ZoneRuntime:
                 raise ProtocolError("unknown entity")
             return self._enqueue("despawn", {"entity_id": entity_id})
 
+    def enqueue_reset(
+        self,
+        *,
+        entity_id: str,
+        x: float = 100.0,
+    ) -> int:
+        x = finite_number("x", x)
+        if not 0.0 <= x <= self.line.length:
+            raise ProtocolError(f"x must be within [0,{self.line.length:g}]")
+        with self._lock:
+            entity = self.entities.get(entity_id)
+            if entity is None:
+                raise ProtocolError("unknown entity")
+            if entity.kind != "player":
+                raise ProtocolError("reset is only supported for player entities")
+            return self._enqueue("reset", {"entity_id": entity_id, "x": x})
+
     def enqueue_input(
         self,
         *,
@@ -186,6 +203,14 @@ class ZoneRuntime:
                     entity.last_sequence = payload["sequence"]
                     entity.move_x = payload["move_x"]
 
+            elif command.kind == "reset":
+                entity = self.entities.get(payload["entity_id"])
+                if entity is None or entity.kind != "player":
+                    status = "rejected"
+                else:
+                    entity.x = payload["x"]
+                    entity.vx = 0.0
+                    entity.move_x = 0
             applied.append(
                 {
                     "command_id": command.command_id,

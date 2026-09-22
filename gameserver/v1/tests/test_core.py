@@ -83,6 +83,51 @@ class ZoneRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError,"x must be within"):
             runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1",x=1001.0)
 
+    def test_player_reset_restores_spawn_without_resetting_sequence(self):
+        runtime = ZoneRuntime()
+        runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1")
+        runtime.tick()
+        runtime.enqueue_input(
+            entity_id="actor-player1",
+            sequence=1,
+            move_x=1,
+            source="player",
+        )
+        runtime.tick()
+        runtime.tick()
+
+        reset_id = runtime.enqueue_reset(entity_id="actor-player1")
+        reset_snapshot = runtime.tick()
+        player = next(
+            item
+            for item in reset_snapshot["entities"]
+            if item["entity_id"] == "actor-player1"
+        )
+        self.assertEqual(player["x"], 100.0)
+        self.assertEqual(player["vx"], 0.0)
+        self.assertEqual(player["move_x"], 0)
+        applied = next(
+            item
+            for item in reset_snapshot["commands_applied"]
+            if item["command_id"] == reset_id
+        )
+        self.assertEqual(applied["kind"], "reset")
+        self.assertEqual(applied["status"], "accepted")
+
+        runtime.enqueue_input(
+            entity_id="actor-player1",
+            sequence=2,
+            move_x=-1,
+            source="player",
+        )
+        after = runtime.tick()
+        player = next(
+            item
+            for item in after["entities"]
+            if item["entity_id"] == "actor-player1"
+        )
+        self.assertLess(player["x"], 100.0)
+
     def test_sequence_must_increase(self):
         runtime=ZoneRuntime(); runtime.enqueue_input(entity_id="mob1",sequence=1,move_x=-1,source="mob")
         with self.assertRaisesRegex(ProtocolError,"sequence must increase"):

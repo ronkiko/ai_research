@@ -12,8 +12,11 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   status, but it must not perform the realtime left/right/stop loop.
 - GameLab is a normal downstream GameClient Host client. Use the official
   `gameclient.v1.clients.base.HostClient` API; never access GameServer internals directly.
-- GameLab must not login, logout, replace, or reset the Host-owned player
-  session. It behaves like another joystick attached to the already active player.
+- GameLab must not login, logout, or replace the Host-owned player session.
+  It behaves like another joystick attached to the already active player.
+- TRAIN/VERIFY episode boundaries use Host's non-destructive physical reset
+  (spawn x=100, vx=0, move_x=0) while preserving session and sequence. RUN must
+  not reset.
 - Physics is 120 Hz, Motor is 60 Hz, Spine is 10 Hz unless the experiment
   explicitly changes the documented contract.
 - Rollout boundaries, reward, logging, measurement, checkpointing, and terminal

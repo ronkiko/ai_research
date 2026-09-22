@@ -47,6 +47,13 @@ class ZoneService:
             )
             return message("command_queued", command_id=command_id,
                            world_tick=self.runtime.world_tick)
+        if kind == "reset":
+            command_id = self.runtime.enqueue_reset(
+                entity_id=str(request.get("entity_id", "")),
+                x=request.get("x", 100.0),
+            )
+            return message("command_queued", command_id=command_id,
+                           world_tick=self.runtime.world_tick)
         if kind == "snapshot":
             return self.runtime.latest_snapshot()
         if kind == "health":

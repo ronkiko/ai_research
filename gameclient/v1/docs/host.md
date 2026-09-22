@@ -71,8 +71,14 @@ service addresses.
 
 Host binds only to loopback by default and uses newline-delimited JSON on
 `127.0.0.1:17700`. The implemented v1 operations are `health`, `describe`,
-`players`, `login`, `session`, `state`, `input`, `events`, and
-`logout`.
+`players`, `login`, `session`, `state`, `input`, `reset`, `events`,
+and `logout`.
+
+`reset` is a non-destructive physical-state reset for laboratory episode
+boundaries. It restores the active player to spawn state (`x=100`, `vx=0`,
+`move_x=0`) without replacing the GameServer session and without resetting
+or incrementing Host's monotonic command sequence. It is distinct from
+`logout/login`.
 
 The protocol must remain suitable for simultaneous CLI, MCP, GUI, AI, debug,
 and automation Clients.

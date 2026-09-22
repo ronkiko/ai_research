@@ -6,7 +6,7 @@ import json
 
 from .config import DEFAULT_GOAL_TIMEOUT, SUCCESS_TOLERANCE
 from .host import HostClient
-from .runtime import GoalRunner, ensure_player, load_runtime_model
+from .runtime import GoalRunner, ensure_player, load_runtime_model, reset_player_state
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ensure_player(client, args.player)
         for index in range(1, args.runs + 1):
+            reset_player_state(client, args.player)
             result = GoalRunner(model, client, player_id=args.player).run(
                 args.target,
                 tolerance=args.tolerance,

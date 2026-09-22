@@ -114,9 +114,14 @@ verification, and live model runs execute asynchronously and publish bounded
 status.
 
 GameLab does not own player-session lifecycle. It never logs in, logs out, or
-resets the Host-owned session. A Host player must already be active. All
+replaces the Host-owned session. A Host player must already be active. All
 downstream clients share Host's monotonic command sequence; the latest accepted
 movement intent becomes active.
+
+TRAIN resets physical player state to spawn before every episode, and VERIFY
+does the same before every frozen run. This reset is a separate Host operation:
+it sets `x=100`, `vx=0`, and `move_x=0` while preserving session identity
+and Host command sequence. RUN never performs this reset.
 
 The MCP may expose reward instrumentation and experiment metadata, but it does
 not expose low-level actuator commands or model implementation details. GameTable

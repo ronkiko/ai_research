@@ -113,6 +113,11 @@ CLI, GUI, and MCP do not own separate sessions. If MCP sends `move right`,
 GUI and CLI can observe the resulting state/event; if GUI then sends
 `move left`, MCP can observe that event in the same Host stream.
 
+Host also provides a non-destructive `reset` operation for laboratory
+episode boundaries. It resets physical player state to spawn while preserving
+the shared session and monotonic input sequence; it is not exposed as a normal
+gameplay command in the GameClient MCP surface.
+
 ## Tests
 
 ```bash

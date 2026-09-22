@@ -112,7 +112,7 @@ class HostService:
                 role_to_clients="server",
                 host_protocol_version=HOST_PROTOCOL_VERSION,
                 gameplay_ready=True,
-                capabilities=["players", "login", "session", "state", "input", "events", "logout"],
+                capabilities=["players", "login", "session", "state", "input", "reset", "events", "logout"],
                 upstream={
                     "entity": "GameServer Gateway",
                     "host": self.gateway_host,
@@ -137,6 +137,8 @@ class HostService:
             return self._state()
         if kind == "input":
             return self._input(request)
+        if kind == "reset":
+            return self._reset(request)
         if kind == "events":
             return self._events_since(request)
         if kind == "logout":
@@ -210,6 +212,32 @@ class HostService:
                 queued_at_tick=response.get("world_tick"),
             )
             return message("input", sequence=sequence, move_x=move_x, event=event)
+
+    def _reset(self, request: dict[str, Any]) -> dict[str, Any]:
+        client_id = self._client_id(request)
+        with self._operation_lock:
+            session = self._session_copy()
+            response = self.gateway.request(
+                "reset",
+                session_id=session["session_id"],
+            )
+            with self._state_lock:
+                sequence = self._sequence
+            event = self._append_event(
+                "reset",
+                client_id=client_id,
+                player_id=session["player_id"],
+                sequence=sequence,
+                x=100.0,
+                command_id=response.get("command_id"),
+                queued_at_tick=response.get("world_tick"),
+            )
+            return message(
+                "reset",
+                sequence=sequence,
+                x=100.0,
+                event=event,
+            )
 
     def _events_since(self, request: dict[str, Any]) -> dict[str, Any]:
         after = request.get("after_event_id", 0)

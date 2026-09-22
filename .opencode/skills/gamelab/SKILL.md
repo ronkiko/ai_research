@@ -12,7 +12,8 @@ or verification scripts.
 The laboratory is another downstream client of the same GameClient Host hub
 and active player session used by other clients. It exposes model metadata,
 reward configuration, asynchronous training, frozen verification, and live
-model runs. It does not login, logout, or reset the shared Host session.
+model runs. It does not login/logout or replace the shared Host session.
+TRAIN/VERIFY use Host's non-destructive physical episode reset; RUN does not.
 
 Start with:
 

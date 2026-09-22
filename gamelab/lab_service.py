@@ -19,7 +19,7 @@ from .config import (
 from .host import HostClient, HostError
 from .models import SpineMotorPolicy, load_checkpoint, save_checkpoint
 from .reward import RewardConfig, RewardStore
-from .runtime import GoalRunner, checkpoint_path, ensure_player
+from .runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
 from .training import collect_episode, ppo_update
 
 
@@ -382,6 +382,7 @@ class Laboratory:
             for index in range(1, runs + 1):
                 if self._cancel.is_set():
                     break
+                reset_player_state(client, self.player_id)
                 result = runner.run(
                     target_x,
                     tolerance=tolerance,

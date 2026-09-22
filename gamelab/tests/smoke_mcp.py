@@ -305,8 +305,22 @@ async def run_flow(
             ]
             if destructive:
                 raise AssertionError(
-                    f"GameLab must be joystick-only on Host session lifecycle: {destructive}"
+                    f"GameLab must not own Host session lifecycle: {destructive}"
                 )
+
+            reset_clients = {
+                event.get("client_id")
+                for event in events
+                if event.get("kind") == "reset"
+            }
+            for expected in ("gamelab-mcp-train", "gamelab-mcp-verify"):
+                if expected not in reset_clients:
+                    raise AssertionError(
+                        f"missing non-destructive episode reset from {expected}: {events}"
+                    )
+            if "gamelab-mcp-run" in reset_clients:
+                raise AssertionError(f"live RUN must not reset player state: {events}")
+
             if not any(
                 event.get("kind") == "input"
                 and str(event.get("client_id", "")).startswith("gamelab-mcp-")
@@ -356,7 +370,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP shared-Host joystick smoke tools=14 no_session_reset=yes")
+                print("PASS gamelab MCP shared-Host smoke tools=14 episode_reset=yes session_preserved=yes")
                 return 0
             except Exception:
                 server_log.flush()

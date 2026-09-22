@@ -57,6 +57,13 @@ class _FakeGatewayHandler(socketserver.BaseRequestHandler):
                     command_id=len(self.server.sequences),
                     world_tick=43,
                 )
+            elif kind == "reset":
+                self.server.resets += 1
+                response = gateway_message(
+                    "command_queued",
+                    command_id=100 + self.server.resets,
+                    world_tick=44,
+                )
             elif kind == "logout":
                 response = gateway_message("logout", player_id="player1")
             else:
@@ -71,6 +78,7 @@ class _FakeGateway(socketserver.ThreadingTCPServer):
     def __init__(self):
         super().__init__(("127.0.0.1", 0), _FakeGatewayHandler)
         self.sequences = []
+        self.resets = 0
 
 
 class HostVerticalTests(unittest.TestCase):
@@ -120,6 +128,34 @@ class HostVerticalTests(unittest.TestCase):
             cli.close()
             mcp.close()
             gui.close()
+
+    def test_reset_preserves_session_and_sequence(self):
+        operator = self.client("operator")
+        lab = self.client("gamelab")
+        try:
+            login = operator.login("player1")
+            session_id = login["session"]["session_id"]
+            first = operator.input(1)
+            self.assertEqual(first["sequence"], 1)
+
+            reset = lab.reset()
+            self.assertEqual(reset["sequence"], 1)
+            self.assertEqual(self.gateway.resets, 1)
+
+            session = operator.session()
+            self.assertEqual(session["session_id"], session_id)
+            self.assertEqual(session["sequence"], 1)
+
+            second = operator.input(0)
+            self.assertEqual(second["sequence"], 2)
+            events = operator.events(0, limit=20)["events"]
+            reset_events = [event for event in events if event["kind"] == "reset"]
+            self.assertEqual(len(reset_events), 1)
+            self.assertEqual(reset_events[0]["client_id"], "gamelab")
+            self.assertEqual(reset_events[0]["sequence"], 1)
+        finally:
+            operator.close()
+            lab.close()
 
     def test_event_history_is_memory_bounded_and_page_bounded(self):
         client = self.client("cli")

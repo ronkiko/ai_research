@@ -53,6 +53,7 @@ def _public_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "player_id",
         "sequence",
         "move_x",
+        "x",
         "command_id",
         "queued_at_tick",
     )

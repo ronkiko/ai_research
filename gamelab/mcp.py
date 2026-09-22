@@ -84,8 +84,13 @@ def describe() -> dict[str, Any]:
         ),
         "control_relationship": (
             "GameLab behaves as another joystick on the shared Host session: "
-            "it may observe state and submit input, but it does not login, "
-            "logout, or reset the Host-owned player session"
+            "it observes state and submits input, but never login/logout or "
+            "replace the Host-owned player session"
+        ),
+        "episode_reset": (
+            "TRAIN and VERIFY request a non-destructive Host reset of physical "
+            "player state to spawn x=100 with vx=0 and move_x=0; session and "
+            "Host command sequence are preserved. RUN never resets."
         ),
         "arbitration": (
             "Host serializes all client inputs into one monotonic sequence; "

@@ -68,6 +68,37 @@ def ensure_player(client: HostClient, player_id: str) -> dict[str, Any]:
         )
     return wait_player(client)
 
+def reset_player_state(
+    client: HostClient,
+    player_id: str,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
+    """Reset physical episode state through Host without replacing its session."""
+    before = ensure_player(client, player_id)
+    before_session = before.get("session") or {}
+    before_sequence = before_session.get("sequence")
+    client.reset()
+
+    deadline = time.monotonic() + timeout
+    last_state: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        state = client.state()
+        last_state = state
+        session = state.get("session") or {}
+        if session.get("player_id") != player_id:
+            raise HostError("Host player changed during GameLab episode reset")
+        if session.get("sequence") != before_sequence:
+            raise HostError("Host sequence changed during GameLab episode reset")
+        player = player_from_state(state)
+        if (
+            float(player["x"]) == 100.0
+            and float(player["vx"]) == 0.0
+            and int(player["move_x"]) == 0
+        ):
+            return state
+        time.sleep(0.01)
+    raise HostError(f"GameLab episode reset did not settle: {last_state}")
+
 
 class GoalRunner:
     """Runs only learned inference at 10 Hz Spine / 60 Hz Motor."""

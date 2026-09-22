@@ -132,6 +132,12 @@ class HostClient:
             move_x=move_x,
         )
 
+    def reset(self) -> dict[str, Any]:
+        return self.connection.request(
+            "reset",
+            client_id=self.client_id,
+        )
+
     def events(
         self,
         after_event_id: int = 0,

@@ -126,6 +126,29 @@ def main() -> int:
                 if observed["session"].get("sequence") != 1:
                     raise AssertionError(f"operator must observe shared sequence 1: {observed}")
 
+                reset = lab.reset()
+                if reset.get("sequence") != 1:
+                    raise AssertionError(f"reset must preserve Host sequence 1: {reset}")
+                deadline = time.monotonic() + 2.0
+                reset_state = None
+                while time.monotonic() < deadline:
+                    reset_state = operator.state()
+                    reset_player = player_from_state(reset_state)
+                    if (
+                        float(reset_player["x"]) == 100.0
+                        and float(reset_player["vx"]) == 0.0
+                        and int(reset_player["move_x"]) == 0
+                    ):
+                        break
+                    time.sleep(0.01)
+                else:
+                    raise AssertionError(f"reset did not restore spawn state: {reset_state}")
+
+                if reset_state["session"].get("session_id") != operator_session.get("session_id"):
+                    raise AssertionError("reset replaced shared Host session")
+                if reset_state["session"].get("sequence") != 1:
+                    raise AssertionError("reset changed shared Host sequence")
+
                 events = operator.events(0, limit=20).get("events", [])
                 if not any(
                     event.get("kind") == "input"
@@ -133,6 +156,12 @@ def main() -> int:
                     for event in events
                 ):
                     raise AssertionError(f"GameLab input not visible in shared Host events: {events}")
+                if not any(
+                    event.get("kind") == "reset"
+                    and event.get("client_id") == "gamelab-smoke"
+                    for event in events
+                ):
+                    raise AssertionError(f"GameLab reset event not visible through Host: {events}")
                 if any(
                     event.get("kind") in {"login", "logout"}
                     and str(event.get("client_id", "")).startswith("gamelab")
@@ -140,17 +169,13 @@ def main() -> int:
                 ):
                     raise AssertionError(f"GameLab unexpectedly owned Host session lifecycle: {events}")
 
-                if int(observed_player["move_x"]) != 0:
-                    stopped = lab.input(0)
-                    if int(stopped.get("sequence", 0)) <= 1:
-                        raise AssertionError(f"stop must advance shared sequence: {stopped}")
-
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab inference smoke")
 
                 print(
                     "PASS gamelab shared-Host joystick smoke "
-                    f"action={move_x} x={observed_player['x']} no_session_reset=yes"
+                    f"action={move_x} moved_x={observed_player['x']} "
+                    "episode_reset_x=100 session_preserved=yes"
                 )
                 return 0
             except Exception:

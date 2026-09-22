@@ -40,7 +40,7 @@ from .models import (
     sensor_frame,
 )
 from .reward import RewardConfig, RewardStore, step_reward
-from .runtime import checkpoint_path, ensure_player
+from .runtime import checkpoint_path, ensure_player, reset_player_state
 
 
 @dataclass
@@ -78,7 +78,7 @@ def collect_episode(
 ) -> EpisodeResult:
     model.eval()
     reward_config = (reward_config or RewardConfig()).validated()
-    state = ensure_player(client, player_id)
+    state = reset_player_state(client, player_id)
     player = player_from_state(state)
     history = SensorHistory(
         sensor_frame(
