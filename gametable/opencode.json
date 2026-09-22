@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "game_v1": {
+      "type": "local",
+      "command": [
+        "./gameclient/v1/op/mcp.sh"
+      ],
+      "cwd": "..",
+      "enabled": true,
+      "timeout": 10000
+    },
+    "gamelab_v1": {
+      "type": "local",
+      "command": [
+        "./gamelab/op/mcp.sh"
+      ],
+      "cwd": "..",
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}

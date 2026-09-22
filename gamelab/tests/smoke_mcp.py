@@ -113,8 +113,20 @@ async def run_flow(checkpoint: Path) -> None:
                 raise AssertionError(f"bad GameLab health: {health}")
 
             info = await tool(session, "model_info")
-            if info.get("motor_count") != 1 or info.get("procedural_controller") is not False:
+            if info.get("trainable") is not True or info.get("goal_interface") != "target_x":
                 raise AssertionError(f"bad model contract: {info}")
+            for hidden in (
+                "architecture",
+                "physics_hz",
+                "spine_hz",
+                "motor_hz",
+                "motor_count",
+                "procedural_controller",
+            ):
+                if hidden in info:
+                    raise AssertionError(
+                        f"agent-facing model_info disclosed implementation {hidden}: {info}"
+                    )
 
             started = await tool(
                 session,

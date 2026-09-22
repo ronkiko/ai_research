@@ -40,6 +40,9 @@ ai_research/
 - [`gamelab/`](gamelab/) — отдельная лаборатория иерархического обучаемого
   управления: LLM задаёт стратегическую цель, Spine CNN и Motor MLP обучаются
   самостоятельно замыкать realtime motor loop через GameClient Host.
+- [`gametable/`](gametable/) — отдельный рабочий стол OpenCode для
+  LLM-лаборанта: директор ставит задачу в диалоге, а агент получает live-world
+  и experimental-bench инструменты без заранее записанного решения.
 
 ## Стек
 

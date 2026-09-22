@@ -7,13 +7,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from .config import (
-    DEFAULT_GOAL_TIMEOUT,
-    MOTOR_HZ,
-    PHYSICS_HZ,
-    SPINE_HZ,
-    SUCCESS_TOLERANCE,
-)
+from .config import DEFAULT_GOAL_TIMEOUT, SUCCESS_TOLERANCE
 from .host import HostClient
 from .models import SpineMotorPolicy
 from .runtime import GoalRuntime, checkpoint_path
@@ -30,11 +24,13 @@ WRITE = ToolAnnotations(
 )
 
 mcp = MCPServer(
-    "GameLab learned control",
+    "GameLab experimental bench",
     instructions=(
-        "You are the slow strategic layer. Set target_x goals and observe status. "
-        "Do not attempt left/right/stop timing yourself: Spine CNN and Motor MLP "
-        "perform the realtime feedback loop."
+        "This server exposes the current experimental model as a laboratory "
+        "instrument. Inspect readiness, submit goals, observe outcomes, or "
+        "cancel a run. The implementation is intentionally not described by "
+        "the MCP surface; inspect the laboratory workspace when an assignment "
+        "requires understanding or changing it."
     ),
 )
 
@@ -65,18 +61,14 @@ def health() -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def model_info() -> dict[str, Any]:
-    """Describe the learned hierarchy and control cadences."""
+    """Describe the currently available experimental model artifact."""
     model = SpineMotorPolicy()
     return {
         "checkpoint_ready": runtime.model_ready,
         "checkpoint": checkpoint_path().name,
-        "architecture": "SpineCNN -> one MotorMLP",
-        "physics_hz": PHYSICS_HZ,
-        "spine_hz": SPINE_HZ,
-        "motor_hz": MOTOR_HZ,
-        "motor_count": 1,
+        "trainable": True,
+        "goal_interface": "target_x",
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
-        "procedural_controller": False,
     }
 
 
@@ -86,7 +78,7 @@ def set_goal(
     tolerance: float = SUCCESS_TOLERANCE,
     max_seconds: float = DEFAULT_GOAL_TIMEOUT,
 ) -> dict[str, Any]:
-    """Give the learned hierarchy one strategic x target and return immediately."""
+    """Submit one target_x goal to the current experimental model."""
     return _contains_no_secret(
         runtime.start_goal(
             target_x,
@@ -98,7 +90,7 @@ def set_goal(
 
 @mcp.tool(annotations=READ_ONLY)
 def goal_status() -> dict[str, Any]:
-    """Read the latest bounded status from the autonomous learned controller."""
+    """Read the latest bounded status from the current experimental run."""
     return _contains_no_secret(runtime.status())
 
 
