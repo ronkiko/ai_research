@@ -47,3 +47,7 @@ game1/research/weights/**/*.md
 .idea/
 .vscode/
 *.swp
+
+# gamelab: isolated AI environment and learned runtime artifacts
+gamelab/.venv/
+gamelab/runtime/

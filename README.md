@@ -37,6 +37,9 @@ ai_research/
 - [`gameclient/`](gameclient/) — независимый CLI-клиент к публичному Gateway
   GameServer: passwordless lobby, session, snapshots и управление без TUI;
   текстовый вывод удобен человеку, `--json` — агентам и скриптам.
+- [`gamelab/`](gamelab/) — отдельная лаборатория иерархического обучаемого
+  управления: LLM задаёт стратегическую цель, Spine CNN и Motor MLP обучаются
+  самостоятельно замыкать realtime motor loop через GameClient Host.
 
 ## Стек
 
