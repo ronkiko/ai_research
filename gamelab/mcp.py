@@ -336,19 +336,31 @@ def relationship_state() -> dict[str, Any]:
 
 @mcp.tool(annotations=WRITE)
 def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
-    """Record an observed relationship event with a factual note."""
+    """Record one observed event: director_attention, director_concern,
+    director_praise, director_personal_disclosure, director_kept_promise,
+    director_missed_promise, help_offered, help_proved_useful,
+    help_proved_wrong, reunion, jealousy_trigger, conflict, apology, repair,
+    access_granted, first_meeting, or mutual_confession.  Use exactly one listed
+    kind; do not invent combined labels.  A greeting/praise normally maps to
+    director_praise, or may be left unrecorded if it adds no durable context."""
     return _public(relationship.event(kind=kind, evidence_note=evidence_note))
 
 
 @mcp.tool(annotations=WRITE)
 def relationship_action(kind: str, note: str) -> dict[str, Any]:
-    """Record Yuki's social intention before she expresses it in chat herself."""
+    """Record Yuki's intention before chat: ask_for_help, ask_personal_question,
+    offer_support, share_vulnerability, flirt, confess_feelings,
+    request_hand_holding, request_embrace, request_kiss, set_boundary, decline,
+    or repair_attempt.  Use exactly one listed kind; do not fabricate a label."""
     return _public(relationship.action(kind=kind, note=note))
 
 
 @mcp.tool(annotations=WRITE)
 def relationship_consent(action: str, actor: str, state: str, evidence_note: str) -> dict[str, Any]:
-    """Record explicit consent, decline, or revocation for one narrative action."""
+    """Record explicit consent for hand_holding, embrace, kiss,
+    affectionate_touch, or private_intimacy. actor is brain or director; state
+    is unknown, invited, accepted, declined, or revoked. Each person and action
+    is separate; never infer consent from praise, access, employment, or silence."""
     return _public(relationship.consent(
         action=action, actor=actor, state=state, evidence_note=evidence_note,
     ))

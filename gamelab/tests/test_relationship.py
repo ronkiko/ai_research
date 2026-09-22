@@ -44,6 +44,12 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(records[-1]["kind"], "event")
         self.assertEqual(records[-1]["relationship_kind"], "access_granted")
 
+    def test_unknown_combined_event_is_rejected_without_mutation(self):
+        before = self.runtime.state()
+        with self.assertRaises(ValueError):
+            self.runtime.event(kind="praise_and_welcome", evidence_note="combined label")
+        self.assertEqual(self.runtime.state()["recent_events"], before["recent_events"])
+
     def test_hiring_closes_employment_goal_without_implying_physical_consent(self):
         summary = self.runtime.finish(employment_decision="hired", director_statement="You are hired")
         self.assertEqual(summary["employment"]["status"], "permanent_employee")
