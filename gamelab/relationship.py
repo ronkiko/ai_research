@@ -9,9 +9,10 @@ import json
 from pathlib import Path
 import time
 from typing import Any, Callable
+import uuid
 
 
-RELATIONSHIP_VERSION = 1
+RELATIONSHIP_VERSION = 2
 CHARACTER_ID = "yuki-02"
 CONSENT_ACTIONS = {
     "hand_holding", "embrace", "kiss", "affectionate_touch", "private_intimacy",
@@ -34,7 +35,8 @@ EVENT_DELTAS: dict[str, dict[str, int]] = {
     "apology": {"repair_willingness": 5, "hurt": -2},
     "repair": {"trust": 5, "hurt": -5, "resentment": -4, "shared_history": 3},
     "access_granted": {"trust": 3, "warmth": 3, "professional_belonging": 4},
-    "first_meeting": {"proximity_comfort": 8, "shared_history": 5, "romantic_inhibition": -4},
+    "first_meeting": {"warmth": 2, "shared_history": 2, "being_understood": 1},
+    "first_lab_meeting": {"proximity_comfort": 8, "shared_history": 5, "romantic_inhibition": -4},
     "mutual_confession": {"romantic_awareness": 35, "relationship_security": 15, "intimacy_interest": 12},
 }
 ACTION_DELTAS: dict[str, dict[str, int]] = {
@@ -97,7 +99,16 @@ class RelationshipRuntime:
             state = json.loads(self.current_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             return
-        if isinstance(state, dict) and state.get("version") == RELATIONSHIP_VERSION:
+        if not isinstance(state, dict):
+            return
+        if state.get("version") == 1:
+            state["relationship_session_id"] = state.get("executive_session_id")
+            location = state.setdefault("location", {})
+            location["first_lab_meeting_occurred"] = location.pop("first_meeting_occurred", False)
+            state["version"] = RELATIONSHIP_VERSION
+            self._state = state
+            self._save()
+        elif state.get("version") == RELATIONSHIP_VERSION:
             self._state = state
 
     def _save(self) -> None:
@@ -116,10 +127,11 @@ class RelationshipRuntime:
             payload["relationship_kind"] = payload.pop("kind")
         event = {
             "relationship_version": RELATIONSHIP_VERSION,
-            "executive_session_id": state["executive_session_id"],
+            "relationship_session_id": state["relationship_session_id"],
+            "executive_session_id": state.get("executive_session_id"),
             "character_id": CHARACTER_ID, "time": self.clock(), "kind": kind, **payload,
         }
-        with (self.root / f"{state['executive_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
+        with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
 
     def _require_open(self) -> dict[str, Any]:
@@ -138,9 +150,9 @@ class RelationshipRuntime:
 
     @staticmethod
     def _stage(stats: dict[str, int], location: dict[str, Any]) -> str:
-        if location["first_meeting_occurred"] and stats["touch_trust"] >= 70 and stats["intimacy_interest"] >= 70:
+        if location["first_lab_meeting_occurred"] and stats["touch_trust"] >= 70 and stats["intimacy_interest"] >= 70:
             return "intimate_partnership"
-        if location["first_meeting_occurred"] and stats["touch_trust"] >= 45 and stats["romantic_attraction"] >= 55:
+        if location["first_lab_meeting_occurred"] and stats["touch_trust"] >= 45 and stats["romantic_attraction"] >= 55:
             return "physical_affection"
         if stats["romantic_attraction"] >= 55 and stats["relationship_security"] >= 40:
             return "romantic_relationship"
@@ -160,24 +172,46 @@ class RelationshipRuntime:
                 and stats["abandonment_fear"] >= 55 and stats["stress"] >= 50
                 and stats["autonomy"] <= 45 and stats["relationship_security"] <= 40)
 
-    def begin(self, *, executive_session_id: str, deadline_at: float) -> dict[str, Any]:
+    def begin(self, *, first_impression: str, duration_minutes: float = 180.0) -> dict[str, Any]:
         if self._state is not None and self._state.get("status") == "active":
             raise RelationshipError("Yuki relationship session is already active")
-        if not isinstance(executive_session_id, str) or not executive_session_id:
-            raise ValueError("executive_session_id is required")
+        impression = self._text(first_impression, "first_impression")
+        duration = float(duration_minutes)
+        if not 1.0 <= duration <= 180.0:
+            raise ValueError("duration_minutes must be within [1,180]")
         now = self.clock()
+        relationship_session_id = uuid.uuid4().hex
         self._state = {
             "version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
-            "executive_session_id": executive_session_id, "status": "active",
-            "started_at": now, "deadline_at": float(deadline_at), "stats": _initial_stats(),
-            "location": {"state": "desk_only", "access_granted": False, "first_meeting_occurred": False},
+            "relationship_session_id": relationship_session_id,
+            "executive_session_id": None, "status": "active",
+            "started_at": now, "deadline_at": now + duration * 60.0, "stats": _initial_stats(),
+            "location": {"state": "desk_only", "access_granted": False, "first_lab_meeting_occurred": False},
             "employment": {"status": "intern", "goal": "permanent_employee", "decision": "pending"},
             "consent": {action: {"brain": "unknown", "director": "unknown"} for action in CONSENT_ACTIONS},
             "events": [], "actions": [],
         }
         self._save()
-        self._append("begin", {"deadline_at": float(deadline_at), "employment_goal": "permanent_employee"})
+        self._append("begin", {"deadline_at": self._state["deadline_at"], "duration_minutes": duration,
+                               "employment_goal": "permanent_employee"})
+        self.event(kind="first_meeting", evidence_note=impression)
         return self.state()
+
+    def attach_executive(self, executive_session_id: str) -> dict[str, Any]:
+        state = self._require_open()
+        if not isinstance(executive_session_id, str) or not executive_session_id:
+            raise ValueError("executive_session_id is required")
+        attached = state.get("executive_session_id")
+        if attached is not None and attached != executive_session_id:
+            raise RelationshipError("relationship session already has a different Executive")
+        state["executive_session_id"] = executive_session_id
+        self._save()
+        self._append("executive_attached", {"attached_executive_session_id": executive_session_id})
+        return self.state()
+
+    def deadline_at(self) -> float:
+        """Return the authoritative shared-shift deadline for sibling runtimes."""
+        return float(self._require_open()["deadline_at"])
 
     def _apply(self, delta: dict[str, int]) -> tuple[dict[str, int], dict[str, int]]:
         state = self._require_open(); stats = state["stats"]
@@ -191,13 +225,13 @@ class RelationshipRuntime:
         if kind not in EVENT_DELTAS:
             raise ValueError(f"kind must be one of {sorted(EVENT_DELTAS)}")
         note = self._text(evidence_note, "evidence_note")
-        if kind == "first_meeting" and not state["location"]["access_granted"]:
-            raise RelationshipError("first meeting requires narrative lab access")
+        if kind == "first_lab_meeting" and not state["location"]["access_granted"]:
+            raise RelationshipError("first laboratory meeting requires narrative lab access")
         before, after = self._apply(EVENT_DELTAS[kind])
         if kind == "access_granted":
             state["location"].update(access_granted=True, state="lab_access")
-        if kind == "first_meeting":
-            state["location"].update(first_meeting_occurred=True, state="laboratory")
+        if kind == "first_lab_meeting":
+            state["location"].update(first_lab_meeting_occurred=True, state="laboratory")
         item = {"event_id": f"r{len(state['events']) + 1}", "kind": kind, "evidence_note": note, "time": self.clock()}
         state["events"].append(item); self._save(); self._append("event", {**item, "before": before, "after": after})
         return self.state()
@@ -233,17 +267,20 @@ class RelationshipRuntime:
             state["employment"]["decision"] = employment_decision
         state["status"] = "finished"; state["finished_at"] = self.clock(); self._save()
         # Append after changing status without requiring a further public operation.
-        event = {"relationship_version": RELATIONSHIP_VERSION, "executive_session_id": state["executive_session_id"],
+        event = {"relationship_version": RELATIONSHIP_VERSION,
+                 "relationship_session_id": state["relationship_session_id"],
+                 "executive_session_id": state.get("executive_session_id"),
                  "character_id": CHARACTER_ID, "time": state["finished_at"], "kind": "employment_decision",
                  "decision": employment_decision, "director_statement": statement}
-        with (self.root / f"{state['executive_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
+        with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
         return self.summary()
 
     def state(self) -> dict[str, Any]:
         state = self._require_open(); stats = state["stats"]
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
-                "executive_session_id": state["executive_session_id"], "status": state["status"],
+                "relationship_session_id": state["relationship_session_id"],
+                "executive_session_id": state.get("executive_session_id"), "status": state["status"],
                 "time_remaining_seconds": max(0.0, state["deadline_at"] - self.clock()),
                 "relationship_stage": self._stage(stats, state["location"]), "yandere_tension": self._tension(stats),
                 "employment": state["employment"], "location": state["location"], "consent": state["consent"],
@@ -254,7 +291,8 @@ class RelationshipRuntime:
             raise RelationshipError("no Yuki relationship session")
         state = self._state; stats = state["stats"]
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
-                "executive_session_id": state["executive_session_id"], "status": state["status"],
+                "relationship_session_id": state["relationship_session_id"],
+                "executive_session_id": state.get("executive_session_id"), "status": state["status"],
                 "relationship_stage": self._stage(stats, state["location"]), "yandere_tension": self._tension(stats),
                 "employment": state["employment"], "consent": state["consent"], "stats": stats,
                 "events": state["events"], "actions": state["actions"], "finished_at": state.get("finished_at")}

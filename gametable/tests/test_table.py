@@ -118,6 +118,7 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_run_status",
             "gamelab_v1_run_cancel",
             "gamelab_v1_run_update_goal",
+            "gamelab_v1_relationship_begin",
             "gamelab_v1_executive_begin",
             "gamelab_v1_executive_state",
             "gamelab_v1_executive_strategy_begin",

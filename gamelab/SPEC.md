@@ -118,6 +118,7 @@ run_start
 run_status
 run_cancel
 run_update_goal
+relationship_begin
 executive_begin
 executive_state
 executive_strategy_begin
@@ -148,8 +149,12 @@ and surfaces advisory plateau/relapse/budget/deadline signals. It never issues
 movement intent, starts/cancels laboratory operations, or chooses a strategy.
 TRAIN/VERIFY/RUN status is copied into it as machine evidence automatically.
 
-Yuki relationship memory is a persistent adult-character narrative layer for
-the Director's conversation during the same Executive shift. It records bounded
+Yuki relationship memory is a persistent adult-character narrative layer. It
+starts at the Director's first conversational address, before an assignment or
+Executive session, and owns the bounded 180-minute shift clock. `first_meeting`
+is that first conversational impression. `access_granted` and
+`first_lab_meeting` separately describe access and an encounter inside the
+fictional laboratory. It records bounded
 relationship events, Yuki's social intentions and explicit consent per physical
 narrative action. It never controls the game, changes the acceptance criterion,
 changes reward, or counts as machine evidence.

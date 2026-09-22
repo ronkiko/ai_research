@@ -245,6 +245,19 @@ def describe() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
+def relationship_begin(first_impression: str, duration_minutes: float = 180.0) -> dict[str, Any]:
+    """Begin Yuki's bounded relationship shift at the Director's first address.
+
+    This records the conversational first meeting and starts the shared shift
+    clock before any research assignment or laboratory access is given.
+    """
+    return _public(relationship.begin(
+        first_impression=first_impression,
+        duration_minutes=duration_minutes,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
 def executive_begin(
     objective: str,
     acceptance_criteria: str,
@@ -252,19 +265,20 @@ def executive_begin(
     plateau_minutes: float = 15.0,
 ) -> dict[str, Any]:
     """Start one bounded strategic research notebook after the Director gives a task."""
+    relationship_state_payload = relationship.state()
+    remaining_minutes = float(relationship_state_payload["time_remaining_seconds"]) / 60.0
+    if remaining_minutes < 1.0:
+        raise ValueError("the relationship shift has less than one minute remaining")
     payload = executive.begin(
         objective=objective,
         acceptance_criteria=acceptance_criteria,
-        duration_minutes=duration_minutes,
+        duration_minutes=min(float(duration_minutes), remaining_minutes),
         plateau_minutes=plateau_minutes,
     )
-    relationship.begin(
-        executive_session_id=payload["executive_session_id"],
-        deadline_at=float(payload["deadline_at"]),
-    )
+    relationship.attach_executive(payload["executive_session_id"])
     duality.begin(
         executive_session_id=payload["executive_session_id"],
-        deadline_at=float(payload["deadline_at"]),
+        deadline_at=relationship.deadline_at(),
     )
     return _public(payload)
 
@@ -346,9 +360,10 @@ def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
     director_praise, director_personal_disclosure, director_kept_promise,
     director_missed_promise, help_offered, help_proved_useful,
     help_proved_wrong, reunion, jealousy_trigger, conflict, apology, repair,
-    access_granted, first_meeting, or mutual_confession.  Use exactly one listed
-    kind; do not invent combined labels.  A greeting/praise normally maps to
-    director_praise, or may be left unrecorded if it adds no durable context."""
+    access_granted, first_lab_meeting, or mutual_confession. first_meeting means
+    the first conversational contact and is recorded by relationship_begin;
+    first_lab_meeting is the later in-laboratory encounter and requires access.
+    Use exactly one listed kind; do not invent combined labels."""
     return _public(relationship.event(kind=kind, evidence_note=evidence_note))
 
 

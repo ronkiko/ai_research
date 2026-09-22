@@ -89,7 +89,7 @@ python director/build_dataset.py /path/to/opencode-session.sqlite3 --attachments
 # Для новой сессии с Executive добавь:
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl
 # Если сессия использовала Юки, добавить её отдельный narrative journal:
-python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl --relationship-journal /path/to/executive-session.relationship.jsonl
+python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl --relationship-journal /path/to/relationship-session.relationship.jsonl
 # Для Heart–Brain слоя добавить приватный журнал (не передавать следующему Brain):
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --duality-journal /path/to/executive-session.duality.jsonl
 python director/validate_dataset.py

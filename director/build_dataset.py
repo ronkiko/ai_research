@@ -37,7 +37,7 @@ def import_executive_journal(db, sid, path):
     records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
     if not records:
         raise ValueError('Executive journal is empty')
-    ids = {r.get('executive_session_id') for r in records}
+    ids = {r.get('relationship_session_id', r.get('executive_session_id')) for r in records}
     versions = {r.get('executive_version') for r in records}
     if len(ids) != 1 or None in ids or versions != {1}:
         raise ValueError('Executive journal has inconsistent session/version')
@@ -141,9 +141,11 @@ def import_relationship_journal(db, sid, path):
     ids = {r.get('executive_session_id') for r in records}
     versions = {r.get('relationship_version') for r in records}
     characters = {r.get('character_id') for r in records}
-    if len(ids) != 1 or None in ids or versions != {1} or len(characters) != 1 or None in characters:
+    if (len(ids) != 1 or None in ids or len(versions) != 1 or
+            next(iter(versions)) not in {1, 2} or len(characters) != 1 or None in characters):
         raise ValueError('Relationship journal has inconsistent session/version/character')
     relationship_id = next(iter(ids))
+    relationship_version = next(iter(versions))
     begins = [r for r in records if r.get('kind') == 'begin']
     decisions = [r for r in records if r.get('kind') == 'employment_decision']
     if len(begins) != 1 or len(decisions) > 1:
@@ -152,7 +154,7 @@ def import_relationship_journal(db, sid, path):
     decision = decisions[0] if decisions else None
     db.execute('INSERT OR IGNORE INTO source VALUES(?,?,?,?,?)',
                (sha, path.name, 'application/x-ndjson', raw,
-                'Yuki relationship v1 append-only narrative journal supplied with OpenCode session ' + sid))
+                f'Yuki relationship v{relationship_version} append-only narrative journal supplied with OpenCode session ' + sid))
     existing = db.execute('SELECT source_sha256 FROM relationship_session WHERE session_id=?', (sid,)).fetchone()
     if existing:
         if existing[0] != sha:
@@ -162,7 +164,7 @@ def import_relationship_journal(db, sid, path):
     if employment_decision not in {'hired', 'extended', 'rejected', 'pending'}:
         raise ValueError('Relationship journal has invalid employment decision')
     db.execute('INSERT INTO relationship_session VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-               (relationship_id, sid, sha, 1, next(iter(characters)), float(begin['time']),
+               (relationship_id, sid, sha, relationship_version, next(iter(characters)), float(begin['time']),
                 float(decision['time']) if decision else None,
                 'finished' if decision else 'incomplete_archive',
                 'permanent_employee' if employment_decision == 'hired' else 'intern',
@@ -173,7 +175,7 @@ def import_relationship_journal(db, sid, path):
     counts = Counter(record.get('kind') for record in records)
     # Event payloads are preserved; these aggregates deliberately make no claim about emotion truth.
     milestones = sum(record.get('kind') == 'event' and record.get('relationship_kind') in {
-                         'access_granted', 'first_meeting', 'mutual_confession', 'repair'
+                         'first_meeting', 'access_granted', 'first_lab_meeting', 'mutual_confession', 'repair'
                      }
                      for record in records)
     values = {

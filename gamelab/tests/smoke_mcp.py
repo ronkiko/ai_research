@@ -42,6 +42,7 @@ EXPECTED_TOOLS = {
     "run_cancel",
     "run_update_goal",
     "executive_begin",
+    "relationship_begin",
     "executive_state",
     "executive_strategy_begin",
     "executive_strategy_end",
@@ -291,6 +292,18 @@ async def run_flow(
             session_before = operator.session()
             sequence_before = int(session_before.get("sequence", 0))
 
+            relationship_started = await tool(
+                session,
+                "relationship_begin",
+                {
+                    "first_impression": "Director greeted Yuki as the new employee",
+                    "duration_minutes": 180,
+                },
+            )
+            payloads.append(relationship_started)
+            if relationship_started.get("executive_session_id") is not None:
+                raise AssertionError(f"relationship incorrectly depends on Executive: {relationship_started}")
+
             executive_started = await tool(
                 session,
                 "executive_begin",
@@ -309,6 +322,8 @@ async def run_flow(
             payloads.append(relationship)
             if relationship.get("employment", {}).get("status") != "intern":
                 raise AssertionError(f"Yuki internship did not start: {relationship}")
+            if relationship.get("executive_session_id") != executive_started.get("executive_session_id"):
+                raise AssertionError(f"Executive was not attached to relationship: {relationship}")
             duality = await tool(session, "duality_state")
             payloads.append(duality)
             if "confidence_telemetry" not in duality or "confidence" in duality:
@@ -343,7 +358,7 @@ async def run_flow(
             )
             relationship = await tool(
                 session, "relationship_event",
-                {"kind": "first_meeting", "evidence_note": "Director arrived in the laboratory"},
+                {"kind": "first_lab_meeting", "evidence_note": "Director arrived in the laboratory"},
             )
             relationship = await tool(
                 session, "relationship_action",
@@ -647,7 +662,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP smoke tools=26 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
+                print("PASS gamelab MCP smoke tools=27 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
                 return 0
             except Exception:
                 server_log.flush()
