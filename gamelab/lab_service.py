@@ -64,10 +64,15 @@ class Laboratory:
             "episodes_trained": int(extra.get("episodes", 0)),
         }
 
-    def _require_attached_player(self) -> None:
-        client = HostClient("gamelab-preflight")
+    def _require_attached_player(self, host_id: str) -> str:
+        client = HostClient("gamelab-preflight", host_id=host_id)
         try:
-            ensure_player(client, self.player_id)
+            session = client.session()
+            player_id = session.get("player_id")
+            if not isinstance(player_id, str) or not player_id:
+                raise HostError("selected Host has no active player")
+            ensure_player(client, player_id)
+            return player_id
         finally:
             client.close()
 
@@ -189,6 +194,7 @@ class Laboratory:
         fresh: bool,
         seed: int,
         max_seconds: float,
+        host_id: str,
     ) -> dict[str, Any]:
         if type(episodes) is not int or not 1 <= episodes <= 500:
             raise ValueError("episodes must be within [1,500]")
@@ -197,7 +203,7 @@ class Laboratory:
         target = self._target(target_x)
         seconds = self._seconds(max_seconds, name="max_seconds")
         reward = self.reward_store.load()
-        self._require_attached_player()
+        player_id = self._require_attached_player(host_id)
         return self._start(
             "training",
             {
@@ -209,6 +215,8 @@ class Laboratory:
                 "max_seconds": seconds,
                 "reward": reward.public(),
                 "recent_episodes": [],
+                "host_id": host_id,
+                "player_id": player_id,
             },
             self._training_worker,
             episodes,
@@ -217,6 +225,8 @@ class Laboratory:
             seed,
             seconds,
             reward,
+            host_id,
+            player_id,
         )
 
     def _training_worker(
@@ -227,6 +237,8 @@ class Laboratory:
         seed: int,
         max_seconds: float,
         reward: RewardConfig,
+        host_id: str,
+        player_id: str,
     ) -> None:
         random.seed(seed)
         torch.manual_seed(seed)
@@ -255,10 +267,10 @@ class Laboratory:
                 extra={"episodes": 0, "seed": seed},
             )
 
-        client = HostClient("gamelab-mcp-train")
+        client = HostClient("gamelab-mcp-train", host_id=host_id)
         recent: deque[dict[str, Any]] = deque(maxlen=20)
         try:
-            ensure_player(client, self.player_id)
+            ensure_player(client, player_id)
 
             completed = 0
             for offset in range(1, episodes + 1):
@@ -273,7 +285,7 @@ class Laboratory:
                 result = collect_episode(
                     model,
                     client,
-                    player_id=self.player_id,
+                    player_id=player_id,
                     target_x=target,
                     max_seconds=max_seconds,
                     reward_config=reward,
@@ -334,6 +346,7 @@ class Laboratory:
         runs: int,
         tolerance: float,
         max_seconds: float,
+        host_id: str,
     ) -> dict[str, Any]:
         target = self._target(target_x)
         assert target is not None
@@ -344,7 +357,7 @@ class Laboratory:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
         self.ensure_model()
-        self._require_attached_player()
+        player_id = self._require_attached_player(host_id)
         return self._start(
             "verify",
             {
@@ -355,12 +368,16 @@ class Laboratory:
                 "tolerance": tolerance,
                 "max_seconds": seconds,
                 "results": [],
+                "host_id": host_id,
+                "player_id": player_id,
             },
             self._verify_worker,
             target,
             runs,
             tolerance,
             seconds,
+            host_id,
+            player_id,
         )
 
     def _verify_worker(
@@ -369,20 +386,22 @@ class Laboratory:
         runs: int,
         tolerance: float,
         max_seconds: float,
+        host_id: str,
+        player_id: str,
     ) -> None:
         model = SpineMotorPolicy()
         load_checkpoint(checkpoint_path(), model)
         model.eval()
-        client = HostClient("gamelab-mcp-verify")
+        client = HostClient("gamelab-mcp-verify", host_id=host_id)
         results: list[dict[str, Any]] = []
         passed = 0
         try:
-            ensure_player(client, self.player_id)
-            runner = GoalRunner(model, client, player_id=self.player_id)
+            ensure_player(client, player_id)
+            runner = GoalRunner(model, client, player_id=player_id)
             for index in range(1, runs + 1):
                 if self._cancel.is_set():
                     break
-                reset_player_state(client, self.player_id)
+                reset_player_state(client, player_id)
                 result = runner.run(
                     target_x,
                     tolerance=tolerance,
@@ -427,6 +446,7 @@ class Laboratory:
         target_x: float,
         tolerance: float,
         max_seconds: float,
+        host_id: str,
     ) -> dict[str, Any]:
         target = self._target(target_x)
         assert target is not None
@@ -435,18 +455,22 @@ class Laboratory:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
         self.ensure_model()
-        self._require_attached_player()
+        player_id = self._require_attached_player(host_id)
         return self._start(
             "run",
             {
                 "target_x": target,
                 "tolerance": tolerance,
                 "max_seconds": seconds,
+                "host_id": host_id,
+                "player_id": player_id,
             },
             self._run_worker,
             target,
             tolerance,
             seconds,
+            host_id,
+            player_id,
         )
 
     def _run_worker(
@@ -454,13 +478,15 @@ class Laboratory:
         target_x: float,
         tolerance: float,
         max_seconds: float,
+        host_id: str,
+        player_id: str,
     ) -> None:
         model = SpineMotorPolicy()
         load_checkpoint(checkpoint_path(), model)
         model.eval()
-        client = HostClient("gamelab-mcp-run")
+        client = HostClient("gamelab-mcp-run", host_id=host_id)
         try:
-            runner = GoalRunner(model, client, player_id=self.player_id)
+            runner = GoalRunner(model, client, player_id=player_id)
 
             def update(status: dict[str, Any]) -> None:
                 with self._lock:

@@ -11,6 +11,8 @@ TABLE = ROOT / "gametable"
 SKILLS = TABLE / ".opencode" / "skills"
 SKILL_001 = "001-игровой_клиент_и_базовая_информация_об_игре"
 SKILL_002 = "002-игровая_лаборатория_по_изучению_игровых_механик"
+SKILL_003_ADV = "003-лаборатория_расширеные_настройки"
+SKILL_003_PLUGINS = "003-лаборатория_плагины_подключаем_и_пишем_свои"
 
 
 class GameTableTests(unittest.TestCase):
@@ -30,12 +32,15 @@ class GameTableTests(unittest.TestCase):
             self.assertIs(item["enabled"], True)
             self.assertGreaterEqual(item["timeout"], 5000)
 
-    def test_exactly_two_manuals_are_on_the_table(self):
+    def test_expected_manuals_are_on_the_table(self):
         manuals = {
             path.parent.name
             for path in SKILLS.glob("*/SKILL.md")
         }
-        self.assertEqual(manuals, {SKILL_001, SKILL_002})
+        self.assertEqual(
+            manuals,
+            {SKILL_001, SKILL_002, SKILL_003_ADV, SKILL_003_PLUGINS},
+        )
 
     def test_desk_contains_no_assignment(self):
         text = (
@@ -58,6 +63,8 @@ class GameTableTests(unittest.TestCase):
             TABLE / "DESK.md",
             SKILLS / SKILL_001 / "SKILL.md",
             SKILLS / SKILL_002 / "SKILL.md",
+            SKILLS / SKILL_003_ADV / "SKILL.md",
+            SKILLS / SKILL_003_PLUGINS / "SKILL.md",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
         for forbidden in ("cnn", "mlp", "ppo", "pid"):
@@ -71,6 +78,8 @@ class GameTableTests(unittest.TestCase):
             TABLE / "AGENTS.md",
             TABLE / "DESK.md",
             SKILLS / SKILL_002 / "SKILL.md",
+            SKILLS / SKILL_003_ADV / "SKILL.md",
+            SKILLS / SKILL_003_PLUGINS / "SKILL.md",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         for forbidden in (
@@ -110,6 +119,29 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_run_cancel",
         ):
             self.assertIn(tool, text)
+
+    def test_advanced_manual_documents_host_instances(self):
+        text = (SKILLS / SKILL_003_ADV / "SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for expected in (
+            "game-v1-default",
+            "17700",
+            "17701",
+            "gamelab_v1_host_list",
+            "gamelab_v1_host_create",
+            "gamelab_v1_host_delete",
+            "PERMISSION_DENIED",
+            "host_id",
+        ):
+            self.assertIn(expected, normalized)
+
+    def test_plugins_manual_is_explicit_placeholder(self):
+        text = (
+            SKILLS / SKILL_003_PLUGINS / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        self.assertIn("пока не реализована", normalized)
+        self.assertIn("feedback@gamelab", normalized)
 
     def test_director_is_source_of_assignment(self):
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")

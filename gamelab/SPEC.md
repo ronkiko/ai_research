@@ -12,8 +12,10 @@ The initial task is one-dimensional target positioning.
 
 ## External environment
 
-GameLab uses the official public GameClient Host client API against the Host at
-`127.0.0.1:17700`. GameClient Host remains the only GameServer-facing client.
+GameLab uses the official public GameClient Host client API. Its configured
+default is the game-owned Host `game-v1-default` at `127.0.0.1:17700`.
+GameLab may create additional ordinary Host processes on separate local ports.
+Every Host remains an independent GameServer-facing client.
 
 GameLab may import only the public Host client primitive
 `gameclient.v1.clients.base.HostClient`; it must not access GameServer
@@ -95,6 +97,9 @@ active player session used by GUI, CLI, and `game_v1`. Its MCP surface is:
 ```text
 health
 login
+host_list
+host_create
+host_delete
 describe
 model_info
 reward_get
@@ -114,11 +119,12 @@ Only one long-running laboratory operation may be active at a time. Training,
 verification, and live model runs execute asynchronously and publish bounded
 status.
 
-GameLab may explicitly establish the shared Host player session through
-`login(player_id)`, or reuse it when the same player is already active. It
-never logs out the session and cannot replace a different active player. All
-downstream clients share Host's monotonic command sequence; the latest accepted
-movement intent becomes active.
+GameLab may explicitly establish a selected Host player session through
+`login(player_id, host_id)`, or reuse it when the same player is already
+active. Laboratory operations accept `host_id` and default to
+`game-v1-default`. The default Host is visible but protected from laboratory
+deletion. Additional Hosts created by GameLab are laboratory-owned and can be
+deleted by GameLab.
 
 TRAIN resets physical player state to spawn before every episode, and VERIFY
 does the same before every frozen run. This reset is a separate Host operation:

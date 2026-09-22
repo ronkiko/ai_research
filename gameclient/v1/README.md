@@ -96,6 +96,11 @@ AI MCP Client:
 ./gameclient/v1/op/mcp.sh
 ```
 
+The `game_v1` MCP owns the default Host identity
+`game-v1-default` on `127.0.0.1:17700`. On MCP startup it ensures that a
+compatible default Host is running; if one is already present, it reuses it.
+GameLab may use this Host but does not own or delete it.
+
 The SDK is isolated in the gitignored `gameclient/v1/.venv-mcp` and pinned to
 `mcp==2.2.0`; the launcher does not use the user's global Python packages.
 

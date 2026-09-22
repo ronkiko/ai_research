@@ -121,10 +121,14 @@ async def run_mcp_flow() -> None:
             health = await tool(session, "health")
             if health.get("status") != "ready":
                 raise AssertionError(f"bad health: {health}")
+            if health.get("host_id") != "game-v1-default":
+                raise AssertionError(f"bad default Host identity: {health}")
 
             describe = await tool(session, "describe")
             if describe.get("entity") != "GameClient Host":
                 raise AssertionError(f"bad describe: {describe}")
+            if describe.get("host_id") != "game-v1-default":
+                raise AssertionError(f"describe lacks default Host identity: {describe}")
 
             players = await tool(session, "players")
             if players.get("result") != ["player1", "player2", "player3"]:
@@ -188,11 +192,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="game-v1-mcp-smoke-") as temp:
         temp_path = Path(temp)
         server_log_path = temp_path / "server.log"
-        host_log_path = temp_path / "host.log"
-
-        with server_log_path.open("w+", encoding="utf-8") as server_log, host_log_path.open(
-            "w+", encoding="utf-8"
-        ) as host_log:
+        with server_log_path.open("w+", encoding="utf-8") as server_log:
             server = subprocess.Popen(
                 [str(ROOT / "gameserver/v1/op/server.sh")],
                 cwd=ROOT,
@@ -201,38 +201,32 @@ def main() -> int:
                 text=True,
                 start_new_session=True,
             )
-            host: subprocess.Popen | None = None
             try:
                 wait_port(SERVER_PORT, server)
-                host = subprocess.Popen(
-                    [str(ROOT / "gameclient/v1/op/host.sh")],
-                    cwd=ROOT,
-                    stdout=host_log,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    start_new_session=True,
-                )
-                wait_port(HOST_PORT, host)
 
                 asyncio.run(run_mcp_flow())
 
                 if server.poll() is not None:
                     raise AssertionError("GameServer died during MCP smoke")
-                if host.poll() is not None:
-                    raise AssertionError("GameClient Host died during MCP smoke")
 
-                print("PASS game v1 MCP stdio smoke tools=9 bounded=yes no_session_leak=yes")
+                with socket.create_connection(("127.0.0.1", HOST_PORT), timeout=0.5):
+                    pass
+
+                print("PASS game v1 MCP stdio smoke tools=9 auto_host=yes bounded=yes no_session_leak=yes")
                 return 0
             except Exception:
                 server_log.flush()
-                host_log.flush()
                 print("----- GameServer log -----")
                 print(server_log_path.read_text(encoding="utf-8", errors="replace"))
-                print("----- GameClient Host log -----")
-                print(host_log_path.read_text(encoding="utf-8", errors="replace"))
                 raise
             finally:
-                stop_group(host)
+                subprocess.run(
+                    [str(ROOT / "gameclient/v1/op/host.sh"), "--stop"],
+                    cwd=ROOT,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
                 stop_group(server)
 
 

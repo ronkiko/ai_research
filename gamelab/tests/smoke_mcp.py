@@ -24,6 +24,9 @@ HOST_PORT = 17700
 EXPECTED_TOOLS = {
     "health",
     "login",
+    "host_list",
+    "host_create",
+    "host_delete",
     "describe",
     "model_info",
     "reward_get",
@@ -133,6 +136,7 @@ async def run_flow(
             "GAMELAB_CHECKPOINT": str(checkpoint),
             "GAMELAB_REWARD_CONFIG": str(reward_config),
             "GAMELAB_PLAYER": "player1",
+            "GAMELAB_HOST_REGISTRY": str(reward_config.parent / "hosts.json"),
         },
     )
     async with stdio_client(params) as (read, write):
@@ -147,6 +151,59 @@ async def run_flow(
                 )
 
             payloads: list[Any] = []
+
+            hosts = await tool(session, "host_list")
+            payloads.append(hosts)
+            default_hosts = [
+                item
+                for item in hosts.get("hosts", [])
+                if item.get("host_id") == "game-v1-default"
+            ]
+            if len(default_hosts) != 1:
+                raise AssertionError(f"default Host missing from laboratory listing: {hosts}")
+            if default_hosts[0].get("port") != 17700 or default_hosts[0].get("owner") != "game_v1":
+                raise AssertionError(f"bad default Host contract: {default_hosts[0]}")
+
+            denied = await tool(
+                session,
+                "host_delete",
+                {"host_id": "game-v1-default"},
+            )
+            payloads.append(denied)
+            if denied.get("deleted") is not False:
+                raise AssertionError(f"default Host deletion unexpectedly succeeded: {denied}")
+            if denied.get("error", {}).get("code") != "PERMISSION_DENIED":
+                raise AssertionError(f"default Host deletion lacks permission denial: {denied}")
+
+            created = await tool(
+                session,
+                "host_create",
+                {"host_id": "lab-second"},
+            )
+            payloads.append(created)
+            lab_host = created.get("host") or {}
+            if created.get("created") is not True:
+                raise AssertionError(f"laboratory Host was not created: {created}")
+            if lab_host.get("host_id") != "lab-second" or lab_host.get("port") == 17700:
+                raise AssertionError(f"laboratory Host did not use a separate port: {created}")
+
+            second_login = await tool(
+                session,
+                "login",
+                {"player_id": "player2", "host_id": "lab-second"},
+            )
+            payloads.append(second_login)
+            if second_login.get("session", {}).get("player_id") != "player2":
+                raise AssertionError(f"second Host did not login player2: {second_login}")
+
+            second_health = await tool(
+                session,
+                "health",
+                {"host_id": "lab-second"},
+            )
+            payloads.append(second_health)
+            if not second_health.get("attached_to_player"):
+                raise AssertionError(f"second Host is not attached to player2: {second_health}")
 
             health = await tool(session, "health")
             payloads.append(health)
@@ -182,8 +239,8 @@ async def run_flow(
             payloads.append(description)
             if description.get("operations_are_asynchronous") is not True:
                 raise AssertionError(f"bad laboratory description: {description}")
-            if "same" not in str(description.get("game_connection", "")).lower():
-                raise AssertionError(f"game connection is not described: {description}")
+            if description.get("default_host_id") != "game-v1-default":
+                raise AssertionError(f"default Host is not described: {description}")
 
             info = await tool(session, "model_info")
             payloads.append(info)
@@ -363,6 +420,15 @@ async def run_flow(
             ):
                 raise AssertionError(f"no GameLab joystick input visible in Host events: {events}")
 
+            deleted = await tool(
+                session,
+                "host_delete",
+                {"host_id": "lab-second"},
+            )
+            payloads.append(deleted)
+            if deleted.get("deleted") is not True:
+                raise AssertionError(f"laboratory Host deletion failed: {deleted}")
+
             for payload in payloads:
                 if contains_key(payload, "session_id"):
                     raise AssertionError(f"GameLab MCP leaked session_id: {payload}")
@@ -404,7 +470,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP shared-Host smoke tools=15 login=yes episode_reset=yes session_preserved=yes")
+                print("PASS gamelab MCP smoke tools=18 default_host_protected=yes extra_host=yes episode_reset=yes")
                 return 0
             except Exception:
                 server_log.flush()

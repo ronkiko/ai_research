@@ -6,12 +6,16 @@ The human Operator is the Director. The workstation intentionally contains no
 concrete game assignment and no prewritten solution. The Director gives the
 assignment in the OpenCode conversation after launch.
 
-The assistant's working interface consists of exactly two local manuals:
+The assistant's working interface consists of four local manuals:
 
 1. `001-игровой_клиент_и_базовая_информация_об_игре`
 2. `002-игровая_лаборатория_по_изучению_игровых_механик`
+3. `003-лаборатория_расширеные_настройки`
+4. `003-лаборатория_плагины_подключаем_и_пишем_свои`
 
 They describe the two preconfigured MCP servers `game_v1` and `gamelab_v1`.
+The two 003 manuals cover advanced laboratory-only features and the reserved
+future plugins surface.
 
 The assistant is not expected to enter `../gamelab` or run laboratory shell
 scripts. Training, reward configuration, verification, and model runs are
@@ -19,13 +23,16 @@ available through `gamelab_v1`.
 
 ## Operator launch
 
-The Director starts the shared backend as usual, then launches the workstation:
+The Director starts GameServer and then launches the workstation:
 
 ```bash
 ./gameserver/v1/op/server.sh
-./gameclient/v1/op/host.sh
 ./gametable/op/start.sh
 ```
+
+The `game_v1` MCP ensures its default Host `game-v1-default:17700` is
+running. Starting `./gameclient/v1/op/host.sh` manually is still supported,
+for example when GUI is needed before OpenCode.
 
 `gametable/opencode.json` connects both MCP servers. After OpenCode starts,
 the Director gives the actual assignment in chat.
@@ -46,5 +53,5 @@ Without a management flag it starts OpenCode normally.
 ./gametable/op/check.sh
 ```
 
-This validates the workstation configuration and the two-manual contract. It
+This validates the workstation configuration and the manual contract. It
 does not attempt to solve a game task.

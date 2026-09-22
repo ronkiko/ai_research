@@ -146,9 +146,9 @@ Start the existing realtime backend in separate terminals:
 ## MCP laboratory service
 
 The supported agent interface is the long-lived `gamelab_v1` MCP laboratory.
-It is an ordinary downstream client of the same GameClient Host hub used by
-GUI, CLI, and `game_v1`. All of them observe and control the same active
-Host-owned player session.
+By default it uses the game-owned Host `game-v1-default` on
+`127.0.0.1:17700`. GameLab may also create its own additional ordinary
+GameClient Host instances on other local ports for advanced experiments.
 
 On first MCP startup, if no checkpoint exists, GameLab creates a fresh
 untrained model artifact. The laboratory then exposes:
@@ -156,6 +156,9 @@ untrained model artifact. The laboratory then exposes:
 ```text
 health
 login
+host_list
+host_create
+host_delete
 describe
 model_info
 reward_get
@@ -173,11 +176,13 @@ run_cancel
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
 Start tools return immediately; status tools expose bounded progress/results.
-GameLab can explicitly create the Host player session with `login`, or reuse
-the already active same-player session. It never logs out the shared session
-and cannot replace a session owned by a different active player. TRAIN and
-VERIFY reset only the player's physical episode state through Host while
-preserving session identity and sequence; RUN does not reset.
+GameLab can explicitly create or reuse a player session on a selected
+`host_id`. `game-v1-default` is the default and belongs to the game system;
+GameLab can list and use it but `host_delete(game-v1-default)` returns
+`PERMISSION_DENIED`. Host instances created with `host_create` are
+laboratory-owned and may be deleted by GameLab. TRAIN and VERIFY reset only the
+selected Host player's physical episode state while preserving session identity
+and sequence; RUN does not reset.
 
 Reward configuration is persisted under the ignored `gamelab/runtime/` area
 and applies to subsequent training episodes. The configurable measured signals
@@ -224,6 +229,7 @@ The gate verifies:
 - Motor source has no strategic target input;
 - real fresh-model inference as a second joystick through the shared GameClient Host;
 - real stdio MCP laboratory flow with non-destructive TRAIN/VERIFY resets,
-  preserved session/sequence, and no GameLab login/logout.
+  preserved session/sequence, protected game-owned default Host, and
+  laboratory-owned extra Host lifecycle.
 
 GUI runtime is outside GameLab and is not part of this gate.

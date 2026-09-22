@@ -9,10 +9,16 @@ from mcp.types import ToolAnnotations
 
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
+    DEFAULT_HOST_ID,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
 from .host import HostClient, HostError
+from .hosts import (
+    LabHostError,
+    LabHostPermissionDenied,
+    host_catalog,
+)
 from .lab_service import Laboratory
 from .runtime import checkpoint_path
 
@@ -53,9 +59,19 @@ def _public_session(session: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def health() -> dict[str, Any]:
-    """Check laboratory, shared Host hub, model, and active-player attachment."""
-    client = HostClient("gamelab-health")
+def health(host_id: str = DEFAULT_HOST_ID) -> dict[str, Any]:
+    """Check laboratory, selected Host, model, and active-player attachment."""
+    try:
+        client = HostClient("gamelab-health", host_id=host_id)
+    except HostError as exc:
+        return {
+            "status": "not_ready",
+            "host_id": host_id,
+            "host_ready": False,
+            "model_ready": checkpoint_path().is_file(),
+            "active_operation": laboratory.active_operation(),
+            "error": str(exc),
+        }
     try:
         host = client.health()
         players = client.players()
@@ -68,12 +84,15 @@ def health() -> dict[str, Any]:
             session_player = None
         return _public({
             "status": "ready",
+            "host_id": host_id,
+            "host_ready": True,
             "backend_ready": host.get("gameplay_ready") is True,
             "model_ready": checkpoint_path().is_file(),
-            "player_id": PLAYER_ID,
-            "player_available": PLAYER_ID in players,
+            "player_id": session_player,
+            "default_player_id": PLAYER_ID,
+            "default_player_available": PLAYER_ID in players,
             "host_session_active": session_player is not None,
-            "attached_to_player": session_player == PLAYER_ID,
+            "attached_to_player": session_player is not None,
             "active_operation": laboratory.active_operation(),
         })
     finally:
@@ -81,12 +100,16 @@ def health() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def login(player_id: str = PLAYER_ID) -> dict[str, Any]:
-    """Create or reuse the shared Host player session for laboratory work."""
-    client = HostClient("gamelab-login")
+def login(
+    player_id: str = PLAYER_ID,
+    host_id: str = DEFAULT_HOST_ID,
+) -> dict[str, Any]:
+    """Create or reuse a player session on the selected Host."""
+    client = HostClient("gamelab-login", host_id=host_id)
     try:
         response = client.login(player_id)
         return _public({
+            "host_id": host_id,
             "reused": bool(response.get("reused")),
             "session": _public_session(response.get("session") or {}),
         })
@@ -95,19 +118,72 @@ def login(player_id: str = PLAYER_ID) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+def host_list() -> dict[str, Any]:
+    """List the game-owned default Host and laboratory-owned extra Hosts."""
+    return {
+        "default_host_id": DEFAULT_HOST_ID,
+        "hosts": host_catalog.list(),
+    }
+
+
+@mcp.tool(annotations=WRITE)
+def host_create(host_id: str) -> dict[str, Any]:
+    """Create an additional laboratory-owned GameClient Host on another port."""
+    try:
+        return {
+            "created": True,
+            "host": host_catalog.create(host_id),
+        }
+    except LabHostError as exc:
+        return {
+            "created": False,
+            "error": {
+                "code": exc.code,
+                "host_id": host_id,
+                "message": str(exc),
+            },
+        }
+
+
+@mcp.tool(annotations=WRITE)
+def host_delete(host_id: str) -> dict[str, Any]:
+    """Delete a laboratory-owned Host; the game-owned default Host is protected."""
+    try:
+        return host_catalog.delete(host_id)
+    except LabHostPermissionDenied as exc:
+        return {
+            "deleted": False,
+            "error": {
+                "code": exc.code,
+                "host_id": host_id,
+                "message": str(exc),
+            },
+        }
+    except LabHostError as exc:
+        return {
+            "deleted": False,
+            "error": {
+                "code": exc.code,
+                "host_id": host_id,
+                "message": str(exc),
+            },
+        }
+
+
+@mcp.tool(annotations=READ_ONLY)
 def describe() -> dict[str, Any]:
     """Describe laboratory capabilities and its relationship to the live game."""
     return {
         "purpose": "experimental environment for studying game mechanics with a trainable model",
         "game_connection": (
-            "GameLab is a downstream GameClient Host client attached through "
-            "the same Host hub and active player session as GUI, CLI, and game_v1"
+            "GameLab uses the game-owned default Host by default and may create "
+            "additional ordinary GameClient Host instances on other local ports"
         ),
+        "default_host_id": DEFAULT_HOST_ID,
         "control_relationship": (
-            "GameLab behaves as another joystick on the shared Host session: "
-            "it may explicitly create/reuse the selected player session through "
-            "login, then observes state and submits input. It never logs out or "
-            "replaces an active session owned by a different player"
+            "Normal GameLab operations behave as another joystick on the selected "
+            "Host session. Deleting a laboratory-owned extra Host also ends that "
+            "Host and its session; the game-owned default Host is protected."
         ),
         "episode_reset": (
             "TRAIN and VERIFY request a non-destructive Host reset of physical "
@@ -119,7 +195,10 @@ def describe() -> dict[str, Any]:
             "the latest accepted movement intent becomes active"
         ),
         "capabilities": [
-            "create or reuse the shared Host player session",
+            "list Host instances",
+            "create/delete laboratory-owned extra Host instances",
+            "select Host by host_id for laboratory work",
+            "create or reuse the selected Host player session",
             "inspect model readiness and training metadata",
             "inspect and change reward instrumentation",
             "start/cancel model training",
@@ -173,6 +252,7 @@ def training_start(
     fresh: bool = False,
     seed: int = 1,
     max_seconds: float = TRAIN_EPISODE_SECONDS,
+    host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start asynchronous model training in the live game."""
     return _public(laboratory.start_training(
@@ -181,6 +261,7 @@ def training_start(
         fresh=fresh,
         seed=seed,
         max_seconds=max_seconds,
+        host_id=host_id,
     ))
 
 
@@ -202,6 +283,7 @@ def verify_start(
     runs: int = 3,
     tolerance: float = SUCCESS_TOLERANCE,
     max_seconds: float = DEFAULT_GOAL_TIMEOUT,
+    host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start frozen-weight verification of the current model."""
     return _public(laboratory.start_verify(
@@ -209,6 +291,7 @@ def verify_start(
         runs=runs,
         tolerance=tolerance,
         max_seconds=max_seconds,
+        host_id=host_id,
     ))
 
 
@@ -229,12 +312,14 @@ def run_start(
     target_x: float,
     tolerance: float = SUCCESS_TOLERANCE,
     max_seconds: float = DEFAULT_GOAL_TIMEOUT,
+    host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start the current model acting toward one goal in the live game."""
     return _public(laboratory.start_run(
         target_x=target_x,
         tolerance=tolerance,
         max_seconds=max_seconds,
+        host_id=host_id,
     ))
 
 

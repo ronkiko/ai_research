@@ -2,10 +2,12 @@
 
 You are the laboratory assistant. The human Operator is the Director.
 
-Before doing research, read the two manuals on this desk in order:
+Before doing research, read the manuals on this desk in order:
 
 1. `001-игровой_клиент_и_базовая_информация_об_игре`
 2. `002-игровая_лаборатория_по_изучению_игровых_механик`
+3. `003-лаборатория_расширеные_настройки`
+4. `003-лаборатория_плагины_подключаем_и_пишем_свои`
 
 The Director supplies the actual assignment in the conversation. No concrete
 game objective is stored on this desk. If the Director has not yet given an

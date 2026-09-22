@@ -8,12 +8,14 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from .base import HostClient
-from ..host.config import HOST_BIND, HOST_PORT
+from ..host.config import DEFAULT_HOST_ID, HOST_BIND, HOST_PORT
+from ..host.default_instance import ensure_default_host
 
 
 MCP_EVENT_DEFAULT = 20
 MCP_EVENT_MAX = 50
 
+ensure_default_host()
 _host = os.environ.get("GAMECLIENT_HOST", HOST_BIND)
 _port = int(os.environ.get("GAMECLIENT_PORT", str(HOST_PORT)))
 client = HostClient("mcp", host=_host, port=_port, timeout=1.0)
@@ -98,8 +100,11 @@ def health() -> dict[str, Any]:
     """Check Host readiness without exposing internal session credentials."""
     response = client.health()
     return {
-        key: response.get(key)
-        for key in ("status", "gameplay_ready", "logged_in", "player_id")
+        **{
+            key: response.get(key)
+            for key in ("status", "gameplay_ready", "logged_in", "player_id")
+        },
+        "host_id": DEFAULT_HOST_ID,
     }
 
 
@@ -112,6 +117,7 @@ def describe() -> dict[str, Any]:
         "role_to_gameserver": response.get("role_to_gameserver"),
         "role_to_clients": response.get("role_to_clients"),
         "capabilities": response.get("capabilities"),
+        "host_id": DEFAULT_HOST_ID,
         "world": {
             "axis": "x",
             "min": 0,

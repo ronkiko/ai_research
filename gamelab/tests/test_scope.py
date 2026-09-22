@@ -11,11 +11,19 @@ class ScopeTests(unittest.TestCase):
     def test_gamelab_uses_official_gameclient_host_api_only(self):
         host = (ROOT / "gamelab/host.py").read_text(encoding="utf-8")
         self.assertIn(
-            "from gameclient.v1.clients.base import HostClient, HostClientError",
+            "from gameclient.v1.clients.base import HostClient as BaseHostClient, HostClientError",
             host,
         )
         self.assertNotIn("socket.", host)
         self.assertNotIn("json.", host)
+
+        hosts = (ROOT / "gamelab/hosts.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "from gameclient.v1.clients.base import HostClient as BaseHostClient, HostClientError",
+            hosts,
+        )
+        self.assertNotIn("import gameserver", hosts)
+        self.assertNotIn("from gameserver", hosts)
 
         for relative in (
             "gamelab/models.py",
