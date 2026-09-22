@@ -47,7 +47,7 @@ op_find_legacy_process() {
   local proc pid cmdline cwd
   for proc in /proc/[0-9]*; do
     pid="${proc##*/}"
-    [[ "$pid" != "$$" ]] || continue
+    [[ "$pid" != "$BASHPID" ]] || continue
     [[ -r "$proc/cmdline" && -e "$proc/cwd" ]] || continue
     cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
     [[ "$cmdline" == *"$marker"* ]] || continue
@@ -143,8 +143,8 @@ op_start_process() {
   fi
 
   pidfile="$(op_pid_file "$tag" "$root")"
-  start="$(op_proc_starttime "$$")"
-  printf '%s %s\n' "$$" "$start" > "$pidfile"
+  start="$(op_proc_starttime "$BASHPID")"
+  printf '%s %s\n' "$BASHPID" "$start" > "$pidfile"
   trap 'rm -f "'"$pidfile"'"' EXIT
 
   echo "$label: starting"
