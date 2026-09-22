@@ -90,13 +90,41 @@ The terminal safety stop that runs after success/timeout/cancel is cleanup only.
 It is applied after outcome classification and cannot turn a failed episode
 into a success.
 
-## Setup
+## Python environment
 
-GameLab uses an isolated Python environment and CPU PyTorch:
+By default GameLab uses the current `python3` environment. It does not create
+a virtual environment and does not install or download packages automatically.
+
+Required versions are checked before every operator command:
+
+```text
+torch >=2.1,<3
+numpy >=1.26,<3
+mcp ==2.2.0
+```
+
+Check the current environment without installing anything:
 
 ```bash
 ./gamelab/op/setup.sh
 ```
+
+A different existing Python may be selected explicitly:
+
+```bash
+GAMELAB_PYTHON=/path/to/python ./gamelab/op/check.sh
+```
+
+An isolated environment remains available only when explicitly requested:
+
+```bash
+./gamelab/op/setup.sh --isolated
+GAMELAB_PYTHON=./gamelab/.venv/bin/python ./gamelab/op/check.sh
+```
+
+The isolated mode may download CPU PyTorch and is used by CI to prove
+reproducibility. It is not required for normal local work when the global
+environment already satisfies the version contract.
 
 Start the existing realtime backend in separate terminals:
 

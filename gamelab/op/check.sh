@@ -3,8 +3,8 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-./gamelab/op/setup.sh
-PY="$ROOT/gamelab/.venv/bin/python"
+PY="${GAMELAB_PYTHON:-python3}"
+./gamelab/op/check-env.sh "$PY"
 
 echo "CHECK GameLab compile"
 "$PY" -m compileall -q -x '/\.venv/' gamelab

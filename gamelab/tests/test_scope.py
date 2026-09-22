@@ -31,5 +31,17 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn("goal_dx", motor_source)
 
 
+    def test_operator_launchers_default_to_current_python(self):
+        for name in ("check.sh", "train.sh", "verify.sh", "run.sh", "mcp.sh"):
+            text = (ROOT / "gamelab/op" / name).read_text(encoding="utf-8")
+            self.assertIn('GAMELAB_PYTHON:-python3', text, name)
+            self.assertNotIn('gamelab/.venv/bin/python', text, name)
+
+    def test_isolated_setup_requires_explicit_flag(self):
+        text = (ROOT / "gamelab/op/setup.sh").read_text(encoding="utf-8")
+        self.assertIn('"--isolated"', text)
+        self.assertIn("exec ./gamelab/op/check-env.sh", text)
+
+
 if __name__ == "__main__":
     unittest.main()

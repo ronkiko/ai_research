@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-PY="$ROOT/gamelab/.venv/bin/python"
 cd "$ROOT"
-if [[ ! -x "$PY" ]]; then
-  echo "ERROR run ./gamelab/op/setup.sh first" >&2
-  exit 2
-fi
+PY="${GAMELAB_PYTHON:-python3}"
+./gamelab/op/check-env.sh "$PY" >/dev/null
 exec "$PY" -m gamelab.verify "$@"
