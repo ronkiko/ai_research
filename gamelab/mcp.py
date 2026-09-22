@@ -1,4 +1,4 @@
-"""Goal-level MCP surface for an LLM strategist."""
+"""MCP interface for the complete GameLab experimental environment."""
 from __future__ import annotations
 
 import os
@@ -7,14 +7,18 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from .config import DEFAULT_GOAL_TIMEOUT, SUCCESS_TOLERANCE
+from .config import (
+    DEFAULT_GOAL_TIMEOUT,
+    SUCCESS_TOLERANCE,
+    TRAIN_EPISODE_SECONDS,
+)
 from .host import HostClient
-from .models import SpineMotorPolicy
-from .runtime import GoalRuntime, checkpoint_path
+from .lab_service import Laboratory
+from .runtime import checkpoint_path
 
 
 PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
-runtime = GoalRuntime(player_id=PLAYER_ID)
+laboratory = Laboratory(player_id=PLAYER_ID)
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -24,18 +28,18 @@ WRITE = ToolAnnotations(
 )
 
 mcp = MCPServer(
-    "GameLab experimental bench",
+    "GameLab game-mechanics laboratory",
     instructions=(
-        "This server exposes the current experimental model as a laboratory "
-        "instrument. Inspect readiness, submit goals, observe outcomes, or "
-        "cancel a run. The implementation is intentionally not described by "
-        "the MCP surface; inspect the laboratory workspace when an assignment "
-        "requires understanding or changing it."
+        "GameLab is an already configured experimental environment connected "
+        "to the same live game through its own GameClient client. It can train "
+        "the current model, change reward instrumentation, run frozen "
+        "verification, and let the model act in the live game. Long operations "
+        "start asynchronously and are observed with status tools."
     ),
 )
 
 
-def _contains_no_secret(payload: dict[str, Any]) -> dict[str, Any]:
+def _public(payload: dict[str, Any]) -> dict[str, Any]:
     if "session_id" in str(payload):
         raise RuntimeError("internal session data reached GameLab MCP boundary")
     return payload
@@ -43,61 +47,165 @@ def _contains_no_secret(payload: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def health() -> dict[str, Any]:
-    """Check model availability and the real GameClient Host -> GameServer path."""
+    """Check laboratory, model, and live-game connectivity."""
     client = HostClient("gamelab-health")
     try:
         host = client.health()
         players = client.players()
-        return _contains_no_secret({
+        return _public({
             "status": "ready",
             "backend_ready": host.get("gameplay_ready") is True,
-            "model_ready": runtime.model_ready,
+            "model_ready": checkpoint_path().is_file(),
             "player_id": PLAYER_ID,
             "player_available": PLAYER_ID in players,
+            "active_operation": laboratory.active_operation(),
         })
     finally:
         client.close()
 
 
 @mcp.tool(annotations=READ_ONLY)
-def model_info() -> dict[str, Any]:
-    """Describe the currently available experimental model artifact."""
-    model = SpineMotorPolicy()
+def describe() -> dict[str, Any]:
+    """Describe laboratory capabilities and its relationship to the live game."""
     return {
-        "checkpoint_ready": runtime.model_ready,
-        "checkpoint": checkpoint_path().name,
-        "trainable": True,
+        "purpose": "experimental environment for studying game mechanics with a trainable model",
+        "game_connection": (
+            "GameLab has its own GameClient client connected to the same "
+            "authoritative realtime game as other clients"
+        ),
+        "control_relationship": (
+            "the laboratory client and the operator's game client are separate "
+            "control paths into the same live game"
+        ),
+        "capabilities": [
+            "inspect model readiness and training metadata",
+            "inspect and change reward instrumentation",
+            "start/cancel model training",
+            "observe bounded training progress",
+            "start/cancel frozen verification",
+            "run/cancel the current model in the live game",
+            "observe bounded experiment results",
+        ],
+        "operations_are_asynchronous": True,
+        "one_lab_operation_at_a_time": True,
         "goal_interface": "target_x",
-        "parameters": sum(parameter.numel() for parameter in model.parameters()),
     }
 
 
+@mcp.tool(annotations=READ_ONLY)
+def model_info() -> dict[str, Any]:
+    """Read current model artifact metadata without exposing implementation details."""
+    return _public(laboratory.model_info())
+
+
+@mcp.tool(annotations=READ_ONLY)
+def reward_get() -> dict[str, float]:
+    """Read the reward instrumentation currently used for new training episodes."""
+    return laboratory.reward_get()
+
+
 @mcp.tool(annotations=WRITE)
-def set_goal(
+def reward_set(
+    distance_progress_scale: float | None = None,
+    step_cost: float | None = None,
+    success_bonus: float | None = None,
+    timeout_penalty: float | None = None,
+    stopped_near_goal_bonus: float | None = None,
+    near_goal_radius: float | None = None,
+) -> dict[str, float]:
+    """Change bounded reward weights used by subsequent training."""
+    return laboratory.reward_set(
+        distance_progress_scale=distance_progress_scale,
+        step_cost=step_cost,
+        success_bonus=success_bonus,
+        timeout_penalty=timeout_penalty,
+        stopped_near_goal_bonus=stopped_near_goal_bonus,
+        near_goal_radius=near_goal_radius,
+    )
+
+
+@mcp.tool(annotations=WRITE)
+def training_start(
+    episodes: int = 50,
+    target_x: float | None = None,
+    fresh: bool = False,
+    seed: int = 1,
+    max_seconds: float = TRAIN_EPISODE_SECONDS,
+) -> dict[str, Any]:
+    """Start asynchronous model training in the live game."""
+    return _public(laboratory.start_training(
+        episodes=episodes,
+        target_x=target_x,
+        fresh=fresh,
+        seed=seed,
+        max_seconds=max_seconds,
+    ))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def training_status() -> dict[str, Any]:
+    """Read bounded progress and recent episode results from the last training run."""
+    return _public(laboratory.status("training"))
+
+
+@mcp.tool(annotations=WRITE)
+def training_cancel() -> dict[str, Any]:
+    """Request cancellation of active training."""
+    return laboratory.cancel("training")
+
+
+@mcp.tool(annotations=WRITE)
+def verify_start(
+    target_x: float,
+    runs: int = 3,
+    tolerance: float = SUCCESS_TOLERANCE,
+    max_seconds: float = DEFAULT_GOAL_TIMEOUT,
+) -> dict[str, Any]:
+    """Start frozen-weight verification of the current model."""
+    return _public(laboratory.start_verify(
+        target_x=target_x,
+        runs=runs,
+        tolerance=tolerance,
+        max_seconds=max_seconds,
+    ))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def verify_status() -> dict[str, Any]:
+    """Read results from the last frozen verification."""
+    return _public(laboratory.status("verify"))
+
+
+@mcp.tool(annotations=WRITE)
+def verify_cancel() -> dict[str, Any]:
+    """Cancel active frozen verification."""
+    return laboratory.cancel("verify")
+
+
+@mcp.tool(annotations=WRITE)
+def run_start(
     target_x: float,
     tolerance: float = SUCCESS_TOLERANCE,
     max_seconds: float = DEFAULT_GOAL_TIMEOUT,
 ) -> dict[str, Any]:
-    """Submit one target_x goal to the current experimental model."""
-    return _contains_no_secret(
-        runtime.start_goal(
-            target_x,
-            tolerance=tolerance,
-            max_seconds=max_seconds,
-        )
-    )
+    """Start the current model acting toward one goal in the live game."""
+    return _public(laboratory.start_run(
+        target_x=target_x,
+        tolerance=tolerance,
+        max_seconds=max_seconds,
+    ))
 
 
 @mcp.tool(annotations=READ_ONLY)
-def goal_status() -> dict[str, Any]:
-    """Read the latest bounded status from the current experimental run."""
-    return _contains_no_secret(runtime.status())
+def run_status() -> dict[str, Any]:
+    """Read status of the last live model run."""
+    return _public(laboratory.status("run"))
 
 
 @mcp.tool(annotations=WRITE)
-def cancel_goal() -> dict[str, Any]:
-    """Cancel the current goal. Terminal safety stops the actuator."""
-    return _contains_no_secret(runtime.cancel())
+def run_cancel() -> dict[str, Any]:
+    """Cancel the active live model run."""
+    return laboratory.cancel("run")
 
 
 if __name__ == "__main__":

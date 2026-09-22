@@ -137,74 +137,60 @@ Start the existing realtime backend in separate terminals:
 ./gameclient/v1/op/host.sh
 ```
 
-## Train
+## MCP laboratory service
 
-Fresh training:
+The supported agent interface is the long-lived `gamelab_v1` MCP laboratory.
+It is connected to the same GameClient Host / GameServer world through its own
+GameClient client.
 
-```bash
-./gamelab/op/train.sh --fresh --episodes 50
-```
-
-Resume the existing checkpoint:
-
-```bash
-./gamelab/op/train.sh --episodes 50
-```
-
-For a focused experiment, a fixed target may be supplied:
-
-```bash
-./gamelab/op/train.sh --fresh --episodes 50 --target 987
-```
-
-Checkpoint:
+On first MCP startup, if no checkpoint exists, GameLab creates a fresh
+untrained model artifact. The laboratory then exposes:
 
 ```text
-gamelab/runtime/spine_motor.pt
+health
+describe
+model_info
+reward_get
+reward_set
+training_start
+training_status
+training_cancel
+verify_start
+verify_status
+verify_cancel
+run_start
+run_status
+run_cancel
 ```
 
-## Frozen verification
+Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
+Start tools return immediately; status tools expose bounded progress/results.
+
+Reward configuration is persisted under the ignored `gamelab/runtime/` area
+and applies to subsequent training episodes. The configurable measured signals
+are distance progress, per-step cost, success bonus, timeout penalty, and an
+optional stopped-near-goal signal. Reward configuration never emits controller
+actions.
+
+`training_start(fresh=true)` creates and immediately saves a fresh untrained
+checkpoint before collecting experience. VERIFY uses frozen weights. A live
+`run_start` uses the current checkpoint against the same authoritative game
+without giving the MCP caller low-level LEFT/STOP/RIGHT controls.
+
+## Operator and CI entry points
+
+Shell scripts remain available for maintainers, CI, and direct diagnostics:
 
 ```bash
-./gamelab/op/verify.sh --target 987 --runs 3
-```
-
-All requested runs must report PASS for the command to exit successfully.
-Weights are frozen during verification.
-
-A one-off learned run is also available:
-
-```bash
-./gamelab/op/run.sh --target 987
-```
-
-## LLM / OpenCode interface
-
-GameLab has its own goal-level MCP server:
-
-```bash
+./gamelab/op/check.sh
+./gamelab/op/train.sh
+./gamelab/op/verify.sh
+./gamelab/op/run.sh
 ./gamelab/op/mcp.sh
 ```
 
-Register it in OpenCode as a local stdio server named `gamelab_v1`, with the
-repository root as `cwd`, enabled, and command:
-
-```text
-./gamelab/op/mcp.sh
-```
-
-After changing MCP registration, fully restart the installed OpenCode process.
-
-The GameLab MCP surface contains only five tools:
-
-- `health`
-- `model_info`
-- `set_goal`
-- `goal_status`
-- `cancel_goal`
-
-There is intentionally no MCP `left/right/stop` tool in GameLab. Low-level
-movement is the learned Motor's job.
+They are not the GameTable laboratory assistant interface; that assistant uses
+`gamelab_v1` MCP tools.
 
 ## Checks
 

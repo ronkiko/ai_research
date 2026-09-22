@@ -8,6 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "gametable"
+SKILLS = TABLE / ".opencode" / "skills"
+SKILL_001 = "001-игровой_клиент_и_базовая_информация_об_игре"
+SKILL_002 = "002-игровая_лаборатория_по_изучению_игровых_механик"
 
 
 class GameTableTests(unittest.TestCase):
@@ -26,6 +29,13 @@ class GameTableTests(unittest.TestCase):
             self.assertEqual(item["cwd"], "..")
             self.assertIs(item["enabled"], True)
             self.assertGreaterEqual(item["timeout"], 5000)
+
+    def test_exactly_two_manuals_are_on_the_table(self):
+        manuals = {
+            path.parent.name
+            for path in SKILLS.glob("*/SKILL.md")
+        }
+        self.assertEqual(manuals, {SKILL_001, SKILL_002})
 
     def test_desk_contains_no_assignment(self):
         text = (
@@ -46,25 +56,57 @@ class GameTableTests(unittest.TestCase):
         paths = [
             TABLE / "AGENTS.md",
             TABLE / "DESK.md",
-            TABLE / ".opencode/skills/experiment-bench/SKILL.md",
+            SKILLS / SKILL_001 / "SKILL.md",
+            SKILLS / SKILL_002 / "SKILL.md",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
         for forbidden in ("cnn", "mlp", "ppo", "pid"):
             self.assertIsNone(
-                re.search(rf"\\b{re.escape(forbidden)}\\b", text),
+                re.search(rf"\b{re.escape(forbidden)}\b", text),
                 forbidden,
             )
+
+    def test_assistant_uses_mcp_not_neighbor_scripts(self):
+        paths = [
+            TABLE / "AGENTS.md",
+            TABLE / "DESK.md",
+            SKILLS / SKILL_002 / "SKILL.md",
+        ]
+        text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        for forbidden in (
+            "../gamelab/op/",
+            "../gamelab/",
+            "../gameclient/",
+            "../gameserver/",
+        ):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("MCP", text)
+
+    def test_second_manual_explains_shared_game_and_full_lab_surface(self):
+        text = (SKILLS / SKILL_002 / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("два джойстика", text)
+        self.assertIn("одной и той же игрой", text)
+        for tool in (
+            "gamelab_v1_health",
+            "gamelab_v1_describe",
+            "gamelab_v1_reward_get",
+            "gamelab_v1_reward_set",
+            "gamelab_v1_training_start",
+            "gamelab_v1_training_status",
+            "gamelab_v1_training_cancel",
+            "gamelab_v1_verify_start",
+            "gamelab_v1_verify_status",
+            "gamelab_v1_verify_cancel",
+            "gamelab_v1_run_start",
+            "gamelab_v1_run_status",
+            "gamelab_v1_run_cancel",
+        ):
+            self.assertIn(tool, text)
 
     def test_director_is_source_of_assignment(self):
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("Director supplies the actual assignment", agents)
         self.assertIn("ask for it and wait", agents)
-
-    def test_bench_is_editable_but_world_is_not_task_shortcut(self):
-        agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertIn("../gamelab", agents)
-        self.assertIn("../gameserver", agents)
-        self.assertIn("../gameclient", agents)
 
 
 if __name__ == "__main__":

@@ -1,41 +1,26 @@
 ---
 name: gamelab
-description: Use when working with the GameLab experimental model through the gamelab_v1 MCP server.
+description: Use the gamelab_v1 MCP server as the complete machine interface to the configured GameLab experimental environment.
 ---
 
-# GameLab experimental bench
+# GameLab MCP laboratory
 
-Use `gamelab_v1` as the machine-facing interface to the current experimental
-model.
+Use `gamelab_v1` for machine-facing laboratory work. The MCP surface is the
+supported agent interface; do not require direct invocation of GameLab training
+or verification scripts.
 
-The MCP intentionally does not explain the model implementation. If an
-assignment requires understanding, training, or changing the experiment,
-inspect the `gamelab/` workspace and its operator scripts rather than assuming
-how the model works.
+The laboratory is connected to the same live game through its own GameClient
+client and exposes model metadata, reward configuration, asynchronous training,
+frozen verification, and live model runs.
 
-## Tools
-
-Expected tools:
+Start with:
 
 - `gamelab_v1_health`
-- `gamelab_v1_model_info`
-- `gamelab_v1_set_goal`
-- `gamelab_v1_goal_status`
-- `gamelab_v1_cancel_goal`
+- `gamelab_v1_describe`
 
-Start with `health`. A connected MCP process does not by itself prove that
-the live game backend is ready.
+Then use the relevant `reward_*`, `training_*`, `verify_*`, or `run_*`
+tools. Long operations are asynchronous and must be observed through their
+status tools.
 
-`set_goal` starts an experimental run and returns immediately. Observe its
-outcome with `goal_status`. A timeout or failed goal is experimental evidence;
-do not report it as success.
-
-The laboratory workspace is editable. When the Director's assignment requires
-improving the model, inspect the code, documentation, logs, checkpoints, and
-operator commands in `gamelab/`, form your own hypothesis, change only what
-the evidence supports, and test the result.
-
-Do not modify GameServer or GameClient merely to make an experimental objective
-easier unless the Director explicitly assigns infrastructure work.
-
-GUI is outside this machine-facing laboratory.
+A failed training, verification, or run result is experimental evidence and
+must not be reported as success.

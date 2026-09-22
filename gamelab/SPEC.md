@@ -83,19 +83,39 @@ The learned policy succeeds only when:
 
 A post-terminal safety stop is not part of success classification.
 
-## Strategic interface
+## Laboratory MCP interface
 
-The LLM-facing GameLab MCP exposes goals, not actuator commands:
+The supported LLM-facing boundary is a complete laboratory service, not direct
+shell access to training scripts.
+
+GameLab is connected to the same authoritative game through its own GameClient
+client. Its MCP surface is:
 
 ```text
 health
+describe
 model_info
-set_goal
-goal_status
-cancel_goal
+reward_get
+reward_set
+training_start
+training_status
+training_cancel
+verify_start
+verify_status
+verify_cancel
+run_start
+run_status
+run_cancel
 ```
 
-The LLM is never required to issue actions at Motor cadence.
+Only one long-running laboratory operation may be active at a time. Training,
+verification, and live model runs execute asynchronously and publish bounded
+status.
+
+The MCP may expose reward instrumentation and experiment metadata, but it does
+not expose low-level actuator commands or model implementation details. GameTable
+agents operate the laboratory through MCP and do not require filesystem access
+to GameLab.
 
 ## Verification
 

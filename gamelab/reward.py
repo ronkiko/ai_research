@@ -1,0 +1,135 @@
+"""Configurable reward instrumentation for GameLab experiments."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, fields, replace
+import json
+import math
+import os
+from pathlib import Path
+from typing import Any
+
+from .config import WORLD_MAX_X
+
+
+DEFAULT_REWARD_PATH = (
+    Path(__file__).resolve().parent / "runtime" / "reward.json"
+)
+
+
+def reward_path() -> Path:
+    value = os.environ.get("GAMELAB_REWARD_CONFIG")
+    return Path(value) if value else DEFAULT_REWARD_PATH
+
+
+@dataclass(frozen=True)
+class RewardConfig:
+    """Weights for measured training signals; never emits controller actions."""
+
+    distance_progress_scale: float = 1.0
+    step_cost: float = 0.0005
+    success_bonus: float = 1.0
+    timeout_penalty: float = 0.25
+    stopped_near_goal_bonus: float = 0.0
+    near_goal_radius: float = 10.0
+
+    def validated(self) -> "RewardConfig":
+        values = asdict(self)
+        for name, value in values.items():
+            if type(value) is bool or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be numeric")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
+
+        bounded = {
+            "distance_progress_scale": (0.0, 20.0),
+            "step_cost": (0.0, 1.0),
+            "success_bonus": (0.0, 20.0),
+            "timeout_penalty": (0.0, 20.0),
+            "stopped_near_goal_bonus": (-20.0, 20.0),
+            "near_goal_radius": (0.1, 250.0),
+        }
+        for name, (lower, upper) in bounded.items():
+            value = float(values[name])
+            if not lower <= value <= upper:
+                raise ValueError(f"{name} must be within [{lower},{upper}]")
+        return RewardConfig(**{name: float(value) for name, value in values.items()})
+
+    def public(self) -> dict[str, float]:
+        return {key: float(value) for key, value in asdict(self).items()}
+
+    def updated(self, **changes: float | None) -> "RewardConfig":
+        allowed = {field.name for field in fields(self)}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unknown reward fields: {sorted(unknown)}")
+        concrete = {
+            name: float(value)
+            for name, value in changes.items()
+            if value is not None
+        }
+        return replace(self, **concrete).validated()
+
+
+class RewardStore:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or reward_path()
+
+    def load(self) -> RewardConfig:
+        if not self.path.is_file():
+            return RewardConfig()
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("GameLab reward config must be a JSON object")
+        return RewardConfig(**payload).validated()
+
+    def save(self, config: RewardConfig) -> RewardConfig:
+        config = config.validated()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_suffix(self.path.suffix + ".tmp")
+        temp.write_text(
+            json.dumps(config.public(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temp.replace(self.path)
+        return config
+
+
+def step_reward(
+    config: RewardConfig,
+    *,
+    before_distance: float,
+    after_distance: float,
+    next_vx: float,
+    next_move_x: int,
+    success: bool,
+    timeout: bool,
+) -> float:
+    """Calculate reward from measured state only; no steering logic lives here."""
+    config = config.validated()
+    reward = (
+        config.distance_progress_scale
+        * (float(before_distance) - float(after_distance))
+        / WORLD_MAX_X
+    )
+    reward -= config.step_cost
+
+    if (
+        float(after_distance) <= config.near_goal_radius
+        and abs(float(next_vx)) < 1e-9
+        and int(next_move_x) == 0
+    ):
+        reward += config.stopped_near_goal_bonus
+
+    if success:
+        reward += config.success_bonus
+    if timeout:
+        reward -= config.timeout_penalty
+    return float(reward)
+
+
+__all__ = [
+    "RewardConfig",
+    "RewardStore",
+    "reward_path",
+    "step_reward",
+]

@@ -1,44 +1,21 @@
-# Laboratory desk
+# Стол лаборанта
 
-This workspace contains no preselected research objective. The Director gives
-the assignment in the conversation.
+На рабочем ноутбуке доступны два руководства и два уже подключённых MCP-инструмента.
+Конкретной исследовательской задачи на столе нет: её сообщает Директор в диалоге.
 
-You have two independent machine-facing instruments plus the editable
-experimental bench.
+## Руководство 001
 
-## Live world instrument
+`001-игровой_клиент_и_базовая_информация_об_игре`
 
-Skill: `live-world`
+Описывает игровой клиент `game_v1`, базовые свойства текущей игры и прямое
+взаимодействие лаборанта с живым игровым миром.
 
-MCP server: `game_v1`
+## Руководство 002
 
-This is the direct interface to the authoritative realtime game world. It can
-inspect the world and issue the low-level controls that the public game client
-supports. The world continues to run while you reason between tool calls.
+`002-игровая_лаборатория_по_изучению_игровых_механик`
 
-Use it when you need ground-truth evidence about what actually happened in the
-game. Direct control is available; whether it is sufficient for a Director's
-assignment is an experimental question, not an assumption.
+Описывает лабораторию `gamelab_v1`: уже настроенную экспериментальную среду,
+подключённую к той же игре через отдельный игровой клиент.
 
-## Experimental bench instrument
-
-Skill: `experiment-bench`
-
-MCP server: `gamelab_v1`
-
-This exposes the current experimental model: readiness, model metadata, goal
-submission, run status, and cancellation.
-
-The implementation is deliberately not summarized on the desk. The complete
-bench lives at `../gamelab` and is available for inspection and modification
-if your assignment requires understanding or improving it.
-
-## Workspace access
-
-OpenCode's normal repository tools remain available. You may read code, run
-machine-friendly commands, edit the experimental bench, inspect results, and
-iterate.
-
-Do not alter the live world's implementation simply to make the Director's
-objective easier. Treat the game as the environment and the bench as the
-experimental apparatus unless the Director explicitly changes that boundary.
+Оба инструмента доступны с этого ноутбука. Способ решения конкретной задачи
+заранее не задан.

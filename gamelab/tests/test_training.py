@@ -8,10 +8,51 @@ from torch.distributions import Categorical
 
 from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
 from gamelab.models import SpineMotorPolicy
+from gamelab.reward import RewardConfig, step_reward
 from gamelab.training import Transition, ppo_update
 
 
 class TrainingTests(unittest.TestCase):
+    def test_default_reward_preserves_original_training_signal(self):
+        reward = step_reward(
+            RewardConfig(),
+            before_distance=100.0,
+            after_distance=90.0,
+            next_vx=180.0,
+            next_move_x=1,
+            success=False,
+            timeout=False,
+        )
+        self.assertAlmostEqual(reward, 0.0095)
+
+        timeout = step_reward(
+            RewardConfig(),
+            before_distance=10.0,
+            after_distance=13.0,
+            next_vx=0.0,
+            next_move_x=0,
+            success=False,
+            timeout=True,
+        )
+        self.assertAlmostEqual(timeout, -0.2535)
+
+    def test_reward_configuration_can_be_changed_without_steering(self):
+        config = RewardConfig().updated(
+            timeout_penalty=1.5,
+            stopped_near_goal_bonus=0.2,
+            near_goal_radius=20.0,
+        )
+        reward = step_reward(
+            config,
+            before_distance=15.0,
+            after_distance=12.0,
+            next_vx=0.0,
+            next_move_x=0,
+            success=False,
+            timeout=False,
+        )
+        self.assertAlmostEqual(reward, 0.2025)
+
     def test_joint_ppo_updates_learned_hierarchy(self):
         torch.manual_seed(23)
         model = SpineMotorPolicy.fresh(23)

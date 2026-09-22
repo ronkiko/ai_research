@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import math
 from pathlib import Path
 import random
+import threading
 import time
 
 import torch
@@ -96,6 +97,17 @@ def collect_episode(
 
     try:
         while True:
+            if cancel is not None and cancel.is_set():
+                return EpisodeResult(
+                    target_x=float(target_x),
+                    result="cancelled",
+                    final_x=float(final_player["x"]),
+                    final_error=float(target_x) - float(final_player["x"]),
+                    reward=float(total_reward),
+                    motor_steps=step,
+                    controller_requests=requests,
+                    transitions=transitions,
+                )
             player = player_from_state(state)
             frame = sensor_frame(
                 x=player["x"],

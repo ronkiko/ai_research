@@ -15,6 +15,8 @@ class ScopeTests(unittest.TestCase):
             "gamelab/runtime.py",
             "gamelab/training.py",
             "gamelab/mcp.py",
+            "gamelab/lab_service.py",
+            "gamelab/reward.py",
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("import gameclient", text, relative)

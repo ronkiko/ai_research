@@ -1,59 +1,40 @@
 # GameTable
 
-GameTable is the working directory for the LLM laboratory assistant.
+GameTable is the OpenCode workstation for the LLM laboratory assistant.
 
-The human Operator is the laboratory Director. The table intentionally contains
-no concrete game assignment and no prewritten solution. The Director gives the
+The human Operator is the Director. The workstation intentionally contains no
+concrete game assignment and no prewritten solution. The Director gives the
 assignment in the OpenCode conversation after launch.
 
-The assistant receives:
+The assistant's working interface consists of exactly two local manuals:
 
-- a direct live-world instrument through `game_v1`;
-- an experimental-bench instrument through `gamelab_v1`;
-- normal repository tools;
-- the editable `../gamelab` bench;
-- generic laboratory rules in `AGENTS.md` and `DESK.md`.
+1. `001-игровой_клиент_и_базовая_информация_об_игре`
+2. `002-игровая_лаборатория_по_изучению_игровых_механик`
 
-The table does not summarize the experimental model implementation. The
-assistant may inspect the bench if its own investigation leads there.
+They describe the two preconfigured MCP servers `game_v1` and `gamelab_v1`.
 
-## Backend
+The assistant is not expected to enter `../gamelab` or run laboratory shell
+scripts. Training, reward configuration, verification, and model runs are
+available through `gamelab_v1`.
 
-For a live experiment the Director normally starts the existing services in
-separate terminals:
+## Operator launch
+
+The Director starts the shared backend as usual, then launches the workstation:
 
 ```bash
 ./gameserver/v1/op/server.sh
 ./gameclient/v1/op/host.sh
+./gametable/op/start.sh
 ```
 
-The GameLab MCP uses the current compatible Python environment. It does not
-download dependencies during normal startup.
+`gametable/opencode.json` connects both MCP servers. After OpenCode starts,
+the Director gives the actual assignment in chat.
 
-## Check the table
+## Contract check
 
 ```bash
 ./gametable/op/check.sh
 ```
 
-This checks the checked-in OpenCode MCP configuration and the desk contract. It
+This validates the workstation configuration and the two-manual contract. It
 does not attempt to solve a game task.
-
-## Launch the laboratory assistant
-
-From the repository root:
-
-```bash
-./gametable/op/start.sh
-```
-
-The launcher changes the OpenCode workspace to `gametable/`. Its local
-`opencode.json` enables both `game_v1` and `gamelab_v1`.
-
-After OpenCode starts, the Director gives the actual assignment in chat. If no
-assignment is given, the assistant is instructed to ask for one rather than
-inventing a task.
-
-For OpenCode 1.18.31 the checked-in configuration deliberately uses the
-flat `mcp` server map with `enabled`, `cwd`, and `timeout`, matching the
-project's tested local configuration style.

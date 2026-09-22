@@ -1,4 +1,4 @@
-"""Real stdio MCP smoke for the LLM goal-level GameLab interface."""
+"""Real stdio MCP smoke for the complete GameLab laboratory interface."""
 from __future__ import annotations
 
 import asyncio
@@ -15,13 +15,26 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from gamelab.models import SpineMotorPolicy, save_checkpoint
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVER_PORT = 17600
 HOST_PORT = 17700
-EXPECTED_TOOLS = {"health", "model_info", "set_goal", "goal_status", "cancel_goal"}
+EXPECTED_TOOLS = {
+    "health",
+    "describe",
+    "model_info",
+    "reward_get",
+    "reward_set",
+    "training_start",
+    "training_status",
+    "training_cancel",
+    "verify_start",
+    "verify_status",
+    "verify_cancel",
+    "run_start",
+    "run_status",
+    "run_cancel",
+}
 
 
 def wait_port(port: int, process: subprocess.Popen, timeout: float = 10.0) -> None:
@@ -86,7 +99,24 @@ async def tool(
     raise AssertionError(f"MCP tool {name} returned no machine-readable payload")
 
 
-async def run_flow(checkpoint: Path) -> None:
+async def wait_status(
+    session: ClientSession,
+    tool_name: str,
+    terminal: set[str],
+    *,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    latest: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        latest = await tool(session, tool_name)
+        if latest.get("status") in terminal:
+            return latest
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"{tool_name} did not finish: {latest}")
+
+
+async def run_flow(checkpoint: Path, reward_config: Path) -> None:
     params = StdioServerParameters(
         command=str(ROOT / "gamelab/op/mcp.sh"),
         args=[],
@@ -94,6 +124,7 @@ async def run_flow(checkpoint: Path) -> None:
         env={
             **os.environ,
             "GAMELAB_CHECKPOINT": str(checkpoint),
+            "GAMELAB_REWARD_CONFIG": str(reward_config),
             "GAMELAB_PLAYER": "player1",
         },
     )
@@ -108,44 +139,135 @@ async def run_flow(checkpoint: Path) -> None:
                     f"actual={sorted(names)}"
                 )
 
+            payloads: list[Any] = []
+
             health = await tool(session, "health")
+            payloads.append(health)
             if not health.get("backend_ready") or not health.get("model_ready"):
                 raise AssertionError(f"bad GameLab health: {health}")
 
+            description = await tool(session, "describe")
+            payloads.append(description)
+            if description.get("operations_are_asynchronous") is not True:
+                raise AssertionError(f"bad laboratory description: {description}")
+            if "same" not in str(description.get("game_connection", "")).lower():
+                raise AssertionError(f"game connection is not described: {description}")
+
             info = await tool(session, "model_info")
-            if info.get("trainable") is not True or info.get("goal_interface") != "target_x":
-                raise AssertionError(f"bad model contract: {info}")
-            for hidden in (
-                "architecture",
-                "physics_hz",
-                "spine_hz",
-                "motor_hz",
-                "motor_count",
-                "procedural_controller",
-            ):
+            payloads.append(info)
+            if info.get("trainable") is not True or info.get("episodes_trained") != 0:
+                raise AssertionError(f"initial model is not fresh/trainable: {info}")
+            for hidden in ("architecture", "spine_hz", "motor_hz", "motor_count"):
                 if hidden in info:
                     raise AssertionError(
                         f"agent-facing model_info disclosed implementation {hidden}: {info}"
                     )
 
+            rewards = await tool(session, "reward_get")
+            payloads.append(rewards)
+            if rewards.get("timeout_penalty") != 0.25:
+                raise AssertionError(f"unexpected default reward: {rewards}")
+
+            rewards = await tool(
+                session,
+                "reward_set",
+                {
+                    "timeout_penalty": 0.5,
+                    "stopped_near_goal_bonus": 0.01,
+                    "near_goal_radius": 12.0,
+                },
+            )
+            payloads.append(rewards)
+            if rewards.get("timeout_penalty") != 0.5:
+                raise AssertionError(f"reward update did not persist: {rewards}")
+
             started = await tool(
                 session,
-                "set_goal",
-                {"target_x": 987.0, "tolerance": 1.0, "max_seconds": 2.0},
+                "training_start",
+                {
+                    "episodes": 1,
+                    "target_x": 150.0,
+                    "fresh": True,
+                    "seed": 41,
+                    "max_seconds": 0.25,
+                },
             )
+            payloads.append(started)
             if started.get("status") != "starting":
-                raise AssertionError(f"goal did not start: {started}")
+                raise AssertionError(f"training did not start: {started}")
 
-            await asyncio.sleep(0.15)
-            status = await tool(session, "goal_status")
-            if status.get("status") not in {"starting", "active", "reached"}:
-                raise AssertionError(f"unexpected goal status: {status}")
+            trained = await wait_status(
+                session,
+                "training_status",
+                {"completed", "cancelled", "failed"},
+            )
+            payloads.append(trained)
+            if trained.get("status") != "completed" or trained.get("episodes_completed") != 1:
+                raise AssertionError(f"training did not complete one episode: {trained}")
+            if len(trained.get("recent_episodes", [])) != 1:
+                raise AssertionError(f"training history missing: {trained}")
 
-            cancelled = await tool(session, "cancel_goal")
-            if status.get("status") != "reached" and not cancelled.get("accepted"):
-                raise AssertionError(f"active goal was not cancellable: {cancelled}")
+            info = await tool(session, "model_info")
+            payloads.append(info)
+            if info.get("episodes_trained") != 1:
+                raise AssertionError(f"checkpoint metadata not updated: {info}")
 
-            for payload in (health, info, started, status, cancelled):
+            verify = await tool(
+                session,
+                "verify_start",
+                {
+                    "target_x": 150.0,
+                    "runs": 1,
+                    "tolerance": 1.0,
+                    "max_seconds": 0.25,
+                },
+            )
+            payloads.append(verify)
+            if verify.get("status") != "starting":
+                raise AssertionError(f"verify did not start: {verify}")
+
+            verified = await wait_status(
+                session,
+                "verify_status",
+                {"passed", "failed", "cancelled"},
+            )
+            payloads.append(verified)
+            if verified.get("runs_completed") != 1:
+                raise AssertionError(f"verify did not execute: {verified}")
+
+            run = await tool(
+                session,
+                "run_start",
+                {
+                    "target_x": 900.0,
+                    "tolerance": 1.0,
+                    "max_seconds": 2.0,
+                },
+            )
+            payloads.append(run)
+            if run.get("status") != "starting":
+                raise AssertionError(f"model run did not start: {run}")
+
+            await asyncio.sleep(0.1)
+            live = await tool(session, "run_status")
+            payloads.append(live)
+            if live.get("status") not in {"starting", "active", "reached", "timeout"}:
+                raise AssertionError(f"unexpected model run status: {live}")
+
+            cancelled = await tool(session, "run_cancel")
+            payloads.append(cancelled)
+            if live.get("status") not in {"reached", "timeout"} and not cancelled.get("accepted"):
+                raise AssertionError(f"active model run was not cancellable: {cancelled}")
+
+            if cancelled.get("accepted"):
+                final_run = await wait_status(
+                    session,
+                    "run_status",
+                    {"cancelled", "reached", "timeout", "failed"},
+                )
+                payloads.append(final_run)
+
+            for payload in payloads:
                 if contains_key(payload, "session_id"):
                     raise AssertionError(f"GameLab MCP leaked session_id: {payload}")
 
@@ -154,7 +276,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gamelab-mcp-smoke-") as temp:
         temp_path = Path(temp)
         checkpoint = temp_path / "spine_motor.pt"
-        save_checkpoint(checkpoint, SpineMotorPolicy.fresh(37))
+        reward_config = temp_path / "reward.json"
 
         server_log_path = temp_path / "server.log"
         host_log_path = temp_path / "host.log"
@@ -181,10 +303,10 @@ def main() -> int:
                     start_new_session=True,
                 )
                 wait_port(HOST_PORT, host)
-                asyncio.run(run_flow(checkpoint))
+                asyncio.run(run_flow(checkpoint, reward_config))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP goal smoke tools=5 no_session_leak=yes")
+                print("PASS gamelab MCP laboratory smoke tools=14 no_session_leak=yes")
                 return 0
             except Exception:
                 server_log.flush()

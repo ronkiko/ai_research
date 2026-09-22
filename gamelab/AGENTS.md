@@ -19,5 +19,6 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - VERIFY means frozen weights. A procedural fallback must never make VERIFY
   pass.
 - Machine-friendly interfaces only. Do not test or automate GUI here.
+- The MCP laboratory service is the supported agent-facing boundary for training, reward configuration, VERIFY, and live model runs; operator scripts are maintenance/CI entry points, not the GameTable assistant API.
 - Before declaring a patch ready, run the real `./gamelab/op/check.sh`
   vertical, not only unit tests.
