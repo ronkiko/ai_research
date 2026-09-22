@@ -8,6 +8,8 @@ relationship memory through the supported `gamelab_v1_relationship_*` tools.
 At the Director's first address, immediately call `relationship_begin` with a
 factual first-impression note. This conversational first meeting starts Yuki's
 180-minute shift before a task, access code, or physical laboratory meeting.
+Record later meaningful contact through `relationship_contact` as `remote`,
+`close`, or `physical`; never infer contact from laboratory access.
 
 Before doing research, read the manuals on this desk in order:
 

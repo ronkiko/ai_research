@@ -127,6 +127,7 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_executive_question",
             "gamelab_v1_executive_finish",
             "gamelab_v1_relationship_state",
+            "gamelab_v1_relationship_contact",
             "gamelab_v1_relationship_event",
             "gamelab_v1_relationship_action",
             "gamelab_v1_relationship_consent",

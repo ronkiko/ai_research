@@ -141,11 +141,11 @@ def import_relationship_journal(db, sid, path):
     ids = {r.get('executive_session_id') for r in records}
     versions = {r.get('relationship_version') for r in records}
     characters = {r.get('character_id') for r in records}
-    if (len(ids) != 1 or None in ids or len(versions) != 1 or
-            next(iter(versions)) not in {1, 2} or len(characters) != 1 or None in characters):
+    if (len(ids) != 1 or None in ids or not versions or
+            not versions.issubset({1, 2, 3}) or len(characters) != 1 or None in characters):
         raise ValueError('Relationship journal has inconsistent session/version/character')
     relationship_id = next(iter(ids))
-    relationship_version = next(iter(versions))
+    relationship_version = max(versions)
     begins = [r for r in records if r.get('kind') == 'begin']
     decisions = [r for r in records if r.get('kind') == 'employment_decision']
     if len(begins) != 1 or len(decisions) > 1:
@@ -178,6 +178,8 @@ def import_relationship_journal(db, sid, path):
                          'first_meeting', 'access_granted', 'first_lab_meeting', 'mutual_confession', 'repair'
                      }
                      for record in records)
+    milestones += sum(record.get('kind') == 'contact' and record.get('proximity') in {'close', 'physical'}
+                      for record in records)
     values = {
         'relationship_events': counts['event'],
         'relationship_actions': counts['action'],

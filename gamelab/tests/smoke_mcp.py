@@ -50,6 +50,7 @@ EXPECTED_TOOLS = {
     "executive_question",
     "executive_finish",
     "relationship_state",
+    "relationship_contact",
     "relationship_event",
     "relationship_action",
     "relationship_consent",
@@ -353,13 +354,11 @@ async def run_flow(
             )
             payloads.append(duality)
             relationship = await tool(
-                session, "relationship_event",
-                {"kind": "access_granted", "evidence_note": "fictional laboratory pass granted"},
+                session, "relationship_contact",
+                {"proximity": "close", "evidence_note": "Director is physically nearby and speaking"},
             )
-            relationship = await tool(
-                session, "relationship_event",
-                {"kind": "first_lab_meeting", "evidence_note": "Director arrived in the laboratory"},
-            )
+            if relationship.get("contacts", {}).get("close_contact_count") != 1:
+                raise AssertionError(f"close contact was not classified: {relationship}")
             relationship = await tool(
                 session, "relationship_action",
                 {"kind": "ask_for_help", "note": "ask for a scientific hint"},
@@ -662,7 +661,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP smoke tools=27 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
+                print("PASS gamelab MCP smoke tools=28 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
                 return 0
             except Exception:
                 server_log.flush()

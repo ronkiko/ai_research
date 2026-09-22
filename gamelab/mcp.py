@@ -248,7 +248,7 @@ def describe() -> dict[str, Any]:
 def relationship_begin(first_impression: str, duration_minutes: float = 180.0) -> dict[str, Any]:
     """Begin Yuki's bounded relationship shift at the Director's first address.
 
-    This records the conversational first meeting and starts the shared shift
+    This records the first remote contact and starts the shared shift
     clock before any research assignment or laboratory access is given.
     """
     return _public(relationship.begin(
@@ -355,14 +355,25 @@ def relationship_state() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
+def relationship_contact(proximity: str, evidence_note: str) -> dict[str, Any]:
+    """Record meaningful contact with the Director.
+
+    proximity is remote (communication at a distance), close (the Director is
+    physically nearby and communicating), or physical (actual touch occurred).
+    Runtime detects first and repeated contacts automatically. Physical contact
+    records an occurrence; it never grants consent for another action.
+    """
+    return _public(relationship.contact(proximity=proximity, evidence_note=evidence_note))
+
+
+@mcp.tool(annotations=WRITE)
 def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
     """Record one observed event: director_attention, director_concern,
     director_praise, director_personal_disclosure, director_kept_promise,
     director_missed_promise, help_offered, help_proved_useful,
     help_proved_wrong, reunion, jealousy_trigger, conflict, apology, repair,
-    access_granted, first_lab_meeting, or mutual_confession. first_meeting means
-    the first conversational contact and is recorded by relationship_begin;
-    first_lab_meeting is the later in-laboratory encounter and requires access.
+    access_granted, or mutual_confession. Contact is recorded separately with
+    relationship_contact; access is neither contact nor a prerequisite for it.
     Use exactly one listed kind; do not invent combined labels."""
     return _public(relationship.event(kind=kind, evidence_note=evidence_note))
 

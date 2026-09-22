@@ -25,14 +25,25 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(state["executive_session_id"], "executive-1")
         self.assertGreater(state["stats"]["warmth"], 15)
 
-    def test_first_contact_is_relationship_event_but_lab_meeting_needs_access(self):
+    def test_runtime_classifies_first_and_repeated_contact_by_proximity(self):
         state = self.runtime.state()
-        self.assertEqual(state["recent_events"][0]["kind"], "first_meeting")
-        with self.assertRaises(RelationshipError):
-            self.runtime.event(kind="first_lab_meeting", evidence_note="met in laboratory")
-        self.runtime.event(kind="access_granted", evidence_note="fictional laboratory pass granted")
-        state = self.runtime.event(kind="first_lab_meeting", evidence_note="Director arrived in laboratory")
-        self.assertTrue(state["location"]["first_lab_meeting_occurred"])
+        self.assertEqual(state["recent_events"][0]["kind"], "contact")
+        self.assertEqual(state["contacts"]["contact_count"], 1)
+        self.clock.value += 10
+        self.runtime.contact(proximity="close", evidence_note="Director is nearby and speaking")
+        self.clock.value += 10
+        state = self.runtime.contact(proximity="physical", evidence_note="Director and Yuki shook hands")
+        self.assertEqual(state["contacts"]["contact_count"], 3)
+        self.assertEqual(state["contacts"]["close_contact_count"], 1)
+        self.assertEqual(state["contacts"]["physical_contact_count"], 1)
+        self.assertEqual(state["contacts"]["closest_contact_reached"], "physical")
+        self.assertEqual(state["contacts"]["first_close_contact_at"], 1010.0)
+        self.assertEqual(state["consent"]["affectionate_touch"]["director"], "unknown")
+
+    def test_contact_is_independent_of_laboratory_access(self):
+        state = self.runtime.contact(proximity="close", evidence_note="Director is beside Yuki outside the lab")
+        self.assertFalse(state["location"]["access_granted"])
+        self.assertEqual(state["contacts"]["last_contact_proximity"], "close")
 
     def test_relationship_exists_before_executive_attachment(self):
         other = RelationshipRuntime(Path(self.temp.name) / "other", clock=self.clock)
@@ -51,9 +62,9 @@ class RelationshipTests(unittest.TestCase):
         }
         (old_root / "relationship-current.json").write_text(json.dumps(old_state), encoding="utf-8")
         migrated = RelationshipRuntime(old_root, clock=self.clock).state()
-        self.assertEqual(migrated["relationship_version"], 2)
+        self.assertEqual(migrated["relationship_version"], 3)
         self.assertEqual(migrated["relationship_session_id"], "executive-1")
-        self.assertTrue(migrated["location"]["first_lab_meeting_occurred"])
+        self.assertGreaterEqual(migrated["contacts"]["close_contact_count"], 1)
 
     def test_consent_is_per_action_and_per_actor(self):
         state = self.runtime.consent(action="embrace", actor="brain", state="accepted", evidence_note="Yuki agreed")

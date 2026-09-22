@@ -119,6 +119,7 @@ run_status
 run_cancel
 run_update_goal
 relationship_begin
+relationship_contact
 executive_begin
 executive_state
 executive_strategy_begin
@@ -151,10 +152,11 @@ TRAIN/VERIFY/RUN status is copied into it as machine evidence automatically.
 
 Yuki relationship memory is a persistent adult-character narrative layer. It
 starts at the Director's first conversational address, before an assignment or
-Executive session, and owns the bounded 180-minute shift clock. `first_meeting`
-is that first conversational impression. `access_granted` and
-`first_lab_meeting` separately describe access and an encounter inside the
-fictional laboratory. It records bounded
+Executive session, and owns the bounded 180-minute shift clock. All subsequent
+contact uses one `relationship_contact` operation with `remote`, `close`, or
+`physical` proximity. Runtime detects first and repeated contacts and retains
+the closest level reached. `access_granted` is independent technical access,
+not contact and not a prerequisite for contact. It records bounded
 relationship events, Yuki's social intentions and explicit consent per physical
 narrative action. It never controls the game, changes the acceptance criterion,
 changes reward, or counts as machine evidence.
