@@ -7,7 +7,7 @@ cd "$ROOT"
 PY="$ROOT/gamelab/.venv/bin/python"
 
 echo "CHECK GameLab compile"
-"$PY" -m compileall -q gamelab
+"$PY" -m compileall -q -x '/\.venv/' gamelab
 
 echo "CHECK GameLab unit tests"
 "$PY" -m unittest discover -s gamelab/tests -p 'test_*.py' -v

@@ -12,6 +12,7 @@ fi
 
 if "$PY" - <<'PY' >/dev/null 2>&1
 import importlib.metadata
+import numpy
 import torch
 
 parts = torch.__version__.split("+", 1)[0].split(".")
@@ -27,11 +28,15 @@ fi
 echo "GAMELAB SETUP install CPU PyTorch"
 "$PY" -m pip install --disable-pip-version-check -q   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url https://pypi.org/simple   "torch>=2.1,<3"
 
-echo "GAMELAB SETUP install MCP SDK"
-"$PY" -m pip install --disable-pip-version-check -q "mcp==2.2.0"
+echo "GAMELAB SETUP install Python dependencies"
+"$PY" -m pip install --disable-pip-version-check -q "mcp==2.2.0" "numpy>=1.26,<3"
 
 "$PY" - <<'PY'
 import importlib.metadata
+import numpy
 import torch
-print(f"GAMELAB SETUP ready torch={torch.__version__} mcp={importlib.metadata.version('mcp')}")
+print(
+    f"GAMELAB SETUP ready torch={torch.__version__} "
+    f"numpy={numpy.__version__} mcp={importlib.metadata.version('mcp')}"
+)
 PY
