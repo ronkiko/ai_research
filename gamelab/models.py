@@ -11,8 +11,10 @@ from torch import nn
 # NNPACK is an optional CPU acceleration backend. On CPUs unsupported by
 # NNPACK, PyTorch emits a C++ warning before falling back to ordinary CPU
 # kernels. GameLab uses tiny Conv1d models, so disable that optional backend
-# explicitly and keep the normal CPU path quiet.
-torch.backends.nnpack.set_flags(False)
+# explicitly when the installed PyTorch exposes that optional backend.
+_nnpack = getattr(torch.backends, "nnpack", None)
+if _nnpack is not None and hasattr(_nnpack, "set_flags"):
+    _nnpack.set_flags(False)
 
 from .config import (
     CHECKPOINT_VERSION,

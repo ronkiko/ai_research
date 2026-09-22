@@ -25,7 +25,10 @@ from gamelab.models import (
 
 class ModelTests(unittest.TestCase):
     def test_nnpack_backend_is_disabled(self):
-        previous = torch.backends.nnpack.set_flags(False)
+        nnpack = getattr(torch.backends, "nnpack", None)
+        if nnpack is None or not hasattr(nnpack, "set_flags"):
+            self.skipTest("PyTorch does not expose the optional NNPACK backend")
+        previous = nnpack.set_flags(False)
         self.assertFalse(previous[0])
 
     def test_spine_and_single_motor_shapes(self):
