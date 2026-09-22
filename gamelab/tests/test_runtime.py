@@ -3,42 +3,30 @@ from __future__ import annotations
 import unittest
 
 from gamelab.host import HostError
-from gamelab.runtime import reset_player
+from gamelab.runtime import ensure_player
 
 
-class _ResetClient:
-    def __init__(self, *, transient_failures: int = 1, fatal: str | None = None) -> None:
-        self.transient_failures = transient_failures
-        self.fatal = fatal
+class _HubClient:
+    def __init__(self, session: dict | None) -> None:
+        self._session = session
         self.login_calls = 0
-        self.logged_in = False
+        self.logout_calls = 0
 
-    def logout(self):
-        self.logged_in = False
-        return {}
-
-    def login(self, player_id: str):
-        self.login_calls += 1
-        if self.fatal is not None:
-            raise HostError(self.fatal)
-        if self.login_calls <= self.transient_failures:
-            raise HostError("entity already exists")
-        self.logged_in = True
-        return {}
+    def session(self):
+        if self._session is None:
+            raise HostError("GameClient Host is not logged in")
+        return dict(self._session)
 
     def state(self):
-        if not self.logged_in:
-            raise HostError("not logged in")
+        if self._session is None:
+            raise HostError("GameClient Host is not logged in")
         return {
-            "session": {
-                "player_id": "player1",
-                "entity_id": "actor-player1",
-            },
+            "session": dict(self._session),
             "snapshot": {
                 "entities": [
                     {
-                        "entity_id": "actor-player1",
-                        "x": 100.0,
+                        "entity_id": self._session["entity_id"],
+                        "x": 321.0,
                         "vx": 0.0,
                         "move_x": 0,
                     }
@@ -46,18 +34,48 @@ class _ResetClient:
             },
         }
 
+    def login(self, player_id: str):
+        self.login_calls += 1
+        raise AssertionError("GameLab must not login")
 
-class RuntimeResetTests(unittest.TestCase):
-    def test_reset_retries_zone_despawn_race(self):
-        client = _ResetClient(transient_failures=2)
-        state = reset_player(client, "player1", timeout=0.5)
-        self.assertEqual(client.login_calls, 3)
-        self.assertEqual(state["snapshot"]["entities"][0]["x"], 100.0)
+    def logout(self):
+        self.logout_calls += 1
+        raise AssertionError("GameLab must not logout")
 
-    def test_reset_does_not_hide_unrelated_login_errors(self):
-        client = _ResetClient(transient_failures=0, fatal="unknown player_id")
-        with self.assertRaisesRegex(HostError, "unknown player_id"):
-            reset_player(client, "player1", timeout=0.5)
+
+class RuntimeHubTests(unittest.TestCase):
+    def test_attach_to_existing_host_session(self):
+        client = _HubClient({
+            "player_id": "player1",
+            "entity_id": "actor-player1",
+            "world_id": "world1",
+            "zone_id": "zone1",
+            "sequence": 7,
+        })
+        state = ensure_player(client, "player1")
+        self.assertEqual(state["snapshot"]["entities"][0]["x"], 321.0)
+        self.assertEqual(client.login_calls, 0)
+        self.assertEqual(client.logout_calls, 0)
+
+    def test_missing_host_session_is_not_created_by_gamelab(self):
+        client = _HubClient(None)
+        with self.assertRaisesRegex(HostError, "login through the game client"):
+            ensure_player(client, "player1")
+        self.assertEqual(client.login_calls, 0)
+        self.assertEqual(client.logout_calls, 0)
+
+    def test_wrong_active_player_is_not_replaced(self):
+        client = _HubClient({
+            "player_id": "player2",
+            "entity_id": "actor-player2",
+            "world_id": "world1",
+            "zone_id": "zone1",
+            "sequence": 3,
+        })
+        with self.assertRaisesRegex(HostError, "owns player2"):
+            ensure_player(client, "player1")
+        self.assertEqual(client.login_calls, 0)
+        self.assertEqual(client.logout_calls, 0)
 
 
 if __name__ == "__main__":

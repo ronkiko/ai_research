@@ -12,7 +12,7 @@ from .config import (
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
-from .host import HostClient
+from .host import HostClient, HostError
 from .lab_service import Laboratory
 from .runtime import checkpoint_path
 
@@ -47,17 +47,26 @@ def _public(payload: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def health() -> dict[str, Any]:
-    """Check laboratory, model, and live-game connectivity."""
+    """Check laboratory, shared Host hub, model, and active-player attachment."""
     client = HostClient("gamelab-health")
     try:
         host = client.health()
         players = client.players()
+        session_player: str | None = None
+        try:
+            session = client.session()
+            value = session.get("player_id")
+            session_player = value if isinstance(value, str) else None
+        except HostError:
+            session_player = None
         return _public({
             "status": "ready",
             "backend_ready": host.get("gameplay_ready") is True,
             "model_ready": checkpoint_path().is_file(),
             "player_id": PLAYER_ID,
             "player_available": PLAYER_ID in players,
+            "host_session_active": session_player is not None,
+            "attached_to_player": session_player == PLAYER_ID,
             "active_operation": laboratory.active_operation(),
         })
     finally:
@@ -70,12 +79,17 @@ def describe() -> dict[str, Any]:
     return {
         "purpose": "experimental environment for studying game mechanics with a trainable model",
         "game_connection": (
-            "GameLab has its own GameClient client connected to the same "
-            "authoritative realtime game as other clients"
+            "GameLab is a downstream GameClient Host client attached through "
+            "the same Host hub and active player session as GUI, CLI, and game_v1"
         ),
         "control_relationship": (
-            "the laboratory client and the operator's game client are separate "
-            "control paths into the same live game"
+            "GameLab behaves as another joystick on the shared Host session: "
+            "it may observe state and submit input, but it does not login, "
+            "logout, or reset the Host-owned player session"
+        ),
+        "arbitration": (
+            "Host serializes all client inputs into one monotonic sequence; "
+            "the latest accepted movement intent becomes active"
         ),
         "capabilities": [
             "inspect model readiness and training metadata",

@@ -9,9 +9,10 @@ Use `gamelab_v1` for machine-facing laboratory work. The MCP surface is the
 supported agent interface; do not require direct invocation of GameLab training
 or verification scripts.
 
-The laboratory is connected to the same live game through its own GameClient
-client and exposes model metadata, reward configuration, asynchronous training,
-frozen verification, and live model runs.
+The laboratory is another downstream client of the same GameClient Host hub
+and active player session used by other clients. It exposes model metadata,
+reward configuration, asynchronous training, frozen verification, and live
+model runs. It does not login, logout, or reset the shared Host session.
 
 Start with:
 

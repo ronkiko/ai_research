@@ -15,6 +15,8 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from gamelab.host import HostClient
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVER_PORT = 17600
@@ -116,7 +118,11 @@ async def wait_status(
     raise AssertionError(f"{tool_name} did not finish: {latest}")
 
 
-async def run_flow(checkpoint: Path, reward_config: Path) -> None:
+async def run_flow(
+    checkpoint: Path,
+    reward_config: Path,
+    operator: HostClient,
+) -> None:
     params = StdioServerParameters(
         command=str(ROOT / "gamelab/op/mcp.sh"),
         args=[],
@@ -145,6 +151,8 @@ async def run_flow(checkpoint: Path, reward_config: Path) -> None:
             payloads.append(health)
             if not health.get("backend_ready") or not health.get("model_ready"):
                 raise AssertionError(f"bad GameLab health: {health}")
+            if not health.get("host_session_active") or not health.get("attached_to_player"):
+                raise AssertionError(f"GameLab is not attached as shared-Host client: {health}")
 
             description = await tool(session, "describe")
             payloads.append(description)
@@ -181,6 +189,9 @@ async def run_flow(checkpoint: Path, reward_config: Path) -> None:
             if rewards.get("timeout_penalty") != 0.5:
                 raise AssertionError(f"reward update did not persist: {rewards}")
 
+            session_before = operator.session()
+            sequence_before = int(session_before.get("sequence", 0))
+
             started = await tool(
                 session,
                 "training_start",
@@ -212,6 +223,12 @@ async def run_flow(checkpoint: Path, reward_config: Path) -> None:
             if info.get("episodes_trained") != 1:
                 raise AssertionError(f"checkpoint metadata not updated: {info}")
 
+            session_after_training = operator.session()
+            if session_after_training.get("session_id") != session_before.get("session_id"):
+                raise AssertionError("training replaced the shared Host session")
+            if int(session_after_training.get("sequence", 0)) < sequence_before:
+                raise AssertionError("training reset the shared Host sequence")
+
             verify = await tool(
                 session,
                 "verify_start",
@@ -234,6 +251,14 @@ async def run_flow(checkpoint: Path, reward_config: Path) -> None:
             payloads.append(verified)
             if verified.get("runs_completed") != 1:
                 raise AssertionError(f"verify did not execute: {verified}")
+
+            session_after_verify = operator.session()
+            if session_after_verify.get("session_id") != session_before.get("session_id"):
+                raise AssertionError("VERIFY replaced the shared Host session")
+            if int(session_after_verify.get("sequence", 0)) < int(
+                session_after_training.get("sequence", 0)
+            ):
+                raise AssertionError("VERIFY reset the shared Host sequence")
 
             run = await tool(
                 session,
@@ -267,6 +292,28 @@ async def run_flow(checkpoint: Path, reward_config: Path) -> None:
                 )
                 payloads.append(final_run)
 
+            final_session = operator.session()
+            if final_session.get("session_id") != session_before.get("session_id"):
+                raise AssertionError("GameLab run replaced the shared Host session")
+
+            events = operator.events(0, limit=256).get("events", [])
+            destructive = [
+                event
+                for event in events
+                if event.get("kind") in {"login", "logout"}
+                and str(event.get("client_id", "")).startswith("gamelab")
+            ]
+            if destructive:
+                raise AssertionError(
+                    f"GameLab must be joystick-only on Host session lifecycle: {destructive}"
+                )
+            if not any(
+                event.get("kind") == "input"
+                and str(event.get("client_id", "")).startswith("gamelab-mcp-")
+                for event in events
+            ):
+                raise AssertionError(f"no GameLab joystick input visible in Host events: {events}")
+
             for payload in payloads:
                 if contains_key(payload, "session_id"):
                     raise AssertionError(f"GameLab MCP leaked session_id: {payload}")
@@ -292,6 +339,7 @@ def main() -> int:
                 start_new_session=True,
             )
             host: subprocess.Popen | None = None
+            operator: HostClient | None = None
             try:
                 wait_port(SERVER_PORT, server)
                 host = subprocess.Popen(
@@ -303,10 +351,12 @@ def main() -> int:
                     start_new_session=True,
                 )
                 wait_port(HOST_PORT, host)
-                asyncio.run(run_flow(checkpoint, reward_config))
+                operator = HostClient("operator-mcp-smoke")
+                operator.login("player1")
+                asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP laboratory smoke tools=14 no_session_leak=yes")
+                print("PASS gamelab MCP shared-Host joystick smoke tools=14 no_session_reset=yes")
                 return 0
             except Exception:
                 server_log.flush()
@@ -317,6 +367,12 @@ def main() -> int:
                 print(host_log_path.read_text(encoding="utf-8", errors="replace"))
                 raise
             finally:
+                if operator is not None:
+                    try:
+                        operator.logout()
+                    except Exception:
+                        pass
+                    operator.close()
                 stop_group(host)
                 stop_group(server)
 

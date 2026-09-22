@@ -12,11 +12,12 @@ The initial task is one-dimensional target positioning.
 
 ## External environment
 
-GameLab uses the public GameClient Host Protocol at `127.0.0.1:17700`.
-GameClient Host remains the only GameServer-facing client.
+GameLab uses the official public GameClient Host client API against the Host at
+`127.0.0.1:17700`. GameClient Host remains the only GameServer-facing client.
 
-GameLab must not import implementation code from `gameclient.*` or
-`gameserver.*`.
+GameLab may import only the public Host client primitive
+`gameclient.v1.clients.base.HostClient`; it must not access GameServer
+internals directly.
 
 The external authoritative world remains:
 
@@ -88,8 +89,8 @@ A post-terminal safety stop is not part of success classification.
 The supported LLM-facing boundary is a complete laboratory service, not direct
 shell access to training scripts.
 
-GameLab is connected to the same authoritative game through its own GameClient
-client. Its MCP surface is:
+GameLab is an ordinary downstream client of the same GameClient Host hub and
+active player session used by GUI, CLI, and `game_v1`. Its MCP surface is:
 
 ```text
 health
@@ -111,6 +112,11 @@ run_cancel
 Only one long-running laboratory operation may be active at a time. Training,
 verification, and live model runs execute asynchronously and publish bounded
 status.
+
+GameLab does not own player-session lifecycle. It never logs in, logs out, or
+resets the Host-owned session. A Host player must already be active. All
+downstream clients share Host's monotonic command sequence; the latest accepted
+movement intent becomes active.
 
 The MCP may expose reward instrumentation and experiment metadata, but it does
 not expose low-level actuator commands or model implementation details. GameTable

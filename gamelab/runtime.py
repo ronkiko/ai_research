@@ -53,42 +53,20 @@ def wait_player(client: HostClient, timeout: float = 2.0) -> dict[str, Any]:
 
 
 def ensure_player(client: HostClient, player_id: str) -> dict[str, Any]:
+    """Attach to the Host-owned active player without owning session lifecycle."""
     try:
         session = client.session()
-    except HostError:
-        client.login(player_id)
-        return wait_player(client)
+    except HostError as exc:
+        raise HostError(
+            "GameClient Host has no active player session; "
+            "login through the game client before using GameLab"
+        ) from exc
     current = session.get("player_id")
     if current != player_id:
         raise HostError(
-            f"GameClient Host already owns {current}; expected {player_id}"
+            f"GameClient Host owns {current}; GameLab expects {player_id}"
         )
     return wait_player(client)
-
-
-def reset_player(
-    client: HostClient,
-    player_id: str,
-    timeout: float = 2.0,
-) -> dict[str, Any]:
-    """Training/verification reset. Not part of learned movement control."""
-    try:
-        client.logout()
-    except HostError:
-        pass
-
-    deadline = time.monotonic() + timeout
-    last_error: HostError | None = None
-    while time.monotonic() < deadline:
-        try:
-            client.login(player_id)
-            return wait_player(client, timeout=max(0.1, deadline - time.monotonic()))
-        except HostError as exc:
-            last_error = exc
-            if "entity already exists" not in str(exc).lower():
-                raise
-            time.sleep(0.02)
-    raise HostError(f"player reset did not complete: {last_error}")
 
 
 class GoalRunner:
@@ -321,13 +299,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--player", default="player1")
     parser.add_argument("--tolerance", type=float, default=SUCCESS_TOLERANCE)
     parser.add_argument("--timeout", type=float, default=DEFAULT_GOAL_TIMEOUT)
-    parser.add_argument("--reset", action="store_true")
     args = parser.parse_args(argv)
 
     client = HostClient("gamelab-run")
     try:
-        if args.reset:
-            reset_player(client, args.player)
+        ensure_player(client, args.player)
         model = load_runtime_model()
         result = GoalRunner(model, client, player_id=args.player).run(
             args.target,

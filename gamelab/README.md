@@ -1,8 +1,8 @@
 # GameLab
 
 GameLab is a separate research laboratory for learned hierarchical motor control.
-It uses the existing realtime GameServer v1 world as an external environment,
-but it does not import GameServer or GameClient implementation code.
+It uses the existing realtime GameServer v1 world through the official
+GameClient Host client API.
 
 The first experiment asks one concrete question:
 
@@ -43,8 +43,8 @@ distance-based action fallback, gait scheduler, or hidden procedural
 "finish the job" path.
 
 Procedural code is allowed only for the laboratory itself: measurement,
-reward calculation, episode reset, logging, checkpointing, safety stop after a
-terminal/cancel condition, and verification.
+reward calculation, rollout boundaries, logging, checkpointing, safety stop
+after a terminal/cancel condition, and verification.
 
 A successful VERIFY run is frozen inference: no learning and no procedural
 controller.
@@ -72,10 +72,11 @@ Motor solve the strategic task directly.
 Spine and Motor are optimized jointly with PPO. No demonstration or scripted
 action labels are used.
 
-Training episodes reset the selected player to the normal GameServer spawn and
-sample targets across the one-dimensional world. Reward is based on measured
-progress toward the target, with terminal success only when the learned policy
-gets within tolerance and has actually stopped.
+Training episodes start from the current authoritative player state; GameLab
+does not reset, login, or logout the shared Host session. Targets may be sampled
+across the one-dimensional world. Reward is based on measured progress toward
+the target, with terminal success only when the learned policy gets within
+tolerance and has actually stopped.
 
 Default success condition:
 
@@ -141,8 +142,9 @@ Start the existing realtime backend in separate terminals:
 ## MCP laboratory service
 
 The supported agent interface is the long-lived `gamelab_v1` MCP laboratory.
-It is connected to the same GameClient Host / GameServer world through its own
-GameClient client.
+It is an ordinary downstream client of the same GameClient Host hub used by
+GUI, CLI, and `game_v1`. All of them observe and control the same active
+Host-owned player session.
 
 On first MCP startup, if no checkpoint exists, GameLab creates a fresh
 untrained model artifact. The laboratory then exposes:
@@ -166,6 +168,8 @@ run_cancel
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
 Start tools return immediately; status tools expose bounded progress/results.
+They require an already active Host player session. GameLab never creates,
+replaces, resets, or logs out that shared session.
 
 Reward configuration is persisted under the ignored `gamelab/runtime/` area
 and applies to subsequent training episodes. The configurable measured signals
@@ -208,9 +212,9 @@ The gate verifies:
 - Python compilation;
 - model shapes and the Spine -> Motor gradient path;
 - real PPO parameter updates;
-- no imports of GameServer/GameClient internals;
+- use of the official GameClient Host client API with no direct GameServer access;
 - Motor source has no strategic target input;
-- real fresh-model inference through GameClient Host into GameServer;
-- real stdio MCP goal interface against the live backend.
+- real fresh-model inference as a second joystick through the shared GameClient Host;
+- real stdio MCP laboratory flow without login/logout/session reset.
 
 GUI runtime is outside GameLab and is not part of this gate.

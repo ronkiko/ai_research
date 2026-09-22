@@ -6,7 +6,7 @@ import json
 
 from .config import DEFAULT_GOAL_TIMEOUT, SUCCESS_TOLERANCE
 from .host import HostClient
-from .runtime import GoalRunner, load_runtime_model, reset_player
+from .runtime import GoalRunner, ensure_player, load_runtime_model
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,8 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     client = HostClient("gamelab-verify")
     passed = 0
     try:
+        ensure_player(client, args.player)
         for index in range(1, args.runs + 1):
-            reset_player(client, args.player)
             result = GoalRunner(model, client, player_id=args.player).run(
                 args.target,
                 tolerance=args.tolerance,
@@ -45,10 +45,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"VERIFY {passed}/{args.runs} target={args.target:g}", flush=True)
         return 0 if passed == args.runs else 1
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
         client.close()
 
 

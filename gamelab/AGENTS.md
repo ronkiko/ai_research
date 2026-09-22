@@ -10,11 +10,13 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Motor must not receive strategic `target_x` or `goal_dx` directly.
 - LLM/OpenCode is the slow strategist. It may set/cancel goals and inspect
   status, but it must not perform the realtime left/right/stop loop.
-- GameLab consumes GameClient Host only through its public Host Protocol and
-  must not import `gameclient.*` or `gameserver.*`.
+- GameLab is a normal downstream GameClient Host client. Use the official
+  `gameclient.v1.clients.base.HostClient` API; never access GameServer internals directly.
+- GameLab must not login, logout, replace, or reset the Host-owned player
+  session. It behaves like another joystick attached to the already active player.
 - Physics is 120 Hz, Motor is 60 Hz, Spine is 10 Hz unless the experiment
   explicitly changes the documented contract.
-- Episode reset, reward, logging, measurement, checkpointing, and terminal
+- Rollout boundaries, reward, logging, measurement, checkpointing, and terminal
   safety stop are laboratory infrastructure, not learned control.
 - VERIFY means frozen weights. A procedural fallback must never make VERIFY
   pass.

@@ -19,7 +19,7 @@ from .config import (
 from .host import HostClient, HostError
 from .models import SpineMotorPolicy, load_checkpoint, save_checkpoint
 from .reward import RewardConfig, RewardStore
-from .runtime import GoalRunner, checkpoint_path, reset_player
+from .runtime import GoalRunner, checkpoint_path, ensure_player
 from .training import collect_episode, ppo_update
 
 
@@ -63,6 +63,13 @@ class Laboratory:
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
         }
+
+    def _require_attached_player(self) -> None:
+        client = HostClient("gamelab-preflight")
+        try:
+            ensure_player(client, self.player_id)
+        finally:
+            client.close()
 
     def reward_get(self) -> dict[str, float]:
         return self.reward_store.load().public()
@@ -190,6 +197,7 @@ class Laboratory:
         target = self._target(target_x)
         seconds = self._seconds(max_seconds, name="max_seconds")
         reward = self.reward_store.load()
+        self._require_attached_player()
         return self._start(
             "training",
             {
@@ -250,9 +258,7 @@ class Laboratory:
         client = HostClient("gamelab-mcp-train")
         recent: deque[dict[str, Any]] = deque(maxlen=20)
         try:
-            players = client.players()
-            if self.player_id not in players:
-                raise RuntimeError(f"unknown training player: {self.player_id}")
+            ensure_player(client, self.player_id)
 
             completed = 0
             for offset in range(1, episodes + 1):
@@ -338,6 +344,7 @@ class Laboratory:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
         self.ensure_model()
+        self._require_attached_player()
         return self._start(
             "verify",
             {
@@ -370,11 +377,11 @@ class Laboratory:
         results: list[dict[str, Any]] = []
         passed = 0
         try:
+            ensure_player(client, self.player_id)
             runner = GoalRunner(model, client, player_id=self.player_id)
             for index in range(1, runs + 1):
                 if self._cancel.is_set():
                     break
-                reset_player(client, self.player_id)
                 result = runner.run(
                     target_x,
                     tolerance=tolerance,
@@ -427,6 +434,7 @@ class Laboratory:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
         self.ensure_model()
+        self._require_attached_player()
         return self._start(
             "run",
             {

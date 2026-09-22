@@ -1,4 +1,4 @@
-"""Real fresh-model inference smoke: GameLab -> Host -> GameServer."""
+"""Real joystick-style GameLab inference smoke through shared GameClient Host."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,7 @@ import torch
 
 from gamelab.host import HostClient, player_from_state
 from gamelab.models import SensorHistory, SpineMotorPolicy, motor_state, sensor_frame
-from gamelab.runtime import reset_player
+from gamelab.runtime import ensure_player
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,7 +68,8 @@ def main() -> int:
                 start_new_session=True,
             )
             host: subprocess.Popen | None = None
-            client: HostClient | None = None
+            operator: HostClient | None = None
+            lab: HostClient | None = None
             try:
                 wait_port(SERVER_PORT, server)
                 host = subprocess.Popen(
@@ -81,8 +82,17 @@ def main() -> int:
                 )
                 wait_port(HOST_PORT, host)
 
-                client = HostClient("gamelab-smoke")
-                state = reset_player(client, "player1")
+                operator = HostClient("operator-smoke")
+                login = operator.login("player1")
+                if login.get("reused"):
+                    raise AssertionError("fresh Host unexpectedly reused player session")
+
+                operator_session = operator.session()
+                if operator_session.get("sequence") != 0:
+                    raise AssertionError(f"fresh session sequence must be 0: {operator_session}")
+
+                lab = HostClient("gamelab-smoke")
+                state = ensure_player(lab, "player1")
                 player = player_from_state(state)
                 if float(player["x"]) != 100.0:
                     raise AssertionError(f"P must start at 100, got {player['x']}")
@@ -106,22 +116,41 @@ def main() -> int:
                     action = int(logits.argmax().item())
                 move_x = model.action_to_move(action)
 
-                queued = client.input(move_x)
+                queued = lab.input(move_x)
                 if queued.get("sequence") != 1:
-                    raise AssertionError(f"first model command must be sequence 1: {queued}")
+                    raise AssertionError(f"first lab command must share Host sequence 1: {queued}")
+
                 time.sleep(0.1)
-                after = client.state()
-                after_player = player_from_state(after)
+                observed = operator.state()
+                observed_player = player_from_state(observed)
+                if observed["session"].get("sequence") != 1:
+                    raise AssertionError(f"operator must observe shared sequence 1: {observed}")
+
+                events = operator.events(0, limit=20).get("events", [])
+                if not any(
+                    event.get("kind") == "input"
+                    and event.get("client_id") == "gamelab-smoke"
+                    for event in events
+                ):
+                    raise AssertionError(f"GameLab input not visible in shared Host events: {events}")
+                if any(
+                    event.get("kind") in {"login", "logout"}
+                    and str(event.get("client_id", "")).startswith("gamelab")
+                    for event in events
+                ):
+                    raise AssertionError(f"GameLab unexpectedly owned Host session lifecycle: {events}")
+
+                if int(observed_player["move_x"]) != 0:
+                    stopped = lab.input(0)
+                    if int(stopped.get("sequence", 0)) <= 1:
+                        raise AssertionError(f"stop must advance shared sequence: {stopped}")
 
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab inference smoke")
 
-                if int(after_player["move_x"]) != 0:
-                    client.input(0)
-                client.logout()
                 print(
-                    "PASS gamelab real inference smoke "
-                    f"action={move_x} x={after_player['x']}"
+                    "PASS gamelab shared-Host joystick smoke "
+                    f"action={move_x} x={observed_player['x']} no_session_reset=yes"
                 )
                 return 0
             except Exception:
@@ -133,8 +162,14 @@ def main() -> int:
                 print(host_log_path.read_text(encoding="utf-8", errors="replace"))
                 raise
             finally:
-                if client is not None:
-                    client.close()
+                if lab is not None:
+                    lab.close()
+                if operator is not None:
+                    try:
+                        operator.logout()
+                    except Exception:
+                        pass
+                    operator.close()
                 stop_group(host)
                 stop_group(server)
 

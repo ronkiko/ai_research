@@ -8,9 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ScopeTests(unittest.TestCase):
-    def test_gamelab_does_not_import_game_internals(self):
+    def test_gamelab_uses_official_gameclient_host_api_only(self):
+        host = (ROOT / "gamelab/host.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "from gameclient.v1.clients.base import HostClient, HostClientError",
+            host,
+        )
+        self.assertNotIn("socket.", host)
+        self.assertNotIn("json.", host)
+
         for relative in (
-            "gamelab/host.py",
             "gamelab/models.py",
             "gamelab/runtime.py",
             "gamelab/training.py",
@@ -23,6 +30,19 @@ class ScopeTests(unittest.TestCase):
             self.assertNotIn("from gameclient", text, relative)
             self.assertNotIn("import gameserver", text, relative)
             self.assertNotIn("from gameserver", text, relative)
+
+    def test_gamelab_does_not_own_host_session_lifecycle(self):
+        for relative in (
+            "gamelab/runtime.py",
+            "gamelab/training.py",
+            "gamelab/verify.py",
+            "gamelab/lab_service.py",
+            "gamelab/mcp.py",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn(".login(", text, relative)
+            self.assertNotIn(".logout(", text, relative)
+            self.assertNotIn("reset_player", text, relative)
 
     def test_motor_source_has_no_strategic_target_input(self):
         text = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")

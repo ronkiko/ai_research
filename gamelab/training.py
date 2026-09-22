@@ -40,7 +40,7 @@ from .models import (
     sensor_frame,
 )
 from .reward import RewardConfig, RewardStore, step_reward
-from .runtime import checkpoint_path, reset_player
+from .runtime import checkpoint_path, ensure_player
 
 
 @dataclass
@@ -78,7 +78,7 @@ def collect_episode(
 ) -> EpisodeResult:
     model.eval()
     reward_config = (reward_config or RewardConfig()).validated()
-    state = reset_player(client, player_id)
+    state = ensure_player(client, player_id)
     player = player_from_state(state)
     history = SensorHistory(
         sensor_frame(
@@ -340,9 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     reward_config = RewardStore().load()
     client = HostClient("gamelab-train")
     try:
-        players = client.players()
-        if args.player not in players:
-            raise RuntimeError(f"unknown training player: {args.player}")
+        ensure_player(client, args.player)
 
         for offset in range(1, args.episodes + 1):
             episode = completed + offset
@@ -375,10 +373,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
         client.close()
 
 
