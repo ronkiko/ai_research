@@ -43,7 +43,9 @@ def wait_player(client: HostClient, timeout: float = 2.0) -> dict[str, Any]:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            return client.state()
+            state = client.state()
+            player_from_state(state)
+            return state
         except HostError as exc:
             last_error = exc
             time.sleep(0.02)
