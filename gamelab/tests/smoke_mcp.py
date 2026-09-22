@@ -23,6 +23,7 @@ SERVER_PORT = 17600
 HOST_PORT = 17700
 EXPECTED_TOOLS = {
     "health",
+    "login",
     "describe",
     "model_info",
     "reward_get",
@@ -151,8 +152,31 @@ async def run_flow(
             payloads.append(health)
             if not health.get("backend_ready") or not health.get("model_ready"):
                 raise AssertionError(f"bad GameLab health: {health}")
+            if health.get("host_session_active") or health.get("attached_to_player"):
+                raise AssertionError(f"fresh Host unexpectedly has an active session: {health}")
+
+            lab_login = await tool(session, "login", {"player_id": "player1"})
+            payloads.append(lab_login)
+            if lab_login.get("reused") is not False:
+                raise AssertionError(f"GameLab did not create fresh session: {lab_login}")
+            if lab_login.get("session", {}).get("player_id") != "player1":
+                raise AssertionError(f"GameLab login returned wrong player: {lab_login}")
+
+            lab_reuse = await tool(session, "login", {"player_id": "player1"})
+            payloads.append(lab_reuse)
+            if lab_reuse.get("reused") is not True:
+                raise AssertionError(f"GameLab did not reuse its Host session: {lab_reuse}")
+
+            operator_login = operator.login("player1")
+            if operator_login.get("reused") is not True:
+                raise AssertionError(
+                    f"ordinary Host client did not reuse GameLab-created session: {operator_login}"
+                )
+
+            health = await tool(session, "health")
+            payloads.append(health)
             if not health.get("host_session_active") or not health.get("attached_to_player"):
-                raise AssertionError(f"GameLab is not attached as shared-Host client: {health}")
+                raise AssertionError(f"GameLab is not attached after login: {health}")
 
             description = await tool(session, "describe")
             payloads.append(description)
@@ -297,15 +321,26 @@ async def run_flow(
                 raise AssertionError("GameLab run replaced the shared Host session")
 
             events = operator.events(0, limit=256).get("events", [])
-            destructive = [
+            gamelab_logouts = [
                 event
                 for event in events
-                if event.get("kind") in {"login", "logout"}
+                if event.get("kind") == "logout"
                 and str(event.get("client_id", "")).startswith("gamelab")
             ]
-            if destructive:
+            if gamelab_logouts:
                 raise AssertionError(
-                    f"GameLab must not own Host session lifecycle: {destructive}"
+                    f"GameLab must never logout the shared Host session: {gamelab_logouts}"
+                )
+
+            gamelab_logins = [
+                event
+                for event in events
+                if event.get("kind") == "login"
+                and event.get("client_id") == "gamelab-login"
+            ]
+            if len(gamelab_logins) != 1:
+                raise AssertionError(
+                    f"expected exactly one GameLab-created Host login event: {gamelab_logins}"
                 )
 
             reset_clients = {
@@ -366,11 +401,10 @@ def main() -> int:
                 )
                 wait_port(HOST_PORT, host)
                 operator = HostClient("operator-mcp-smoke")
-                operator.login("player1")
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP shared-Host smoke tools=14 episode_reset=yes session_preserved=yes")
+                print("PASS gamelab MCP shared-Host smoke tools=15 login=yes episode_reset=yes session_preserved=yes")
                 return 0
             except Exception:
                 server_log.flush()

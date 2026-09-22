@@ -12,12 +12,14 @@ or verification scripts.
 The laboratory is another downstream client of the same GameClient Host hub
 and active player session used by other clients. It exposes model metadata,
 reward configuration, asynchronous training, frozen verification, and live
-model runs. It does not login/logout or replace the shared Host session.
+model runs. It may explicitly create/reuse the shared Host player session
+through `login`, but never logs it out or replaces a different active player.
 TRAIN/VERIFY use Host's non-destructive physical episode reset; RUN does not.
 
 Start with:
 
 - `gamelab_v1_health`
+- `gamelab_v1_login` when no suitable Host session exists
 - `gamelab_v1_describe`
 
 Then use the relevant `reward_*`, `training_*`, `verify_*`, or `run_*`

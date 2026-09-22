@@ -87,13 +87,15 @@ class GameTableTests(unittest.TestCase):
         normalized = " ".join(text.split())
         self.assertIn("несколько джойстиков", normalized)
         self.assertIn("одной активной игровой сессией", normalized)
-        self.assertIn("не выполняет login/logout", normalized)
+        self.assertIn("умеет сама выполнить `login`", normalized)
+        self.assertIn("не выполняет `logout`", normalized)
         self.assertIn("общую монотонную sequence", normalized)
         self.assertIn("неразрушающий reset", normalized)
         self.assertIn("session и Host sequence сохраняются", normalized)
         self.assertIn("RUN reset не выполняет", normalized)
         for tool in (
             "gamelab_v1_health",
+            "gamelab_v1_login",
             "gamelab_v1_describe",
             "gamelab_v1_reward_get",
             "gamelab_v1_reward_set",

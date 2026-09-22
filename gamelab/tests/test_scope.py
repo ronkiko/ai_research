@@ -31,17 +31,21 @@ class ScopeTests(unittest.TestCase):
             self.assertNotIn("import gameserver", text, relative)
             self.assertNotIn("from gameserver", text, relative)
 
-    def test_gamelab_does_not_own_host_login_logout_lifecycle(self):
+    def test_gamelab_login_is_explicit_mcp_only_and_never_logs_out(self):
         for relative in (
             "gamelab/runtime.py",
             "gamelab/training.py",
             "gamelab/verify.py",
             "gamelab/lab_service.py",
-            "gamelab/mcp.py",
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn(".login(", text, relative)
             self.assertNotIn(".logout(", text, relative)
+
+        mcp = (ROOT / "gamelab/mcp.py").read_text(encoding="utf-8")
+        self.assertIn("def login(", mcp)
+        self.assertIn("client.login(player_id)", mcp)
+        self.assertNotIn(".logout(", mcp)
 
     def test_motor_source_has_no_strategic_target_input(self):
         text = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")

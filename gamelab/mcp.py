@@ -45,6 +45,13 @@ def _public(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _public_session(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: session.get(key)
+        for key in ("player_id", "entity_id", "world_id", "zone_id", "sequence")
+    }
+
+
 @mcp.tool(annotations=READ_ONLY)
 def health() -> dict[str, Any]:
     """Check laboratory, shared Host hub, model, and active-player attachment."""
@@ -73,6 +80,20 @@ def health() -> dict[str, Any]:
         client.close()
 
 
+@mcp.tool(annotations=WRITE)
+def login(player_id: str = PLAYER_ID) -> dict[str, Any]:
+    """Create or reuse the shared Host player session for laboratory work."""
+    client = HostClient("gamelab-login")
+    try:
+        response = client.login(player_id)
+        return _public({
+            "reused": bool(response.get("reused")),
+            "session": _public_session(response.get("session") or {}),
+        })
+    finally:
+        client.close()
+
+
 @mcp.tool(annotations=READ_ONLY)
 def describe() -> dict[str, Any]:
     """Describe laboratory capabilities and its relationship to the live game."""
@@ -84,8 +105,9 @@ def describe() -> dict[str, Any]:
         ),
         "control_relationship": (
             "GameLab behaves as another joystick on the shared Host session: "
-            "it observes state and submits input, but never login/logout or "
-            "replace the Host-owned player session"
+            "it may explicitly create/reuse the selected player session through "
+            "login, then observes state and submits input. It never logs out or "
+            "replaces an active session owned by a different player"
         ),
         "episode_reset": (
             "TRAIN and VERIFY request a non-destructive Host reset of physical "
@@ -97,6 +119,7 @@ def describe() -> dict[str, Any]:
             "the latest accepted movement intent becomes active"
         ),
         "capabilities": [
+            "create or reuse the shared Host player session",
             "inspect model readiness and training metadata",
             "inspect and change reward instrumentation",
             "start/cancel model training",

@@ -155,6 +155,7 @@ untrained model artifact. The laboratory then exposes:
 
 ```text
 health
+login
 describe
 model_info
 reward_get
@@ -172,10 +173,11 @@ run_cancel
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
 Start tools return immediately; status tools expose bounded progress/results.
-They require an already active Host player session. GameLab never creates,
-replaces, or logs out that shared session. TRAIN and VERIFY may reset only the
-player's physical episode state through Host while preserving session identity
-and sequence; RUN does not reset.
+GameLab can explicitly create the Host player session with `login`, or reuse
+the already active same-player session. It never logs out the shared session
+and cannot replace a session owned by a different active player. TRAIN and
+VERIFY reset only the player's physical episode state through Host while
+preserving session identity and sequence; RUN does not reset.
 
 Reward configuration is persisted under the ignored `gamelab/runtime/` area
 and applies to subsequent training episodes. The configurable measured signals

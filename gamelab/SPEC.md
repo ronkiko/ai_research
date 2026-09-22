@@ -94,6 +94,7 @@ active player session used by GUI, CLI, and `game_v1`. Its MCP surface is:
 
 ```text
 health
+login
 describe
 model_info
 reward_get
@@ -113,8 +114,9 @@ Only one long-running laboratory operation may be active at a time. Training,
 verification, and live model runs execute asynchronously and publish bounded
 status.
 
-GameLab does not own player-session lifecycle. It never logs in, logs out, or
-replaces the Host-owned session. A Host player must already be active. All
+GameLab may explicitly establish the shared Host player session through
+`login(player_id)`, or reuse it when the same player is already active. It
+never logs out the session and cannot replace a different active player. All
 downstream clients share Host's monotonic command sequence; the latest accepted
 movement intent becomes active.
 
