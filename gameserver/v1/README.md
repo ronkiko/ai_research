@@ -144,6 +144,18 @@ python -m gameserver.v1.supervisor
 The supervisor launches independent Python processes for Persistence,
 Telemetry, World, Zone, Mob, and Gateway. `Ctrl+C` stops the group.
 
+The launcher also manages the long-lived process explicitly:
+
+```bash
+./gameserver/v1/op/server.sh --status
+./gameserver/v1/op/server.sh --stop
+./gameserver/v1/op/server.sh --restart
+```
+
+Running `server.sh` without a management flag remains equivalent to
+`--start`. A first `--restart` after upgrading can also discover the older
+GameServer process from the same repository checkout.
+
 A manual protocol smoke test can be run in another terminal:
 
 ```bash

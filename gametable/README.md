@@ -30,6 +30,16 @@ The Director starts the shared backend as usual, then launches the workstation:
 `gametable/opencode.json` connects both MCP servers. After OpenCode starts,
 the Director gives the actual assignment in chat.
 
+The OpenCode launcher is also managed:
+
+```bash
+./gametable/op/start.sh --status
+./gametable/op/start.sh --stop
+./gametable/op/start.sh --restart
+```
+
+Without a management flag it starts OpenCode normally.
+
 ## Contract check
 
 ```bash

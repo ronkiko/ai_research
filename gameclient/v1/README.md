@@ -74,6 +74,21 @@ Optional human GUI:
 ./gameclient/v1/op/gui.sh
 ```
 
+The long-lived Host and GUI launchers support explicit process management:
+
+```bash
+./gameclient/v1/op/host.sh --status
+./gameclient/v1/op/host.sh --stop
+./gameclient/v1/op/host.sh --restart
+
+./gameclient/v1/op/gui.sh --status
+./gameclient/v1/op/gui.sh --stop
+./gameclient/v1/op/gui.sh --restart
+```
+
+No management flag means `--start`. Application arguments after `--start` or
+`--restart` are forwarded to the underlying program.
+
 AI MCP Client:
 
 ```bash
