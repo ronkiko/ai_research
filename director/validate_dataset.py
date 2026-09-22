@@ -12,6 +12,7 @@ from ami_annotations import SESSION_ID
 def validate(path):
     c=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
     assert c.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+    assert c.execute('PRAGMA user_version').fetchone()[0]==2
     assert not c.execute('PRAGMA foreign_key_check').fetchall()
     for sha,raw in c.execute('SELECT sha256,bytes FROM source'):
         assert hashlib.sha256(raw).hexdigest()==sha
@@ -22,10 +23,22 @@ def validate(path):
             original=dict(source.execute('SELECT id,data FROM '+table))
             imported=dict(c.execute('SELECT id,raw_json FROM '+destination+' WHERE session_id=?',(sid,)))
             assert original==imported,table+' is not lossless'
+        executive=c.execute('SELECT id,source_sha256,executive_version,status FROM executive_session WHERE session_id=?',(sid,)).fetchone()
+        if executive:
+            executive_id,executive_sha,version,status=executive
+            assert version==1
+            assert c.execute('SELECT count(*) FROM source WHERE sha256=?',(executive_sha,)).fetchone()[0]==1
+            event_counts=dict(c.execute('SELECT kind,count(*) FROM executive_event WHERE executive_session_id=? GROUP BY kind',(executive_id,)))
+            assert event_counts.get('begin')==1
+            assert event_counts.get('finish',0)<=1
+            if status=='finished':
+                assert c.execute('SELECT count(*) FROM executive_metric WHERE executive_session_id=?',(executive_id,)).fetchone()[0]>0
+        if sid!=SESSION_ID:
+            print('PASS:',sid,'— lossless source, source hashes, foreign keys; Executive validated' if executive else '— lossless source, source hashes, foreign keys')
+            source.close()
+            continue
         for table in ['experiment','episode','snapshot','stimulus','strategy_evidence','finding_evidence']:
             assert c.execute('SELECT count(*) FROM '+table).fetchone()[0]>0
-        if sid!=SESSION_ID:
-            continue
         metric=dict(c.execute('SELECT name,value FROM metric WHERE session_id=?',(sid,)))
         calls=list(c.execute('SELECT e.id,e.created_ms,t.name,t.status,t.input_json,t.output_json FROM tool_call t JOIN event e ON e.id=t.event_id WHERE e.session_id=? ORDER BY e.ordinal',(sid,)))
         assert metric['tool_calls']==len(calls)==605

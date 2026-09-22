@@ -10,6 +10,9 @@
 
 Первый кейс: [Ами — независимый разбор](AMI_CASE.md).
 Единые параметры и заполненный паспорт: [Оценка Brain v1](EVALUATION.md).
+Для следующих опытов с Brain Executive: [Оценка Brain v2](EVALUATION_V2.md).
+Schema v2 умеет дополнительно импортировать append-only Executive journal; у
+Ами Executive ещё не было, поэтому её исходный паспорт v1 не переписывается.
 Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанные идентификаторы,
 а не независимая аттестация обслуживающего backend. Размер LLM, архитектура,
 число слоёв и размер контекста **неизвестны (`NULL`)**. `xhigh` — режим reasoning,
@@ -33,6 +36,8 @@ Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанны
 | `quality_check` | Проверки целостности и известные ограничения |
 | `evaluation_dimension`, `evaluation_result`, `evaluation_evidence` | 13 параметров оценки Brain, значения/знаменатели, ограничения и доказательства |
 | `research_proposal` | Гипотезы и дизайн будущих контролируемых опытов; не проверенные результаты |
+| `executive_session`, `executive_event` | Brain Executive v1: фиксированный бюджет и append-only стратегический журнал |
+| `executive_strategy`, `executive_metric` | Контракты гипотез и машинно вычислимые показатели Executive |
 | `dialogue` | Полный текст диалога с ролями, порядком и временем |
 
 Глобальные source IDs сохранены. При импорте новая сессия добавляется; одинаковый
@@ -78,6 +83,8 @@ hash существующей сессии — no-op, другой hash того
 
 ```sh
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --attachments /path/to/first.png /path/to/second.png
+# Для новой сессии с Executive добавь:
+python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl
 python director/validate_dataset.py
 ```
 
@@ -121,3 +128,16 @@ SELECT * FROM brain_comparison WHERE name IN
 как неизвестность, не заменять нулём. Предварительно задать независимый критерий
 успеха: точность, скорость и время удержания. Сравнивать повторные сессии, стратифицируя
 по задаче и среде; тексты завершающего самоотчёта не подменяют машинный результат.
+## Brain Executive и сравнение v2
+
+Executive journal не заменяет OpenCode transcript: первый даёт машинную историю
+стратегий/бюджетов/лучших результатов, второй остаётся источником фактического
+диалога и социальных воздействий. Метрики вроде high-value questions,
+correction relapse, Director rework и constraint violations требуют объединить
+оба источника и сделать evidence-linked разметку; их нельзя честно вывести лишь
+из самоотчёта Brain.
+
+Для чистого сравнения первым опытом рекомендуется одинаковая Brain/model/effort
+с Executive v1 и без него при идентичных runtime, checkpoint, seed, задании,
+лимите 180 минут и расписании Director stimuli. После этого тем же протоколом
+сравнивать разные Brain. Передача материалов Ами остаётся отдельным фактором.

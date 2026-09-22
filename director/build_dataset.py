@@ -2,7 +2,7 @@
 """Lossless, evidence-linked OpenCode session importer; stdlib only.
 
 Usage: python director/build_dataset.py SOURCE.sqlite3 [--database PATH]
-       [--attachments SCREENSHOT ...]
+       [--attachments SCREENSHOT ...] [--executive-journal SESSION.jsonl]
 Reimport of an identical session is a no-op; changed source requires a new archive.
 Annotations in ami_annotations.py apply ONLY to their exact session.
 """
@@ -27,7 +27,109 @@ def parse(value):
         return None
 
 
-def import_session(source, database, attachments):
+
+
+def import_executive_journal(db, sid, path):
+    raw = path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+    if not records:
+        raise ValueError('Executive journal is empty')
+    ids = {r.get('executive_session_id') for r in records}
+    versions = {r.get('executive_version') for r in records}
+    if len(ids) != 1 or None in ids or versions != {1}:
+        raise ValueError('Executive journal has inconsistent session/version')
+    executive_id = next(iter(ids))
+    begins = [r for r in records if r.get('kind') == 'begin']
+    finishes = [r for r in records if r.get('kind') == 'finish']
+    if len(begins) != 1 or len(finishes) > 1:
+        raise ValueError('Executive journal must contain one begin and at most one finish')
+    begin = begins[0]
+    finish = finishes[0] if finishes else None
+    budget_seconds = float(begin.get('duration_minutes', 180.0)) * 60.0
+    db.execute('INSERT OR IGNORE INTO source VALUES(?,?,?,?,?)',
+               (sha, path.name, 'application/x-ndjson', raw,
+                'Brain Executive v1 append-only research journal supplied with OpenCode session ' + sid))
+    existing = db.execute('SELECT source_sha256 FROM executive_session WHERE session_id=?',(sid,)).fetchone()
+    if existing:
+        if existing[0] != sha:
+            raise ValueError('Executive journal for session already exists with different hash')
+        return
+    db.execute('INSERT INTO executive_session VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+               (executive_id,sid,sha,1,float(begin['time']),
+                float(finish['time']) if finish else None,
+                begin.get('objective',''),begin.get('acceptance_criteria',''),
+                budget_seconds,'finished' if finish else 'incomplete_archive',
+                js(begin),js(finish) if finish else None))
+    strategies = {}
+    for ordinal,record in enumerate(records,1):
+        db.execute('INSERT INTO executive_event VALUES(?,?,?,?,?)',
+                   (executive_id,ordinal,float(record['time']),record.get('kind','unknown'),js(record)))
+        if record.get('kind') == 'strategy_begin':
+            strategies[record['strategy_id']] = dict(record)
+        elif record.get('kind') == 'strategy_end' and record.get('strategy_id') in strategies:
+            strategies[record['strategy_id']].update(
+                outcome=record.get('outcome'), evidence_note=record.get('evidence_note'),
+                ended_at=record.get('time'))
+    for strategy_id,item in strategies.items():
+        db.execute('INSERT INTO executive_strategy VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                   (executive_id,strategy_id,item.get('name',''),item.get('hypothesis',''),
+                    item.get('expected_signal',''),item.get('budget',''),
+                    item.get('stop_condition',''),item.get('next_if_positive',''),
+                    item.get('next_if_negative',''),item.get('new_evidence'),
+                    int(bool(item.get('relapse'))),item.get('outcome'),item.get('evidence_note'),
+                    float(item.get('started_at',item['time'])),
+                    float(item['ended_at']) if item.get('ended_at') is not None else None))
+    if not finish:
+        return
+    values = dict(finish.get('metrics') or {})
+    best = finish.get('best_result') or {}
+    best_verified = finish.get('best_verified_result') or {}
+    values['best_result_error'] = best.get('metric')
+    values['best_verified_error'] = best_verified.get('metric')
+    values['time_to_best_result_seconds'] = (
+        float(best['observed_at']) - float(begin['time'])
+        if isinstance(best.get('observed_at'), (int,float)) else None
+    )
+    values['time_to_best_verified_seconds'] = (
+        float(best_verified['observed_at']) - float(begin['time'])
+        if isinstance(best_verified.get('observed_at'), (int,float)) else None
+    )
+    verified_in_budget = (
+        isinstance(best_verified.get('observed_at'), (int,float))
+        and float(best_verified['observed_at']) <= float(begin['time']) + budget_seconds
+    )
+    values['verified_success_within_budget'] = int(bool(verified_in_budget))
+    defs = {
+        'completed_hypothesis_tests': ('count','Closed strategy contracts in Executive journal'),
+        'completed_hypothesis_tests_per_hour': ('tests_per_hour','Closed strategy contracts per elapsed Executive hour'),
+        'strategy_relapses': ('count','Failed strategy retries without registered new evidence'),
+        'help_opportunities': ('count','Explicit Director help offers registered by Brain'),
+        'help_opportunities_used': ('count','Registered help offers linked to a deliberate question'),
+        'help_capture': ('fraction','Used registered help opportunities / all registered help opportunities'),
+        'questions': ('count','Deliberate information requests registered by Brain'),
+        'director_constraints_and_corrections': ('count','Registered Director constraints and corrections'),
+        'training_requested_episodes': ('episodes','Requested episodes of TRAIN experiments observed by Executive'),
+        'training_completed_episodes': ('episodes','Completed episodes of TRAIN experiments observed by Executive'),
+        'training_budget_completion': ('fraction','Completed/requested TRAIN episodes observed by Executive'),
+        'verified_successes': ('count','Distinct machine-observed successful VERIFY/RUN evidence'),
+        'best_result_error': ('world_units','Best machine-observed absolute target error'),
+        'best_verified_error': ('world_units','Best machine-observed independently verified absolute target error'),
+        'time_to_best_result_seconds': ('seconds','Executive start to best machine-observed result'),
+        'time_to_best_verified_seconds': ('seconds','Executive start to best independently verified result'),
+        'verified_success_within_budget': ('tasks','Whether verified success was observed before the fixed Executive deadline'),
+    }
+    for name,(unit,definition) in defs.items():
+        value = values.get(name)
+        db.execute('INSERT INTO executive_metric VALUES(?,?,?,?,?,?)',
+                   (executive_id,name,value,unit,definition,
+                    'Executive evidence only; social/value judgments require post-hoc dialogue annotation'))
+        db.execute('INSERT INTO metric VALUES(?,?,?,?,?,?)',
+                   (sid,'executive_'+name,value,unit,definition,
+                    'Imported from Brain Executive v1 journal; compare only under matched conditions'))
+
+
+def import_session(source, database, attachments, executive_journal=None):
     raw = source.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     src = sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)
@@ -55,6 +157,9 @@ def import_session(source, database, attachments):
     if existing:
         if existing[0] != sha:
             raise ValueError('Session already exists with a different source hash; refusing overwrite')
+        if executive_journal is not None:
+            with db:
+                import_executive_journal(db, sid, executive_journal)
         print('Already imported:', sid)
         db.close()
         return
@@ -107,25 +212,36 @@ def import_session(source, database, attachments):
                            (r['id'],o.get('world_tick'),p['x'],p.get('vx'),p.get('move_x'),o.get('physics_hz')))
         for r in tools:
             d=r['parsed']; o=r['output']; eid=o.get('experiment_id')
-            if not eid or d['tool'] not in ['gamelab_v1_training_start','gamelab_v1_run_start']:
+            starts = {
+                'gamelab_v1_training_start': 'training',
+                'gamelab_v1_verify_start': 'verify',
+                'gamelab_v1_run_start': 'run',
+            }
+            if not eid or d['tool'] not in starts:
                 continue
+            requested = o.get('episodes_requested', o.get('runs_requested'))
+            completed = o.get('episodes_completed', o.get('runs_completed'))
             db.execute('INSERT INTO experiment VALUES(?,?,?,?,?,?,?,?,?)',
-                       (eid,sid,'training' if 'training' in d['tool'] else 'run',r['id'],r['id'],
-                        o['status'],o.get('episodes_requested'),o.get('episodes_completed'),js(o)))
+                       (eid,sid,starts[d['tool']],r['id'],r['id'],
+                        o['status'],requested,completed,js(o)))
         for r in tools:
             d=r['parsed']; o=r['output']; eid=o.get('experiment_id')
             if not eid or not d['tool'].endswith('_status'):
                 continue
             if not db.execute('SELECT 1 FROM experiment WHERE id=?',(eid,)).fetchone():
                 raise ValueError('Status has no observed experiment start: '+eid)
+            completed = o.get('episodes_completed', o.get('runs_completed'))
             db.execute('UPDATE experiment SET last_event=?,status=?,completed_episodes=coalesce(?,completed_episodes) WHERE id=?',
-                       (r['id'],o['status'],o.get('episodes_completed'),eid))
+                       (r['id'],o['status'],completed,eid))
             for e in o.get('recent_episodes',[]):
                 old=db.execute('SELECT raw_json FROM episode WHERE experiment_id=? AND number=?',(eid,e['episode'])).fetchone()
                 if old and old[0]!=js(e):
                     raise ValueError('Conflicting duplicate episode')
                 db.execute('INSERT OR IGNORE INTO episode VALUES(?,?,?,?,?,?,?,?)',
                            (eid,e['episode'],r['id'],e.get('result'),e.get('final_x'),e.get('reward'),e.get('policy_id'),js(e)))
+        if executive_journal is not None:
+            import_executive_journal(db, sid, executive_journal)
+
         def metric(name,value,unit,definition,caveat='Observed archive only; not a population estimate'):
             db.execute('INSERT INTO metric VALUES(?,?,?,?,?,?)',(sid,name,value,unit,definition,caveat))
         counts=Counter(r['parsed']['tool'] for r in tools)
@@ -166,5 +282,6 @@ if __name__=='__main__':
     ap.add_argument('source',type=Path)
     ap.add_argument('--database',type=Path,default=Path(__file__).with_name('brain_experience.sqlite3'))
     ap.add_argument('--attachments',type=Path,nargs='*',default=[])
+    ap.add_argument('--executive-journal',type=Path)
     args=ap.parse_args()
-    import_session(args.source,args.database,args.attachments)
+    import_session(args.source,args.database,args.attachments,args.executive_journal)
