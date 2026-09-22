@@ -126,6 +126,10 @@ The isolated mode may download CPU PyTorch and is used by CI to prove
 reproducibility. It is not required for normal local work when the global
 environment already satisfies the version contract.
 
+GameLab disables PyTorch's optional NNPACK CPU backend. Unsupported CPUs would
+otherwise print an NNPACK initialization warning before using the normal CPU
+fallback; disabling it does not hide other PyTorch warnings or errors.
+
 Start the existing realtime backend in separate terminals:
 
 ```bash

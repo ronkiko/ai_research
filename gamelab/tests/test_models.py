@@ -24,6 +24,10 @@ from gamelab.models import (
 
 
 class ModelTests(unittest.TestCase):
+    def test_nnpack_backend_is_disabled(self):
+        previous = torch.backends.nnpack.set_flags(False)
+        self.assertFalse(previous[0])
+
     def test_spine_and_single_motor_shapes(self):
         frame = sensor_frame(x=100.0, vx=0.0, move_x=0, target_x=987.0)
         history = SensorHistory(frame).tensor()
