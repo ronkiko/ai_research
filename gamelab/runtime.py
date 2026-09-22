@@ -66,14 +66,29 @@ def ensure_player(client: HostClient, player_id: str) -> dict[str, Any]:
     return wait_player(client)
 
 
-def reset_player(client: HostClient, player_id: str) -> dict[str, Any]:
+def reset_player(
+    client: HostClient,
+    player_id: str,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
     """Training/verification reset. Not part of learned movement control."""
     try:
         client.logout()
     except HostError:
         pass
-    client.login(player_id)
-    return wait_player(client)
+
+    deadline = time.monotonic() + timeout
+    last_error: HostError | None = None
+    while time.monotonic() < deadline:
+        try:
+            client.login(player_id)
+            return wait_player(client, timeout=max(0.1, deadline - time.monotonic()))
+        except HostError as exc:
+            last_error = exc
+            if "entity already exists" not in str(exc).lower():
+                raise
+            time.sleep(0.02)
+    raise HostError(f"player reset did not complete: {last_error}")
 
 
 class GoalRunner:
