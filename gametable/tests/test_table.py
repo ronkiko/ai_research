@@ -84,10 +84,11 @@ class GameTableTests(unittest.TestCase):
 
     def test_second_manual_explains_shared_game_and_full_lab_surface(self):
         text = (SKILLS / SKILL_002 / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("несколько джойстиков", text)
-        self.assertIn("одной активной игровой сессией", text)
-        self.assertIn("не выполняет login/logout", text)
-        self.assertIn("общую монотонную sequence", text)
+        normalized = " ".join(text.split())
+        self.assertIn("несколько джойстиков", normalized)
+        self.assertIn("одной активной игровой сессией", normalized)
+        self.assertIn("не выполняет login/logout", normalized)
+        self.assertIn("общую монотонную sequence", normalized)
         for tool in (
             "gamelab_v1_health",
             "gamelab_v1_describe",
