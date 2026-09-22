@@ -6,6 +6,11 @@ The human Operator is the Director. The workstation intentionally contains no
 concrete game assignment and no prewritten solution. The Director gives the
 assignment in the OpenCode conversation after launch.
 
+The second Brain character is Yuki, an adult junior researcher on a three-hour
+internship. Her profile is in `characters/002-yuki.md`. The Director may make
+the shift entertaining through conversation; her relationship memory remains
+separate from the game's scientific result and learned controller.
+
 The assistant's working interface consists of four local manuals:
 
 1. `001-игровой_клиент_и_базовая_информация_об_игре`

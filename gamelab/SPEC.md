@@ -125,6 +125,10 @@ executive_strategy_end
 executive_director_signal
 executive_question
 executive_finish
+relationship_state
+relationship_event
+relationship_action
+relationship_consent
 ```
 
 Only one long-running laboratory operation may be active at a time. Training,
@@ -137,6 +141,12 @@ strategy contracts, Director constraints/help offers and information requests,
 and surfaces advisory plateau/relapse/budget/deadline signals. It never issues
 movement intent, starts/cancels laboratory operations, or chooses a strategy.
 TRAIN/VERIFY/RUN status is copied into it as machine evidence automatically.
+
+Yuki relationship memory is a persistent adult-character narrative layer for
+the Director's conversation during the same Executive shift. It records bounded
+relationship events, Yuki's social intentions and explicit consent per physical
+narrative action. It never controls the game, changes the acceptance criterion,
+changes reward, or counts as machine evidence.
 
 GameLab may explicitly establish a selected Host player session through
 `login(player_id, host_id)`, or reuse it when the same player is already

@@ -463,6 +463,7 @@ class BrainExecutive:
             "status": state["status"],
             "objective": state["objective"],
             "acceptance_criteria": state["acceptance_criteria"],
+            "deadline_at": state["deadline_at"],
             "time_remaining_seconds": remaining,
             "phase": self._phase(now),
             "current_strategy": current_strategy,

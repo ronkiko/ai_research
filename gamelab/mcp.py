@@ -14,6 +14,7 @@ from .config import (
     TRAIN_EPISODE_SECONDS,
 )
 from .executive import BrainExecutive
+from .relationship import RelationshipRuntime
 from .host import HostClient, HostError
 from .hosts import (
     LabHostError,
@@ -27,6 +28,7 @@ from .runtime import checkpoint_path
 PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
 laboratory = Laboratory(player_id=PLAYER_ID)
 executive = BrainExecutive(checkpoint_path().parent / "executive")
+relationship = RelationshipRuntime(checkpoint_path().parent / "executive")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -44,7 +46,8 @@ mcp = MCPServer(
         "verification, and let the model act in the live game. Long operations "
         "start asynchronously and are observed with status tools. Brain Executive "
         "adds strategic memory, experiment discipline, and machine-backed evidence; "
-        "it never issues actuator commands or chooses a strategy for the Brain."
+        "it never issues actuator commands or chooses a strategy for the Brain. "
+        "Yuki relationship memory is narrative context and never changes scientific evidence."
     ),
 )
 
@@ -230,6 +233,7 @@ def describe() -> dict[str, Any]:
             "observe bounded experiment results",
             "keep a persistent Brain Executive research notebook",
             "surface plateau, help, relapse, budget, and deadline signals",
+            "keep Yuki's persistent relationship and consent memory",
         ],
         "operations_are_asynchronous": True,
         "one_lab_operation_at_a_time": True,
@@ -246,12 +250,17 @@ def executive_begin(
     plateau_minutes: float = 15.0,
 ) -> dict[str, Any]:
     """Start one bounded strategic research notebook after the Director gives a task."""
-    return _public(executive.begin(
+    payload = executive.begin(
         objective=objective,
         acceptance_criteria=acceptance_criteria,
         duration_minutes=duration_minutes,
         plateau_minutes=plateau_minutes,
-    ))
+    )
+    relationship.begin(
+        executive_session_id=payload["executive_session_id"],
+        deadline_at=float(payload["deadline_at"]),
+    )
+    return _public(payload)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -317,6 +326,32 @@ def executive_finish(conclusion: str) -> dict[str, Any]:
     """Freeze a machine-backed factual summary at the end of the research session."""
     _sync_executive()
     return _public(executive.finish(conclusion=conclusion))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def relationship_state() -> dict[str, Any]:
+    """Read Yuki's narrative state, consent, and internship goal."""
+    return _public(relationship.state())
+
+
+@mcp.tool(annotations=WRITE)
+def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
+    """Record an observed relationship event with a factual note."""
+    return _public(relationship.event(kind=kind, evidence_note=evidence_note))
+
+
+@mcp.tool(annotations=WRITE)
+def relationship_action(kind: str, note: str) -> dict[str, Any]:
+    """Record Yuki's social intention before she expresses it in chat herself."""
+    return _public(relationship.action(kind=kind, note=note))
+
+
+@mcp.tool(annotations=WRITE)
+def relationship_consent(action: str, actor: str, state: str, evidence_note: str) -> dict[str, Any]:
+    """Record explicit consent, decline, or revocation for one narrative action."""
+    return _public(relationship.consent(
+        action=action, actor=actor, state=state, evidence_note=evidence_note,
+    ))
 
 
 @mcp.tool(annotations=READ_ONLY)

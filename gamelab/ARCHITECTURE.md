@@ -111,6 +111,16 @@ as a separate best verified result. Thus a later regression cannot erase an
 earlier machine-observed best result. Executive journals are append-only JSONL
 with a compact current-state file; they are research evidence, not policy input.
 
+## Yuki relationship memory
+
+Yuki's relationship runtime is persistent narrative memory for the adult
+laboratory character and the Director. It shares the Executive session ID and
+180-minute deadline but is not an actuator, policy input, reward source or
+scientific judge. Relationship events and Yuki's social intentions are
+append-only self-reports; the dialogue remains the source for what was actually
+said. Consent is per action and per participant. Employment acceptance resolves
+Yuki's internship goal but does not imply romance or consent.
+
 ## Brain goal updates
 
 `run_update_goal(target_x)` replaces the active RUN goal. It returns an accepted

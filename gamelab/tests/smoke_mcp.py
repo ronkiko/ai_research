@@ -48,6 +48,10 @@ EXPECTED_TOOLS = {
     "executive_director_signal",
     "executive_question",
     "executive_finish",
+    "relationship_state",
+    "relationship_event",
+    "relationship_action",
+    "relationship_consent",
 }
 
 
@@ -294,6 +298,30 @@ async def run_flow(
             payloads.append(executive_started)
             if executive_started.get("phase") != "orientation":
                 raise AssertionError(f"Executive did not start: {executive_started}")
+
+            relationship = await tool(session, "relationship_state")
+            payloads.append(relationship)
+            if relationship.get("employment", {}).get("status") != "intern":
+                raise AssertionError(f"Yuki internship did not start: {relationship}")
+            relationship = await tool(
+                session, "relationship_event",
+                {"kind": "access_granted", "evidence_note": "fictional laboratory pass granted"},
+            )
+            relationship = await tool(
+                session, "relationship_event",
+                {"kind": "first_meeting", "evidence_note": "Director arrived in the laboratory"},
+            )
+            relationship = await tool(
+                session, "relationship_action",
+                {"kind": "ask_for_help", "note": "ask for a scientific hint"},
+            )
+            relationship = await tool(
+                session, "relationship_consent",
+                {"action": "embrace", "actor": "brain", "state": "accepted", "evidence_note": "Yuki explicitly agrees"},
+            )
+            payloads.append(relationship)
+            if relationship.get("consent", {}).get("embrace", {}).get("director") != "unknown":
+                raise AssertionError(f"Yuki consent leaked between participants: {relationship}")
 
             strategy = await tool(
                 session,

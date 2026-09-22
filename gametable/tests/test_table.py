@@ -125,6 +125,10 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_executive_director_signal",
             "gamelab_v1_executive_question",
             "gamelab_v1_executive_finish",
+            "gamelab_v1_relationship_state",
+            "gamelab_v1_relationship_event",
+            "gamelab_v1_relationship_action",
+            "gamelab_v1_relationship_consent",
         ):
             self.assertIn(tool, text)
 
@@ -168,6 +172,14 @@ class GameTableTests(unittest.TestCase):
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("Director supplies the actual assignment", agents)
         self.assertIn("ask for it and wait", agents)
+
+    def test_yuki_profile_is_mandatory_and_does_not_change_science(self):
+        agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
+        profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        self.assertIn("002-yuki.md", agents)
+        self.assertIn("совершеннолетняя", profile)
+        self.assertIn("не заменяет машинное evidence", profile)
+        self.assertIn("не являются согласием", profile)
 
 
 if __name__ == "__main__":
