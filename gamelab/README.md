@@ -95,7 +95,8 @@ into a success.
 By default GameLab uses the current `python3` environment. It does not create
 a virtual environment and does not install or download packages automatically.
 
-Required versions are checked before every operator command:
+Required versions are checked by the setup, check, train, verify, and run
+operator scripts:
 
 ```text
 torch >=2.1,<3
@@ -197,6 +198,10 @@ They are not the GameTable laboratory assistant interface; that assistant uses
 ```bash
 ./gamelab/op/check.sh
 ```
+
+The stdio MCP launcher starts the configured Python directly. If an import or
+dependency is broken, the MCP process fails at its actual import site instead
+of running a separate preflight Python process first.
 
 The gate verifies:
 
