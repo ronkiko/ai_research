@@ -11,3 +11,4 @@
   корневых. Не вноси правила/решения одной игры в другую.
 - Стек общий: Python 3.10+, PyTorch (CPU), адаптер ИИ. Сейчас реализуем только
   локальный обучаемый бэкенд; Ollama — потом.
+- **GameServer/GameClient v1 live-world tasks:** load the project skill `game-v1` before operating or testing the world through OpenCode/MCP.
