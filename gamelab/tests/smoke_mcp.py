@@ -53,6 +53,11 @@ EXPECTED_TOOLS = {
     "relationship_action",
     "relationship_consent",
     "relationship_employment_decision",
+    "duality_state",
+    "duality_appraise",
+    "duality_conflict_begin",
+    "duality_conflict_resolve",
+    "duality_outcome",
 }
 
 
@@ -304,6 +309,34 @@ async def run_flow(
             payloads.append(relationship)
             if relationship.get("employment", {}).get("status") != "intern":
                 raise AssertionError(f"Yuki internship did not start: {relationship}")
+            duality = await tool(session, "duality_state")
+            payloads.append(duality)
+            if "confidence_telemetry" not in duality or "confidence" in duality:
+                raise AssertionError(f"Duality leaked or omitted confidence telemetry: {duality}")
+            duality = await tool(
+                session, "duality_appraise",
+                {"side": "heart", "direction": "strengthen", "intensity": "meaningful",
+                 "position": "stay close to Director", "evidence_note": "Director showed concern"},
+            )
+            duality = await tool(
+                session, "duality_appraise",
+                {"side": "brain", "direction": "strengthen", "intensity": "meaningful",
+                 "position": "continue the experiment", "evidence_note": "acceptance criterion is unmet"},
+            )
+            duality = await tool(
+                session, "duality_conflict_begin",
+                {"question": "pause for Director or continue research", "stakes": "remaining research time"},
+            )
+            duality = await tool(
+                session, "duality_conflict_resolve",
+                {"resolution": "brain", "decision": "continue research",
+                 "rationale": "the deadline is approaching and evidence is incomplete"},
+            )
+            duality = await tool(
+                session, "duality_outcome",
+                {"outcome": "mixed", "evidence_note": "research continued while the emotional need remained"},
+            )
+            payloads.append(duality)
             relationship = await tool(
                 session, "relationship_event",
                 {"kind": "access_granted", "evidence_note": "fictional laboratory pass granted"},

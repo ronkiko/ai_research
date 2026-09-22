@@ -130,6 +130,11 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_relationship_action",
             "gamelab_v1_relationship_consent",
             "gamelab_v1_relationship_employment_decision",
+            "gamelab_v1_duality_state",
+            "gamelab_v1_duality_appraise",
+            "gamelab_v1_duality_conflict_begin",
+            "gamelab_v1_duality_conflict_resolve",
+            "gamelab_v1_duality_outcome",
         ):
             self.assertIn(tool, text)
 
@@ -145,6 +150,13 @@ class GameTableTests(unittest.TestCase):
             "не запускает и не отменяет эксперименты",
         ):
             self.assertIn(expected, normalized)
+
+    def test_yuki_uses_blurred_heart_brain_telemetry(self):
+        text = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for expected in ("0/4..4/4", "99 выглядит как `3/4`", "ALL_IN", "не гарантирует победу", "180 минут"):
+            self.assertIn(expected, normalized)
+        self.assertNotIn("100 > 99", normalized)
 
     def test_advanced_manual_documents_host_instances(self):
         text = (SKILLS / SKILL_003_ADV / "SKILL.md").read_text(encoding="utf-8")

@@ -130,6 +130,11 @@ relationship_event
 relationship_action
 relationship_consent
 relationship_employment_decision
+duality_state
+duality_appraise
+duality_conflict_begin
+duality_conflict_resolve
+duality_outcome
 ```
 
 Only one long-running laboratory operation may be active at a time. Training,
@@ -153,6 +158,15 @@ After `executive_finish` has frozen the factual research report, the Director
 may explicitly resolve Yuki's internship through `relationship_employment_decision`
 as `hired`, `extended`, `rejected`, or `pending`. A hire resolves her stated
 professional goal; it does not create romance or consent.
+
+Heart–Brain duality is a narrative decision layer, not a score function.
+`heart_confidence` and `brain_confidence` are stored exactly only in the private
+append-only journal. The MCP returns coarse `0/4` through `4/4` telemetry; for
+example private confidence 99 is exposed as `3/4`. Exact 100 only makes ALL_IN
+available. ALL_IN removes a safe compromise but does not select a winner. The
+LLM arbiter records an internal heart/brain decision, while `duality_outcome`
+separately records whether the chosen stake won, lost, mixed, or remained
+unresolved. Neither confidence is reward or machine evidence.
 
 GameLab may explicitly establish a selected Host player session through
 `login(player_id, host_id)`, or reuse it when the same player is already

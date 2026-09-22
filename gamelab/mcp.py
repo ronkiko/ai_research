@@ -14,6 +14,7 @@ from .config import (
     TRAIN_EPISODE_SECONDS,
 )
 from .executive import BrainExecutive
+from .duality import DualityRuntime
 from .relationship import RelationshipRuntime
 from .host import HostClient, HostError
 from .hosts import (
@@ -29,6 +30,7 @@ PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
 laboratory = Laboratory(player_id=PLAYER_ID)
 executive = BrainExecutive(checkpoint_path().parent / "executive")
 relationship = RelationshipRuntime(checkpoint_path().parent / "executive")
+duality = DualityRuntime(checkpoint_path().parent / "executive")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -260,6 +262,10 @@ def executive_begin(
         executive_session_id=payload["executive_session_id"],
         deadline_at=float(payload["deadline_at"]),
     )
+    duality.begin(
+        executive_session_id=payload["executive_session_id"],
+        deadline_at=float(payload["deadline_at"]),
+    )
     return _public(payload)
 
 
@@ -372,6 +378,50 @@ def relationship_employment_decision(decision: str, director_statement: str) -> 
     return _public(relationship.finish(
         employment_decision=decision, director_statement=director_statement,
     ))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def duality_state() -> dict[str, Any]:
+    """Read blurred Heart–Brain telemetry. Exact confidences are intentionally private."""
+    return _public(duality.state())
+
+
+@mcp.tool(annotations=WRITE)
+def duality_appraise(
+    side: str,
+    direction: str,
+    intensity: str,
+    position: str,
+    evidence_note: str,
+) -> dict[str, Any]:
+    """Appraise heart or brain qualitatively. direction: strengthen/weaken;
+    intensity: faint/meaningful/strong/decisive. The private numeric change is
+    randomized inside the selected band and never returned to either voice."""
+    return _public(duality.appraise(
+        side=side, direction=direction, intensity=intensity,
+        position=position, evidence_note=evidence_note,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
+def duality_conflict_begin(question: str, stakes: str, all_in_by: str = "none") -> dict[str, Any]:
+    """Open a Heart–Brain conflict after both voices state positions. all_in_by
+    is none, heart, or brain; ALL_IN requires that side's private confidence 100."""
+    return _public(duality.conflict_begin(question=question, stakes=stakes, all_in_by=all_in_by))
+
+
+@mcp.tool(annotations=WRITE)
+def duality_conflict_resolve(resolution: str, decision: str, rationale: str) -> dict[str, Any]:
+    """Record the LLM arbiter's choice: heart, brain, or compromise. This is not
+    calculated from telemetry; ALL_IN forbids compromise but never guarantees victory."""
+    return _public(duality.resolve(resolution=resolution, decision=decision, rationale=rationale))
+
+
+@mcp.tool(annotations=WRITE)
+def duality_outcome(outcome: str, evidence_note: str) -> dict[str, Any]:
+    """Record the later external result as won, lost, mixed, or unresolved;
+    internal choice and real-world outcome remain separate."""
+    return _public(duality.outcome(outcome=outcome, evidence_note=evidence_note))
 
 
 @mcp.tool(annotations=READ_ONLY)

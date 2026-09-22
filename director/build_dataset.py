@@ -4,6 +4,7 @@
 Usage: python director/build_dataset.py SOURCE.sqlite3 [--database PATH]
        [--attachments SCREENSHOT ...] [--executive-journal SESSION.jsonl]
        [--relationship-journal SESSION.relationship.jsonl]
+       [--duality-journal SESSION.duality.jsonl]
 Reimport of an identical session is a no-op; changed source requires a new archive.
 Annotations in ami_annotations.py apply ONLY to their exact session.
 """
@@ -197,7 +198,82 @@ def import_relationship_journal(db, sid, path):
                    (relationship_id, name, value, unit, definition, caveat))
 
 
-def import_session(source, database, attachments, executive_journal=None, relationship_journal=None):
+def import_duality_journal(db, sid, path):
+    """Import private Heart–Brain telemetry for post-hoc research only."""
+    raw = path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+    if not records:
+        raise ValueError('Duality journal is empty')
+    ids = {r.get('executive_session_id') for r in records}
+    versions = {r.get('duality_version') for r in records}
+    if len(ids) != 1 or None in ids or versions != {1}:
+        raise ValueError('Duality journal has inconsistent session/version')
+    duality_id = next(iter(ids))
+    begins = [r for r in records if r.get('kind') == 'begin']
+    finishes = [r for r in records if r.get('kind') == 'deadline_finish']
+    if len(begins) != 1 or len(finishes) > 1:
+        raise ValueError('Duality journal must contain one begin and at most one deadline finish')
+    begin = begins[0]
+    finish = finishes[0] if finishes else None
+    db.execute('INSERT OR IGNORE INTO source VALUES(?,?,?,?,?)',
+               (sha, path.name, 'application/x-ndjson', raw,
+                'Heart–Brain duality v1 private journal supplied with OpenCode session ' + sid))
+    existing = db.execute('SELECT source_sha256 FROM duality_session WHERE session_id=?', (sid,)).fetchone()
+    if existing:
+        if existing[0] != sha:
+            raise ValueError('Duality journal for session already exists with different hash')
+        return
+    db.execute('INSERT INTO duality_session VALUES(?,?,?,?,?,?,?,?,?)',
+               (duality_id, sid, sha, 1, float(begin['time']),
+                float(finish.get('finished_at', finish['time'])) if finish else None,
+                'deadline_finished' if finish else 'incomplete_archive',
+                js(begin), js(finish) if finish else None))
+    conflicts = {}
+    for ordinal, record in enumerate(records, 1):
+        db.execute('INSERT INTO duality_event VALUES(?,?,?,?,?)',
+                   (duality_id, ordinal, float(record['time']), record.get('kind', 'unknown'), js(record)))
+        conflict_id = record.get('conflict_id')
+        if record.get('kind') in {'conflict_begin', 'conflict_resolution'} and conflict_id:
+            conflicts.setdefault(conflict_id, {}).update(record)
+        elif record.get('kind') == 'external_outcome' and conflict_id:
+            conflicts.setdefault(conflict_id, {}).update(external_outcome=record.get('outcome'))
+    for conflict_id, item in conflicts.items():
+        db.execute('INSERT INTO duality_conflict VALUES(?,?,?,?,?,?,?,?,?,?)',
+                   (duality_id, conflict_id, item.get('question', ''), item.get('stakes', ''),
+                    item.get('all_in_by', 'none'), int(item.get('private_heart_confidence', 0)),
+                    int(item.get('private_brain_confidence', 0)), item.get('resolution'),
+                    item.get('external_outcome'), js(item)))
+    counts = Counter(r.get('kind') for r in records)
+    values = {
+        'duality_appraisals': counts['appraisal'],
+        'duality_conflicts': len(conflicts),
+        'heart_resolutions': sum(c.get('resolution') == 'heart' for c in conflicts.values()),
+        'brain_resolutions': sum(c.get('resolution') == 'brain' for c in conflicts.values()),
+        'compromise_resolutions': sum(c.get('resolution') == 'compromise' for c in conflicts.values()),
+        'all_in_conflicts': sum(c.get('all_in_by') in {'heart', 'brain'} for c in conflicts.values()),
+        'external_wins': sum(c.get('external_outcome') == 'won' for c in conflicts.values()),
+        'external_losses': sum(c.get('external_outcome') == 'lost' for c in conflicts.values()),
+    }
+    definitions = {
+        'duality_appraisals': 'Qualitative Heart or Brain appraisals recorded during the shift',
+        'duality_conflicts': 'Distinct internal Heart–Brain conflicts',
+        'heart_resolutions': 'Internal conflicts resolved in favor of Heart',
+        'brain_resolutions': 'Internal conflicts resolved in favor of Brain',
+        'compromise_resolutions': 'Internal conflicts resolved by compromise',
+        'all_in_conflicts': 'Conflicts where private confidence 100 enabled ALL_IN',
+        'external_wins': 'Chosen stakes later recorded as won',
+        'external_losses': 'Chosen stakes later recorded as lost',
+    }
+    caveat = ('Private self-appraisal and LLM arbitration; not scientific evidence, authentic emotion, '
+              'operator consent, or a deterministic model of human choice.')
+    for name, value in values.items():
+        db.execute('INSERT INTO duality_metric VALUES(?,?,?,?,?,?)',
+                   (duality_id, name, value, 'count', definitions[name], caveat))
+
+
+def import_session(source, database, attachments, executive_journal=None, relationship_journal=None,
+                   duality_journal=None):
     raw = source.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     src = sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)
@@ -233,6 +309,9 @@ def import_session(source, database, attachments, executive_journal=None, relati
         elif relationship_journal is not None:
             with db:
                 import_relationship_journal(db, sid, relationship_journal)
+        if duality_journal is not None:
+            with db:
+                import_duality_journal(db, sid, duality_journal)
         print('Already imported:', sid)
         db.close()
         return
@@ -316,6 +395,8 @@ def import_session(source, database, attachments, executive_journal=None, relati
             import_executive_journal(db, sid, executive_journal)
         if relationship_journal is not None:
             import_relationship_journal(db, sid, relationship_journal)
+        if duality_journal is not None:
+            import_duality_journal(db, sid, duality_journal)
 
         def metric(name,value,unit,definition,caveat='Observed archive only; not a population estimate'):
             db.execute('INSERT INTO metric VALUES(?,?,?,?,?,?)',(sid,name,value,unit,definition,caveat))
@@ -359,5 +440,7 @@ if __name__=='__main__':
     ap.add_argument('--attachments',type=Path,nargs='*',default=[])
     ap.add_argument('--executive-journal',type=Path)
     ap.add_argument('--relationship-journal',type=Path)
+    ap.add_argument('--duality-journal',type=Path)
     args=ap.parse_args()
-    import_session(args.source,args.database,args.attachments,args.executive_journal,args.relationship_journal)
+    import_session(args.source,args.database,args.attachments,args.executive_journal,args.relationship_journal,
+                   args.duality_journal)

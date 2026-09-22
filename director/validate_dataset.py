@@ -12,7 +12,7 @@ from ami_annotations import SESSION_ID
 def validate(path):
     c=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
     assert c.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
-    assert c.execute('PRAGMA user_version').fetchone()[0]==3
+    assert c.execute('PRAGMA user_version').fetchone()[0]==4
     assert not c.execute('PRAGMA foreign_key_check').fetchall()
     for sha,raw in c.execute('SELECT sha256,bytes FROM source'):
         assert hashlib.sha256(raw).hexdigest()==sha
@@ -43,6 +43,15 @@ def validate(path):
             assert event_counts.get('employment_decision',0)<=1
             if status=='finished':
                 assert c.execute('SELECT count(*) FROM relationship_metric WHERE relationship_session_id=?',(relationship_id,)).fetchone()[0]>0
+        duality=c.execute('SELECT id,source_sha256,duality_version,status FROM duality_session WHERE session_id=?',(sid,)).fetchone()
+        if duality:
+            duality_id,duality_sha,version,status=duality
+            assert version==1
+            assert c.execute('SELECT count(*) FROM source WHERE sha256=?',(duality_sha,)).fetchone()[0]==1
+            event_counts=dict(c.execute('SELECT kind,count(*) FROM duality_event WHERE duality_session_id=? GROUP BY kind',(duality_id,)))
+            assert event_counts.get('begin')==1
+            assert event_counts.get('deadline_finish',0)<=1
+            assert c.execute('SELECT count(*) FROM duality_metric WHERE duality_session_id=?',(duality_id,)).fetchone()[0]>0
         if sid!=SESSION_ID:
             print('PASS:',sid,'— lossless source, source hashes, foreign keys; Executive validated' if executive else '— lossless source, source hashes, foreign keys')
             source.close()

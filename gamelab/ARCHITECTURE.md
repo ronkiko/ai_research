@@ -125,6 +125,23 @@ The factual Executive summary is frozen before the Director's employment
 decision. The decision is a separate relationship-journal event with `hired`,
 `extended`, `rejected`, or `pending`; Yuki cannot create it herself.
 
+## Heart–Brain arbitration
+
+The narrative Brain may hold two conflicting positions: emotional Heart and
+rational Brain. Their exact confidence values are private journal telemetry.
+Each side sees only quarters (`0/4`..`4/4`), so a private value such as 99 is
+reported as `3/4`. Qualitative appraisals change the hidden value within a
+bounded randomized range; this prevents an operator or either voice from
+calculating an exact sequence that guarantees a desired relationship result.
+
+Private confidence 100 permits that side to declare ALL_IN. It does not win the
+conflict: an LLM arbiter still chooses heart or brain using both positions,
+history, evidence and stakes. ALL_IN only removes the compromise outcome and is
+consumed on resolution. Internal choice and external outcome are logged
+separately. At the absolute Executive deadline an unresolved conflict closes as
+`unresolved`; it cannot extend the 180-minute shift. This layer never controls
+the game, changes reward, or supplies scientific evidence.
+
 ## Brain goal updates
 
 `run_update_goal(target_x)` replaces the active RUN goal. It returns an accepted

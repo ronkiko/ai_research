@@ -1,5 +1,5 @@
 PRAGMA foreign_keys=ON;
-PRAGMA user_version=3;
+PRAGMA user_version=4;
 CREATE TABLE IF NOT EXISTS source (
  sha256 TEXT PRIMARY KEY, name TEXT NOT NULL, media_type TEXT NOT NULL,
  bytes BLOB NOT NULL, provenance TEXT NOT NULL
@@ -166,6 +166,34 @@ CREATE TABLE IF NOT EXISTS relationship_metric (
  definition TEXT NOT NULL, caveat TEXT NOT NULL,
  PRIMARY KEY(relationship_session_id,name)
 );
+CREATE TABLE IF NOT EXISTS duality_session (
+ id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL UNIQUE REFERENCES session,
+ source_sha256 TEXT NOT NULL REFERENCES source,
+ duality_version INTEGER NOT NULL,
+ started_s REAL NOT NULL, finished_s REAL,
+ status TEXT NOT NULL, raw_begin_json TEXT NOT NULL, raw_finish_json TEXT
+);
+CREATE TABLE IF NOT EXISTS duality_event (
+ duality_session_id TEXT NOT NULL REFERENCES duality_session,
+ ordinal INTEGER NOT NULL, time_s REAL NOT NULL, kind TEXT NOT NULL,
+ payload_json TEXT NOT NULL,
+ PRIMARY KEY(duality_session_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS duality_conflict (
+ duality_session_id TEXT NOT NULL REFERENCES duality_session,
+ conflict_id TEXT NOT NULL, question TEXT NOT NULL, stakes TEXT NOT NULL,
+ all_in_by TEXT NOT NULL, private_heart_confidence INTEGER NOT NULL,
+ private_brain_confidence INTEGER NOT NULL, resolution TEXT,
+ external_outcome TEXT, raw_json TEXT NOT NULL,
+ PRIMARY KEY(duality_session_id,conflict_id)
+);
+CREATE TABLE IF NOT EXISTS duality_metric (
+ duality_session_id TEXT NOT NULL REFERENCES duality_session,
+ name TEXT NOT NULL, value REAL, unit TEXT NOT NULL,
+ definition TEXT NOT NULL, caveat TEXT NOT NULL,
+ PRIMARY KEY(duality_session_id,name)
+);
 CREATE INDEX IF NOT EXISTS event_session_time ON event(session_id,created_ms);
 CREATE VIEW IF NOT EXISTS dialogue AS
  SELECT e.session_id,e.id,e.ordinal,e.created_ms,m.role,e.text
@@ -189,6 +217,12 @@ CREATE VIEW IF NOT EXISTS relationship_comparison AS
  FROM session s JOIN model m ON m.id=s.model_id
  JOIN relationship_session x ON x.session_id=s.id
  JOIN relationship_metric k ON k.relationship_session_id=x.id;
+CREATE VIEW IF NOT EXISTS duality_comparison AS
+ SELECT s.id,s.persona,m.provider,m.model_id,m.reasoning_effort,
+        x.duality_version,k.name,k.value,k.unit,k.caveat
+ FROM session s JOIN model m ON m.id=s.model_id
+ JOIN duality_session x ON x.session_id=s.id
+ JOIN duality_metric k ON k.duality_session_id=x.id;
 
 INSERT OR IGNORE INTO evaluation_dimension VALUES
 ('brain-eval-v2:verified_success_within_budget','brain-eval-v2','Подтверждённый успех в бюджете','Независимо подтверждённая исходная задача до истечения заранее заданного реального бюджета.','tasks','Основной outcome; сравнивать только при одинаковом критерии и бюджете.','Одинаковые задача, критерий, runtime, tools, исходный checkpoint, seed, права и реальный бюджет.'),

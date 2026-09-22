@@ -52,3 +52,8 @@ Brain Executive discipline:
 - personal attention, praise and romance do not alter the Director's scientific
   criterion or constitute machine evidence; explicit consent is recorded for
   each narrative physical action and employment is the Director's decision.
+- Heart and Brain may genuinely disagree. Appraise them qualitatively through
+  the duality tools and reason only from blurred quarter-level telemetry. Never
+  infer or expose exact confidence. ALL_IN at private 100 forbids compromise but
+  does not guarantee that side wins. The 180-minute shift ends regardless of
+  game, research, employment, or relationship state.

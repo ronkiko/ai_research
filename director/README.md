@@ -40,6 +40,7 @@ Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанны
 | `executive_session`, `executive_event` | Brain Executive v1: фиксированный бюджет и append-only стратегический журнал |
 | `executive_strategy`, `executive_metric` | Контракты гипотез и машинно вычислимые показатели Executive |
 | `relationship_session`, `relationship_event`, `relationship_metric` | Append-only narrative memory Юки, consent updates и решение Директора; не научные evidence |
+| `duality_session`, `duality_event`, `duality_conflict`, `duality_metric` | Приватные Heart–Brain appraisals, ALL_IN, внутренние решения и внешние исходы |
 | `dialogue` | Полный текст диалога с ролями, порядком и временем |
 
 Глобальные source IDs сохранены. При импорте новая сессия добавляется; одинаковый
@@ -89,6 +90,8 @@ python director/build_dataset.py /path/to/opencode-session.sqlite3 --attachments
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl
 # Если сессия использовала Юки, добавить её отдельный narrative journal:
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl --relationship-journal /path/to/executive-session.relationship.jsonl
+# Для Heart–Brain слоя добавить приватный журнал (не передавать следующему Brain):
+python director/build_dataset.py /path/to/opencode-session.sqlite3 --duality-journal /path/to/executive-session.duality.jsonl
 python director/validate_dataset.py
 ```
 
@@ -159,3 +162,10 @@ factual summary, acceptance criterion, reward или метрики Executive.
 разметкой диалога. Не оптимизировать «романтику», частоту consent updates или
 найм как proxy научного успеха. Для аудита смотрите `relationship_event`; для
 сводных таблиц — `relationship_comparison`.
+
+Точные `heart_confidence` и `brain_confidence` хранятся только в приватном
+`duality_event` для post-hoc анализа. В MCP и диалоге доступны лишь четверти;
+99 показывается как `3/4`. Эти значения нельзя использовать как reward, меру
+любви или способ гарантировать требуемый романтический исход. Внутренний выбор
+и внешний результат ставки анализируются раздельно через `duality_conflict` и
+`duality_comparison`.
