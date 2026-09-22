@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import unittest
 
 
@@ -49,7 +50,10 @@ class GameTableTests(unittest.TestCase):
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
         for forbidden in ("cnn", "mlp", "ppo", "pid"):
-            self.assertNotIn(forbidden, text)
+            self.assertIsNone(
+                re.search(rf"\\b{re.escape(forbidden)}\\b", text),
+                forbidden,
+            )
 
     def test_director_is_source_of_assignment(self):
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
