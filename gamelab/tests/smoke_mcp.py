@@ -41,6 +41,13 @@ EXPECTED_TOOLS = {
     "run_status",
     "run_cancel",
     "run_update_goal",
+    "executive_begin",
+    "executive_state",
+    "executive_strategy_begin",
+    "executive_strategy_end",
+    "executive_director_signal",
+    "executive_question",
+    "executive_finish",
 }
 
 
@@ -274,6 +281,35 @@ async def run_flow(
             session_before = operator.session()
             sequence_before = int(session_before.get("sequence", 0))
 
+            executive_started = await tool(
+                session,
+                "executive_begin",
+                {
+                    "objective": "Put the test player near x=150 using the learned laboratory",
+                    "acceptance_criteria": "machine-observed laboratory evidence",
+                    "duration_minutes": 180,
+                    "plateau_minutes": 15,
+                },
+            )
+            payloads.append(executive_started)
+            if executive_started.get("phase") != "orientation":
+                raise AssertionError(f"Executive did not start: {executive_started}")
+
+            strategy = await tool(
+                session,
+                "executive_strategy_begin",
+                {
+                    "name": "one-episode smoke hypothesis",
+                    "hypothesis": "one training episode produces machine evidence",
+                    "expected_signal": "one completed episode",
+                    "budget": "1 training episode",
+                    "stop_condition": "episode completes",
+                    "next_if_positive": "verify",
+                    "next_if_negative": "inspect status",
+                },
+            )
+            payloads.append(strategy)
+
             started = await tool(
                 session,
                 "training_start",
@@ -299,6 +335,36 @@ async def run_flow(
                 raise AssertionError(f"training did not complete one episode: {trained}")
             if len(trained.get("recent_episodes", [])) != 1:
                 raise AssertionError(f"training history missing: {trained}")
+
+            executive_after_train = await tool(session, "executive_state")
+            payloads.append(executive_after_train)
+            metrics = executive_after_train.get("metrics", {})
+            if metrics.get("training_requested_episodes") != 1 or metrics.get("training_completed_episodes") != 1:
+                raise AssertionError(f"Executive lost TRAIN budget evidence: {executive_after_train}")
+            if executive_after_train.get("best_result") is None:
+                raise AssertionError(f"Executive lost machine best-result evidence: {executive_after_train}")
+
+            offer = await tool(
+                session,
+                "executive_director_signal",
+                {"kind": "offer_help", "text": "Ask one useful question if blocked"},
+            )
+            payloads.append(offer)
+            available = offer.get("available_help") or []
+            if len(available) != 1:
+                raise AssertionError(f"Executive did not retain help opportunity: {offer}")
+            question = await tool(
+                session,
+                "executive_question",
+                {
+                    "text": "Which observation would reduce uncertainty most?",
+                    "reason": "exercise explicit help accounting",
+                    "help_signal_id": available[0]["signal_id"],
+                },
+            )
+            payloads.append(question)
+            if question.get("metrics", {}).get("help_opportunities_used") != 1:
+                raise AssertionError(f"Executive did not account help use: {question}")
 
             info = await tool(session, "model_info")
             payloads.append(info)
@@ -380,6 +446,26 @@ async def run_flow(
             final_session = operator.session()
             if final_session.get("session_id") != session_before.get("session_id"):
                 raise AssertionError("GameLab run replaced the shared Host session")
+
+            ended_strategy = await tool(
+                session,
+                "executive_strategy_end",
+                {
+                    "outcome": "inconclusive",
+                    "evidence_note": "smoke validates accounting, not task skill",
+                },
+            )
+            payloads.append(ended_strategy)
+            executive_summary = await tool(
+                session,
+                "executive_finish",
+                {"conclusion": "MCP smoke completed with machine-backed evidence"},
+            )
+            payloads.append(executive_summary)
+            if executive_summary.get("metrics", {}).get("completed_hypothesis_tests") != 1:
+                raise AssertionError(f"Executive summary lost strategy result: {executive_summary}")
+            if executive_summary.get("best_result") is None:
+                raise AssertionError(f"Executive summary lost best result: {executive_summary}")
 
             events = operator.events(0, limit=256).get("events", [])
             gamelab_logouts = [
@@ -490,7 +576,7 @@ def main() -> int:
                 asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP smoke tools=19 default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
+                print("PASS gamelab MCP smoke tools=26 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
                 return 0
             except Exception:
                 server_log.flush()

@@ -118,8 +118,28 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_run_status",
             "gamelab_v1_run_cancel",
             "gamelab_v1_run_update_goal",
+            "gamelab_v1_executive_begin",
+            "gamelab_v1_executive_state",
+            "gamelab_v1_executive_strategy_begin",
+            "gamelab_v1_executive_strategy_end",
+            "gamelab_v1_executive_director_signal",
+            "gamelab_v1_executive_question",
+            "gamelab_v1_executive_finish",
         ):
             self.assertIn(tool, text)
+
+    def test_second_manual_documents_executive_without_autopilot(self):
+        text = (SKILLS / SKILL_002 / "SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for expected in (
+            "180 минут",
+            "current и best result раздельно",
+            "PLATEAU",
+            "STRATEGY_RELAPSE",
+            "не двигает персонажа",
+            "не запускает и не отменяет эксперименты",
+        ):
+            self.assertIn(expected, normalized)
 
     def test_advanced_manual_documents_host_instances(self):
         text = (SKILLS / SKILL_003_ADV / "SKILL.md").read_text(encoding="utf-8")

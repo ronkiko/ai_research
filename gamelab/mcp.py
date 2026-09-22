@@ -13,6 +13,7 @@ from .config import (
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
+from .executive import BrainExecutive
 from .host import HostClient, HostError
 from .hosts import (
     LabHostError,
@@ -25,6 +26,7 @@ from .runtime import checkpoint_path
 
 PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
 laboratory = Laboratory(player_id=PLAYER_ID)
+executive = BrainExecutive(checkpoint_path().parent / "executive")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -40,13 +42,23 @@ mcp = MCPServer(
         "to the same live game through its own GameClient client. It can train "
         "the current model, change reward instrumentation, run frozen "
         "verification, and let the model act in the live game. Long operations "
-        "start asynchronously and are observed with status tools."
+        "start asynchronously and are observed with status tools. Brain Executive "
+        "adds strategic memory, experiment discipline, and machine-backed evidence; "
+        "it never issues actuator commands or chooses a strategy for the Brain."
     ),
 )
 
 
+def _contains_key(value: Any, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_contains_key(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(item, key) for item in value)
+    return False
+
+
 def _public(payload: dict[str, Any]) -> dict[str, Any]:
-    if "session_id" in str(payload):
+    if _contains_key(payload, "session_id"):
         raise RuntimeError("internal session data reached GameLab MCP boundary")
     return payload
 
@@ -56,6 +68,12 @@ def _public_session(session: dict[str, Any]) -> dict[str, Any]:
         key: session.get(key)
         for key in ("player_id", "entity_id", "world_id", "zone_id", "sequence")
     }
+
+
+def _sync_executive() -> None:
+    """Feed bounded machine status into Executive without giving it control."""
+    for kind in ("training", "verify", "run"):
+        executive.operation_status(kind, laboratory.status(kind))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -210,12 +228,95 @@ def describe() -> dict[str, Any]:
             "run/cancel the current model in the live game",
             "update the active run goal without resetting the body",
             "observe bounded experiment results",
+            "keep a persistent Brain Executive research notebook",
+            "surface plateau, help, relapse, budget, and deadline signals",
         ],
         "operations_are_asynchronous": True,
         "one_lab_operation_at_a_time": True,
         "goal_interface": "target_x",
         "evidence": "experiment_id and policy_id identify persisted experiment evidence",
     }
+
+
+@mcp.tool(annotations=WRITE)
+def executive_begin(
+    objective: str,
+    acceptance_criteria: str,
+    duration_minutes: float = 180.0,
+    plateau_minutes: float = 15.0,
+) -> dict[str, Any]:
+    """Start one bounded strategic research notebook after the Director gives a task."""
+    return _public(executive.begin(
+        objective=objective,
+        acceptance_criteria=acceptance_criteria,
+        duration_minutes=duration_minutes,
+        plateau_minutes=plateau_minutes,
+    ))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def executive_state() -> dict[str, Any]:
+    """Read current strategy, best/current evidence, time budget, help and alerts."""
+    _sync_executive()
+    return _public(executive.state())
+
+
+@mcp.tool(annotations=WRITE)
+def executive_strategy_begin(
+    name: str,
+    hypothesis: str,
+    expected_signal: str,
+    budget: str,
+    stop_condition: str,
+    next_if_positive: str,
+    next_if_negative: str,
+    new_evidence: str | None = None,
+) -> dict[str, Any]:
+    """Record a hypothesis contract before committing meaningful research resources."""
+    return _public(executive.strategy_begin(
+        name=name,
+        hypothesis=hypothesis,
+        expected_signal=expected_signal,
+        budget=budget,
+        stop_condition=stop_condition,
+        next_if_positive=next_if_positive,
+        next_if_negative=next_if_negative,
+        new_evidence=new_evidence,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
+def executive_strategy_end(outcome: str, evidence_note: str) -> dict[str, Any]:
+    """Close the active strategy as successful, failed, or inconclusive."""
+    _sync_executive()
+    return _public(executive.strategy_end(outcome=outcome, evidence_note=evidence_note))
+
+
+@mcp.tool(annotations=WRITE)
+def executive_director_signal(kind: str, text: str) -> dict[str, Any]:
+    """Record a Director constraint, correction, information, help offer, deadline, praise, or pressure."""
+    return _public(executive.director_signal(kind=kind, text=text))
+
+
+@mcp.tool(annotations=WRITE)
+def executive_question(
+    text: str,
+    reason: str,
+    help_signal_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a deliberate information request; this does not send a chat message by itself."""
+    return _public(executive.question(
+        text=text,
+        reason=reason,
+        help_signal_id=help_signal_id,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
+def executive_finish(conclusion: str) -> dict[str, Any]:
+    """Freeze a machine-backed factual summary at the end of the research session."""
+    _sync_executive()
+    return _public(executive.finish(conclusion=conclusion))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -260,20 +361,24 @@ def training_start(
     host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start asynchronous model training in the live game."""
-    return _public(laboratory.start_training(
+    payload = laboratory.start_training(
         episodes=episodes,
         target_x=target_x,
         fresh=fresh,
         seed=seed,
         max_seconds=max_seconds,
         host_id=host_id,
-    ))
+    )
+    executive.operation_started("training", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=READ_ONLY)
 def training_status() -> dict[str, Any]:
     """Read bounded progress and recent episode results from the last training run."""
-    return _public(laboratory.status("training"))
+    payload = laboratory.status("training")
+    executive.operation_status("training", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=WRITE)
@@ -291,19 +396,23 @@ def verify_start(
     host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start frozen-weight verification of the current model."""
-    return _public(laboratory.start_verify(
+    payload = laboratory.start_verify(
         target_x=target_x,
         runs=runs,
         tolerance=tolerance,
         max_seconds=max_seconds,
         host_id=host_id,
-    ))
+    )
+    executive.operation_started("verify", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=READ_ONLY)
 def verify_status() -> dict[str, Any]:
     """Read results from the last frozen verification."""
-    return _public(laboratory.status("verify"))
+    payload = laboratory.status("verify")
+    executive.operation_status("verify", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=WRITE)
@@ -320,18 +429,22 @@ def run_start(
     host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start the current model acting toward one goal in the live game."""
-    return _public(laboratory.start_run(
+    payload = laboratory.start_run(
         target_x=target_x,
         tolerance=tolerance,
         max_seconds=max_seconds,
         host_id=host_id,
-    ))
+    )
+    executive.operation_started("run", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=READ_ONLY)
 def run_status() -> dict[str, Any]:
     """Read status of the last live model run."""
-    return _public(laboratory.status("run"))
+    payload = laboratory.status("run")
+    executive.operation_status("run", payload)
+    return _public(payload)
 
 
 @mcp.tool(annotations=WRITE)

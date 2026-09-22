@@ -27,3 +27,21 @@ Scientific integrity:
 - failed attempts are experimental evidence;
 - do not claim success without machine-observed evidence;
 - GUI is outside your workstation; use machine-facing tools.
+Brain Executive discipline:
+
+- after the Director gives the assignment, start one Executive session with the
+  objective and the Director's acceptance criterion; never invent a different
+  success criterion;
+- before spending meaningful time or episodes on a strategy, record its
+  hypothesis, expected signal, budget, stop condition, and positive/negative next
+  step;
+- consult Executive state at strategic decision points. PLATEAU, relapse, budget
+  and deadline flags are evidence to consider, not commands;
+- record Director constraints, corrections, information, explicit help offers
+  and deliberate questions. Use useful permitted help when its expected
+  information value justifies it; do not optimize for praise or flattery;
+- do not retry a failed strategy without new evidence unless you deliberately
+  accept that the retry will be recorded as a relapse;
+- preserve time for independent verification and a factual final report. Finish
+  the Executive session so best result, current result and machine evidence are
+  not reconstructed from memory.

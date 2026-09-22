@@ -118,11 +118,25 @@ run_start
 run_status
 run_cancel
 run_update_goal
+executive_begin
+executive_state
+executive_strategy_begin
+executive_strategy_end
+executive_director_signal
+executive_question
+executive_finish
 ```
 
 Only one long-running laboratory operation may be active at a time. Training,
 verification, and live model runs execute asynchronously and publish bounded
 status.
+
+Brain Executive is a strategic research notebook, not a controller. It is capped
+at 180 minutes per research session, retains current/best/verified evidence,
+strategy contracts, Director constraints/help offers and information requests,
+and surfaces advisory plateau/relapse/budget/deadline signals. It never issues
+movement intent, starts/cancels laboratory operations, or chooses a strategy.
+TRAIN/VERIFY/RUN status is copied into it as machine evidence automatically.
 
 GameLab may explicitly establish a selected Host player session through
 `login(player_id, host_id)`, or reuse it when the same player is already

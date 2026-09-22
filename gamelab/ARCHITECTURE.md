@@ -86,6 +86,31 @@ Only one long-running GameLab operation is active at a time, even with multiple
 Hosts. An active operation's Host cannot be deleted through GameLab. Explicit
 MCP setup login is allowed; the learned loop does not own session lifecycle.
 
+## Brain Executive
+
+Brain Executive is a persistent strategic notebook around the asynchronous Brain.
+It is not another controller and does not participate in the 120/60/10 Hz loops.
+It has no actuator surface, cannot start or cancel an experiment by itself, and
+does not select a replacement strategy when it detects a problem.
+
+A research session has a hard maximum budget of 180 minutes. The default advisory
+phases are orientation (first 10%), exploration (to 70%), exploitation (to 90%),
+then verification/report. A default 15-minute no-improvement interval may surface
+a `PLATEAU` alert. These are attention signals, not forced transitions.
+
+Before a substantial strategy the Brain records a hypothesis, expected signal,
+budget, stop condition, and next actions for positive/negative evidence. Failed
+strategy names remain visible as tabu without new evidence; retrying one without
+new evidence is recorded as a relapse but is not blocked. Director constraints,
+corrections and explicit help offers remain visible in state. Questions and use
+of offered help are recorded separately from social tone.
+
+TRAIN/VERIFY/RUN start/status payloads feed Executive automatically. Current
+result and best result are kept separately, and frozen VERIFY/RUN success is kept
+as a separate best verified result. Thus a later regression cannot erase an
+earlier machine-observed best result. Executive journals are append-only JSONL
+with a compact current-state file; they are research evidence, not policy input.
+
 ## Brain goal updates
 
 `run_update_goal(target_x)` replaces the active RUN goal. It returns an accepted

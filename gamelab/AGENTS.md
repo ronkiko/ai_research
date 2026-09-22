@@ -31,3 +31,12 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - The MCP laboratory service is the supported agent-facing boundary for training, reward configuration, VERIFY, and live model runs; operator scripts are maintenance/CI entry points, not the GameTable assistant API.
 - Before declaring a patch ready, run the real `./gamelab/op/check.sh`
   vertical, not only unit tests.
+- Brain Executive is strategic memory and research accounting only. It must never
+  emit LEFT/STOP/RIGHT, alter Motor/Spine outputs, start/cancel experiments by
+  itself, or choose a strategy for the LLM.
+- Executive machine evidence comes from normal bounded TRAIN/VERIFY/RUN status.
+  Brain-authored hypotheses and Director-signal notes must remain distinguishable
+  from machine observations.
+- Executive research sessions are capped at 180 minutes. Phase and plateau
+  signals are advisory; they may surface evidence and risks but must not become
+  procedural steering.
