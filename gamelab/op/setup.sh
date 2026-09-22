@@ -25,7 +25,7 @@ then
 fi
 
 echo "GAMELAB SETUP install CPU PyTorch"
-"$PY" -m pip install --disable-pip-version-check -q   --index-url https://download.pytorch.org/whl/cpu   "torch>=2.1,<3"
+"$PY" -m pip install --disable-pip-version-check -q   --index-url https://download.pytorch.org/whl/cpu   --extra-index-url https://pypi.org/simple   "torch>=2.1,<3"
 
 echo "GAMELAB SETUP install MCP SDK"
 "$PY" -m pip install --disable-pip-version-check -q "mcp==2.2.0"
