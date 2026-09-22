@@ -52,6 +52,7 @@ EXPECTED_TOOLS = {
     "relationship_event",
     "relationship_action",
     "relationship_consent",
+    "relationship_employment_decision",
 }
 
 
@@ -494,6 +495,15 @@ async def run_flow(
                 raise AssertionError(f"Executive summary lost strategy result: {executive_summary}")
             if executive_summary.get("best_result") is None:
                 raise AssertionError(f"Executive summary lost best result: {executive_summary}")
+            employment = await tool(
+                session, "relationship_employment_decision",
+                {"decision": "hired", "director_statement": "The factual report is accepted; Yuki is hired."},
+            )
+            payloads.append(employment)
+            if employment.get("employment", {}).get("status") != "permanent_employee":
+                raise AssertionError(f"hiring did not resolve Yuki internship: {employment}")
+            if employment.get("consent", {}).get("kiss", {}).get("director") != "unknown":
+                raise AssertionError(f"hiring incorrectly created consent: {employment}")
 
             events = operator.events(0, limit=256).get("events", [])
             gamelab_logouts = [

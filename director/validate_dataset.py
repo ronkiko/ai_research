@@ -12,7 +12,7 @@ from ami_annotations import SESSION_ID
 def validate(path):
     c=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
     assert c.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
-    assert c.execute('PRAGMA user_version').fetchone()[0]==2
+    assert c.execute('PRAGMA user_version').fetchone()[0]==3
     assert not c.execute('PRAGMA foreign_key_check').fetchall()
     for sha,raw in c.execute('SELECT sha256,bytes FROM source'):
         assert hashlib.sha256(raw).hexdigest()==sha
@@ -33,6 +33,16 @@ def validate(path):
             assert event_counts.get('finish',0)<=1
             if status=='finished':
                 assert c.execute('SELECT count(*) FROM executive_metric WHERE executive_session_id=?',(executive_id,)).fetchone()[0]>0
+        relationship=c.execute('SELECT id,source_sha256,relationship_version,status FROM relationship_session WHERE session_id=?',(sid,)).fetchone()
+        if relationship:
+            relationship_id,relationship_sha,version,status=relationship
+            assert version==1
+            assert c.execute('SELECT count(*) FROM source WHERE sha256=?',(relationship_sha,)).fetchone()[0]==1
+            event_counts=dict(c.execute('SELECT kind,count(*) FROM relationship_event WHERE relationship_session_id=? GROUP BY kind',(relationship_id,)))
+            assert event_counts.get('begin')==1
+            assert event_counts.get('employment_decision',0)<=1
+            if status=='finished':
+                assert c.execute('SELECT count(*) FROM relationship_metric WHERE relationship_session_id=?',(relationship_id,)).fetchone()[0]>0
         if sid!=SESSION_ID:
             print('PASS:',sid,'— lossless source, source hashes, foreign keys; Executive validated' if executive else '— lossless source, source hashes, foreign keys')
             source.close()

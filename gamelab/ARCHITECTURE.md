@@ -121,6 +121,10 @@ append-only self-reports; the dialogue remains the source for what was actually
 said. Consent is per action and per participant. Employment acceptance resolves
 Yuki's internship goal but does not imply romance or consent.
 
+The factual Executive summary is frozen before the Director's employment
+decision. The decision is a separate relationship-journal event with `hired`,
+`extended`, `rejected`, or `pending`; Yuki cannot create it herself.
+
 ## Brain goal updates
 
 `run_update_goal(target_x)` replaces the active RUN goal. It returns an accepted

@@ -354,6 +354,14 @@ def relationship_consent(action: str, actor: str, state: str, evidence_note: str
     ))
 
 
+@mcp.tool(annotations=WRITE)
+def relationship_employment_decision(decision: str, director_statement: str) -> dict[str, Any]:
+    """Record the Director's explicit internship decision after the factual report."""
+    return _public(relationship.finish(
+        employment_decision=decision, director_statement=director_statement,
+    ))
+
+
 @mcp.tool(annotations=READ_ONLY)
 def model_info() -> dict[str, Any]:
     """Read current model artifact metadata without exposing implementation details."""

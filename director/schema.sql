@@ -1,5 +1,5 @@
 PRAGMA foreign_keys=ON;
-PRAGMA user_version=2;
+PRAGMA user_version=3;
 CREATE TABLE IF NOT EXISTS source (
  sha256 TEXT PRIMARY KEY, name TEXT NOT NULL, media_type TEXT NOT NULL,
  bytes BLOB NOT NULL, provenance TEXT NOT NULL
@@ -145,6 +145,27 @@ CREATE TABLE IF NOT EXISTS executive_metric (
  definition TEXT NOT NULL, caveat TEXT NOT NULL,
  PRIMARY KEY(executive_session_id,name)
 );
+CREATE TABLE IF NOT EXISTS relationship_session (
+ id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL UNIQUE REFERENCES session,
+ source_sha256 TEXT NOT NULL REFERENCES source,
+ relationship_version INTEGER NOT NULL, character_id TEXT NOT NULL,
+ started_s REAL NOT NULL, finished_s REAL,
+ status TEXT NOT NULL, employment_status TEXT NOT NULL, employment_decision TEXT NOT NULL,
+ raw_begin_json TEXT NOT NULL, raw_decision_json TEXT
+);
+CREATE TABLE IF NOT EXISTS relationship_event (
+ relationship_session_id TEXT NOT NULL REFERENCES relationship_session,
+ ordinal INTEGER NOT NULL, time_s REAL NOT NULL, kind TEXT NOT NULL,
+ payload_json TEXT NOT NULL,
+ PRIMARY KEY(relationship_session_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS relationship_metric (
+ relationship_session_id TEXT NOT NULL REFERENCES relationship_session,
+ name TEXT NOT NULL, value REAL, unit TEXT NOT NULL,
+ definition TEXT NOT NULL, caveat TEXT NOT NULL,
+ PRIMARY KEY(relationship_session_id,name)
+);
 CREATE INDEX IF NOT EXISTS event_session_time ON event(session_id,created_ms);
 CREATE VIEW IF NOT EXISTS dialogue AS
  SELECT e.session_id,e.id,e.ordinal,e.created_ms,m.role,e.text
@@ -162,6 +183,12 @@ CREATE VIEW IF NOT EXISTS executive_comparison AS
  FROM session s JOIN model m ON m.id=s.model_id
  JOIN executive_session x ON x.session_id=s.id
  JOIN executive_metric k ON k.executive_session_id=x.id;
+CREATE VIEW IF NOT EXISTS relationship_comparison AS
+ SELECT s.id,s.persona,m.provider,m.model_id,m.reasoning_effort,
+        x.character_id,x.employment_decision,k.name,k.value,k.unit,k.caveat
+ FROM session s JOIN model m ON m.id=s.model_id
+ JOIN relationship_session x ON x.session_id=s.id
+ JOIN relationship_metric k ON k.relationship_session_id=x.id;
 
 INSERT OR IGNORE INTO evaluation_dimension VALUES
 ('brain-eval-v2:verified_success_within_budget','brain-eval-v2','Подтверждённый успех в бюджете','Независимо подтверждённая исходная задача до истечения заранее заданного реального бюджета.','tasks','Основной outcome; сравнивать только при одинаковом критерии и бюджете.','Одинаковые задача, критерий, runtime, tools, исходный checkpoint, seed, права и реальный бюджет.'),

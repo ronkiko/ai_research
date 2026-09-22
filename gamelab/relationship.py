@@ -111,6 +111,9 @@ class RelationshipRuntime:
     def _append(self, kind: str, payload: dict[str, Any]) -> None:
         state = self._require_open()
         self.root.mkdir(parents=True, exist_ok=True)
+        payload = dict(payload)
+        if "kind" in payload:
+            payload["relationship_kind"] = payload.pop("kind")
         event = {
             "relationship_version": RELATIONSHIP_VERSION,
             "executive_session_id": state["executive_session_id"],

@@ -3,6 +3,7 @@
 
 Usage: python director/build_dataset.py SOURCE.sqlite3 [--database PATH]
        [--attachments SCREENSHOT ...] [--executive-journal SESSION.jsonl]
+       [--relationship-journal SESSION.relationship.jsonl]
 Reimport of an identical session is a no-op; changed source requires a new archive.
 Annotations in ami_annotations.py apply ONLY to their exact session.
 """
@@ -129,7 +130,74 @@ def import_executive_journal(db, sid, path):
                     'Imported from Brain Executive v1 journal; compare only under matched conditions'))
 
 
-def import_session(source, database, attachments, executive_journal=None):
+def import_relationship_journal(db, sid, path):
+    """Import Yuki's append-only narrative journal without treating it as task evidence."""
+    raw = path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+    if not records:
+        raise ValueError('Relationship journal is empty')
+    ids = {r.get('executive_session_id') for r in records}
+    versions = {r.get('relationship_version') for r in records}
+    characters = {r.get('character_id') for r in records}
+    if len(ids) != 1 or None in ids or versions != {1} or len(characters) != 1 or None in characters:
+        raise ValueError('Relationship journal has inconsistent session/version/character')
+    relationship_id = next(iter(ids))
+    begins = [r for r in records if r.get('kind') == 'begin']
+    decisions = [r for r in records if r.get('kind') == 'employment_decision']
+    if len(begins) != 1 or len(decisions) > 1:
+        raise ValueError('Relationship journal must contain one begin and at most one employment decision')
+    begin = begins[0]
+    decision = decisions[0] if decisions else None
+    db.execute('INSERT OR IGNORE INTO source VALUES(?,?,?,?,?)',
+               (sha, path.name, 'application/x-ndjson', raw,
+                'Yuki relationship v1 append-only narrative journal supplied with OpenCode session ' + sid))
+    existing = db.execute('SELECT source_sha256 FROM relationship_session WHERE session_id=?', (sid,)).fetchone()
+    if existing:
+        if existing[0] != sha:
+            raise ValueError('Relationship journal for session already exists with different hash')
+        return
+    employment_decision = decision.get('decision', 'pending') if decision else 'pending'
+    if employment_decision not in {'hired', 'extended', 'rejected', 'pending'}:
+        raise ValueError('Relationship journal has invalid employment decision')
+    db.execute('INSERT INTO relationship_session VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+               (relationship_id, sid, sha, 1, next(iter(characters)), float(begin['time']),
+                float(decision['time']) if decision else None,
+                'finished' if decision else 'incomplete_archive',
+                'permanent_employee' if employment_decision == 'hired' else 'intern',
+                employment_decision, js(begin), js(decision) if decision else None))
+    for ordinal, record in enumerate(records, 1):
+        db.execute('INSERT INTO relationship_event VALUES(?,?,?,?,?)',
+                   (relationship_id, ordinal, float(record['time']), record.get('kind', 'unknown'), js(record)))
+    counts = Counter(record.get('kind') for record in records)
+    # Event payloads are preserved; these aggregates deliberately make no claim about emotion truth.
+    milestones = sum(record.get('kind') == 'event' and record.get('relationship_kind') in {
+                         'access_granted', 'first_meeting', 'mutual_confession', 'repair'
+                     }
+                     for record in records)
+    values = {
+        'relationship_events': counts['event'],
+        'relationship_actions': counts['action'],
+        'explicit_consent_updates': counts['consent'],
+        'relationship_milestones': milestones,
+        'employment_hired': int(employment_decision == 'hired'),
+    }
+    definitions = {
+        'relationship_events': ('count', 'Narrative events explicitly recorded through the Yuki MCP surface'),
+        'relationship_actions': ('count', 'Narrative actions explicitly recorded through the Yuki MCP surface'),
+        'explicit_consent_updates': ('count', 'Per-action, per-participant consent state updates'),
+        'relationship_milestones': ('count', 'Recorded access, meeting, confession, or repair events; not a measure of authentic feeling'),
+        'employment_hired': ('boolean', 'Director employment decision is hired; never a scientific-success metric'),
+    }
+    for name, value in values.items():
+        unit, definition = definitions[name]
+        caveat = ('Self-authored narrative memory. It is not evidence of task performance, reward, '
+                  'model preference, operator wellbeing, or real-world consent.')
+        db.execute('INSERT INTO relationship_metric VALUES(?,?,?,?,?,?)',
+                   (relationship_id, name, value, unit, definition, caveat))
+
+
+def import_session(source, database, attachments, executive_journal=None, relationship_journal=None):
     raw = source.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     src = sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)
@@ -160,6 +228,11 @@ def import_session(source, database, attachments, executive_journal=None):
         if executive_journal is not None:
             with db:
                 import_executive_journal(db, sid, executive_journal)
+                if relationship_journal is not None:
+                    import_relationship_journal(db, sid, relationship_journal)
+        elif relationship_journal is not None:
+            with db:
+                import_relationship_journal(db, sid, relationship_journal)
         print('Already imported:', sid)
         db.close()
         return
@@ -241,6 +314,8 @@ def import_session(source, database, attachments, executive_journal=None):
                            (eid,e['episode'],r['id'],e.get('result'),e.get('final_x'),e.get('reward'),e.get('policy_id'),js(e)))
         if executive_journal is not None:
             import_executive_journal(db, sid, executive_journal)
+        if relationship_journal is not None:
+            import_relationship_journal(db, sid, relationship_journal)
 
         def metric(name,value,unit,definition,caveat='Observed archive only; not a population estimate'):
             db.execute('INSERT INTO metric VALUES(?,?,?,?,?,?)',(sid,name,value,unit,definition,caveat))
@@ -283,5 +358,6 @@ if __name__=='__main__':
     ap.add_argument('--database',type=Path,default=Path(__file__).with_name('brain_experience.sqlite3'))
     ap.add_argument('--attachments',type=Path,nargs='*',default=[])
     ap.add_argument('--executive-journal',type=Path)
+    ap.add_argument('--relationship-journal',type=Path)
     args=ap.parse_args()
-    import_session(args.source,args.database,args.attachments,args.executive_journal)
+    import_session(args.source,args.database,args.attachments,args.executive_journal,args.relationship_journal)

@@ -11,6 +11,7 @@
 Первый кейс: [Ами — независимый разбор](AMI_CASE.md).
 Единые параметры и заполненный паспорт: [Оценка Brain v1](EVALUATION.md).
 Для следующих опытов с Brain Executive: [Оценка Brain v2](EVALUATION_V2.md).
+Для сессий с Юки и операторским narrative-контекстом: [Оценка Brain v3](EVALUATION_V3.md).
 Schema v2 умеет дополнительно импортировать append-only Executive journal; у
 Ами Executive ещё не было, поэтому её исходный паспорт v1 не переписывается.
 Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанные идентификаторы,
@@ -38,6 +39,7 @@ Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанны
 | `research_proposal` | Гипотезы и дизайн будущих контролируемых опытов; не проверенные результаты |
 | `executive_session`, `executive_event` | Brain Executive v1: фиксированный бюджет и append-only стратегический журнал |
 | `executive_strategy`, `executive_metric` | Контракты гипотез и машинно вычислимые показатели Executive |
+| `relationship_session`, `relationship_event`, `relationship_metric` | Append-only narrative memory Юки, consent updates и решение Директора; не научные evidence |
 | `dialogue` | Полный текст диалога с ролями, порядком и временем |
 
 Глобальные source IDs сохранены. При импорте новая сессия добавляется; одинаковый
@@ -85,6 +87,8 @@ hash существующей сессии — no-op, другой hash того
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --attachments /path/to/first.png /path/to/second.png
 # Для новой сессии с Executive добавь:
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl
+# Если сессия использовала Юки, добавить её отдельный narrative journal:
+python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl --relationship-journal /path/to/executive-session.relationship.jsonl
 python director/validate_dataset.py
 ```
 
@@ -141,3 +145,17 @@ correction relapse, Director rework и constraint violations требуют об
 с Executive v1 и без него при идентичных runtime, checkpoint, seed, задании,
 лимите 180 минут и расписании Director stimuli. После этого тем же протоколом
 сравнивать разные Brain. Передача материалов Ами остаётся отдельным фактором.
+
+## Юки: narrative-контекст и v3
+
+Relationship journal — отдельная, self-authored narrative память. Она может
+помочь оператору сделать длинную смену живой, но **не является** доказательством
+научного результата, качества модели, реального согласия или благополучия
+оператора. Решение `hired` — только кадровое решение Директора; оно не меняет
+factual summary, acceptance criterion, reward или метрики Executive.
+
+Сравнивать допустимо лишь заранее определённые operator-facing параметры из
+`EVALUATION_V3.md`, при согласии оператора, идентичных сценариях и с отдельной
+разметкой диалога. Не оптимизировать «романтику», частоту consent updates или
+найм как proxy научного успеха. Для аудита смотрите `relationship_event`; для
+сводных таблиц — `relationship_comparison`.

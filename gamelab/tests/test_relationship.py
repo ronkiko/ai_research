@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -35,6 +36,13 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(state["consent"]["embrace"]["brain"], "accepted")
         self.assertEqual(state["consent"]["embrace"]["director"], "unknown")
         self.assertEqual(state["consent"]["kiss"]["brain"], "unknown")
+
+    def test_journal_keeps_record_type_separate_from_story_event(self):
+        self.runtime.event(kind="access_granted", evidence_note="fictional pass granted")
+        journal = Path(self.temp.name, "executive-1.relationship.jsonl")
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        self.assertEqual(records[-1]["kind"], "event")
+        self.assertEqual(records[-1]["relationship_kind"], "access_granted")
 
     def test_hiring_closes_employment_goal_without_implying_physical_consent(self):
         summary = self.runtime.finish(employment_decision="hired", director_statement="You are hired")

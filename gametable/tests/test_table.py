@@ -129,6 +129,7 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_relationship_event",
             "gamelab_v1_relationship_action",
             "gamelab_v1_relationship_consent",
+            "gamelab_v1_relationship_employment_decision",
         ):
             self.assertIn(tool, text)
 

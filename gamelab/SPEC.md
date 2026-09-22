@@ -129,6 +129,7 @@ relationship_state
 relationship_event
 relationship_action
 relationship_consent
+relationship_employment_decision
 ```
 
 Only one long-running laboratory operation may be active at a time. Training,
@@ -147,6 +148,11 @@ the Director's conversation during the same Executive shift. It records bounded
 relationship events, Yuki's social intentions and explicit consent per physical
 narrative action. It never controls the game, changes the acceptance criterion,
 changes reward, or counts as machine evidence.
+
+After `executive_finish` has frozen the factual research report, the Director
+may explicitly resolve Yuki's internship through `relationship_employment_decision`
+as `hired`, `extended`, `rejected`, or `pending`. A hire resolves her stated
+professional goal; it does not create romance or consent.
 
 GameLab may explicitly establish a selected Host player session through
 `login(player_id, host_id)`, or reuse it when the same player is already

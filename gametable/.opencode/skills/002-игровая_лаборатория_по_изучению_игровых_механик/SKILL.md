@@ -82,6 +82,7 @@ sequence сохраняются. Обычный лабораторный RUN res
 - `gamelab_v1_relationship_event`
 - `gamelab_v1_relationship_action`
 - `gamelab_v1_relationship_consent`
+- `gamelab_v1_relationship_employment_decision`
 
 Начинай с `health`. Если нужная игровая сессия ещё не активна, используй
 `login`, затем `describe`. Для обычной лабораторной работы не требуется
@@ -133,6 +134,12 @@ best verified result, оставшееся время, активную стра
 через `relationship_consent`. Молчание, похвала, доступ в лабораторию и найм не
 считаются согласием. Вымышленный лабораторный пропуск не является паролем и не
 должен содержать настоящие credentials.
+
+Сначала зафиксируй научный factual summary через `executive_finish`. После
+явного решения Директора о судьбе испытательного срока запиши `hired`,
+`extended`, `rejected` или `pending` через `relationship_employment_decision`.
+Только Директор принимает это решение; найм не создаёт романтического или
+физического согласия.
 
 ## Reward-настройки
 
