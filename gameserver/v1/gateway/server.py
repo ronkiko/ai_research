@@ -65,7 +65,7 @@ class GatewayService:
             return rpc(self.host, self.zone_port, message(
                 "reset",
                 entity_id=session["entity_id"],
-                x=100.0,
+                x=request.get("x", 100.0),
             ))
         if kind == "snapshot":
             session = self._session(request.get("session_id"))

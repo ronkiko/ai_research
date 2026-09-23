@@ -58,6 +58,17 @@ class UnpacedTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_unpaced_reset_accepts_explicit_spawn_position(self):
+        client = UnpacedHostClient("test-unpaced-reset")
+        try:
+            state = reset_player_state(client, "player1", spawn_x=640.0)
+            player = player_from_state(state)
+            self.assertEqual(float(player["x"]), 640.0)
+            self.assertEqual(float(player["vx"]), 0.0)
+            self.assertEqual(float(player["motor_x"]), 0.0)
+        finally:
+            client.close()
+
     def test_control_can_physically_settle_on_987(self):
         client = UnpacedHostClient("test-unpaced-control")
         transitions = []

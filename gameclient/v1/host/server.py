@@ -272,11 +272,18 @@ class HostService:
 
     def _reset(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)
+        value = request.get("x", 100.0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HostProtocolError("reset x must be numeric")
+        x = float(value)
+        if not math.isfinite(x) or not 0.0 <= x <= 1000.0:
+            raise HostProtocolError("reset x must be finite within [0,1000]")
         with self._operation_lock:
             session = self._session_copy()
             response = self.gateway.request(
                 "reset",
                 session_id=session["session_id"],
+                x=x,
             )
             with self._state_lock:
                 sequence = self._sequence
@@ -285,14 +292,14 @@ class HostService:
                 client_id=client_id,
                 player_id=session["player_id"],
                 sequence=sequence,
-                x=100.0,
+                x=x,
                 command_id=response.get("command_id"),
                 queued_at_tick=response.get("world_tick"),
             )
             return message(
                 "reset",
                 sequence=sequence,
-                x=100.0,
+                x=x,
                 event=event,
             )
 

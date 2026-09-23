@@ -116,17 +116,22 @@ class UnpacedHostClient:
         response["event"]["move_x"] = move_x
         return response
 
-    def reset(self) -> dict[str, Any]:
-        command_id = self.runtime.enqueue_reset(entity_id=self.entity_id, x=100.0)
+    def reset(self, x: float = 100.0) -> dict[str, Any]:
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            raise ValueError("reset x must be numeric")
+        x = float(x)
+        if not math.isfinite(x) or not 0.0 <= x <= WORLD_MAX_X:
+            raise ValueError(f"reset x must be finite within [0,{WORLD_MAX_X:g}]")
+        command_id = self.runtime.enqueue_reset(entity_id=self.entity_id, x=x)
         event = self._append_event(
             "reset",
             player_id=self.player_id,
             sequence=self._sequence,
-            x=100.0,
+            x=x,
             command_id=command_id,
             queued_at_tick=self.runtime.world_tick,
         )
-        return {"sequence": self._sequence, "x": 100.0, "event": event}
+        return {"sequence": self._sequence, "x": x, "event": event}
 
     def events(self, after_event_id: int = 0, *, limit: int = 50) -> dict[str, Any]:
         if type(after_event_id) is not int or after_event_id < 0:

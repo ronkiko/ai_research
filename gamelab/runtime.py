@@ -74,12 +74,19 @@ def reset_player_state(
     client: HostClient,
     player_id: str,
     timeout: float = 2.0,
+    *,
+    spawn_x: float = 100.0,
 ) -> dict[str, Any]:
     """Reset physical episode state through Host without replacing its session."""
+    if isinstance(spawn_x, bool) or not isinstance(spawn_x, (int, float)):
+        raise ValueError("spawn_x must be numeric")
+    spawn_x = float(spawn_x)
+    if not WORLD_MIN_X <= spawn_x <= WORLD_MAX_X:
+        raise ValueError("spawn_x must be within [0,1000]")
     before = ensure_player(client, player_id)
     before_session = before.get("session") or {}
     before_sequence = before_session.get("sequence")
-    reset = client.reset()
+    reset = client.reset(spawn_x)
     command_id = reset["event"]["command_id"]
     before_tick = before["snapshot"]["world_tick"]
     epoch = before["snapshot"].get("epoch")
@@ -102,7 +109,7 @@ def reset_player_state(
         if (
             player.get("last_reset_command_id") == command_id
             and player.get("last_reset_tick", 0) > before_tick
-            and float(player["x"]) == 100.0
+            and float(player["x"]) == spawn_x
             and float(player["vx"]) == 0.0
             and abs(float(player["motor_x"])) < 1e-9
         ):

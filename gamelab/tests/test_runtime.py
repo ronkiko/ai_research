@@ -44,12 +44,12 @@ class _HubClient:
             },
         }
 
-    def reset(self):
+    def reset(self, x=100.0):
         self.reset_calls += 1
-        self.x = 100.0
+        self.x = float(x)
         self.vx = 0.0
         self.motor_x = 0
-        return {"sequence": self._session["sequence"], "x": 100.0,
+        return {"sequence": self._session["sequence"], "x": self.x,
                 "event": {"command_id": self.reset_calls}}
 
     def login(self, player_id: str):
@@ -92,6 +92,25 @@ class RuntimeHubTests(unittest.TestCase):
         self.assertEqual(client.reset_calls, 1)
         self.assertEqual(client.login_calls, 0)
         self.assertEqual(client.logout_calls, 0)
+
+    def test_episode_reset_accepts_explicit_spawn_position(self):
+        client = _HubClient({
+            "player_id": "player1",
+            "entity_id": "actor-player1",
+            "world_id": "world1",
+            "zone_id": "zone1",
+            "sequence": 7,
+        })
+        state = reset_player_state(
+            client,
+            "player1",
+            timeout=0.5,
+            spawn_x=640.0,
+        )
+        player = state["snapshot"]["entities"][0]
+        self.assertEqual(player["x"], 640.0)
+        self.assertEqual(player["vx"], 0.0)
+        self.assertEqual(state["session"]["sequence"], 7)
 
     def test_missing_host_session_is_not_created_by_gamelab(self):
         client = _HubClient(None)
