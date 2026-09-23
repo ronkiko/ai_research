@@ -188,9 +188,11 @@ time changes opportunity cost and the hard shift budget, never trust.
 The factual Executive summary is frozen before the Director's employment
 decision. The decision is a separate relationship-journal event with `hired`,
 `extended`, `rejected`, or `pending`; Yuki cannot create it herself.
-At the relationship deadline, new narrative writes close automatically while
-the factual history remains readable and an explicit employment decision may
-still be recorded.
+At the 180-minute deadline only the professional trial/research window closes.
+Narrative relationship writes, consent updates, Heart/Head arbitration and
+Will/Ego appraisal remain available for final words and later personal
+conversation. The deadline is not a synthetic death, breakup, memory reset or
+forced emotional resolution.
 
 ## Character, Audience and Will
 
@@ -254,9 +256,11 @@ Private confidence 100 permits that side to declare ALL_IN. It does not win the
 conflict: parent Yuki still chooses heart or brain using both independent
 positions, history, evidence and stakes. ALL_IN only removes the compromise
 outcome and is consumed on resolution. Internal choice and external outcome are
-logged separately. At the absolute Executive deadline an unresolved conflict
-closes as `unresolved`; it cannot extend the 180-minute shift. This layer never
-controls the game, changes reward, or supplies scientific evidence.
+logged separately. At the absolute Executive deadline the professional
+research shift ends, but an internal conflict may remain active and be resolved
+afterward as part of Yuki's personal continuity. Post-shift narrative resolution
+never reopens the expired research budget. This layer never controls the game,
+changes reward, or supplies scientific evidence.
 
 ## Brain goal updates
 

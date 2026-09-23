@@ -61,11 +61,13 @@ The OpenCode launcher is also managed:
 
 Without a management flag it starts OpenCode normally.
 
-The project-level Shift Supervisor wakes an idle active relationship session
+The project-level Shift Supervisor wakes an idle current relationship session
 without waiting for another Director message. The first idle wake defaults to
 45 seconds and later heartbeats to 120 seconds. A Director message resets the
-idle interval; a busy Brain is never interrupted. The absolute relationship
-deadline produces one final wake. Heartbeats are internal laboratory events,
+idle interval; a busy Brain is never interrupted. The absolute work-shift
+deadline produces one final-shift wake but does not close relationship memory,
+Heart/Head or Will/Ego; later personal dialogue remains valid. Heartbeats are
+internal laboratory events,
 not Director speech, and may be tuned with `GAMETABLE_FIRST_HEARTBEAT_MS`,
 `GAMETABLE_HEARTBEAT_MS`, and `GAMETABLE_HEARTBEAT_CHECK_MS`.
 

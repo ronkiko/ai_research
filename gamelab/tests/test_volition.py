@@ -95,14 +95,14 @@ class VolitionTests(unittest.TestCase):
                 character_core=changed,
             )
 
-    def test_deadline_closes_new_appraisals(self):
+    def test_deadline_ends_shift_but_volition_appraisals_continue(self):
         self.clock.value = 11800.0
         self.assertEqual(self.runtime.state()["status"], "deadline_reached")
-        with self.assertRaises(VolitionError):
-            self.runtime.appraise(
-                action="kiss", desire="uncertain", readiness="guarded", pressure="none",
-                agency="intact", stress="none", evidence_note="too late",
-            )
+        state = self.runtime.appraise(
+            action="kiss", desire="uncertain", readiness="guarded", pressure="none",
+            agency="intact", stress="none", evidence_note="personal conversation continued after shift",
+        )
+        self.assertEqual(state["current_appraisals"]["kiss"]["readiness"], "guarded")
 
 
 if __name__ == "__main__":

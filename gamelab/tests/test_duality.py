@@ -58,15 +58,19 @@ class DualityTests(unittest.TestCase):
         self.assertIsNone(state["active_conflict"])
         self.assertEqual(state["completed_conflicts"], 1)
 
-    def test_absolute_deadline_closes_unresolved_conflict(self):
+    def test_absolute_deadline_ends_shift_but_inner_conflict_can_continue(self):
         self.appraise("heart"); self.appraise("brain")
         self.runtime.conflict_begin(question="love or exam", stakes="internship")
         self.clock.value = 11800.0
         state = self.runtime.state()
         self.assertEqual(state["status"], "deadline_finished")
-        self.assertEqual(state["completed_conflicts"], 1)
-        with self.assertRaisesRegex(DualityError, "no active"):
-            self.appraise("heart")
+        self.assertIsNotNone(state["active_conflict"])
+        state = self.runtime.resolve(
+            resolution="heart",
+            decision="say the final words honestly",
+            rationale="the work shift ended but the personal decision did not disappear",
+        )
+        self.assertEqual(state["active_conflict"]["resolution"], "heart")
 
 
 if __name__ == "__main__": unittest.main()

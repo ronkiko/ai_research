@@ -100,35 +100,24 @@ class DualityRuntime:
         return {"level": "0/4", "all_in_available": False}
 
     def _require_active(self) -> dict[str, Any]:
-        if self._state is None or self._state.get("status") != "active":
-            raise DualityError("no active Heart–Brain shift")
-        if self.clock() >= float(self._state["deadline_at"]):
+        if self._state is None:
+            raise DualityError("Heart–Brain state has not started")
+        if self._state.get("status") == "active" and self.clock() >= float(self._state["deadline_at"]):
             self._expire()
-            raise DualityError("the 180-minute shift has ended")
+        if self._state.get("status") not in {"active", "deadline_finished"}:
+            raise DualityError("Heart–Brain state is unavailable")
         return self._state
 
     def _expire(self) -> None:
         state = self._state
         if state is None or state.get("status") != "active":
             return
-        conflict = state.get("active_conflict")
-        if conflict is not None:
-            conflict.update(
-                resolution="unresolved",
-                decision="Shift ended before an internal resolution",
-                rationale="Absolute shift deadline",
-                resolved_at=float(state["deadline_at"]),
-                external_outcome="unresolved",
-                external_evidence="Absolute shift deadline",
-            )
-            state["conflicts"].append(conflict)
-            state["active_conflict"] = None
         state["status"] = "deadline_finished"
         state["finished_at"] = float(state["deadline_at"])
         self._save()
         self._append("deadline_finish", {
             "finished_at": state["finished_at"],
-            "active_conflict_closed": conflict is not None,
+            "active_conflict_closed": False,
         })
 
     def begin(self, *, executive_session_id: str, deadline_at: float) -> dict[str, Any]:

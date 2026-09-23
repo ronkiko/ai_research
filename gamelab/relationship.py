@@ -102,6 +102,13 @@ class RelationshipRuntime:
                 raise RelationshipError(
                     "active relationship character does not match configured Character Core"
                 )
+            # Older runtime used status=finished for an employment decision.
+            # Employment resolves the trial goal, not the relationship itself.
+            if self._state.get("status") == "finished":
+                deadline = float(self._state.get("deadline_at", 0.0))
+                self._state["status"] = (
+                    "deadline_reached" if self.clock() >= deadline else "active"
+                )
             self._save()
 
     def _save(self) -> None:
@@ -140,8 +147,10 @@ class RelationshipRuntime:
 
     def _require_open(self) -> dict[str, Any]:
         self._expire_if_due()
-        if self._state is None or self._state.get("status") != "active":
-            raise RelationshipError("no active Yuki relationship session")
+        if self._state is None:
+            raise RelationshipError("no Yuki relationship session")
+        if self._state.get("status") not in {"active", "deadline_reached"}:
+            raise RelationshipError("Yuki relationship session is unavailable")
         return self._state
 
     @staticmethod
@@ -183,8 +192,10 @@ class RelationshipRuntime:
 
     def begin(self, *, first_impression: str, duration_minutes: float = 180.0) -> dict[str, Any]:
         self._expire_if_due()
-        if self._state is not None and self._state.get("status") == "active":
-            raise RelationshipError("Yuki relationship session is already active")
+        if self._state is not None:
+            raise RelationshipError(
+                "Yuki relationship session already exists; the shift deadline does not reset it"
+            )
         impression = self._text(first_impression, "first_impression")
         duration = float(duration_minutes)
         if not 1.0 <= duration <= 180.0:
@@ -280,12 +291,12 @@ class RelationshipRuntime:
             state["employment"].update(status="permanent_employee", decision="hired")
         else:
             state["employment"]["decision"] = employment_decision
-        state["status"] = "finished"; state["finished_at"] = self.clock(); self._save()
-        # Append after changing status without requiring a further public operation.
+        decided_at = self.clock()
+        self._save()
         event = {"relationship_version": RELATIONSHIP_VERSION,
                  "relationship_session_id": state["relationship_session_id"],
                  "executive_session_id": state.get("executive_session_id"),
-                 "character_id": state["character_id"], "time": state["finished_at"], "kind": "employment_decision",
+                 "character_id": state["character_id"], "time": decided_at, "kind": "employment_decision",
                  "decision": employment_decision, "director_statement": statement}
         with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
@@ -299,6 +310,7 @@ class RelationshipRuntime:
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": state["character_id"],
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
+                "relationship_open": True,
                 "time_remaining_seconds": max(0.0, state["deadline_at"] - self.clock()),
                 "employment": state["employment"], "location": state["location"], "contacts": state["contacts"],
                 "consent": state["consent"],
@@ -312,6 +324,7 @@ class RelationshipRuntime:
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": state["character_id"],
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
+                "relationship_open": True,
                 "employment": state["employment"], "contacts": state["contacts"],
                 "consent": state["consent"],
                 "events": state["events"], "actions": state["actions"], "finished_at": state.get("finished_at")}

@@ -105,8 +105,10 @@ class VolitionRuntime:
 
     def _require_open(self) -> dict[str, Any]:
         self._expire_if_due()
-        if self._state is None or self._state.get("status") != "active":
-            raise VolitionError("no active Will/Ego session")
+        if self._state is None:
+            raise VolitionError("no Will/Ego session")
+        if self._state.get("status") not in {"active", "deadline_reached"}:
+            raise VolitionError("Will/Ego state is unavailable")
         return self._state
 
     def begin(

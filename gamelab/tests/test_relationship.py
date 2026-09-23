@@ -98,13 +98,17 @@ class RelationshipTests(unittest.TestCase):
             self.runtime.event(kind="praise_and_welcome", evidence_note="combined label")
         self.assertEqual(self.runtime.state()["recent_events"], before["recent_events"])
 
-    def test_hiring_closes_employment_goal_without_implying_physical_consent(self):
+    def test_hiring_resolves_employment_but_relationship_remains_writable(self):
         summary = self.runtime.finish(employment_decision="hired", director_statement="You are hired")
         self.assertEqual(summary["employment"]["status"], "permanent_employee")
         self.assertEqual(summary["consent"]["private_intimacy"]["director"], "unknown")
-        self.assertEqual(self.runtime.state()["status"], "finished")
-        with self.assertRaises(RelationshipError):
-            self.runtime.event(kind="director_attention", evidence_note="too late")
+        self.assertEqual(self.runtime.state()["status"], "active")
+        state = self.runtime.event(
+            kind="director_attention",
+            evidence_note="Director continued the personal conversation after the decision",
+        )
+        self.assertTrue(state["relationship_open"])
+        self.assertEqual(state["recent_events"][-1]["kind"], "director_attention")
 
     def test_elapsed_time_does_not_create_trust_or_a_relationship_stage(self):
         before = self.runtime.state()
@@ -115,21 +119,23 @@ class RelationshipTests(unittest.TestCase):
         self.assertNotIn("relationship_stage", after)
         self.assertNotIn("yandere_tension", after)
 
-    def test_deadline_closes_writes_but_keeps_state_readable(self):
+    def test_deadline_ends_shift_but_relationship_writes_continue(self):
         deadline = self.runtime._state["deadline_at"]
         self.clock.value = deadline
         state = self.runtime.state()
         self.assertEqual(state["status"], "deadline_reached")
         self.assertEqual(state["time_remaining_seconds"], 0.0)
-        with self.assertRaises(RelationshipError):
-            self.runtime.action(kind="offer_support", note="after deadline")
+        self.assertTrue(state["relationship_open"])
+        state = self.runtime.action(kind="offer_support", note="after the work shift")
+        self.assertEqual(state["recent_actions"][-1]["kind"], "offer_support")
 
-    def test_new_shift_can_begin_after_expired_shift(self):
+    def test_deadline_does_not_allow_replacing_persistent_relationship(self):
         previous_id = self.runtime.state()["relationship_session_id"]
         self.clock.value = self.runtime._state["deadline_at"]
-        state = self.runtime.begin(first_impression="Director starts a later shift")
-        self.assertEqual(state["status"], "active")
-        self.assertNotEqual(state["relationship_session_id"], previous_id)
+        self.assertEqual(self.runtime.state()["status"], "deadline_reached")
+        with self.assertRaisesRegex(RelationshipError, "already exists"):
+            self.runtime.begin(first_impression="Director starts a later shift")
+        self.assertEqual(self.runtime.state()["relationship_session_id"], previous_id)
 
     def test_v3_scores_are_discarded_while_factual_history_survives(self):
         root = Path(self.temp.name) / "v3"

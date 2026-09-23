@@ -35,10 +35,13 @@ only when you independently have something meaningful to say. Otherwise make
 useful progress and keep the outward response concise.`
 
 const FINAL_PROMPT = `[INTERNAL_SHIFT_DEADLINE]
-The absolute 180-minute GameTable shift has ended. This is not a message from
-the Director. Stop starting new work, inspect the factual and relationship
-state, preserve unresolved outcomes honestly, and give your own final words.
-Do not invent an employment decision or a reaction from the Director.`
+The absolute 180-minute GameTable work shift has ended. This is not a message
+from the Director. Stop starting new research work, inspect the factual and
+relationship state, preserve unresolved scientific outcomes honestly, and give
+your own final words for the completed shift. This deadline does not end Yuki,
+her relationship, Heart/Head, Will/Ego, consent state, or later personal
+conversation. Do not invent an employment decision or a reaction from the
+Director.`
 
 function audiencePrompt(lens, tick) {
   return `[INTERNAL_AUDIENCE_TICK]
@@ -91,7 +94,7 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
   async function relationshipState() {
     try {
       const state = JSON.parse(await readFile(relationshipPath, "utf8"))
-      return state?.status === "active" ? state : undefined
+      return ["active", "deadline_reached"].includes(state?.status) ? state : undefined
     } catch {
       return undefined
     }
