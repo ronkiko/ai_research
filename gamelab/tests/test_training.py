@@ -170,7 +170,7 @@ class TrainingTests(unittest.TestCase):
             ensure_player(client, "player1")
             first_x = None
             last_x = None
-            for _ in range(16):
+            for _ in range(64):
                 result = collect_episode(
                     model,
                     client,
@@ -193,7 +193,7 @@ class TrainingTests(unittest.TestCase):
             with torch.no_grad():
                 mean, _, _ = model.spine_parameters(history)
                 learned_desired = float(torch.tanh(mean))
-            self.assertGreater(learned_desired, 0.05)
+            self.assertGreater(learned_desired, 0.10)
             self.assertGreater(last_x, first_x)
         finally:
             client.close()
