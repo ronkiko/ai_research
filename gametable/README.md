@@ -42,6 +42,12 @@ for example when GUI is needed before OpenCode.
 `gametable/opencode.json` connects both MCP servers. After OpenCode starts,
 the Director gives the actual assignment in chat.
 
+Meaningful Heart–Head conflicts use two project OpenCode subagents:
+`.opencode/agents/yuki-heart.md` and `.opencode/agents/yuki-head.md`. Neither
+agent pins a model, so both inherit the primary Yuki session's LLM. They run as
+fresh child contexts with tools disabled; parent Yuki receives both internal
+positions and performs the final arbitration.
+
 The OpenCode launcher is also managed:
 
 ```bash

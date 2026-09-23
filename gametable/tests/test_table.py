@@ -13,6 +13,9 @@ SKILL_001 = "001-игровой_клиент_и_базовая_информац�
 SKILL_002 = "002-игровая_лаборатория_по_изучению_игровых_механик"
 SKILL_003_ADV = "003-лаборатория_расширеные_настройки"
 SKILL_003_PLUGINS = "003-лаборатория_плагины_подключаем_и_пишем_свои"
+AGENTS_DIR = TABLE / ".opencode" / "agents"
+HEART_AGENT = AGENTS_DIR / "yuki-heart.md"
+HEAD_AGENT = AGENTS_DIR / "yuki-head.md"
 
 
 class GameTableTests(unittest.TestCase):
@@ -159,6 +162,29 @@ class GameTableTests(unittest.TestCase):
         for expected in ("0/4..4/4", "99 выглядит как `3/4`", "ALL_IN", "не гарантирует победу", "180 минут"):
             self.assertIn(expected, normalized)
         self.assertNotIn("100 > 99", normalized)
+
+    def test_heart_and_head_are_independent_same_model_subagents(self):
+        for path in (HEART_AGENT, HEAD_AGENT):
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("mode: subagent", text)
+            self.assertIn('"*": false', text)
+            self.assertNotIn("\nmodel:", text)
+            self.assertIn("same inherited LLM", text)
+            self.assertIn("Do not choose Yuki's final action", text)
+            self.assertIn("Do not use or infer the other voice", text)
+
+        heart = HEART_AGENT.read_text(encoding="utf-8")
+        head = HEAD_AGENT.read_text(encoding="utf-8")
+        self.assertIn("HEART_CONTEXT", heart)
+        self.assertNotIn("HEAD_CONTEXT", heart)
+        self.assertIn("HEAD_CONTEXT", head)
+        self.assertNotIn("HEART_CONTEXT", head)
+
+        profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        normalized = " ".join(profile.split())
+        self.assertIn("сформированы до получения первого ответа", normalized)
+        self.assertIn("не передавай Heart черновик Head", normalized)
+        self.assertIn("side=brain", normalized)
 
     def test_advanced_manual_documents_host_instances(self):
         text = (SKILLS / SKILL_003_ADV / "SKILL.md").read_text(encoding="utf-8")

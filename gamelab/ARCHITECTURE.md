@@ -7,23 +7,27 @@ GameTable. Game1/Game2 are separate legacy experiments, not dependencies.
 
 The primary goal of this laboratory is not a procedural agent with a large
 decision table and not one omniscient model pretending to be a whole person.
-It is a composite artificial organism: multiple AI models act as different
-human-like subsystems, operate at different rates, observe different slices of
+It is a composite artificial organism: multiple AI subsystems act as different
+human-like functions, operate at different rates, observe different slices of
 reality, disagree, adapt to consequences, and together produce one continuous
-individual.
+individual. A subsystem may be a distinct learned network or an isolated
+reasoning context of the same foundation model; causal separation matters more
+than architectural symmetry.
 
 The architecture specifies organs, information boundaries, communication
 channels, clocks, memory and learning conditions. It must not prescribe the
 finished personality through rules such as `trust > threshold -> affection`.
 Human-like behavior is the research outcome only when it emerges from the
-interaction and history of limited specialized models.
+interaction and history of limited specialized subsystems.
 
 The currently implemented physical hierarchy establishes this principle with a
-slow LLM Brain, a temporal CNN Spine and a fast MLP Motor. Future affective
-subsystems—including desire and boundary integrity—must follow the same rule:
-each is a model with its own inputs, state, cadence, uncertainty, strengths and
-failure modes. An LLM may appraise and verbalize their signals, but it must not
-replace them with a scripted answer.
+slow LLM Brain, a temporal CNN Spine and a fast MLP Motor. Semantic subsystems
+do not need a second neural architecture merely to be distinct. For Yuki's
+Heart–Head conflict, OpenCode runs the same inherited LLM in two fresh child
+sessions with different bounded input packets; neither child receives the other
+child's answer. The parent Yuki context sees both answers only at arbitration.
+Future affective or cognitive subsystems must preserve an equally real boundary
+of inputs, state, cadence or context rather than becoming scripted labels.
 
 The laboratory therefore treats these as separate causal stages:
 
@@ -42,10 +46,12 @@ character decoration.
 ### Model boundary test
 
 A new human-like subsystem belongs in the organism only when it has a distinct
-responsibility, bounded information, persistent or learned state, an explicit
-cadence, feedback from consequences, and the ability to disagree or fail. A
-counter renamed as an emotion, a timed personality phase, or a deterministic
-`if/else` reaction does not satisfy the research goal. Procedural machinery is
+responsibility, bounded information, persistent or learned state or an isolated
+reasoning context, an explicit cadence or invocation boundary, feedback from
+consequences, and the ability to disagree or fail. Reusing the same LLM weights
+is valid when contexts are causally isolated. A counter renamed as an emotion,
+a timed personality phase, or a deterministic `if/else` reaction does not
+satisfy the research goal. Procedural machinery is
 still allowed for transport, scheduling, measurement, safety, persistence and
 scientific verification; it must not secretly supply the behavior being studied.
 
@@ -171,22 +177,39 @@ The factual Executive summary is frozen before the Director's employment
 decision. The decision is a separate relationship-journal event with `hired`,
 `extended`, `rejected`, or `pending`; Yuki cannot create it herself.
 
-## Heart–Brain arbitration
+## Heart–Head arbitration
 
-The narrative Brain may hold two conflicting positions: emotional Heart and
-rational Brain. Their exact confidence values are private journal telemetry.
-Each side sees only quarters (`0/4`..`4/4`), so a private value such as 99 is
-reported as `3/4`. Qualitative appraisals change the hidden value within a
-bounded randomized range; this prevents an operator or either voice from
-calculating an exact sequence that guarantees a desired relationship result.
+Heart and Head are two independent deliberation contexts of the same inherited
+OpenCode LLM, not two CNNs and not two separately trained foundation models.
+Runtime keeps the compatibility key `brain` for the Head side.
+
+For a meaningful internal conflict, parent Yuki freezes one neutral description
+of the event and stakes, then dispatches both child sessions before consuming
+either result. Heart receives the shared event plus relationship/affective
+context. Head receives the same shared event plus Executive/task facts,
+constraints, evidence and remaining time. Neither request contains the other
+voice's draft or reasoning. The child agents have no tools and cannot act,
+change memory, inspect the workspace or contact the Director. Their only product
+is an internal position returned to parent Yuki.
+
+Only after both independent answers arrive does parent Yuki record qualitative
+appraisals through `duality_appraise`, open the conflict and arbitrate the whole
+person's decision. If one voice fails to return, the parent must not invent its
+position. This separation is the experimental equivalent of yin and yang: two
+honest evaluations of one situation, followed by one individual decision.
+
+Exact Heart/Head confidence values remain private journal telemetry. Each side
+sees only quarters (`0/4`..`4/4`), so a private value such as 99 is reported
+as `3/4`. Qualitative appraisals change the hidden value within a bounded
+randomized range.
 
 Private confidence 100 permits that side to declare ALL_IN. It does not win the
-conflict: an LLM arbiter still chooses heart or brain using both positions,
-history, evidence and stakes. ALL_IN only removes the compromise outcome and is
-consumed on resolution. Internal choice and external outcome are logged
-separately. At the absolute Executive deadline an unresolved conflict closes as
-`unresolved`; it cannot extend the 180-minute shift. This layer never controls
-the game, changes reward, or supplies scientific evidence.
+conflict: parent Yuki still chooses heart or brain using both independent
+positions, history, evidence and stakes. ALL_IN only removes the compromise
+outcome and is consumed on resolution. Internal choice and external outcome are
+logged separately. At the absolute Executive deadline an unresolved conflict
+closes as `unresolved`; it cannot extend the 180-minute shift. This layer never
+controls the game, changes reward, or supplies scientific evidence.
 
 ## Brain goal updates
 
