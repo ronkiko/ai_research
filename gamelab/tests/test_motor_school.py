@@ -57,7 +57,9 @@ class MotorSchoolTests(unittest.TestCase):
         self.assertEqual(len(transitions), 240)
         self.assertGreater(sequence, 0)
         self.assertGreater(rollout["mean_abs_velocity_error"], 0.0)
-        self.assertTrue(all(torch.isfinite(torch.tensor(value)) for value in metrics.values()))
+        self.assertTrue(
+            all(torch.isfinite(torch.tensor(value)) for value in metrics.values())
+        )
         self.assertTrue(
             any(
                 not torch.equal(left, right)
@@ -65,7 +67,7 @@ class MotorSchoolTests(unittest.TestCase):
             )
         )
 
-    def test_default_motor_school_converges_and_promotes_candidate(self):
+    def test_default_motor_school_converges_in_quick_stop_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
             shutil.copytree(SOURCE, root / "continuous_1d_v1")
@@ -75,10 +77,59 @@ class MotorSchoolTests(unittest.TestCase):
                     episodes=100,
                     seed=1,
                     fresh=True,
+                    stop_on_pass=True,
                 )
+                self.assertTrue(result["trained"], result)
                 self.assertTrue(result["promoted"], result)
                 self.assertLessEqual(result["candidate_episodes"], 100)
-                self.assertTrue((root / "continuous_1d_v1" / "brain.pt").is_file())
+                self.assertTrue(
+                    (root / "continuous_1d_v1" / "brain.pt").is_file()
+                )
+
+    def test_normal_mode_uses_full_budget_and_keeps_best_verified_brain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            shutil.copytree(SOURCE, root / "continuous_1d_v1")
+            first = {
+                "passed": True,
+                "mean_abs_velocity_error": 8.0,
+                "zero_target_mean_abs_speed": 2.0,
+                "mae_limit": 18.0,
+                "zero_speed_limit": 8.0,
+            }
+            later = {
+                "passed": True,
+                "mean_abs_velocity_error": 12.0,
+                "zero_target_mean_abs_speed": 4.0,
+                "mae_limit": 18.0,
+                "zero_speed_limit": 8.0,
+            }
+            with patch.dict(
+                os.environ,
+                {"GAMELAB_MOTOR_ROOT": str(root)},
+            ), patch(
+                "gamelab.motor_school._verify",
+                side_effect=[first, later],
+            ):
+                result = run_school(
+                    "continuous_1d_v1",
+                    episodes=12,
+                    seed=3,
+                    fresh=True,
+                )
+
+            self.assertEqual(result["episodes_run"], 12)
+            self.assertEqual(result["candidate_episodes"], 12)
+            self.assertTrue(result["trained"])
+            self.assertEqual(result["best_episode"], 10)
+            self.assertEqual(result["best_verification"], first)
+            self.assertEqual(result["final_verification"], later)
+
+            brain = torch.load(
+                root / "continuous_1d_v1" / "brain.pt",
+                map_location="cpu",
+            )
+            self.assertEqual(brain["episodes"], 10)
 
     def test_frozen_school_verification_accepts_physical_velocity_reflex(self):
         result = _verify(RuleMotor())

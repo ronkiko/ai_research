@@ -53,6 +53,10 @@
     "sessions": 0,
     "episodes_total": 0,
     "verified": false,
-    "last_result": null
+    "last_result": null,
+    "best_episode": null,
+    "best_verification": null,
+    "best_quality": null,
+    "best_brain_sha256": null
   }
 }

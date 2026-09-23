@@ -2,7 +2,8 @@
 
 The school teaches a local reflex only: track a requested normalized velocity
 using physical effort. It never sees target_x and never supplies teacher
-actions. A candidate is promoted to brain.pt only after frozen verification.
+actions. Passing VERIFY certifies a candidate, while the normal school mode
+continues through the requested budget and keeps the best verified brain.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import hashlib
 import json
 import os
 import random
+import shutil
 
 import torch
 from torch import nn
@@ -115,12 +117,7 @@ def _update(
     optimizer: torch.optim.Optimizer,
     transitions: list[SchoolTransition],
 ) -> dict[str, float]:
-    """Clipped local policy-gradient update for the physical reflex.
-
-    Motor actions affect velocity immediately over the next Motor interval, so
-    School credit is intentionally local.  A distant critic/GAE horizon would
-    mix consequences from later, randomly changed velocity goals.
-    """
+    """Clipped local policy-gradient update for the physical reflex."""
     goals = torch.stack([item.goal for item in transitions])
     props = torch.stack([item.proprioception for item in transitions])
     actions = torch.tensor([item.action for item in transitions], dtype=torch.float32)
@@ -139,7 +136,7 @@ def _update(
     updates = 0
     count = len(transitions)
     motor.train()
-    for _ in range(4):
+    for _ in range(PPO_EPOCHS):
         order = torch.randperm(count)
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = order[start : start + PPO_BATCH_SIZE]
@@ -197,10 +194,14 @@ def _rollout(
         player = _player(runtime)
         goal = _goal(desired)
         prop = _proprioception(player)
-        before_error = (desired * PLAYER_MAX_SPEED - float(player["vx"])) / PLAYER_MAX_SPEED
+        before_error = (
+            desired * PLAYER_MAX_SPEED - float(player["vx"])
+        ) / PLAYER_MAX_SPEED
         with torch.no_grad():
             mean, log_std = motor.parameters_for(goal, prop)
-            action_tensor, log_prob = squashed_action(mean, log_std, sampled=True)
+            action_tensor, log_prob = squashed_action(
+                mean, log_std, sampled=True
+            )
         action = float(action_tensor.item())
         sequence += 1
         runtime.enqueue_input(
@@ -213,7 +214,9 @@ def _rollout(
             runtime.tick()
         after = _player(runtime)
         desired_vx = desired * PLAYER_MAX_SPEED
-        error_norm = (desired_vx - float(after["vx"])) / PLAYER_MAX_SPEED
+        error_norm = (
+            desired_vx - float(after["vx"])
+        ) / PLAYER_MAX_SPEED
         reward = (
             before_error * before_error
             - error_norm * error_norm
@@ -282,6 +285,16 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
     }
 
 
+def _verification_quality(verification: dict) -> float:
+    """Lower is better; balance both required verification dimensions."""
+    return (
+        float(verification["mean_abs_velocity_error"])
+        / float(verification["mae_limit"])
+        + float(verification["zero_target_mean_abs_speed"])
+        / float(verification["zero_speed_limit"])
+    )
+
+
 def _save_candidate(
     package: MotorPackage,
     motor: nn.Module,
@@ -309,12 +322,18 @@ def _load_candidate(
     motor: nn.Module,
     optimizer: torch.optim.Optimizer,
 ) -> int:
-    source = package.candidate_path if package.candidate_path.is_file() else package.brain_path
+    source = (
+        package.candidate_path
+        if package.candidate_path.is_file()
+        else package.brain_path
+    )
     if not source.is_file():
         return 0
     payload = torch.load(source, map_location="cpu")
     if not isinstance(payload, dict) or payload.get("motor_id") != package.motor_id:
-        raise MotorPackageError(f"motor {package.motor_id}: invalid school artifact")
+        raise MotorPackageError(
+            f"motor {package.motor_id}: invalid school artifact"
+        )
     if payload.get("school") != SCHOOL_VERSION:
         raise MotorPackageError(
             f"motor {package.motor_id}: candidate belongs to "
@@ -326,18 +345,139 @@ def _load_candidate(
     return int(payload.get("episodes", 0))
 
 
+def _existing_best(
+    package: MotorPackage,
+) -> tuple[dict | None, int | None]:
+    training = dict(package.manifest.get("training") or {})
+    best = training.get("best_verification")
+    episode = training.get("best_episode")
+    if isinstance(best, dict) and best.get("passed"):
+        return dict(best), int(episode) if episode is not None else None
+
+    last = training.get("last_result")
+    if (
+        package.brain_path.is_file()
+        and isinstance(last, dict)
+        and isinstance(last.get("verification"), dict)
+        and last["verification"].get("passed")
+    ):
+        inferred_episode = None
+        try:
+            payload = torch.load(package.brain_path, map_location="cpu")
+            inferred_episode = int(payload.get("episodes", 0))
+        except Exception:
+            inferred_episode = None
+        return dict(last["verification"]), inferred_episode
+    return None, None
+
+
+def _promote_if_better(
+    package: MotorPackage,
+    *,
+    verification: dict,
+    episode: int,
+    best_verification: dict | None,
+    best_episode: int | None,
+) -> tuple[dict | None, int | None, bool]:
+    if not verification.get("passed"):
+        return best_verification, best_episode, False
+    if not package.candidate_path.is_file():
+        raise MotorPackageError(
+            f"motor {package.motor_id}: verified candidate artifact is missing"
+        )
+
+    candidate_quality = _verification_quality(verification)
+    if (
+        best_verification is not None
+        and best_verification.get("passed")
+        and candidate_quality >= _verification_quality(best_verification) - 1e-12
+    ):
+        return best_verification, best_episode, False
+
+    package.archive_verified_brain()
+    shutil.copyfile(package.candidate_path, package.brain_path)
+    brain_sha = _sha256(package.brain_path)
+    package.manifest["brain_sha256"] = brain_sha
+    package.manifest["model_sha256"] = _sha256(
+        package.path / str(package.manifest["model"]["file"])
+    )
+
+    training = dict(package.manifest.get("training") or {})
+    training["status"] = "trained"
+    training["verified"] = True
+    training["best_episode"] = int(episode)
+    training["best_verification"] = dict(verification)
+    training["best_quality"] = candidate_quality
+    training["best_brain_sha256"] = brain_sha
+    package.manifest["training"] = training
+    package.write_manifest()
+    package.append_history(
+        {
+            "at": _now(),
+            "kind": "best_promoted",
+            "school": SCHOOL_VERSION,
+            "episode": int(episode),
+            "verification": dict(verification),
+            "quality": candidate_quality,
+            "brain_sha256": brain_sha,
+        }
+    )
+    return dict(verification), int(episode), True
+
+
+def _record_verification(
+    package: MotorPackage,
+    *,
+    episode: int,
+    verification: dict,
+    improved: bool,
+) -> None:
+    package.append_history(
+        {
+            "at": _now(),
+            "kind": "verification",
+            "school": SCHOOL_VERSION,
+            "episode": int(episode),
+            "verification": dict(verification),
+            "quality": (
+                _verification_quality(verification)
+                if verification.get("passed")
+                else None
+            ),
+            "improved_best": bool(improved),
+        }
+    )
+
+
 def _finish_manifest(
     package: MotorPackage,
     *,
     episodes_run: int,
-    verification: dict,
-    promoted: bool,
+    final_verification: dict,
+    best_verification: dict | None,
+    best_episode: int | None,
+    improved_this_run: bool,
     seed: int,
+    stop_on_pass: bool,
     interrupted: bool = False,
 ) -> None:
     training = dict(package.manifest.get("training") or {})
     training["sessions"] = int(training.get("sessions", 0)) + 1
-    training["episodes_total"] = int(training.get("episodes_total", 0)) + int(episodes_run)
+    training["episodes_total"] = (
+        int(training.get("episodes_total", 0)) + int(episodes_run)
+    )
+    if best_verification is not None and best_verification.get("passed"):
+        training["status"] = "trained"
+        training["verified"] = True
+        training["best_verification"] = dict(best_verification)
+        training["best_episode"] = best_episode
+        training["best_quality"] = _verification_quality(best_verification)
+        if package.brain_sha256:
+            training["best_brain_sha256"] = package.brain_sha256
+    elif not package.brain_path.is_file():
+        training["status"] = "untrained"
+        training["verified"] = False
+
     result = {
         "at": _now(),
         "school": SCHOOL_VERSION,
@@ -348,23 +488,28 @@ def _finish_manifest(
         "credit_assignment": "one_motor_interval_error_improvement",
         "segment_seconds": SEGMENT_SECONDS,
         "target_levels": list(TARGET_LEVELS),
-        "verification": verification,
-        "promoted": bool(promoted),
+        "final_verification": dict(final_verification),
+        "best_verification": (
+            dict(best_verification) if best_verification is not None else None
+        ),
+        "best_episode": best_episode,
+        "improved_best": bool(improved_this_run),
+        "stop_on_pass": bool(stop_on_pass),
         "interrupted": bool(interrupted),
     }
+    # Compatibility key for readers written before best/final were separated.
+    result["verification"] = (
+        dict(best_verification)
+        if best_verification is not None
+        else dict(final_verification)
+    )
     training["last_result"] = result
-    if promoted:
-        training["status"] = "trained"
-        training["verified"] = True
-    elif not package.brain_path.is_file():
-        training["status"] = "untrained"
-        training["verified"] = False
     package.manifest["training"] = training
     package.manifest["model_sha256"] = _sha256(
         package.path / str(package.manifest["model"]["file"])
     )
     package.write_manifest()
-    package.append_history(result)
+    package.append_history({"kind": "session", **result})
 
 
 def run_school(
@@ -374,6 +519,7 @@ def run_school(
     seed: int,
     fresh: bool,
     verify_only: bool = False,
+    stop_on_pass: bool = False,
 ) -> dict:
     package = get_motor_package(motor_id)
     training_manifest = dict(package.manifest.get("training") or {})
@@ -405,16 +551,25 @@ def run_school(
         candidate_episodes = _load_candidate(package, motor, optimizer)
 
     if verify_only:
-        source = package.brain_path if package.brain_path.is_file() else package.candidate_path
+        source = (
+            package.brain_path
+            if package.brain_path.is_file()
+            else package.candidate_path
+        )
         if not source.is_file():
-            raise MotorPackageError(f"motor {motor_id}: no brain/candidate to verify")
+            raise MotorPackageError(
+                f"motor {motor_id}: no brain/candidate to verify"
+            )
         payload = torch.load(source, map_location="cpu")
         motor.load_state_dict(payload["model"])
         return _verify(motor)
 
+    best_verification, best_episode = _existing_best(package)
     runtime, sequence = _new_world()
     episodes_run = 0
-    verification: dict | None = None
+    final_verification: dict | None = None
+    improved_this_run = False
+
     try:
         for _ in range(episodes):
             transitions, sequence, rollout = _rollout(
@@ -436,60 +591,127 @@ def run_school(
                 f"policy_loss={metrics['policy_loss']:+.5f}",
                 flush=True,
             )
+
             if candidate_episodes % VERIFY_EVERY_EPISODES == 0:
-                verification = _verify(motor)
+                final_verification = _verify(motor)
+                (
+                    best_verification,
+                    best_episode,
+                    improved,
+                ) = _promote_if_better(
+                    package,
+                    verification=final_verification,
+                    episode=candidate_episodes,
+                    best_verification=best_verification,
+                    best_episode=best_episode,
+                )
+                improved_this_run = improved_this_run or improved
+                _record_verification(
+                    package,
+                    episode=candidate_episodes,
+                    verification=final_verification,
+                    improved=improved,
+                )
+                best_text = (
+                    f" best={_verification_quality(best_verification):.3f}"
+                    f"@{best_episode}"
+                    if best_verification is not None
+                    else ""
+                )
                 print(
                     f"MotorSchool VERIFY episode={candidate_episodes} "
-                    f"mae={verification['mean_abs_velocity_error']:.2f} "
-                    f"zero_speed={verification['zero_target_mean_abs_speed']:.2f} "
-                    f"{'PASS' if verification['passed'] else 'FAIL'}",
+                    f"mae={final_verification['mean_abs_velocity_error']:.2f} "
+                    f"zero_speed={final_verification['zero_target_mean_abs_speed']:.2f} "
+                    f"{'PASS' if final_verification['passed'] else 'FAIL'}"
+                    f"{' NEW_BEST' if improved else ''}{best_text}",
                     flush=True,
                 )
-                if verification["passed"]:
+                if stop_on_pass and final_verification["passed"]:
                     break
     except KeyboardInterrupt:
+        final_verification = final_verification or {
+            "passed": False,
+            "reason": "interrupted",
+        }
         _finish_manifest(
             package,
             episodes_run=episodes_run,
-            verification={"passed": False, "reason": "interrupted"},
-            promoted=False,
+            final_verification=final_verification,
+            best_verification=best_verification,
+            best_episode=best_episode,
+            improved_this_run=improved_this_run,
             seed=seed,
+            stop_on_pass=stop_on_pass,
             interrupted=True,
         )
         raise
 
-    if verification is None or not verification.get("passed"):
-        verification = _verify(motor)
-    promoted = bool(verification["passed"])
-    if promoted:
-        package.archive_verified_brain()
-        os.replace(package.candidate_path, package.brain_path)
-        package.manifest["brain_sha256"] = _sha256(package.brain_path)
+    if (
+        final_verification is None
+        or candidate_episodes % VERIFY_EVERY_EPISODES != 0
+    ):
+        final_verification = _verify(motor)
+        (
+            best_verification,
+            best_episode,
+            improved,
+        ) = _promote_if_better(
+            package,
+            verification=final_verification,
+            episode=candidate_episodes,
+            best_verification=best_verification,
+            best_episode=best_episode,
+        )
+        improved_this_run = improved_this_run or improved
+        _record_verification(
+            package,
+            episode=candidate_episodes,
+            verification=final_verification,
+            improved=improved,
+        )
 
+    trained = (
+        best_verification is not None
+        and bool(best_verification.get("passed"))
+        and package.brain_path.is_file()
+    )
     _finish_manifest(
         package,
         episodes_run=episodes_run,
-        verification=verification,
-        promoted=promoted,
+        final_verification=final_verification,
+        best_verification=best_verification,
+        best_episode=best_episode,
+        improved_this_run=improved_this_run,
         seed=seed,
+        stop_on_pass=stop_on_pass,
     )
     return {
         "motor_id": package.motor_id,
         "episodes_run": episodes_run,
         "candidate_episodes": candidate_episodes,
-        "promoted": promoted,
-        "verification": verification,
-        "brain": str(package.brain_path) if promoted else None,
+        "trained": trained,
+        "promoted": improved_this_run,
+        "best_episode": best_episode,
+        "best_verification": best_verification,
+        "final_verification": final_verification,
+        "brain": str(package.brain_path) if trained else None,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Train/verify one portable GameLab Motor")
+    parser = argparse.ArgumentParser(
+        description="Train/verify one portable GameLab Motor"
+    )
     parser.add_argument("--motor", default=DEFAULT_MOTOR_ID)
     parser.add_argument("--episodes", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument(
+        "--stop-on-pass",
+        action="store_true",
+        help="stop at the first passing VERIFY (quick/CI mode)",
+    )
     args = parser.parse_args(argv)
     if args.episodes <= 0:
         raise SystemExit("--episodes must be positive")
@@ -500,13 +722,17 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             fresh=args.fresh,
             verify_only=args.verify_only,
+            stop_on_pass=args.stop_on_pass,
         )
     except MotorPackageError as exc:
         raise SystemExit(str(exc)) from exc
-    print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+    print(
+        "MotorSchool result " + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
     if args.verify_only:
         return 0 if result.get("passed") else 2
-    return 0 if result.get("promoted") else 2
+    return 0 if result.get("trained") else 2
 
 
 if __name__ == "__main__":

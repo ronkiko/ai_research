@@ -90,8 +90,11 @@ contains only measured velocity/current effort, and the Motor alone chooses
 `motor_x`. Credit assignment is local to one 60 Hz Motor interval: reward
 measures whether the physical velocity error decreased after that action,
 with only small residual error/effort costs. No critic or long return is allowed
-to mix credit across later randomly changed velocity goals. Frozen verification
-runs every 10 episodes and the first PASS may promote the candidate immediately.
+to mix credit across later randomly changed velocity goals. Frozen verification runs every 10 episodes. Every PASS is compared with the
+best certified brain using normalized overall velocity MAE plus normalized
+zero-speed MAE. A better PASS replaces `brain.pt` while the live candidate
+continues training. Normal mode consumes the full requested episode budget;
+`--stop-on-pass` is reserved for quick/CI runs.
 
 ## Learning
 

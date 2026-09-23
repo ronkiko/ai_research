@@ -101,8 +101,10 @@ artifacts inside the selected Motor package and promotes a candidate to
 
 Motor School v2 uses local physical credit: each Motor action is scored by the
 measured reduction in velocity error over the next 1/60 second. It does not use
-a critic to propagate consequences from later velocity assignments. Frozen
-verification runs every 10 episodes and training stops early on PASS.
+a critic to propagate consequences from later velocity assignments. Frozen verification runs every 10 episodes. A PASS certifies the candidate and
+may update `brain.pt`, but normal training continues through the full requested
+`--episodes` budget. The best passing brain is retained even if later training
+regresses. `--stop-on-pass` is an explicit quick/CI mode.
 
 A clean checkout intentionally contains no verified Motor brain. Train the
 default wheel first:
@@ -236,7 +238,7 @@ in-process:
 ./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 50 --target 987
 ```
 
-The continuous Motor uses checkpoint format v2. Discrete three-logit v1 weights
+The modular Spine checkpoint uses format v3. Discrete three-logit v1 weights
 are intentionally not loaded into it; replacing the active model archives the
 previous checkpoint bytes under `runtime/checkpoints/`.
 

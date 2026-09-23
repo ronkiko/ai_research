@@ -25,5 +25,7 @@ The active school uses local clipped policy-gradient credit. Each 60 Hz Motor
 action is scored from the measured change in velocity error over the following
 Motor interval. No critic propagates reward across later randomly changed
 velocity goals, and no teacher supplies a target motor effort. Frozen
-verification runs every 10 school episodes and the first PASS promotes the
-candidate immediately.
+verification runs every 10 school episodes. Passing candidates compete against
+the current verified brain using balanced normalized velocity/zero-speed error.
+Normal school runs continue through the requested budget and keep the best
+verified brain; `--stop-on-pass` exists only for quick/CI runs.
