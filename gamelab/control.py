@@ -18,7 +18,7 @@ from torch.distributions import Categorical
 from .config import MOTOR_HZ, SPINE_HZ, SUCCESS_HOLD_STEPS
 from .host import HostError, player_from_state
 from .models import SensorHistory, motor_state, sensor_frame
-from .reward import RewardConfig, step_reward
+from .reward import RewardConfig, stopped_near_goal_proximity, step_reward
 
 STALE_SECONDS = 0.5
 MAX_HOLD_GAP_SECONDS = 0.1
@@ -136,6 +136,8 @@ def control_loop(
     cached_goal = hidden = latched_history = None
     pending = None
     before_distance = 0.0
+    best_stopped_proximity = 0.0
+    closest_stopped_distance: float | None = None
     steps = spine_calls = requests = duplicates = overruns = 0
     total_reward = 0.0
     result: dict[str, Any] = {}
@@ -241,6 +243,8 @@ def control_loop(
                 speedup=simulation_seconds / max(wall_seconds, 1e-9),
                 epoch=epoch,
                 stable_ticks=stable_ticks,
+                closest_stopped_distance=closest_stopped_distance,
+                best_stopped_proximity=best_stopped_proximity,
                 motor_steps=steps,
                 spine_calls=spine_calls,
                 controller_requests=requests,
@@ -271,6 +275,19 @@ def control_loop(
                 pending.next_tick = tick
                 pending.elapsed_steps = (tick - pending.tick) * MOTOR_HZ / hz
                 pending.applied_tick = player.get("last_input_tick")
+                stopped_now = abs(vx) < 1e-9 and current_move == 0
+                if stopped_now:
+                    distance_now = abs(error)
+                    if closest_stopped_distance is None or distance_now < closest_stopped_distance:
+                        closest_stopped_distance = distance_now
+                proximity = stopped_near_goal_proximity(
+                    reward_config,
+                    distance=abs(error),
+                    vx=vx,
+                    move_x=current_move,
+                )
+                proximity_gain = max(0.0, proximity - best_stopped_proximity)
+                best_stopped_proximity = max(best_stopped_proximity, proximity)
                 pending.reward = step_reward(
                     reward_config,
                     before_distance=before_distance,
@@ -280,6 +297,7 @@ def control_loop(
                     success=reached,
                     timeout=timed_out and not reached,
                     elapsed_steps=pending.elapsed_steps,
+                    stopped_proximity_gain=proximity_gain,
                 )
                 pending.done = reached or timed_out
                 total_reward += pending.reward
@@ -370,6 +388,8 @@ def control_loop(
         controller_requests=requests,
         duplicate_snapshots=duplicates,
         overruns=overruns,
+        closest_stopped_distance=closest_stopped_distance,
+        best_stopped_proximity=best_stopped_proximity,
         execution_mode=mode,
         simulated_ticks=max(0, final_tick - start_tick),
         simulation_seconds=simulation_seconds,

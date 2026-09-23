@@ -719,7 +719,11 @@ def reward_set(
     stopped_near_goal_bonus: StoppedNearGoalBonus = None,
     near_goal_radius: NearGoalRadius = None,
 ) -> dict[str, float]:
-    """Change bounded reward weights used by subsequent training; omit unchanged fields."""
+    """Change bounded reward weights used by subsequent training; omit unchanged fields.
+
+    stopped_near_goal_bonus is the maximum cumulative episode shaping bonus for
+    improved stopped proximity inside near_goal_radius, not a per-step STOP reward.
+    """
     return laboratory.reward_set(
         distance_progress_scale=distance_progress_scale,
         step_cost=step_cost,

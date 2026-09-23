@@ -100,6 +100,13 @@ the same sensor history, reward, PPO update, reset semantics, success hold and
 checkpoint. Episode timeout is measured in simulated world ticks. Wall time is
 only a liveness watchdog/diagnostic and cannot change the learned trajectory.
 
+Default reward shaping does not reward STOP as an action. It rewards a measured
+state only when the player is physically stopped (`vx=0`, `move_x=0`) within
+±5 of the target. The bounded proximity bonus increases smoothly toward the
+target and is paid only for improvement over the best stopped proximity already
+seen in that episode, so waiting or repeatedly stopping at the same point cannot
+farm reward. Exact SUCCESS remains a separate larger terminal bonus.
+
 Each TRAIN episode begins with a non-destructive Host episode reset to
 `x=100, vx=0, move_x=0`. VERIFY performs the same reset before every run.
 The reset preserves the active Host/GameServer session and Host command

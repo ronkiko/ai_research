@@ -134,12 +134,14 @@ submission, the executor observes application before collecting the next
 decision. Transition records identify before/after tick, sequence, command and
 application tick. Effective discount is gamma^elapsed_steps; elapsed_steps is
 server tick delta divided by the nominal motor period. GAE uses the same time
-scale. Step cost and stopped-near-goal reward scale with elapsed time; distance
-progress and terminal rewards retain their meanings. Under the default reward,
-the timeout penalty is at least the maximum possible accumulated normalized
-distance-progress reward, so an unsuccessful episode cannot become net-positive
-merely by driving near or through the goal until the horizon. Timeout is terminal
-for this finite-horizon experiment; invalid or cancelled rollouts are not optimized.
+scale. Step cost scales with elapsed time; distance progress and terminal rewards
+retain their meanings. Stopped-near-goal shaping is a bounded episode potential:
+only measured states with `vx=0` and STOP intent inside the default ±5 radius
+qualify, proximity rises toward the target, and reward is paid only when that
+episode improves its best stopped proximity. Thus STOP itself is not rewarded
+away from the goal and a stationary agent cannot farm the same shaping signal.
+Timeout remains terminal and strongly negative; invalid or cancelled rollouts
+are not optimized.
 
 ## Shared control and lifecycle
 

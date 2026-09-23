@@ -83,6 +83,13 @@ the canonical ZoneRuntime tick directly. Motor cadence is every 2 world ticks
 is counted in world ticks. Wall time is not part of reward, timeout, success or
 policy input.
 
+Near-goal shaping is state-based, not an actuator hint. The default shaping
+radius is ±5. A bonus exists only for a measured stopped state (`vx=0` and
+`move_x=0`) and rises monotonically with proximity. Each episode pays only the
+increase over its previously best stopped proximity, bounding the total shaping
+bonus and preventing reward farming by waiting. SUCCESS remains the distinct
+terminal objective.
+
 Reward and success measurement may use authoritative state because they belong
 to the training laboratory, not the deployed controller.
 

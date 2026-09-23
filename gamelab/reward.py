@@ -29,8 +29,8 @@ class RewardConfig:
     step_cost: float = 0.0005
     success_bonus: float = 1.0
     timeout_penalty: float = 1.0
-    stopped_near_goal_bonus: float = 0.0
-    near_goal_radius: float = 10.0
+    stopped_near_goal_bonus: float = 0.2
+    near_goal_radius: float = 5.0
 
     def validated(self) -> "RewardConfig":
         values = asdict(self)
@@ -94,6 +94,30 @@ class RewardStore:
         return config
 
 
+def stopped_near_goal_proximity(
+    config: RewardConfig,
+    *,
+    distance: float,
+    vx: float,
+    move_x: int,
+) -> float:
+    """Return bounded proximity only for a physically stopped near-goal state.
+
+    The 0.1 floor at the radius edge gives a small signal anywhere inside the
+    configured band while preserving a monotonic gradient toward the target.
+    """
+    config = config.validated()
+    distance = abs(float(distance))
+    if (
+        distance > config.near_goal_radius
+        or abs(float(vx)) >= 1e-9
+        or int(move_x) != 0
+    ):
+        return 0.0
+    closeness = 1.0 - (distance / config.near_goal_radius)
+    return 0.1 + 0.9 * max(0.0, min(1.0, closeness))
+
+
 def step_reward(
     config: RewardConfig,
     *,
@@ -104,6 +128,7 @@ def step_reward(
     success: bool,
     timeout: bool,
     elapsed_steps: float = 1.0,
+    stopped_proximity_gain: float = 0.0,
 ) -> float:
     """Calculate reward from measured state only; no steering logic lives here."""
     config = config.validated()
@@ -114,12 +139,8 @@ def step_reward(
     )
     reward -= config.step_cost * elapsed_steps
 
-    if (
-        float(after_distance) <= config.near_goal_radius
-        and abs(float(next_vx)) < 1e-9
-        and int(next_move_x) == 0
-    ):
-        reward += config.stopped_near_goal_bonus * elapsed_steps
+    gain = max(0.0, min(1.0, float(stopped_proximity_gain)))
+    reward += config.stopped_near_goal_bonus * gain
 
     if success:
         reward += config.success_bonus
@@ -132,5 +153,6 @@ __all__ = [
     "RewardConfig",
     "RewardStore",
     "reward_path",
+    "stopped_near_goal_proximity",
     "step_reward",
 ]

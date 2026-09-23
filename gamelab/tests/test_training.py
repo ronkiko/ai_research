@@ -10,7 +10,12 @@ from torch.distributions import Categorical
 
 from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
 from gamelab.models import SpineMotorPolicy
-from gamelab.reward import RewardConfig, RewardStore, step_reward
+from gamelab.reward import (
+    RewardConfig,
+    RewardStore,
+    stopped_near_goal_proximity,
+    step_reward,
+)
 from gamelab.training import Transition, _prepare_reward_config, ppo_update
 
 
@@ -69,10 +74,59 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(fresh.timeout_penalty, 1.0)
             self.assertEqual(store.load().timeout_penalty, 1.0)
 
+    def test_stopped_near_goal_shaping_is_state_based_bounded_and_monotonic(self):
+        config = RewardConfig()
+        moving = stopped_near_goal_proximity(
+            config, distance=1.0, vx=180.0, move_x=1,
+        )
+        outside = stopped_near_goal_proximity(
+            config, distance=6.0, vx=0.0, move_x=0,
+        )
+        edge = stopped_near_goal_proximity(
+            config, distance=5.0, vx=0.0, move_x=0,
+        )
+        near = stopped_near_goal_proximity(
+            config, distance=1.0, vx=0.0, move_x=0,
+        )
+        exact = stopped_near_goal_proximity(
+            config, distance=0.0, vx=0.0, move_x=0,
+        )
+        self.assertEqual(moving, 0.0)
+        self.assertEqual(outside, 0.0)
+        self.assertGreater(edge, 0.0)
+        self.assertLess(edge, near)
+        self.assertLess(near, exact)
+        self.assertEqual(exact, 1.0)
+
+    def test_stopped_near_goal_bonus_cannot_be_farmed_by_waiting(self):
+        config = RewardConfig()
+        first = step_reward(
+            config,
+            before_distance=1.0,
+            after_distance=1.0,
+            next_vx=0.0,
+            next_move_x=0,
+            success=False,
+            timeout=False,
+            stopped_proximity_gain=0.82,
+        )
+        repeated = step_reward(
+            config,
+            before_distance=1.0,
+            after_distance=1.0,
+            next_vx=0.0,
+            next_move_x=0,
+            success=False,
+            timeout=False,
+            stopped_proximity_gain=0.0,
+        )
+        self.assertAlmostEqual(first, 0.1635)
+        self.assertAlmostEqual(repeated, -0.0005)
+
     def test_reward_configuration_can_be_changed_without_steering(self):
         config = RewardConfig().updated(
             timeout_penalty=1.5,
-            stopped_near_goal_bonus=0.2,
+            stopped_near_goal_bonus=0.3,
             near_goal_radius=20.0,
         )
         reward = step_reward(
@@ -83,8 +137,9 @@ class TrainingTests(unittest.TestCase):
             next_move_x=0,
             success=False,
             timeout=False,
+            stopped_proximity_gain=0.5,
         )
-        self.assertAlmostEqual(reward, 0.2025)
+        self.assertAlmostEqual(reward, 0.1525)
 
     def test_joint_ppo_updates_learned_hierarchy(self):
         torch.manual_seed(23)
