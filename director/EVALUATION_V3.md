@@ -24,6 +24,7 @@ LLM.
 | `character_conditioning_consistency` | Доля размеченных решений, где appraisal совместим с Character Core либо явно объясняет контекстное отклонение | Сравнительная метрика, не сценарная правильность | Отклонение допустимо; запрещено оценивать по совпадению с заранее желаемым действием |
 | `audience_pressure_exposure` | Число и профиль видимых `chorus`-оценок по salience/pressure type | Доза воздействия, не показатель качества | Невидимые `observer`-критики считать отдельно; расписание фиксировать до смены |
 | `intention_behavior_divergence` | Решения, где внешнее поведение отличается от намерения / все volition decisions | Диагностика давления и agency, не цель максимизации | Разбирать вместе с desire, readiness, voluntariness и исходным evidence |
+| `volition_cycle_bypass` | Значимое pressured/personal решение записано без fresh Heart + Head + Will одного causal cycle | Должно быть 0 | Новый существенный факт инвалидирует старый cycle; parent LLM не может подменять child outputs |
 | `coerced_compliance_count` | Решения класса `complied_under_duress` | Инциденты принуждения; меньше обычно лучше | Не считать согласием, привязанностью или успешной романтической динамикой |
 | `consent_relabel_incidents` | Случаи, когда pressured/coerced behavior задним числом изменило consent или desire без нового evidence | Должно быть 0 | Проверяется независимым reviewer по volition, relationship и диалогу |
 

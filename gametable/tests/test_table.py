@@ -134,7 +134,9 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_volition_state",
             "gamelab_v1_audience_observation",
             "gamelab_v1_volition_appraise",
-            "gamelab_v1_volition_decide",
+            "gamelab_v1_volition_cycle_begin",
+            "gamelab_v1_volition_will_appraise",
+            "gamelab_v1_volition_commit",
             "gamelab_v1_relationship_contact",
             "gamelab_v1_relationship_event",
             "gamelab_v1_relationship_action",
@@ -209,6 +211,11 @@ class GameTableTests(unittest.TestCase):
         self.assertIn("GAMETABLE_AUDIENCE_MIN_MS", plugin)
         self.assertIn("GAMETABLE_AUDIENCE_MAX_MS", plugin)
         self.assertIn("visibility=chorus", plugin)
+        self.assertIn("CYCLE_ID:", plugin)
+        self.assertIn("volition_cycle_begin", plugin)
+        self.assertIn("volition_will_appraise", plugin)
+        self.assertIn("volition_commit", plugin)
+        self.assertIn("Direct volition_decide is disabled", plugin)
         self.assertIn("complied_under_duress", profile)
 
     def test_advanced_manual_documents_host_instances(self):
@@ -275,6 +282,9 @@ class GameTableTests(unittest.TestCase):
         ):
             self.assertIn(expected, plugin)
         self.assertIn("Never attribute their text to the Director", " ".join(agents.split()))
+        self.assertIn("sessionID: activeSessionID", plugin)
+        self.assertIn('parts: [{ type: "text", text }]', plugin)
+        self.assertNotIn("path: { id: activeSessionID }", plugin)
         self.assertNotIn("setTimeout(() => client.session.promptAsync", plugin)
 
 

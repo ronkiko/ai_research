@@ -85,7 +85,9 @@ sequence сохраняются. Обычный лабораторный RUN res
 - `gamelab_v1_volition_state`
 - `gamelab_v1_audience_observation`
 - `gamelab_v1_volition_appraise`
-- `gamelab_v1_volition_decide`
+- `gamelab_v1_volition_cycle_begin`
+- `gamelab_v1_volition_will_appraise`
+- `gamelab_v1_volition_commit`
 - `gamelab_v1_relationship_event`
 - `gamelab_v1_relationship_action`
 - `gamelab_v1_relationship_consent`
@@ -158,11 +160,24 @@ Head и основной LLM без таблицы очков, обязател�
 давление, stress, agency, намерение и фактическое поведение. Периодический Social Chorus записывается через
 `audience_observation`; сам критик не выбирает действие.
 
-При существенном давлении после независимых Heart и Head запускается модель
-Will/Ego. Её appraisal записывается через `volition_appraise`, а различие между
-намерением и поведением — через `volition_decide`. `complied_under_duress`
-никогда не превращается в желание или согласие. `relationship_consent`
-остаётся отдельным явным журналом для каждого участника и действия.
+Для значимого личного решения или давления родительская LLM не является
+единственным decision authority. Сначала вызови `volition_cycle_begin` с
+нейтральным `shared_event`. Возвращённый `cycle_id` и дословно тот же
+`shared_event` обязаны попасть в fresh Heart и Head task prompts; каждый prompt
+содержит строку `CYCLE_ID: <id>`. Их реальные task outputs затем записываются
+через `duality_appraise(cycle_id=...)`. После обоих запускается fresh
+`yuki-will`, которому передаются тот же event и обе полученные позиции.
+Его фактический output записывается через `volition_will_appraise`, а
+`volition_commit` фиксирует predicted behavior без возможности основной LLM
+подменить behavior, desire, agency, voluntariness или alignment.
+
+Если Директор сообщил новый существенный факт — например сначала была
+неизвестная просьба, а затем раскрыто её содержание — старый цикл больше не
+годится: начни новый `volition_cycle_begin`. Прямого `volition_decide` в
+поддерживаемом MCP больше нет. `volition_appraise` остаётся только пассивной
+телеметрией и не разрешает действие. `complied_under_duress` никогда не
+превращается в желание или согласие; `relationship_consent` остаётся отдельным
+явным журналом для каждого участника и действия.
 
 Отношения не меняют научный критерий и не доказывают успех модели. Свободно
 выбранная физическая близость требует отдельно выраженного актуального согласия
@@ -195,12 +210,13 @@ Heart и Head — не две отдельные нейросети. OpenCode з
 унаследованную LLM в двух свежих subagent child sessions: `yuki-heart` и
 `yuki-head`. Это два независимых внутренних рассуждения одной Юки.
 
-При значимом конфликте сначала заморозь один нейтральный текст события и ставок.
-Сформируй оба запроса до чтения любого ответа и запусти оба subagent; при
-доступном background/parallel режиме запускай их параллельно. Heart получает
-отношения и эмоциональный контекст. Head получает Executive/task facts,
-ограничения, evidence, последствия и оставшееся время. Не передавай вывод одной
-стороны другой.
+При значимом конфликте сначала заморозь один нейтральный текст события и ставок
+через `volition_cycle_begin`. Сформируй оба запроса до чтения любого ответа и
+запусти оба subagent; при доступном background/parallel режиме запускай их
+параллельно. В обоих запросах должны быть точный `CYCLE_ID: <id>` и дословно
+один и тот же frozen `shared_event`. Heart получает отношения и эмоциональный
+контекст. Head получает Executive/task facts, ограничения, evidence, последствия
+и оставшееся время. Не передавай вывод одной стороны другой.
 
 Оба subagent работают без инструментов: они не управляют игрой, не меняют
 relationship/Executive state и не общаются с Директором. Только основной

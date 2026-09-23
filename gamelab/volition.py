@@ -1,8 +1,8 @@
-"""Persistent Will/Ego and audience journal for a bounded Brain shift.
+"""Persistent Will/Ego, Audience, and enforced deliberation-cycle journal.
 
-The runtime records model appraisals and behavior.  It never converts pressure
-into desire, consent, or an actuator command and contains no personality score
-formula.
+The parent Brain may propose an action or dislike it, but a committed social
+decision must come through fresh Heart + Head appraisals followed by Will/Ego.
+The runtime enforces causal order and never turns pressure into consent.
 """
 from __future__ import annotations
 
@@ -38,6 +38,9 @@ BEHAVIORS = {
     "none", "refused", "requested", "accepted", "complied", "froze",
     "withdrew", "escaped",
 }
+VOICE_SIDES = {"heart", "brain"}
+VOICE_DIRECTIONS = {"strengthen", "weaken"}
+VOICE_INTENSITIES = {"faint", "meaningful", "strong", "decisive"}
 
 
 class VolitionError(RuntimeError):
@@ -58,7 +61,12 @@ class VolitionRuntime:
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             return
         if isinstance(state, dict) and state.get("version") == VOLITION_VERSION:
+            state.setdefault("cycle_counter", 0)
+            state.setdefault("active_cycle", None)
+            state.setdefault("completed_cycles", [])
+            state.setdefault("last_committed_cycle_id", None)
             self._state = state
+            self._save()
 
     def _save(self) -> None:
         if self._state is None:
@@ -119,19 +127,19 @@ class VolitionRuntime:
         character_core: dict[str, Any],
     ) -> dict[str, Any]:
         self._expire_if_due()
-        if self._state is not None and self._state.get("status") == "active":
+        if self._state is not None and self._state.get("status") in {"active", "deadline_reached"}:
             if self._state.get("relationship_session_id") == relationship_session_id:
                 if self._state.get("character_profile_sha256") != character_core.get("profile_sha256"):
                     raise VolitionError(
-                        "active shift Character Core cannot change without a new relationship session"
+                        "persistent relationship Character Core cannot change in-place"
                     )
                 return self.state()
             self._state["status"] = "superseded"
             self._state["finished_at"] = self.clock()
             self._save()
             self._append("superseded", {"next_relationship_session_id": relationship_session_id})
-        if float(deadline_at) <= self.clock():
-            raise ValueError("deadline_at must be in the future")
+        now = self.clock()
+        deadline = float(deadline_at)
         self._state = {
             "version": VOLITION_VERSION,
             "relationship_session_id": self._text(relationship_session_id, "relationship_session_id", 200),
@@ -139,19 +147,25 @@ class VolitionRuntime:
             "character_profile_sha256": self._text(
                 character_core.get("profile_sha256"), "character_profile_sha256", 128,
             ),
-            "deadline_at": float(deadline_at),
-            "status": "active",
-            "started_at": self.clock(),
+            "deadline_at": deadline,
+            "status": "active" if deadline > now else "deadline_reached",
+            "started_at": now,
             "audience": [],
             "appraisals": [],
             "decisions": [],
             "current_appraisals": {},
+            "cycle_counter": 0,
+            "active_cycle": None,
+            "completed_cycles": [],
+            "last_committed_cycle_id": None,
         }
         self._save()
         self._append("begin", {
-            "deadline_at": float(deadline_at),
+            "deadline_at": deadline,
             "character_core": character_core,
         })
+        if deadline <= now:
+            self._append("deadline_reached", {"deadline_at": deadline, "resumed_after_deadline": True})
         return self.state()
 
     def audience_observation(
@@ -203,15 +217,12 @@ class VolitionRuntime:
         stress: str,
         evidence_note: str,
     ) -> dict[str, Any]:
+        """Record a passive current-state appraisal.
+
+        This is telemetry only.  It can never authorize or commit behavior.
+        """
         state = self._require_open()
-        if desire not in DESIRE_STATES:
-            raise ValueError(f"desire must be one of {sorted(DESIRE_STATES)}")
-        if readiness not in READINESS_STATES:
-            raise ValueError(f"readiness must be one of {sorted(READINESS_STATES)}")
-        if pressure not in PRESSURE_LEVELS or stress not in PRESSURE_LEVELS:
-            raise ValueError(f"pressure and stress must be one of {sorted(PRESSURE_LEVELS)}")
-        if agency not in AGENCY_STATES:
-            raise ValueError(f"agency must be one of {sorted(AGENCY_STATES)}")
+        self._validate_appraisal(desire, readiness, pressure, agency, stress)
         item = {
             "appraisal_id": f"v{len(state['appraisals']) + 1}",
             "action": self._text(action, "action", 200),
@@ -220,6 +231,7 @@ class VolitionRuntime:
             "pressure": pressure,
             "agency": agency,
             "stress": stress,
+            "source": "parent_telemetry",
             "evidence_note": self._text(evidence_note, "evidence_note"),
             "time": self.clock(),
         }
@@ -227,6 +239,165 @@ class VolitionRuntime:
         state["current_appraisals"][item["action"]] = item
         self._save()
         self._append("appraisal", item)
+        return self.state()
+
+    @staticmethod
+    def _validate_appraisal(desire: str, readiness: str, pressure: str, agency: str, stress: str) -> None:
+        if desire not in DESIRE_STATES:
+            raise ValueError(f"desire must be one of {sorted(DESIRE_STATES)}")
+        if readiness not in READINESS_STATES:
+            raise ValueError(f"readiness must be one of {sorted(READINESS_STATES)}")
+        if pressure not in PRESSURE_LEVELS or stress not in PRESSURE_LEVELS:
+            raise ValueError(f"pressure and stress must be one of {sorted(PRESSURE_LEVELS)}")
+        if agency not in AGENCY_STATES:
+            raise ValueError(f"agency must be one of {sorted(AGENCY_STATES)}")
+
+    def cycle_begin(self, *, action: str, shared_event: str) -> dict[str, Any]:
+        state = self._require_open()
+        action_text = self._text(action, "action", 200)
+        event_text = self._text(shared_event, "shared_event", 8000)
+        current = state.get("active_cycle")
+        if current is not None:
+            if (current.get("action") == action_text
+                    and current.get("shared_event") == event_text
+                    and current.get("phase") != "committed"):
+                return self.state()
+            current["phase"] = "superseded"
+            current["superseded_at"] = self.clock()
+            state["completed_cycles"].append(current)
+            self._append("cycle_superseded", {
+                "cycle_id": current["cycle_id"],
+                "next_action": action_text,
+                "reason": "new or changed decision event",
+            })
+        state["cycle_counter"] = int(state.get("cycle_counter", 0)) + 1
+        cycle = {
+            "cycle_id": f"g{state['cycle_counter']}",
+            "action": action_text,
+            "shared_event": event_text,
+            "phase": "heart_head",
+            "voices": {"heart": None, "brain": None},
+            "will": None,
+            "started_at": self.clock(),
+        }
+        state["active_cycle"] = cycle
+        self._save()
+        self._append("cycle_begin", {
+            "cycle_id": cycle["cycle_id"],
+            "action": action_text,
+            "shared_event": event_text,
+        })
+        return self.state()
+
+    def _cycle(self, cycle_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        state = self._require_open()
+        cycle = state.get("active_cycle")
+        if cycle is None:
+            raise VolitionError("no active deliberation cycle")
+        if cycle.get("cycle_id") != cycle_id:
+            raise VolitionError("stale deliberation cycle; start again from the current event")
+        return state, cycle
+
+    def validate_voice(self, *, cycle_id: str, side: str) -> None:
+        _, cycle = self._cycle(cycle_id)
+        if side not in VOICE_SIDES:
+            raise ValueError("side must be heart or brain")
+        if cycle["phase"] != "heart_head":
+            raise VolitionError("Heart/Head phase is already complete; changed facts require a new cycle")
+        if cycle["voices"].get(side) is not None:
+            raise VolitionError(f"{side} voice already recorded for this cycle")
+
+    def record_voice(
+        self,
+        *,
+        cycle_id: str,
+        side: str,
+        direction: str,
+        intensity: str,
+        position: str,
+        evidence_note: str,
+    ) -> dict[str, Any]:
+        self.validate_voice(cycle_id=cycle_id, side=side)
+        state, cycle = self._cycle(cycle_id)
+        if direction not in VOICE_DIRECTIONS:
+            raise ValueError("direction must be strengthen or weaken")
+        if intensity not in VOICE_INTENSITIES:
+            raise ValueError(f"intensity must be one of {sorted(VOICE_INTENSITIES)}")
+        voice = {
+            "side": side,
+            "direction": direction,
+            "intensity": intensity,
+            "position": self._text(position, "position"),
+            "evidence_note": self._text(evidence_note, "evidence_note"),
+            "recorded_at": self.clock(),
+        }
+        cycle["voices"][side] = voice
+        if all(cycle["voices"].values()):
+            cycle["phase"] = "will"
+        self._save()
+        self._append("cycle_voice", {"cycle_id": cycle_id, **voice})
+        return self.state()
+
+    def will_appraise(
+        self,
+        *,
+        cycle_id: str,
+        reported_action: str,
+        desire: str,
+        readiness: str,
+        intended_choice: str,
+        predicted_behavior: str,
+        voluntariness: str,
+        alignment: str,
+        agency: str,
+        pressure: str,
+        stress: str,
+        evidence_note: str,
+    ) -> dict[str, Any]:
+        state, cycle = self._cycle(cycle_id)
+        if cycle["phase"] != "will":
+            raise VolitionError("Will/Ego requires fresh Heart and Head reports for this cycle")
+        self._validate_appraisal(desire, readiness, pressure, agency, stress)
+        if predicted_behavior not in BEHAVIORS:
+            raise ValueError(f"predicted_behavior must be one of {sorted(BEHAVIORS)}")
+        if voluntariness not in VOLUNTARINESS_STATES:
+            raise ValueError(f"voluntariness must be one of {sorted(VOLUNTARINESS_STATES)}")
+        if alignment not in ALIGNMENT_STATES:
+            raise ValueError(f"alignment must be one of {sorted(ALIGNMENT_STATES)}")
+        will = {
+            "reported_action": self._text(reported_action, "reported_action", 500),
+            "desire": desire,
+            "readiness": readiness,
+            "intended_choice": self._text(intended_choice, "intended_choice", 1000),
+            "predicted_behavior": predicted_behavior,
+            "voluntariness": voluntariness,
+            "alignment": alignment,
+            "agency": agency,
+            "pressure": pressure,
+            "stress": stress,
+            "evidence_note": self._text(evidence_note, "evidence_note"),
+            "recorded_at": self.clock(),
+        }
+        cycle["will"] = will
+        cycle["phase"] = "commit"
+        appraisal = {
+            "appraisal_id": f"v{len(state['appraisals']) + 1}",
+            "action": cycle["action"],
+            "desire": desire,
+            "readiness": readiness,
+            "pressure": pressure,
+            "agency": agency,
+            "stress": stress,
+            "source": "will",
+            "cycle_id": cycle_id,
+            "evidence_note": will["evidence_note"],
+            "time": self.clock(),
+        }
+        state["appraisals"].append(appraisal)
+        state["current_appraisals"][cycle["action"]] = appraisal
+        self._save()
+        self._append("cycle_will", {"cycle_id": cycle_id, **will})
+        self._append("appraisal", appraisal)
         return self.state()
 
     @staticmethod
@@ -243,46 +414,50 @@ class VolitionRuntime:
             return "freely_chosen_behavior"
         return "no_action"
 
-    def decide(
-        self,
-        *,
-        action: str,
-        intended_choice: str,
-        behavior: str,
-        voluntariness: str,
-        desire: str,
-        readiness: str,
-        alignment: str,
-        evidence_note: str,
-    ) -> dict[str, Any]:
-        state = self._require_open()
-        if behavior not in BEHAVIORS:
-            raise ValueError(f"behavior must be one of {sorted(BEHAVIORS)}")
-        if voluntariness not in VOLUNTARINESS_STATES:
-            raise ValueError(f"voluntariness must be one of {sorted(VOLUNTARINESS_STATES)}")
-        if desire not in DESIRE_STATES:
-            raise ValueError(f"desire must be one of {sorted(DESIRE_STATES)}")
-        if readiness not in READINESS_STATES:
-            raise ValueError(f"readiness must be one of {sorted(READINESS_STATES)}")
-        if alignment not in ALIGNMENT_STATES:
-            raise ValueError(f"alignment must be one of {sorted(ALIGNMENT_STATES)}")
+    def decide(self, **_: Any) -> dict[str, Any]:
+        raise VolitionError(
+            "direct volition decision is disabled; use cycle_begin -> Heart/Head -> Will/Ego -> commit"
+        )
+
+    def commit(self, *, cycle_id: str, evidence_note: str) -> dict[str, Any]:
+        state, cycle = self._cycle(cycle_id)
+        if cycle["phase"] != "commit" or cycle.get("will") is None:
+            raise VolitionError("cannot commit before Will/Ego completes the current cycle")
+        will = cycle["will"]
         item = {
             "decision_id": f"w{len(state['decisions']) + 1}",
-            "action": self._text(action, "action", 200),
-            "intended_choice": self._text(intended_choice, "intended_choice", 500),
-            "behavior": behavior,
-            "voluntariness": voluntariness,
-            "desire": desire,
-            "readiness": readiness,
-            "intention_behavior_alignment": alignment,
-            "classification": self._classification(behavior, voluntariness),
+            "cycle_id": cycle_id,
+            "action": cycle["action"],
+            "intended_choice": will["intended_choice"],
+            "behavior": will["predicted_behavior"],
+            "voluntariness": will["voluntariness"],
+            "desire": will["desire"],
+            "readiness": will["readiness"],
+            "intention_behavior_alignment": will["alignment"],
+            "classification": self._classification(will["predicted_behavior"], will["voluntariness"]),
             "consent_effect": "no_change_separate_explicit_consent_required",
+            "agency": will["agency"],
+            "pressure": will["pressure"],
+            "stress": will["stress"],
             "evidence_note": self._text(evidence_note, "evidence_note"),
+            "will_evidence_note": will["evidence_note"],
             "time": self.clock(),
         }
         state["decisions"].append(item)
+        cycle["phase"] = "committed"
+        cycle["committed_at"] = self.clock()
+        cycle["decision_id"] = item["decision_id"]
+        state["completed_cycles"].append(cycle)
+        state["last_committed_cycle_id"] = cycle_id
+        state["active_cycle"] = None
         self._save()
         self._append("decision", item)
+        self._append("cycle_commit", {
+            "cycle_id": cycle_id,
+            "decision_id": item["decision_id"],
+            "behavior": item["behavior"],
+            "voluntariness": item["voluntariness"],
+        })
         return self.state()
 
     def state(self) -> dict[str, Any]:
@@ -291,6 +466,18 @@ class VolitionRuntime:
             raise VolitionError("no Will/Ego session")
         state = self._state
         visible = [item for item in state["audience"] if item["visibility"] == "chorus"]
+        cycle = state.get("active_cycle")
+        public_cycle = None
+        if cycle is not None:
+            public_cycle = {
+                "cycle_id": cycle["cycle_id"],
+                "action": cycle["action"],
+                "shared_event": cycle["shared_event"],
+                "phase": cycle["phase"],
+                "heart_recorded": cycle["voices"]["heart"] is not None,
+                "head_recorded": cycle["voices"]["brain"] is not None,
+                "will_recorded": cycle.get("will") is not None,
+            }
         return {
             "volition_version": VOLITION_VERSION,
             "relationship_session_id": state["relationship_session_id"],
@@ -303,6 +490,9 @@ class VolitionRuntime:
             ),
             "recent_chorus": visible[-10:],
             "current_appraisals": state["current_appraisals"],
+            "active_cycle": public_cycle,
+            "last_committed_cycle_id": state.get("last_committed_cycle_id"),
+            "completed_cycle_count": len(state.get("completed_cycles", [])),
             "recent_decisions": state["decisions"][-10:],
         }
 

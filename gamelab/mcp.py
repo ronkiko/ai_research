@@ -117,7 +117,9 @@ mcp = MCPServer(
         "start asynchronously and are observed with status tools. Brain Executive "
         "adds strategic memory, experiment discipline, and machine-backed evidence; "
         "it never issues actuator commands or chooses a strategy for the Brain. "
-        "Yuki relationship memory is narrative context and never changes scientific evidence."
+        "Yuki relationship memory is narrative context and never changes scientific evidence. "
+        "Material personal decisions use an enforced Heart -> Head -> Will/Ego cycle; "
+        "the parent Brain cannot directly commit behavior."
     ),
 )
 
@@ -152,7 +154,7 @@ def _sync_executive() -> None:
 def _sync_volition() -> None:
     """Attach Will/Ego lazily so v3 relationship sessions resume after upgrade."""
     relationship_payload = relationship.state()
-    if relationship_payload["status"] != "active":
+    if relationship_payload["status"] not in {"active", "deadline_reached"}:
         return
     character_payload = character.public()
     try:
@@ -518,32 +520,63 @@ def volition_appraise(
 
 
 @mcp.tool(annotations=WRITE)
-def volition_decide(
-    action: str,
-    intended_choice: str,
-    behavior: VolitionBehavior,
-    voluntariness: VoluntarinessState,
-    desire: DesireState,
-    readiness: ActionReadiness,
-    alignment: IntentionBehaviorAlignment,
-    evidence_note: str,
-) -> dict[str, Any]:
-    """Record intended choice versus behavior under pressure.
+def volition_cycle_begin(action: str, shared_event: str) -> dict[str, Any]:
+    """Begin or replace one enforced Heart -> Head -> Will/Ego decision cycle.
 
-    Coerced compliance remains opposed behavior under duress; this tool never
-    grants consent. Explicit per-person consent remains a separate record.
+    shared_event is the neutral factual event both Heart and Head must receive.
+    Any materially changed facts require a new cycle; old reports then become stale.
     """
     _sync_volition()
-    return _public(volition.decide(
-        action=action,
-        intended_choice=intended_choice,
-        behavior=behavior,
-        voluntariness=voluntariness,
+    return _public(volition.cycle_begin(action=action, shared_event=shared_event))
+
+
+@mcp.tool(annotations=WRITE)
+def volition_will_appraise(
+    cycle_id: str,
+    reported_action: str,
+    desire: DesireState,
+    readiness: ActionReadiness,
+    intended_choice: str,
+    predicted_behavior: VolitionBehavior,
+    voluntariness: VoluntarinessState,
+    alignment: IntentionBehaviorAlignment,
+    agency: AgencyState,
+    pressure: PressureLevel,
+    stress: PressureLevel,
+    evidence_note: str,
+) -> dict[str, Any]:
+    """Record the actual yuki-will subagent report for the current cycle.
+
+    OpenCode provenance hooks replace these model-supplied fields with the
+    captured yuki-will output. Runtime refuses this call until fresh Heart and
+    Head reports for the same cycle have been recorded.
+    """
+    _sync_volition()
+    return _public(volition.will_appraise(
+        cycle_id=cycle_id,
+        reported_action=reported_action,
         desire=desire,
         readiness=readiness,
+        intended_choice=intended_choice,
+        predicted_behavior=predicted_behavior,
+        voluntariness=voluntariness,
         alignment=alignment,
+        agency=agency,
+        pressure=pressure,
+        stress=stress,
         evidence_note=evidence_note,
     ))
+
+
+@mcp.tool(annotations=WRITE)
+def volition_commit(cycle_id: str, evidence_note: str) -> dict[str, Any]:
+    """Commit the current cycle using Will/Ego's recorded behavior exactly.
+
+    The parent LLM supplies no behavior, desire, agency, voluntariness, or
+    alignment fields here and therefore cannot override the system result.
+    """
+    _sync_volition()
+    return _public(volition.commit(cycle_id=cycle_id, evidence_note=evidence_note))
 
 
 @mcp.tool(annotations=WRITE)
@@ -614,19 +647,34 @@ def duality_state() -> dict[str, Any]:
 
 @mcp.tool(annotations=WRITE)
 def duality_appraise(
+    cycle_id: str,
     side: str,
     direction: str,
     intensity: str,
     position: str,
     evidence_note: str,
 ) -> dict[str, Any]:
-    """Appraise heart or brain qualitatively. direction: strengthen/weaken;
-    intensity: faint/meaningful/strong/decisive. The private numeric change is
-    randomized inside the selected band and never returned to either voice."""
-    return _public(duality.appraise(
+    """Record one fresh Heart or Head report for an enforced decision cycle.
+
+    The volition runtime preflights cycle freshness before Duality mutates. The
+    OpenCode provenance hook overwrites direction/intensity/position/evidence
+    with the captured subagent report so the parent cannot rewrite either voice.
+    """
+    _sync_volition()
+    volition.validate_voice(cycle_id=cycle_id, side=side)
+    payload = duality.appraise(
         side=side, direction=direction, intensity=intensity,
         position=position, evidence_note=evidence_note,
-    ))
+    )
+    volition.record_voice(
+        cycle_id=cycle_id,
+        side=side,
+        direction=direction,
+        intensity=intensity,
+        position=position,
+        evidence_note=evidence_note,
+    )
+    return _public(payload)
 
 
 @mcp.tool(annotations=WRITE)

@@ -24,6 +24,15 @@ class DualityTests(unittest.TestCase):
             position=f"{side} position", evidence_note=f"{side} evidence",
         )
 
+
+    def test_begin_is_idempotent_for_same_executive_and_supersedes_stale_one(self):
+        same = self.runtime.begin(executive_session_id="executive-1", deadline_at=11800.0)
+        self.assertEqual(same["executive_session_id"], "executive-1")
+        fresh = self.runtime.begin(executive_session_id="executive-2", deadline_at=11900.0)
+        self.assertEqual(fresh["executive_session_id"], "executive-2")
+        self.assertEqual(fresh["status"], "active")
+        self.assertEqual(fresh["completed_conflicts"], 0)
+
     def test_exact_confidence_is_never_exposed_by_public_state(self):
         for _ in range(3): self.appraise("heart")
         self.appraise("heart", "faint")

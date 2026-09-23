@@ -132,7 +132,9 @@ character_state
 volition_state
 audience_observation
 volition_appraise
-volition_decide
+volition_cycle_begin
+volition_will_appraise
+volition_commit
 relationship_event
 relationship_action
 relationship_consent
@@ -181,13 +183,23 @@ appraised as approval, guilt, threat, authority, conformity or abandonment
 pressure. Neither mode chooses an action. Periodic chorus evaluation is an LLM
 context scheduled by GameTable, not a procedural emotional delta.
 
-Will/Ego is a third bounded LLM appraisal after independent Heart and Head when
-material pressure exists. It predicts whether intended choice and outward
-behavior diverge while keeping desire, current action readiness, stress, agency and voluntariness
-separate. `complied_under_duress` records that divergence and has no consent
-effect. A freely chosen physical narrative action requires separately recorded
-current consent; a coerced event remains an adverse incident rather than being
-retrospectively converted into affection.
+Will/Ego is the third bounded LLM appraisal in an enforced social-decision
+cycle. The parent Brain first freezes one `shared_event`; fresh Heart and Head
+must both appraise that exact event, then fresh Will/Ego receives their captured
+positions and predicts intended choice and outward behavior while keeping desire,
+readiness, stress, agency and voluntariness separate. Runtime refuses a commit
+until that order is complete. OpenCode provenance hooks replace parent-supplied
+Heart/Head/Will fields with the actual child-session outputs. The final
+`volition_commit` accepts no behavior/desire/agency parameters from the parent,
+so parent preference cannot override Will/Ego's structured result.
+
+A materially changed event starts a new cycle and makes prior voice reports
+stale. `volition_appraise` remains passive telemetry only; direct
+`volition_decide` is not an MCP operation. `complied_under_duress` records
+behavior/desire divergence and has no consent effect. A freely chosen physical
+narrative action still requires separately recorded current consent; a coerced
+event remains an adverse incident rather than being retrospectively converted
+into affection.
 
 After `executive_finish` has frozen the factual research report, the Director
 may explicitly resolve Yuki's internship through `relationship_employment_decision`

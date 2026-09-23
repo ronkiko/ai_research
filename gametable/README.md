@@ -71,6 +71,14 @@ internal laboratory events,
 not Director speech, and may be tuned with `GAMETABLE_FIRST_HEARTBEAT_MS`,
 `GAMETABLE_HEARTBEAT_MS`, and `GAMETABLE_HEARTBEAT_CHECK_MS`.
 
+For meaningful personal decisions, the same OpenCode plugin also enforces a
+causal Volition protocol. Parent Yuki freezes one event, fresh Heart and Head
+subagents appraise it independently, and fresh Will/Ego predicts behavior from
+their captured outputs. GameLab refuses out-of-order writes, while the plugin
+replaces appraisal arguments with the actual child-session reports. The parent
+LLM therefore narrates the committed result but cannot directly set behavior,
+agency or voluntariness. A changed material event starts a new cycle.
+
 While the shift is active, the same supervisor schedules a Social Chorus tick
 after a session-seeded interval between one and ten minutes. It waits for the
 Brain to become idle and never interrupts a response. The schedule is transport,

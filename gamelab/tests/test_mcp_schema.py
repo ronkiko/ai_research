@@ -61,7 +61,9 @@ class McpSchemaTests(unittest.TestCase):
 
     def test_volition_schema_keeps_desire_behavior_and_pressure_separate(self):
         appraisal = mcp._tool_manager.get_tool("volition_appraise").parameters["properties"]
-        decision = mcp._tool_manager.get_tool("volition_decide").parameters["properties"]
+        will = mcp._tool_manager.get_tool("volition_will_appraise").parameters["properties"]
+        commit = mcp._tool_manager.get_tool("volition_commit").parameters["properties"]
+        cycle = mcp._tool_manager.get_tool("volition_cycle_begin").parameters["properties"]
         audience = mcp._tool_manager.get_tool("audience_observation").parameters["properties"]
         self.assertEqual(
             appraisal["desire"]["enum"],
@@ -72,10 +74,15 @@ class McpSchemaTests(unittest.TestCase):
             ["closed", "guarded", "ambivalent", "open", "seeking"],
         )
         self.assertEqual(
-            decision["voluntariness"]["enum"],
+            will["voluntariness"]["enum"],
             ["free", "reluctant_but_free", "pressured", "coerced", "overridden"],
         )
-        self.assertEqual(decision["alignment"]["enum"], ["aligned", "diverged", "unclear"])
+        self.assertEqual(will["alignment"]["enum"], ["aligned", "diverged", "unclear"])
+        self.assertEqual(will["predicted_behavior"]["enum"], [
+            "none", "refused", "requested", "accepted", "complied", "froze", "withdrew", "escaped",
+        ])
+        self.assertEqual(set(commit), {"cycle_id", "evidence_note"})
+        self.assertEqual(set(cycle), {"action", "shared_event"})
         self.assertEqual(audience["visibility"]["enum"], ["observer", "chorus"])
 
 

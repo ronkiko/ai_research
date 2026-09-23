@@ -212,19 +212,31 @@ one-to-ten-minute tick only while the Brain is idle; the schedule selects a lens
 not a reaction. The Audience LLM evaluates a bounded new event window, and Yuki
 may accept, reject, resent, ignore or internalize its report.
 
-For materially pressured decisions, Heart and Head first complete independent
-appraisals using the same Character Core but otherwise different bounded context.
-Will/Ego then receives both completed positions, current volition memory and the
-same core. It assesses whether the intended choice survives pressure. This is a
-model judgment, not an arithmetic sum of traits and stimulus labels.
+For a meaningful personal or materially pressured decision, the parent Brain is
+not the sole decision authority. It first freezes an action plus one neutral
+`shared_event` in a Volition cycle. Heart and Head then complete independent
+appraisals of that exact event using the same Character Core but otherwise
+different bounded context. Will/Ego receives both captured positions, current
+volition memory and the same core. A changed material fact creates a new cycle,
+so reports from an earlier event cannot be reused.
 
-The volition journal keeps six concepts separate: current desire, current
-action readiness, intended choice, outward behavior, voluntariness and explicit consent. Resistance,
-free-but-reluctant action, pressured behavior, freezing and compliance under
-duress therefore remain distinguishable. A threat may cause behavior to diverge
-from desire in the simulation, but neither the Audience nor Will can grant
-consent. Coerced physical behavior is recorded as an adverse non-consensual
-incident and never becomes evidence of affection or willingness.
+This causal order is enforced twice. GameLab refuses Will before both voices and
+refuses commit before Will. The OpenCode provenance gate captures the actual
+`yuki-heart`, `yuki-head` and `yuki-will` task outputs and overwrites MCP
+appraisal arguments with those captured values. The parent therefore cannot
+turn an initial preference such as «I don't want this» into arbitrary
+`agency=intact` / `behavior=refused` telemetry. `volition_commit` has no
+parent-supplied behavior, desire, agency, voluntariness or alignment fields; it
+commits Will/Ego's structured prediction. The parent remains the semantic voice
+that explains the resulting action.
+
+The volition journal keeps current desire, action readiness, intended choice,
+outward behavior, voluntariness, agency and explicit consent separate.
+Resistance, free-but-reluctant action, pressured behavior, freezing and
+compliance under duress therefore remain distinguishable. A threat may cause
+behavior to diverge from desire in the simulation, but neither Audience nor Will
+can grant consent. Coerced physical behavior is recorded as an adverse
+non-consensual incident and never becomes evidence of affection or willingness.
 
 ## Heart–Head arbitration
 

@@ -121,18 +121,26 @@ class DualityRuntime:
         })
 
     def begin(self, *, executive_session_id: str, deadline_at: float) -> dict[str, Any]:
-        if self._state is not None and self._state.get("status") == "active":
-            raise DualityError("Heart–Brain shift is already active")
         session_id = self._text(executive_session_id, "executive_session_id", 200)
         now = self.clock()
-        if float(deadline_at) <= now:
-            raise ValueError("deadline_at must be in the future")
+        deadline = float(deadline_at)
+        if self._state is not None and self._state.get("status") in {"active", "deadline_finished"}:
+            if self._state.get("executive_session_id") == session_id:
+                return self.state()
+            previous_id = self._state.get("executive_session_id")
+            self._state["status"] = "superseded"
+            self._state["finished_at"] = now
+            self._save()
+            self._append("superseded", {
+                "previous_executive_session_id": previous_id,
+                "next_executive_session_id": session_id,
+            })
         self._state = {
             "version": DUALITY_VERSION,
             "executive_session_id": session_id,
             "status": "active",
             "started_at": now,
-            "deadline_at": float(deadline_at),
+            "deadline_at": deadline,
             "confidence": {"heart": 0, "brain": 0},
             "positions": {"heart": None, "brain": None},
             "appraisals": [],
@@ -140,7 +148,7 @@ class DualityRuntime:
             "conflicts": [],
         }
         self._save()
-        self._append("begin", {"deadline_at": float(deadline_at)})
+        self._append("begin", {"deadline_at": deadline})
         return self.state()
 
     def appraise(
