@@ -167,7 +167,12 @@ class GameTableTests(unittest.TestCase):
         for path in (HEART_AGENT, HEAD_AGENT):
             text = path.read_text(encoding="utf-8")
             self.assertIn("mode: subagent", text)
-            self.assertIn('"*": false', text)
+            self.assertIn("permissions:", text)
+            self.assertIn('action: "*"', text)
+            self.assertIn('resource: "*"', text)
+            self.assertIn("effect: deny", text)
+            self.assertIn("hidden: true", text)
+            self.assertNotIn("\ntools:", text)
             self.assertNotIn("\nmodel:", text)
             self.assertIn("same inherited LLM", text)
             self.assertIn("Do not choose Yuki's final action", text)
