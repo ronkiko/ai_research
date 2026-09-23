@@ -24,6 +24,17 @@ def create_verified_motor_fixture(root: Path) -> Path:
         (package / "manifest.default.json").read_text(encoding="utf-8")
     )
     model = Motor()
+    # Infrastructure fixture must be deterministic but physically responsive.
+    # It is not a trained brain: two ReLU channels implement a simple signed
+    # desired_vx -> effort mapping so MCP/Host smoke can observe real input.
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.mean[0].weight[0, 0] = 1.0
+        model.mean[0].weight[1, 0] = -1.0
+        model.mean[2].weight[0, 0] = 2.0
+        model.mean[2].weight[0, 1] = -2.0
+        model.log_std.fill_(-5.0)
     brain = package / "brain.pt"
     torch.save(
         {

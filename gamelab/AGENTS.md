@@ -69,3 +69,12 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Keep an actual convergence regression for the default Motor School, not only
   shape/update tests. A school that compiles but cannot promote a fresh Motor is
   not acceptable.
+
+- Spine TRAIN exploration belongs to the 10 Hz `desired_vx` policy. A verified
+  Motor mounted under Spine must be deterministic at 60 Hz; never reintroduce
+  Motor-action sampling into Spine TRAIN.
+- One Spine PPO transition represents one latched `desired_vx` decision and
+  aggregates the physical reward from its Motor intervals. Do not regress to
+  treating each 60 Hz `motor_x` as a Spine PPO action.
+- Fresh Spine policy must start directionally neutral; its final desired-velocity
+  mean layer has zero weight/bias while exploration supplies symmetric trials.

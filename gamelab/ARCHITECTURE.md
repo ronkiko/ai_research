@@ -124,8 +124,11 @@ candidate never overwrites an already verified brain.
 
 The active Motor does not classify LEFT/STOP/RIGHT. At 60 Hz it receives the
 current MotorGoal plus local proprioception and emits one scalar
-`motor_x in [-1,+1]`. During TRAIN this action is sampled from a Gaussian policy
-and tanh-squashed; frozen VERIFY/RUN use `tanh(mean)`.
+`motor_x in [-1,+1]`. Motor School may sample this Motor while teaching the
+reflex, but after verification the mounted Motor is frozen and deterministic.
+Spine TRAIN explores one level higher: at 10 Hz Spine samples `desired_vx`,
+holds it for six Motor intervals, and PPO assigns the accumulated physical
+reward to that Spine decision. VERIFY/RUN use deterministic `tanh(mean)`.
 
 GameServer interprets `motor_x` as normalized actuator effort. Zone integrates
 `acceleration = max_acceleration * motor_x - drag * vx`, clamps velocity to the

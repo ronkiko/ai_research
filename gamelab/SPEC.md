@@ -70,9 +70,15 @@ Input is:
 MotorGoal[4] + proprioception[vx, motor_x]
 ```
 
-Output is one Gaussian policy mean plus one learned exploration scale. TRAIN
-samples the Gaussian and applies `tanh`; VERIFY/RUN use `tanh(mean)`. The
-single external action is normalized physical effort `motor_x in [-1,+1]`.
+The Motor package contains a Gaussian training policy because Motor School must
+explore while learning the reflex. Once the Motor is verified and mounted under
+Spine, its weights and exploration scale are frozen and the Motor runs
+deterministically as `motor_x=tanh(mean)` at 60 Hz.
+
+Spine has its own one-dimensional Gaussian policy over normalized
+`desired_vx` at 10 Hz. TRAIN samples that Spine action and holds it across six
+Motor decisions; VERIFY/RUN use deterministic Spine `tanh(mean)`. The single
+external actuator remains normalized physical effort `motor_x in [-1,+1]`.
 
 Motor 1 does not receive target position or target displacement directly.
 

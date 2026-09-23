@@ -70,8 +70,11 @@ reward calculation, rollout boundaries, logging, checkpointing, terminal actuato
 after a terminal/cancel condition, and verification.
 
 A successful VERIFY run is frozen inference: no learning and no procedural
-controller. TRAIN samples a one-dimensional Gaussian policy and squashes it
-through tanh; VERIFY/RUN use tanh(mean) deterministically.
+controller. During Spine TRAIN, exploration belongs to the 10 Hz Spine policy:
+Spine samples normalized `desired_vx` from its Gaussian policy and holds that
+goal across the following Motor intervals. The verified Motor itself is frozen
+and deterministic at 60 Hz. VERIFY/RUN use deterministic `tanh(mean)` at both
+levels.
 
 ## Information boundary
 
@@ -84,12 +87,13 @@ Spine sees a 32-frame temporal history with four measured/command channels:
 
 Motor does **not** receive `target_x` or `goal_dx`. It receives only:
 
-- the learned 4-value MotorGoal emitted by Spine;
+- `MotorGoal=[desired_vx,0,0,0]` emitted by Spine;
 - normalized local `vx`;
 - current motor effort.
 
-This forces the hierarchy to learn an internal language instead of letting the
-Motor solve the strategic task directly.
+For `continuous_1d_v1`, the socket semantics are explicit rather than an
+arbitrary hidden language: Spine learns the requested velocity, while Motor
+learns how physical effort realizes that velocity.
 
 ## Motor School and Spine Training
 
@@ -238,7 +242,7 @@ in-process:
 ./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 50 --target 987
 ```
 
-The modular Spine checkpoint uses format v3. Discrete three-logit v1 weights
+The modular Spine checkpoint uses format v4. Discrete three-logit v1 weights
 are intentionally not loaded into it; replacing the active model archives the
 previous checkpoint bytes under `runtime/checkpoints/`.
 
