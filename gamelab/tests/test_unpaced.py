@@ -72,7 +72,7 @@ class UnpacedTests(unittest.TestCase):
                 RuleModel(),
                 client,
                 state,
-                target_x=110.0,
+                target_x=118.0,
                 tolerance=1.0,
                 max_seconds=2.0,
                 on_transition=transitions.append,

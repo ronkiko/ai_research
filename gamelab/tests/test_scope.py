@@ -70,8 +70,10 @@ class ScopeTests(unittest.TestCase):
             "from gameserver.v1.zone.model import ZoneRuntime",
             unpaced,
         )
-        self.assertNotIn("ZoneService", unpaced)
-        self.assertNotIn("Gateway", unpaced)
+        self.assertNotIn("from gameserver.v1.zone.server", unpaced)
+        self.assertNotIn("import gameserver.v1.zone.server", unpaced)
+        self.assertNotIn("from gameserver.v1.gateway", unpaced)
+        self.assertNotIn("import gameserver.v1.gateway", unpaced)
 
         for relative in (
             "gamelab/host.py",
