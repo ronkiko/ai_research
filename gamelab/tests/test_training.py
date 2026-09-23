@@ -170,7 +170,7 @@ class TrainingTests(unittest.TestCase):
             ensure_player(client, "player1")
             first_x = None
             last_x = None
-            for _ in range(64):
+            for _ in range(100):
                 result = collect_episode(
                     model,
                     client,
