@@ -6,12 +6,25 @@ import tempfile
 import unittest
 
 import torch
+from torch import nn
 
 from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
-from gamelab.models import SpineMotorPolicy
+from gamelab.models import (
+    SensorHistory,
+    SpineMotorPolicy,
+    motor_state,
+    sensor_frame,
+)
+from gamelab.runtime import ensure_player
+from gamelab.unpaced import UnpacedHostClient
 from gamelab.motors.continuous import squashed_action
 from gamelab.reward import RewardConfig, RewardStore, stopped_near_goal_proximity, step_reward
-from gamelab.training import Transition, _prepare_reward_config, ppo_update
+from gamelab.training import (
+    Transition,
+    _prepare_reward_config,
+    collect_episode,
+    ppo_update,
+)
 
 
 class TrainingTests(unittest.TestCase):
@@ -134,6 +147,56 @@ class TrainingTests(unittest.TestCase):
         self.assertTrue(any(not torch.equal(a, b) for a, b in zip(spine_before, model.spine.parameters())))
         self.assertTrue(all(torch.equal(a, b) for a, b in zip(motor_before, model.motor.parameters())))
 
+
+
+    def test_fresh_spine_learns_direction_over_frozen_physical_motor(self):
+        class TrackingMotor(nn.Module):
+            def parameters_for(self, goal, proprioception):
+                desired = goal[..., 0]
+                current = proprioception[..., 0]
+                effort = torch.clamp(
+                    desired + 2.0 * (desired - current),
+                    -0.99,
+                    0.99,
+                )
+                return torch.atanh(effort), torch.full_like(effort, -20.0)
+
+        torch.manual_seed(1)
+        model = SpineMotorPolicy.fresh(1, motor=TrackingMotor())
+        model.freeze_motor()
+        optimizer = torch.optim.Adam(model.trainable_parameters(), lr=3e-4)
+        client = UnpacedHostClient("spine-learning-regression")
+        try:
+            ensure_player(client, "player1")
+            first_x = None
+            last_x = None
+            for _ in range(16):
+                result = collect_episode(
+                    model,
+                    client,
+                    player_id="player1",
+                    target_x=987.0,
+                    max_seconds=4.0,
+                )
+                if first_x is None:
+                    first_x = result.final_x
+                last_x = result.final_x
+                ppo_update(model, optimizer, result.transitions)
+
+            initial = sensor_frame(
+                x=100.0,
+                vx=0.0,
+                motor_x=0.0,
+                target_x=987.0,
+            )
+            history = SensorHistory(initial).tensor()
+            with torch.no_grad():
+                mean, _, _ = model.spine_parameters(history)
+                learned_desired = float(torch.tanh(mean))
+            self.assertGreater(learned_desired, 0.05)
+            self.assertGreater(last_x, first_x)
+        finally:
+            client.close()
 
 if __name__ == "__main__":
     unittest.main()

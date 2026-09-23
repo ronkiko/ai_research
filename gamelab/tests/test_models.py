@@ -41,15 +41,22 @@ class ModelTests(unittest.TestCase):
         self.assertLessEqual(float(action), 1.0)
         self.assertEqual(value.ndim, 0)
 
-    def test_gradient_reaches_spine_and_motor(self):
+    def test_fresh_spine_is_neutral_and_policy_gradient_is_spine_local(self):
         model = SpineMotorPolicy.fresh(11)
         histories = torch.randn(4, SPINE_CHANNELS, HISTORY_FRAMES)
         proprioception = torch.randn(4, MOTOR_STATE_SIZE)
-        mean, log_std, values, goals = model.evaluate(histories, proprioception)
-        loss = mean.mean() + log_std.square().mean() + values.square().mean() + goals.square().mean()
+        mean, log_std, values = model.evaluate_spine(histories, proprioception)
+        self.assertTrue(torch.equal(mean, torch.zeros_like(mean)))
+        loss = mean.mean() + log_std.square().mean() + values.square().mean()
         loss.backward()
-        self.assertGreater(sum(float(p.grad.abs().sum()) for p in model.spine.parameters() if p.grad is not None), 0.0)
-        self.assertGreater(sum(float(p.grad.abs().sum()) for p in model.motor.parameters() if p.grad is not None), 0.0)
+        self.assertGreater(
+            sum(float(p.grad.abs().sum()) for p in model.spine.parameters() if p.grad is not None),
+            0.0,
+        )
+        self.assertIsNotNone(model.spine_log_std.grad)
+        self.assertTrue(
+            all(p.grad is None for p in model.motor.parameters())
+        )
 
     def test_checkpoint_roundtrip(self):
         model = SpineMotorPolicy.fresh(17)

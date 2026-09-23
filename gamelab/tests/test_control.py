@@ -21,11 +21,23 @@ class FixedMotor:
         return torch.tensor(self.mean), torch.tensor(-20.0)
 
 
+class FakeSpine:
+    @staticmethod
+    def motor_goal(desired_vx):
+        value = desired_vx.reshape(1)
+        return torch.cat((value, torch.zeros(3)))
+
+
 class StopModel:
     def __init__(self):
         self.motor = FixedMotor(0.0)
+        self.spine = FakeSpine()
     def eval(self): pass
-    def spine(self, history): return torch.zeros(4), torch.zeros(16)
+    def spine_parameters(self, history):
+        return torch.tensor(0.0), torch.tensor(-20.0), torch.zeros(16)
+    def deterministic_motor(self, goal, proprioception):
+        mean, _ = self.motor.parameters_for(goal, proprioception)
+        return torch.tanh(mean)
     def critic(self, hidden, proprioception): return torch.tensor(0.0)
 
 
@@ -54,7 +66,7 @@ class Client:
         ] if self.external else []}
     def motor(self, value):
         self.inputs.append(value)
-        raise AssertionError("zero policy must not emit repeated zero commands")
+        raise AssertionError("zero deterministic Motor must not emit commands")
 
 
 class ControlTests(unittest.TestCase):
@@ -76,11 +88,13 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(transitions, [])
         self.assertEqual(result["motor_steps"], 1)
 
-    def test_success_requires_world_time_and_spine_is_cached(self):
-        result = self.run_loop(Client())
+    def test_success_requires_world_time_and_spine_is_slower_than_motor(self):
+        transitions = []
+        result = self.run_loop(Client(), on_transition=transitions.append)
         self.assertEqual(result["status"], "reached")
         self.assertGreaterEqual(result["stable_ticks"], 12)
         self.assertLess(result["spine_calls"], result["motor_steps"])
+        self.assertEqual(len(transitions), result["spine_calls"])
 
     def test_external_control_invalidates_run(self):
         result = self.run_loop(Client(external=True))
@@ -100,26 +114,30 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertEqual(result["simulation_seconds"], 0.0)
 
-    def test_delayed_continuous_input_is_acknowledged_before_next_decision(self):
+    def test_spine_transition_spans_six_motor_intervals(self):
         class RightModel(StopModel):
-            def __init__(self): self.motor = FixedMotor(8.0)
+            def __init__(self):
+                super().__init__()
+                self.motor = FixedMotor(8.0)
 
         class DelayedClient(Client):
             def __init__(self):
                 super().__init__()
                 self.apply_at = None
                 self.sequence = 0
+                self.applied = 0
             def motor(self, value):
                 self.inputs.append(value)
                 self.sequence += 1
-                self.apply_at = self.tick + 6
-                return {"sequence": self.sequence, "event": {"command_id": 9}}
+                self.apply_at = self.tick + 2
+                return {"sequence": self.sequence, "event": {"command_id": self.sequence}}
             def state(self):
                 state = super().state()
                 if self.apply_at is not None and self.tick >= self.apply_at:
+                    self.applied = self.sequence
                     state["snapshot"]["entities"][0].update(
-                        last_sequence=self.sequence,
-                        last_input_command_id=9,
+                        last_sequence=self.applied,
+                        last_input_command_id=self.applied,
                         last_input_tick=self.apply_at,
                         motor_x=self.inputs[-1],
                         vx=10.0,
@@ -130,15 +148,15 @@ class ControlTests(unittest.TestCase):
         with patch("gamelab.control.time.monotonic", clock.monotonic), patch(
             "gamelab.control.time.sleep", clock.sleep
         ):
-            control_loop(
+            result = control_loop(
                 RightModel(), client, client.state(), target_x=900,
-                tolerance=0.9, max_seconds=0.2, on_transition=transitions.append
+                tolerance=0.9, max_seconds=0.25, on_transition=transitions.append
             )
+        self.assertTrue(transitions)
         first = transitions[0]
-        self.assertEqual(first.command_id, 9)
-        self.assertEqual(first.next_tick - first.tick, 6)
-        self.assertEqual(first.elapsed_steps, 3)
-        self.assertGreater(client.inputs[0], 0.99)
+        self.assertEqual(first.next_tick - first.tick, 12)
+        self.assertEqual(first.elapsed_steps, 6)
+        self.assertGreater(result["motor_steps"], result["spine_calls"])
 
 
 if __name__ == "__main__":

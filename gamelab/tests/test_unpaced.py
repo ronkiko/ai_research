@@ -19,14 +19,23 @@ class RuleMotor:
         return mean, torch.tensor(-20.0)
 
 
+class RuleSpine:
+    @staticmethod
+    def motor_goal(desired_vx):
+        return torch.cat((desired_vx.reshape(1), torch.zeros(3)))
+
+
 class RuleModel:
     def __init__(self):
         self.motor = RuleMotor()
+        self.spine = RuleSpine()
     def eval(self): pass
-    def spine(self, history):
-        goal_dx = history[3, -1]
-        zeros = torch.zeros(3, dtype=goal_dx.dtype)
-        return torch.cat((goal_dx.reshape(1), zeros)), torch.zeros(16)
+    def spine_parameters(self, history):
+        desired = torch.clamp(history[3, -1], -0.999, 0.999)
+        return torch.atanh(desired), torch.tensor(-20.0), torch.zeros(16)
+    def deterministic_motor(self, goal, proprioception):
+        mean, _ = self.motor.parameters_for(goal, proprioception)
+        return torch.tanh(mean)
     def critic(self, hidden, proprioception): return torch.tensor(0.0)
 
 

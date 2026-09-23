@@ -88,12 +88,13 @@ class SpineCNN(nn.Module):
             nn.Linear(16 * 4, 16),
             nn.ReLU(),
         )
-        self.goal = nn.Sequential(
-            nn.Linear(16, 1),
-            nn.Tanh(),
-        )
+        self.goal_mean = nn.Linear(16, 1)
+        # A fresh Spine has no arbitrary left/right preference. Exploration is
+        # supplied by the Spine policy distribution, not by Motor noise.
+        nn.init.zeros_(self.goal_mean.weight)
+        nn.init.zeros_(self.goal_mean.bias)
 
-    def forward(self, history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def policy_mean(self, history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         single = history.ndim == 2
         if single:
             history = history.unsqueeze(0)
@@ -105,16 +106,25 @@ class SpineCNN(nn.Module):
                 f"Spine history must have shape [B,{SPINE_CHANNELS},{HISTORY_FRAMES}]"
             )
         hidden = self.hidden(self.conv(history))
-        desired_vx = self.goal(hidden)
-        reserved = torch.zeros(
-            (*desired_vx.shape[:-1], MOTOR_GOAL_SIZE - 1),
-            dtype=desired_vx.dtype,
-            device=desired_vx.device,
-        )
-        motor_goal = torch.cat((desired_vx, reserved), dim=-1)
+        mean = self.goal_mean(hidden).squeeze(-1)
         if single:
-            return motor_goal[0], hidden[0]
-        return motor_goal, hidden
+            return mean[0], hidden[0]
+        return mean, hidden
+
+    @staticmethod
+    def motor_goal(desired_vx: torch.Tensor) -> torch.Tensor:
+        value = desired_vx.unsqueeze(-1)
+        reserved = torch.zeros(
+            (*value.shape[:-1], MOTOR_GOAL_SIZE - 1),
+            dtype=value.dtype,
+            device=value.device,
+        )
+        return torch.cat((value, reserved), dim=-1)
+
+    def forward(self, history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        mean, hidden = self.policy_mean(history)
+        desired_vx = torch.tanh(mean)
+        return self.motor_goal(desired_vx), hidden
 
 
 class CriticMLP(nn.Module):
@@ -136,6 +146,7 @@ class SpineMotorPolicy(nn.Module):
     def __init__(self, motor: nn.Module | None = None) -> None:
         super().__init__()
         self.spine = SpineCNN()
+        self.spine_log_std = nn.Parameter(torch.tensor(-0.7, dtype=torch.float32))
         self.motor = motor if motor is not None else ContinuousMotor()
         self.critic = CriticMLP()
 
@@ -160,15 +171,43 @@ class SpineMotorPolicy(nn.Module):
     def trainable_parameters(self) -> list[nn.Parameter]:
         return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
+    def spine_parameters(
+        self,
+        histories: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mean, hidden = self.spine.policy_mean(histories)
+        log_std = self.spine_log_std.clamp(-5.0, 0.0).expand_as(mean)
+        return mean, log_std, hidden
+
+    def evaluate_spine(
+        self,
+        histories: torch.Tensor,
+        proprioception: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mean, log_std, hidden = self.spine_parameters(histories)
+        value = self.critic(hidden, proprioception)
+        return mean, log_std, value
+
+    def deterministic_motor(
+        self,
+        motor_goal: torch.Tensor,
+        proprioception: torch.Tensor,
+    ) -> torch.Tensor:
+        mean, _ = self.motor.parameters_for(motor_goal, proprioception)
+        return torch.tanh(mean)
+
+    # Compatibility helper for shape/tests: deterministic full hierarchy.
     def evaluate(
         self,
         histories: torch.Tensor,
         proprioception: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        goal, hidden = self.spine(histories)
-        mean, log_std = self.motor.parameters_for(goal, proprioception)
-        value = self.critic(hidden, proprioception)
-        return mean, log_std, value, goal
+        spine_mean, spine_log_std, value = self.evaluate_spine(
+            histories, proprioception
+        )
+        desired_vx = torch.tanh(spine_mean)
+        goal = self.spine.motor_goal(desired_vx)
+        return spine_mean, spine_log_std, value, goal
 
 
 def build_spine_policy(

@@ -144,7 +144,7 @@ def ppo_update(
         order = torch.randperm(count)
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = order[start : start + PPO_BATCH_SIZE]
-            mean, log_std, values, _ = model.evaluate(
+            mean, log_std, values = model.evaluate_spine(
                 histories[indexes],
                 proprioception[indexes],
             )
@@ -171,7 +171,10 @@ def ppo_update(
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), PPO_MAX_GRAD_NORM)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.trainable_parameters(),
+                PPO_MAX_GRAD_NORM,
+            )
             optimizer.step()
 
             metrics["loss"] += float(loss.detach())
@@ -190,7 +193,7 @@ def ppo_update(
             metrics[key] /= updates
     model.eval()
     with torch.no_grad():
-        _, _, predicted, _ = model.evaluate(histories, proprioception)
+        _, _, predicted = model.evaluate_spine(histories, proprioception)
         variance = returns.var(unbiased=False)
         metrics["explained_variance"] = (
             float(1 - (returns - predicted).var(unbiased=False) / variance)
@@ -318,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result.result.upper()} x={result.final_x:.2f} "
                 f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
                 f"vx={result.evidence.get('vx', 0.0):+.2f} "
+                f"desired_vx={result.evidence.get('desired_vx', 0.0):+.3f} "
                 f"motor={result.evidence.get('motor_x', 0.0):+.3f} "
                 f"best_stop_error={result.evidence.get('closest_stopped_distance')} "
                 f"stable={result.evidence.get('stable_ticks', 0)} "
