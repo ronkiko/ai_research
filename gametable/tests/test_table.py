@@ -188,7 +188,7 @@ class GameTableTests(unittest.TestCase):
         profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
         normalized = " ".join(profile.split())
         self.assertIn("сформированы до получения первого ответа", normalized)
-        self.assertIn("не передавай Heart черновик Head", normalized)
+        self.assertIn("не передавай heart черновик head", normalized.lower())
         self.assertIn("side=brain", normalized)
 
     def test_advanced_manual_documents_host_instances(self):
@@ -226,6 +226,20 @@ class GameTableTests(unittest.TestCase):
         self.assertIn("совершеннолетняя", profile)
         self.assertIn("не заменяет машинное evidence", profile)
         self.assertIn("не являются согласием", profile)
+
+    def test_shift_supervisor_wakes_idle_brain_without_impersonating_director(self):
+        plugin = (TABLE / ".opencode" / "plugins" / "shift-supervisor.js").read_text(encoding="utf-8")
+        agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
+        for expected in (
+            "session.idle",
+            "client.session.promptAsync",
+            "INTERNAL_SHIFT_HEARTBEAT",
+            "INTERNAL_SHIFT_DEADLINE",
+            "not a message from the Director",
+        ):
+            self.assertIn(expected, plugin)
+        self.assertIn("Never attribute their text to the Director", " ".join(agents.split()))
+        self.assertNotIn("setTimeout(() => client.session.promptAsync", plugin)
 
 
 if __name__ == "__main__":

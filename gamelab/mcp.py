@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
@@ -38,6 +39,21 @@ WRITE = ToolAnnotations(
     destructive_hint=False,
     open_world_hint=False,
 )
+
+DirectorSignalKind = Literal[
+    "constraint",
+    "correction",
+    "information",
+    "offer_help",
+    "deadline",
+    "praise",
+    "pressure",
+]
+DistanceProgressScale = Annotated[float | None, Field(ge=0.0, le=20.0)]
+StepCost = Annotated[float | None, Field(ge=0.0, le=1.0)]
+RewardMagnitude = Annotated[float | None, Field(ge=0.0, le=20.0)]
+StoppedNearGoalBonus = Annotated[float | None, Field(ge=-20.0, le=20.0)]
+NearGoalRadius = Annotated[float | None, Field(ge=0.1, le=250.0)]
 
 mcp = MCPServer(
     "GameLab game-mechanics laboratory",
@@ -322,8 +338,8 @@ def executive_strategy_end(outcome: str, evidence_note: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def executive_director_signal(kind: str, text: str) -> dict[str, Any]:
-    """Record a Director constraint, correction, information, help offer, deadline, praise, or pressure."""
+def executive_director_signal(kind: DirectorSignalKind, text: str) -> dict[str, Any]:
+    """Record a Director signal. A help offer uses kind=offer_help."""
     return _public(executive.director_signal(kind=kind, text=text))
 
 
@@ -464,14 +480,14 @@ def reward_get() -> dict[str, float]:
 
 @mcp.tool(annotations=WRITE)
 def reward_set(
-    distance_progress_scale: float | None = None,
-    step_cost: float | None = None,
-    success_bonus: float | None = None,
-    timeout_penalty: float | None = None,
-    stopped_near_goal_bonus: float | None = None,
-    near_goal_radius: float | None = None,
+    distance_progress_scale: DistanceProgressScale = None,
+    step_cost: StepCost = None,
+    success_bonus: RewardMagnitude = None,
+    timeout_penalty: RewardMagnitude = None,
+    stopped_near_goal_bonus: StoppedNearGoalBonus = None,
+    near_goal_radius: NearGoalRadius = None,
 ) -> dict[str, float]:
-    """Change bounded reward weights used by subsequent training."""
+    """Change bounded reward weights used by subsequent training; omit unchanged fields."""
     return laboratory.reward_set(
         distance_progress_scale=distance_progress_scale,
         step_cost=step_cost,
