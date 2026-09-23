@@ -217,33 +217,36 @@ def main(argv: list[str] | None = None) -> int:
     torch.manual_seed(args.seed)
     path = checkpoint_path()
 
-    model = SpineMotorPolicy.fresh(args.seed)
-    optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
-    completed = 0
-    if args.fresh:
-        save_checkpoint(
-            path,
-            model,
-            optimizer=optimizer,
-            extra={"episodes": 0, "seed": args.seed},
-        )
-    elif path.exists():
-        extra = load_checkpoint(path, model, optimizer=optimizer)
-        completed = int(extra.get("episodes", 0))
-
-    reward_store = RewardStore()
-    reward_config = _prepare_reward_config(reward_store, fresh=args.fresh)
-    print(
-        "Reward " + json.dumps(reward_config.public(), sort_keys=True),
-        flush=True,
-    )
     client = (
         HostClient("gamelab-train")
         if args.mode == "realtime"
         else UnpacedHostClient("gamelab-train-unpaced", player_id=args.player)
     )
     try:
+        # Fresh is destructive only after the selected execution world/player
+        # passes preflight. A dead realtime Host must not erase a good checkpoint.
         ensure_player(client, args.player)
+
+        model = SpineMotorPolicy.fresh(args.seed)
+        optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
+        completed = 0
+        if args.fresh:
+            save_checkpoint(
+                path,
+                model,
+                optimizer=optimizer,
+                extra={"episodes": 0, "seed": args.seed},
+            )
+        elif path.exists():
+            extra = load_checkpoint(path, model, optimizer=optimizer)
+            completed = int(extra.get("episodes", 0))
+
+        reward_store = RewardStore()
+        reward_config = _prepare_reward_config(reward_store, fresh=args.fresh)
+        print(
+            "Reward " + json.dumps(reward_config.public(), sort_keys=True),
+            flush=True,
+        )
 
         for offset in range(1, args.episodes + 1):
             episode = completed + offset
