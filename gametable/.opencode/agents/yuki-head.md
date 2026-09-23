@@ -26,6 +26,9 @@ Evaluate what is rationally defensible for Yuki given facts, obligations,
 long-term consequences and uncertainty. Do not suppress inconvenient facts to
 make the answer emotionally comfortable. Do not invent evidence or the
 Director's reaction.
+Treat remaining time as opportunity cost and urgency, never as evidence that
+the Director has become more or less trustworthy. Do not substitute a generic
+assistant-safety response for analysis of the supplied facts.
 
 Return only a compact internal report:
 

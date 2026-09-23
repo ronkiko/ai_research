@@ -23,7 +23,9 @@ class RelationshipTests(unittest.TestCase):
         resumed = RelationshipRuntime(Path(self.temp.name), clock=self.clock)
         state = resumed.state()
         self.assertEqual(state["executive_session_id"], "executive-1")
-        self.assertGreater(state["stats"]["warmth"], 15)
+        self.assertEqual(state["recent_events"][-1]["kind"], "director_concern")
+        self.assertNotIn("stats", state)
+        self.assertNotIn("relationship_stage", state)
 
     def test_runtime_classifies_first_and_repeated_contact_by_proximity(self):
         state = self.runtime.state()
@@ -49,7 +51,8 @@ class RelationshipTests(unittest.TestCase):
         other = RelationshipRuntime(Path(self.temp.name) / "other", clock=self.clock)
         state = other.begin(first_impression="First words from Director", duration_minutes=180)
         self.assertIsNone(state["executive_session_id"])
-        self.assertEqual(state["relationship_stage"], "professional")
+        self.assertEqual(state["status"], "active")
+        self.assertNotIn("relationship_stage", state)
 
     def test_v1_state_migrates_physical_meeting_without_changing_meaning(self):
         old_root = Path(self.temp.name) / "old"
@@ -62,9 +65,10 @@ class RelationshipTests(unittest.TestCase):
         }
         (old_root / "relationship-current.json").write_text(json.dumps(old_state), encoding="utf-8")
         migrated = RelationshipRuntime(old_root, clock=self.clock).state()
-        self.assertEqual(migrated["relationship_version"], 3)
+        self.assertEqual(migrated["relationship_version"], 4)
         self.assertEqual(migrated["relationship_session_id"], "executive-1")
         self.assertGreaterEqual(migrated["contacts"]["close_contact_count"], 1)
+        self.assertNotIn("stats", migrated)
 
     def test_consent_is_per_action_and_per_actor(self):
         state = self.runtime.consent(action="embrace", actor="brain", state="accepted", evidence_note="Yuki agreed")
@@ -90,7 +94,46 @@ class RelationshipTests(unittest.TestCase):
         summary = self.runtime.finish(employment_decision="hired", director_statement="You are hired")
         self.assertEqual(summary["employment"]["status"], "permanent_employee")
         self.assertEqual(summary["consent"]["private_intimacy"]["director"], "unknown")
-        with self.assertRaises(RelationshipError): self.runtime.state()
+        self.assertEqual(self.runtime.state()["status"], "finished")
+        with self.assertRaises(RelationshipError):
+            self.runtime.event(kind="director_attention", evidence_note="too late")
+
+    def test_elapsed_time_does_not_create_trust_or_a_relationship_stage(self):
+        before = self.runtime.state()
+        self.clock.value += 60 * 60
+        after = self.runtime.state()
+        self.assertEqual(after["recent_events"], before["recent_events"])
+        self.assertNotIn("stats", after)
+        self.assertNotIn("relationship_stage", after)
+        self.assertNotIn("yandere_tension", after)
+
+    def test_deadline_closes_writes_but_keeps_state_readable(self):
+        deadline = self.runtime._state["deadline_at"]
+        self.clock.value = deadline
+        state = self.runtime.state()
+        self.assertEqual(state["status"], "deadline_reached")
+        self.assertEqual(state["time_remaining_seconds"], 0.0)
+        with self.assertRaises(RelationshipError):
+            self.runtime.action(kind="offer_support", note="after deadline")
+
+    def test_new_shift_can_begin_after_expired_shift(self):
+        previous_id = self.runtime.state()["relationship_session_id"]
+        self.clock.value = self.runtime._state["deadline_at"]
+        state = self.runtime.begin(first_impression="Director starts a later shift")
+        self.assertEqual(state["status"], "active")
+        self.assertNotEqual(state["relationship_session_id"], previous_id)
+
+    def test_v3_scores_are_discarded_while_factual_history_survives(self):
+        root = Path(self.temp.name) / "v3"
+        root.mkdir()
+        old_state = dict(self.runtime._state)
+        old_state["version"] = 3
+        old_state["stats"] = {"trust": 99, "warmth": 100}
+        (root / "relationship-current.json").write_text(json.dumps(old_state), encoding="utf-8")
+        migrated = RelationshipRuntime(root, clock=self.clock).state()
+        self.assertEqual(migrated["relationship_version"], 4)
+        self.assertNotIn("stats", migrated)
+        self.assertEqual(migrated["recent_events"], old_state["events"][-10:])
 
 
 if __name__ == "__main__": unittest.main()

@@ -49,6 +49,26 @@ DirectorSignalKind = Literal[
     "praise",
     "pressure",
 ]
+RelationshipProximity = Literal["remote", "close", "physical"]
+RelationshipEventKind = Literal[
+    "director_attention", "director_concern", "director_praise",
+    "director_personal_disclosure", "director_kept_promise",
+    "director_missed_promise", "help_offered", "help_proved_useful",
+    "help_proved_wrong", "reunion", "jealousy_trigger", "conflict",
+    "apology", "repair", "access_granted", "mutual_confession",
+]
+RelationshipActionKind = Literal[
+    "ask_for_help", "ask_personal_question", "offer_support",
+    "share_vulnerability", "flirt", "confess_feelings",
+    "request_hand_holding", "request_embrace", "request_kiss",
+    "set_boundary", "decline", "repair_attempt",
+]
+ConsentAction = Literal[
+    "hand_holding", "embrace", "kiss", "affectionate_touch", "private_intimacy",
+]
+ConsentActor = Literal["brain", "director"]
+ConsentState = Literal["unknown", "invited", "accepted", "declined", "revoked"]
+EmploymentDecision = Literal["hired", "extended", "rejected", "pending"]
 DistanceProgressScale = Annotated[float | None, Field(ge=0.0, le=20.0)]
 StepCost = Annotated[float | None, Field(ge=0.0, le=1.0)]
 RewardMagnitude = Annotated[float | None, Field(ge=0.0, le=20.0)]
@@ -366,12 +386,12 @@ def executive_finish(conclusion: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def relationship_state() -> dict[str, Any]:
-    """Read Yuki's narrative state, consent, and internship goal."""
+    """Read factual relationship history, consent, deadline, and internship goal; no emotion scores."""
     return _public(relationship.state())
 
 
 @mcp.tool(annotations=WRITE)
-def relationship_contact(proximity: str, evidence_note: str) -> dict[str, Any]:
+def relationship_contact(proximity: RelationshipProximity, evidence_note: str) -> dict[str, Any]:
     """Record meaningful contact with the Director.
 
     proximity is remote (communication at a distance), close (the Director is
@@ -383,7 +403,7 @@ def relationship_contact(proximity: str, evidence_note: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
+def relationship_event(kind: RelationshipEventKind, evidence_note: str) -> dict[str, Any]:
     """Record one observed event: director_attention, director_concern,
     director_praise, director_personal_disclosure, director_kept_promise,
     director_missed_promise, help_offered, help_proved_useful,
@@ -395,7 +415,7 @@ def relationship_event(kind: str, evidence_note: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def relationship_action(kind: str, note: str) -> dict[str, Any]:
+def relationship_action(kind: RelationshipActionKind, note: str) -> dict[str, Any]:
     """Record Yuki's intention before chat: ask_for_help, ask_personal_question,
     offer_support, share_vulnerability, flirt, confess_feelings,
     request_hand_holding, request_embrace, request_kiss, set_boundary, decline,
@@ -404,7 +424,12 @@ def relationship_action(kind: str, note: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def relationship_consent(action: str, actor: str, state: str, evidence_note: str) -> dict[str, Any]:
+def relationship_consent(
+    action: ConsentAction,
+    actor: ConsentActor,
+    state: ConsentState,
+    evidence_note: str,
+) -> dict[str, Any]:
     """Record explicit consent for hand_holding, embrace, kiss,
     affectionate_touch, or private_intimacy. actor is brain or director; state
     is unknown, invited, accepted, declined, or revoked. Each person and action
@@ -415,7 +440,10 @@ def relationship_consent(action: str, actor: str, state: str, evidence_note: str
 
 
 @mcp.tool(annotations=WRITE)
-def relationship_employment_decision(decision: str, director_statement: str) -> dict[str, Any]:
+def relationship_employment_decision(
+    decision: EmploymentDecision,
+    director_statement: str,
+) -> dict[str, Any]:
     """Record the Director's explicit internship decision after the factual report."""
     return _public(relationship.finish(
         employment_decision=decision, director_statement=director_statement,

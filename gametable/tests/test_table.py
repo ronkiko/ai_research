@@ -227,6 +227,21 @@ class GameTableTests(unittest.TestCase):
         self.assertIn("не заменяет машинное evidence", profile)
         self.assertIn("не являются согласием", profile)
 
+    def test_yuki_keeps_moe_yandere_temperament_without_scripted_relationships(self):
+        profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
+        relationship = (ROOT / "gamelab" / "relationship.py").read_text(encoding="utf-8")
+        self.assertIn("моэ/яндере", profile)
+        self.assertIn("Это темперамент, а не сценарий стадий", profile)
+        self.assertIn("Время само по себе не создаёт", profile)
+        self.assertIn("не внешняя модель, которая «играет Юки»", profile)
+        self.assertIn("canned comparison", agents)
+        for forbidden in (
+            "EVENT_DELTAS", "ACTION_DELTAS", "CONTACT_DELTAS",
+            "relationship_stage", "yandere_tension", "_initial_stats",
+        ):
+            self.assertNotIn(forbidden, relationship)
+
     def test_shift_supervisor_wakes_idle_brain_without_impersonating_director(self):
         plugin = (TABLE / ".opencode" / "plugins" / "shift-supervisor.js").read_text(encoding="utf-8")
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")

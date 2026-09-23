@@ -142,7 +142,7 @@ def import_relationship_journal(db, sid, path):
     versions = {r.get('relationship_version') for r in records}
     characters = {r.get('character_id') for r in records}
     if (len(ids) != 1 or None in ids or not versions or
-            not versions.issubset({1, 2, 3}) or len(characters) != 1 or None in characters):
+            not versions.issubset({1, 2, 3, 4}) or len(characters) != 1 or None in characters):
         raise ValueError('Relationship journal has inconsistent session/version/character')
     relationship_id = next(iter(ids))
     relationship_version = max(versions)

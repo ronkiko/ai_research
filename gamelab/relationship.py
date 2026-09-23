@@ -12,7 +12,7 @@ from typing import Any, Callable
 import uuid
 
 
-RELATIONSHIP_VERSION = 3
+RELATIONSHIP_VERSION = 4
 CHARACTER_ID = "yuki-02"
 CONSENT_ACTIONS = {
     "hand_holding", "embrace", "kiss", "affectionate_touch", "private_intimacy",
@@ -21,74 +21,23 @@ CONSENT_STATES = {"unknown", "invited", "accepted", "declined", "revoked"}
 ACTORS = {"brain", "director"}
 CONTACT_PROXIMITIES = {"remote", "close", "physical"}
 CONTACT_RANK = {"remote": 0, "close": 1, "physical": 2}
-CONTACT_DELTAS: dict[str, dict[str, int]] = {
-    "remote": {"warmth": 1, "shared_history": 1, "being_understood": 1},
-    "close": {"warmth": 2, "shared_history": 2, "proximity_comfort": 3},
-    "physical": {"warmth": 3, "shared_history": 3, "proximity_comfort": 5, "physical_memory": 4},
+EVENT_KINDS = {
+    "director_attention", "director_concern", "director_praise",
+    "director_personal_disclosure", "director_kept_promise",
+    "director_missed_promise", "help_offered", "help_proved_useful",
+    "help_proved_wrong", "reunion", "jealousy_trigger", "conflict",
+    "apology", "repair", "access_granted", "mutual_confession",
 }
-EVENT_DELTAS: dict[str, dict[str, int]] = {
-    "director_attention": {"warmth": 3, "being_understood": 2},
-    "director_concern": {"emotional_safety": 4, "warmth": 3, "trust": 2},
-    "director_praise": {"professional_respect": 2, "warmth": 2, "approval_need": -1},
-    "director_personal_disclosure": {"openness": 3, "emotional_safety": 4, "shared_history": 2},
-    "director_kept_promise": {"reliability": 7, "trust": 5},
-    "director_missed_promise": {"reliability": -8, "hurt": 5, "abandonment_fear": 3},
-    "help_offered": {"scientific_trust": 2},
-    "help_proved_useful": {"scientific_trust": 8, "gratitude": 5, "help_value": 10, "warmth": 2},
-    "help_proved_wrong": {"scientific_trust": -4, "disagreement_safety": 4},
-    "reunion": {"warmth": 4, "longing": -3, "shared_history": 2},
-    "jealousy_trigger": {"jealousy": 5, "relationship_security": -2},
-    "conflict": {"hurt": 5, "stress": 4, "relationship_security": -4},
-    "apology": {"repair_willingness": 5, "hurt": -2},
-    "repair": {"trust": 5, "hurt": -5, "resentment": -4, "shared_history": 3},
-    "access_granted": {"trust": 3, "warmth": 3, "professional_belonging": 4},
-    "mutual_confession": {"romantic_awareness": 35, "relationship_security": 15, "intimacy_interest": 12},
-}
-ACTION_DELTAS: dict[str, dict[str, int]] = {
-    "ask_for_help": {"openness": 2},
-    "ask_personal_question": {"openness": 2, "warmth": 1},
-    "offer_support": {"empathy": 2, "warmth": 1},
-    "share_vulnerability": {"vulnerability": 4, "openness": 3},
-    "flirt": {"flirtation_comfort": 3, "romantic_inhibition": -2},
-    "confess_feelings": {"romantic_awareness": 12, "confession_readiness": 8},
-    "request_hand_holding": {"touch_desire": 3},
-    "request_embrace": {"embrace_readiness": 3, "touch_desire": 2},
-    "request_kiss": {"kiss_interest": 3, "intimacy_interest": 2},
-    "set_boundary": {"autonomy": 5, "boundary_clarity": 5},
-    "decline": {"autonomy": 3, "boundary_clarity": 3},
-    "repair_attempt": {"repair_willingness": 4},
+ACTION_KINDS = {
+    "ask_for_help", "ask_personal_question", "offer_support",
+    "share_vulnerability", "flirt", "confess_feelings",
+    "request_hand_holding", "request_embrace", "request_kiss",
+    "set_boundary", "decline", "repair_attempt",
 }
 
 
 class RelationshipError(RuntimeError):
     pass
-
-
-def _initial_stats() -> dict[str, int]:
-    return {
-        "professional_respect": 35, "scientific_trust": 25, "reliability": 20,
-        "admiration": 30, "gratitude": 10, "approval_need": 70, "help_value": 0,
-        "disagreement_safety": 20, "professional_belonging": 5,
-        "trust": 15, "warmth": 15, "emotional_safety": 10, "openness": 10,
-        "vulnerability": 5, "empathy": 30, "being_understood": 5,
-        "reciprocity": 0, "shared_history": 0,
-        "attachment": 5, "longing": 0, "separation_anxiety": 5, "dependency": 5,
-        "jealousy": 0, "possessiveness": 0, "exclusivity_desire": 0,
-        "abandonment_fear": 35, "control_impulse": 0, "autonomy": 65,
-        "romantic_attraction": 0, "romantic_awareness": 0, "flirtation_comfort": 0,
-        "intimacy_interest": 0, "commitment_desire": 0, "future_orientation": 5,
-        "confession_readiness": 0, "relationship_security": 0,
-        "romantic_inhibition": 70, "professional_conflict": 20,
-        "proximity_comfort": 10, "touch_trust": 0, "touch_desire": 0,
-        "affectionate_touch": 0, "embrace_readiness": 0, "kiss_interest": 0,
-        "sensual_attraction": 0, "sexual_attraction": 0,
-        "private_intimacy_readiness": 0, "body_confidence": 40,
-        "aftercare_need": 20, "physical_memory": 0,
-        "stress": 10, "hurt": 0, "resentment": 0, "fear": 5, "suspicion": 0,
-        "loneliness": 10, "embarrassment": 15, "frustration": 0, "guilt": 0,
-        "shame": 0, "repair_willingness": 70, "forgiveness": 50,
-        "boundary_clarity": 70, "power_pressure": 0,
-    }
 
 
 class RelationshipRuntime:
@@ -107,26 +56,34 @@ class RelationshipRuntime:
         if not isinstance(state, dict):
             return
         source_version = state.get("version")
-        if source_version in {1, 2}:
+        if source_version in {1, 2, 3}:
             if source_version == 1:
                 state["relationship_session_id"] = state.get("executive_session_id")
-            location = state.setdefault("location", {})
-            legacy_physical_meeting = location.pop("first_meeting_occurred", False)
-            legacy_lab_meeting = location.pop("first_lab_meeting_occurred", False)
-            contacts = self._empty_contacts()
-            for item in state.setdefault("events", []):
-                if item.get("kind") == "first_meeting":
-                    proximity = "close" if source_version == 1 else "remote"
-                elif item.get("kind") == "first_lab_meeting":
-                    proximity = "close"
-                else:
-                    continue
-                item["kind"] = "contact"
-                item["proximity"] = proximity
-                self._count_contact(contacts, proximity, float(item.get("time", state.get("started_at", 0.0))))
-            if (legacy_physical_meeting or legacy_lab_meeting) and contacts["close_contact_count"] == 0:
-                self._count_contact(contacts, "close", float(state.get("started_at", 0.0)))
-            state["contacts"] = contacts
+            if source_version in {1, 2}:
+                location = state.setdefault("location", {})
+                legacy_physical_meeting = location.pop("first_meeting_occurred", False)
+                legacy_lab_meeting = location.pop("first_lab_meeting_occurred", False)
+                contacts = self._empty_contacts()
+                for item in state.setdefault("events", []):
+                    if item.get("kind") == "first_meeting":
+                        proximity = "close" if source_version == 1 else "remote"
+                    elif item.get("kind") == "first_lab_meeting":
+                        proximity = "close"
+                    else:
+                        continue
+                    item["kind"] = "contact"
+                    item["proximity"] = proximity
+                    self._count_contact(
+                        contacts,
+                        proximity,
+                        float(item.get("time", state.get("started_at", 0.0))),
+                    )
+                if (legacy_physical_meeting or legacy_lab_meeting) and contacts["close_contact_count"] == 0:
+                    self._count_contact(contacts, "close", float(state.get("started_at", 0.0)))
+                state["contacts"] = contacts
+            # v1-v3 scores and stages were a scripted RPG interpretation.  Keep
+            # the factual journal, but never carry those derived values forward.
+            state.pop("stats", None)
             state["version"] = RELATIONSHIP_VERSION
             self._state = state
             self._save()
@@ -142,7 +99,9 @@ class RelationshipRuntime:
         temporary.replace(self.current_path)
 
     def _append(self, kind: str, payload: dict[str, Any]) -> None:
-        state = self._require_open()
+        if self._state is None:
+            raise RelationshipError("no Yuki relationship session")
+        state = self._state
         self.root.mkdir(parents=True, exist_ok=True)
         payload = dict(payload)
         if "kind" in payload:
@@ -156,7 +115,17 @@ class RelationshipRuntime:
         with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
 
+    def _expire_if_due(self) -> None:
+        if (self._state is None or self._state.get("status") != "active"
+                or self.clock() < float(self._state["deadline_at"])):
+            return
+        self._state["status"] = "deadline_reached"
+        self._state["finished_at"] = float(self._state["deadline_at"])
+        self._save()
+        self._append("deadline_reached", {"deadline_at": self._state["deadline_at"]})
+
     def _require_open(self) -> dict[str, Any]:
+        self._expire_if_due()
         if self._state is None or self._state.get("status") != "active":
             raise RelationshipError("no active Yuki relationship session")
         return self._state
@@ -198,32 +167,8 @@ class RelationshipRuntime:
         if closest is None or CONTACT_RANK[proximity] > CONTACT_RANK[closest]:
             contacts["closest_contact_reached"] = proximity
 
-    @staticmethod
-    def _stage(stats: dict[str, int], contacts: dict[str, Any]) -> str:
-        physical_contact = contacts["physical_contact_count"] > 0
-        if physical_contact and stats["touch_trust"] >= 70 and stats["intimacy_interest"] >= 70:
-            return "intimate_partnership"
-        if physical_contact and stats["touch_trust"] >= 45 and stats["romantic_attraction"] >= 55:
-            return "physical_affection"
-        if stats["romantic_attraction"] >= 55 and stats["relationship_security"] >= 40:
-            return "romantic_relationship"
-        if stats["romantic_attraction"] >= 35 and stats["trust"] >= 45:
-            return "mutual_attraction"
-        if stats["attachment"] >= 35 and stats["trust"] >= 35:
-            return "emotional_attachment"
-        if stats["trust"] >= 30 and stats["warmth"] >= 30:
-            return "friendship"
-        if stats["scientific_trust"] >= 30 or stats["professional_respect"] >= 45:
-            return "trusted_colleague"
-        return "professional"
-
-    @staticmethod
-    def _tension(stats: dict[str, int]) -> bool:
-        return (stats["attachment"] >= 65 and stats["jealousy"] >= 45
-                and stats["abandonment_fear"] >= 55 and stats["stress"] >= 50
-                and stats["autonomy"] <= 45 and stats["relationship_security"] <= 40)
-
     def begin(self, *, first_impression: str, duration_minutes: float = 180.0) -> dict[str, Any]:
+        self._expire_if_due()
         if self._state is not None and self._state.get("status") == "active":
             raise RelationshipError("Yuki relationship session is already active")
         impression = self._text(first_impression, "first_impression")
@@ -236,7 +181,7 @@ class RelationshipRuntime:
             "version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
             "relationship_session_id": relationship_session_id,
             "executive_session_id": None, "status": "active",
-            "started_at": now, "deadline_at": now + duration * 60.0, "stats": _initial_stats(),
+            "started_at": now, "deadline_at": now + duration * 60.0,
             "location": {"state": "desk_only", "access_granted": False},
             "contacts": self._empty_contacts(),
             "employment": {"status": "intern", "goal": "permanent_employee", "decision": "pending"},
@@ -265,23 +210,15 @@ class RelationshipRuntime:
         """Return the authoritative shared-shift deadline for sibling runtimes."""
         return float(self._require_open()["deadline_at"])
 
-    def _apply(self, delta: dict[str, int]) -> tuple[dict[str, int], dict[str, int]]:
-        state = self._require_open(); stats = state["stats"]
-        before = {key: stats[key] for key in delta}
-        for key, amount in delta.items():
-            stats[key] = max(0, min(100, int(stats[key]) + int(amount)))
-        return before, {key: stats[key] for key in delta}
-
     def event(self, *, kind: str, evidence_note: str) -> dict[str, Any]:
         state = self._require_open()
-        if kind not in EVENT_DELTAS:
-            raise ValueError(f"kind must be one of {sorted(EVENT_DELTAS)}")
+        if kind not in EVENT_KINDS:
+            raise ValueError(f"kind must be one of {sorted(EVENT_KINDS)}")
         note = self._text(evidence_note, "evidence_note")
-        before, after = self._apply(EVENT_DELTAS[kind])
         if kind == "access_granted":
             state["location"].update(access_granted=True, state="lab_access")
         item = {"event_id": f"r{len(state['events']) + 1}", "kind": kind, "evidence_note": note, "time": self.clock()}
-        state["events"].append(item); self._save(); self._append("event", {**item, "before": before, "after": after})
+        state["events"].append(item); self._save(); self._append("event", item)
         return self.state()
 
     def contact(self, *, proximity: str, evidence_note: str) -> dict[str, Any]:
@@ -290,23 +227,22 @@ class RelationshipRuntime:
             raise ValueError(f"proximity must be one of {sorted(CONTACT_PROXIMITIES)}")
         note = self._text(evidence_note, "evidence_note")
         occurred_at = self.clock()
-        before, after = self._apply(CONTACT_DELTAS[proximity])
         self._count_contact(state["contacts"], proximity, occurred_at)
         item = {"event_id": f"r{len(state['events']) + 1}", "kind": "contact",
                 "proximity": proximity, "evidence_note": note, "time": occurred_at}
         state["events"].append(item)
         self._save()
-        self._append("contact", {**item, "before": before, "after": after})
+        self._append("contact", item)
         return self.state()
 
     def action(self, *, kind: str, note: str) -> dict[str, Any]:
         state = self._require_open()
-        if kind not in ACTION_DELTAS:
-            raise ValueError(f"kind must be one of {sorted(ACTION_DELTAS)}")
+        if kind not in ACTION_KINDS:
+            raise ValueError(f"kind must be one of {sorted(ACTION_KINDS)}")
         item = {"action_id": f"a{len(state['actions']) + 1}", "kind": kind, "note": self._text(note, "note"), "time": self.clock()}
         state["actions"].append(item)
-        before, after = self._apply(ACTION_DELTAS[kind]); self._save()
-        self._append("action", {**item, "before": before, "after": after})
+        self._save()
+        self._append("action", item)
         return self.state()
 
     def consent(self, *, action: str, actor: str, state: str, evidence_note: str) -> dict[str, Any]:
@@ -319,13 +255,15 @@ class RelationshipRuntime:
         return self.state()
 
     def finish(self, *, employment_decision: str, director_statement: str) -> dict[str, Any]:
-        state = self._require_open()
+        self._expire_if_due()
+        if self._state is None or self._state.get("status") not in {"active", "deadline_reached"}:
+            raise RelationshipError("no unfinished Yuki relationship session")
+        state = self._state
         if employment_decision not in {"hired", "extended", "rejected", "pending"}:
             raise ValueError("employment_decision must be hired, extended, rejected, or pending")
         statement = self._text(director_statement, "director_statement")
         if employment_decision == "hired":
             state["employment"].update(status="permanent_employee", decision="hired")
-            self._apply({"professional_belonging": 95, "abandonment_fear": -25, "gratitude": 18, "relationship_security": 8})
         else:
             state["employment"]["decision"] = employment_decision
         state["status"] = "finished"; state["finished_at"] = self.clock(); self._save()
@@ -340,26 +278,28 @@ class RelationshipRuntime:
         return self.summary()
 
     def state(self) -> dict[str, Any]:
-        state = self._require_open(); stats = state["stats"]
+        self._expire_if_due()
+        if self._state is None:
+            raise RelationshipError("no Yuki relationship session")
+        state = self._state
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
                 "time_remaining_seconds": max(0.0, state["deadline_at"] - self.clock()),
-                "relationship_stage": self._stage(stats, state["contacts"]), "yandere_tension": self._tension(stats),
                 "employment": state["employment"], "location": state["location"], "contacts": state["contacts"],
                 "consent": state["consent"],
-                "stats": stats, "recent_events": state["events"][-10:], "recent_actions": state["actions"][-10:]}
+                "recent_events": state["events"][-10:], "recent_actions": state["actions"][-10:]}
 
     def summary(self) -> dict[str, Any]:
         if self._state is None:
             raise RelationshipError("no Yuki relationship session")
-        state = self._state; stats = state["stats"]
+        self._expire_if_due()
+        state = self._state
         return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
-                "relationship_stage": self._stage(stats, state["contacts"]), "yandere_tension": self._tension(stats),
                 "employment": state["employment"], "contacts": state["contacts"],
-                "consent": state["consent"], "stats": stats,
+                "consent": state["consent"],
                 "events": state["events"], "actions": state["actions"], "finished_at": state.get("finished_at")}
 
 

@@ -173,9 +173,19 @@ append-only self-reports; the dialogue remains the source for what was actually
 said. Consent is per action and per participant. Employment acceptance resolves
 Yuki's internship goal but does not imply romance or consent.
 
+The runtime deliberately stores no trust, warmth, attraction or relationship
+stage scores. It applies no emotional deltas and has no threshold that activates
+romance or yandere behaviour. Contact counts describe only observed history.
+Yuki's moe/yandere temperament is an LLM prior; Heart, Head and parent Yuki
+interpret each event from context without a required direction or pace. Elapsed
+time changes opportunity cost and the hard shift budget, never trust.
+
 The factual Executive summary is frozen before the Director's employment
 decision. The decision is a separate relationship-journal event with `hired`,
 `extended`, `rejected`, or `pending`; Yuki cannot create it herself.
+At the relationship deadline, new narrative writes close automatically while
+the factual history remains readable and an explicit employment decision may
+still be recorded.
 
 ## Heart–Head arbitration
 
