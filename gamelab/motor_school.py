@@ -16,7 +16,6 @@ import random
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 from gameserver.v1.zone.model import ZoneRuntime
 
@@ -28,11 +27,7 @@ from .config import (
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_EPOCHS,
-    PPO_GAE_LAMBDA,
-    PPO_GAMMA,
-    PPO_LEARNING_RATE,
     PPO_MAX_GRAD_NORM,
-    PPO_VALUE_COEF,
 )
 from .motors.continuous import squashed_action, squashed_log_prob
 from .motors.package import (
@@ -42,7 +37,9 @@ from .motors.package import (
     get_motor_package,
 )
 
-SCHOOL_VERSION = "velocity_tracking_ppo_v1"
+SCHOOL_VERSION = "velocity_tracking_pg_v2"
+SCHOOL_LEARNING_RATE = 1e-3
+VERIFY_EVERY_EPISODES = 10
 SCHOOL_SECONDS = 4.0
 SEGMENT_SECONDS = 0.5
 TARGET_LEVELS = (-0.75, -0.4, 0.0, 0.4, 0.75)
@@ -58,22 +55,7 @@ class SchoolTransition:
     proprioception: torch.Tensor
     action: float
     old_log_prob: float
-    old_value: float
     reward: float
-    done: bool
-
-
-class SchoolCritic(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(MOTOR_GOAL_SIZE + 2, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-        )
-
-    def forward(self, goal: torch.Tensor, proprioception: torch.Tensor) -> torch.Tensor:
-        return self.net(torch.cat((goal, proprioception), dim=-1)).squeeze(-1)
 
 
 def _now() -> str:
@@ -128,89 +110,74 @@ def _proprioception(player: dict) -> torch.Tensor:
     )
 
 
-def _advantages(transitions: list[SchoolTransition]) -> tuple[torch.Tensor, torch.Tensor]:
-    rewards = [item.reward for item in transitions]
-    values = [item.old_value for item in transitions]
-    advantages = [0.0] * len(transitions)
-    gae = 0.0
-    next_value = 0.0
-    for index in range(len(transitions) - 1, -1, -1):
-        mask = 0.0 if transitions[index].done else 1.0
-        delta = rewards[index] + PPO_GAMMA * next_value * mask - values[index]
-        gae = delta + PPO_GAMMA * PPO_GAE_LAMBDA * mask * gae
-        advantages[index] = gae
-        next_value = values[index]
-    advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
-    returns = advantage_tensor + torch.tensor(values, dtype=torch.float32)
-    if len(advantages) > 1:
-        std = advantage_tensor.std(unbiased=False)
-        if float(std) > 1e-8:
-            advantage_tensor = (
-                advantage_tensor - advantage_tensor.mean()
-            ) / (std + 1e-8)
-    return advantage_tensor, returns
-
-
 def _update(
     motor: nn.Module,
-    critic: SchoolCritic,
     optimizer: torch.optim.Optimizer,
     transitions: list[SchoolTransition],
 ) -> dict[str, float]:
+    """Clipped local policy-gradient update for the physical reflex.
+
+    Motor actions affect velocity immediately over the next Motor interval, so
+    School credit is intentionally local.  A distant critic/GAE horizon would
+    mix consequences from later, randomly changed velocity goals.
+    """
     goals = torch.stack([item.goal for item in transitions])
     props = torch.stack([item.proprioception for item in transitions])
     actions = torch.tensor([item.action for item in transitions], dtype=torch.float32)
     old_log_probs = torch.tensor(
         [item.old_log_prob for item in transitions], dtype=torch.float32
     )
-    advantages, returns = _advantages(transitions)
+    advantages = torch.tensor(
+        [item.reward for item in transitions], dtype=torch.float32
+    )
+    if len(transitions) > 1:
+        std = advantages.std(unbiased=False)
+        if float(std) > 1e-8:
+            advantages = (advantages - advantages.mean()) / (std + 1e-8)
 
-    metrics = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "mae": 0.0}
+    metrics = {"loss": 0.0, "policy_loss": 0.0, "reward_mean": 0.0}
     updates = 0
     count = len(transitions)
     motor.train()
-    critic.train()
-    for _ in range(PPO_EPOCHS):
+    for _ in range(4):
         order = torch.randperm(count)
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = order[start : start + PPO_BATCH_SIZE]
             mean, log_std = motor.parameters_for(goals[indexes], props[indexes])
-            log_probs, _ = squashed_log_prob(mean, log_std, actions[indexes])
-            values = critic(goals[indexes], props[indexes])
+            log_probs, _ = squashed_log_prob(
+                mean, log_std, actions[indexes]
+            )
             ratio = torch.exp(log_probs - old_log_probs[indexes])
             unclipped = ratio * advantages[indexes]
             clipped = torch.clamp(
                 ratio, 1.0 - PPO_CLIP_EPS, 1.0 + PPO_CLIP_EPS
             ) * advantages[indexes]
             policy_loss = -torch.minimum(unclipped, clipped).mean()
-            value_loss = F.mse_loss(values, returns[indexes])
-            loss = policy_loss + PPO_VALUE_COEF * value_loss
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            policy_loss.backward()
             torch.nn.utils.clip_grad_norm_(
-                list(motor.parameters()) + list(critic.parameters()),
+                motor.parameters(),
                 PPO_MAX_GRAD_NORM,
             )
             optimizer.step()
 
-            metrics["loss"] += float(loss.detach())
+            metrics["loss"] += float(policy_loss.detach())
             metrics["policy_loss"] += float(policy_loss.detach())
-            metrics["value_loss"] += float(value_loss.detach())
-            metrics["mae"] += float((values - returns[indexes]).abs().mean())
+            metrics["reward_mean"] += float(
+                advantages[indexes].mean().detach()
+            )
             updates += 1
     if updates:
         for key in metrics:
             metrics[key] /= updates
     motor.eval()
-    critic.eval()
     return metrics
 
 
 def _rollout(
     runtime: ZoneRuntime,
     motor: nn.Module,
-    critic: SchoolCritic,
     *,
     rng: random.Random,
     sequence: int,
@@ -230,10 +197,10 @@ def _rollout(
         player = _player(runtime)
         goal = _goal(desired)
         prop = _proprioception(player)
+        before_error = (desired * PLAYER_MAX_SPEED - float(player["vx"])) / PLAYER_MAX_SPEED
         with torch.no_grad():
             mean, log_std = motor.parameters_for(goal, prop)
             action_tensor, log_prob = squashed_action(mean, log_std, sampled=True)
-            value = critic(goal, prop)
         action = float(action_tensor.item())
         sequence += 1
         runtime.enqueue_input(
@@ -247,7 +214,12 @@ def _rollout(
         after = _player(runtime)
         desired_vx = desired * PLAYER_MAX_SPEED
         error_norm = (desired_vx - float(after["vx"])) / PLAYER_MAX_SPEED
-        reward = -(error_norm * error_norm) - 0.0005 * (action * action)
+        reward = (
+            before_error * before_error
+            - error_norm * error_norm
+            - 0.01 * error_norm * error_norm
+            - 0.0005 * action * action
+        )
         tracking_abs += abs(desired_vx - float(after["vx"]))
         transitions.append(
             SchoolTransition(
@@ -255,9 +227,7 @@ def _rollout(
                 proprioception=prop,
                 action=action,
                 old_log_prob=float(log_prob.item()),
-                old_value=float(value.item()),
                 reward=float(reward),
-                done=step == steps - 1,
             )
         )
 
@@ -315,7 +285,6 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
 def _save_candidate(
     package: MotorPackage,
     motor: nn.Module,
-    critic: SchoolCritic,
     optimizer: torch.optim.Optimizer,
     *,
     episodes: int,
@@ -328,7 +297,6 @@ def _save_candidate(
         "episodes": int(episodes),
         "seed": int(seed),
         "model": motor.state_dict(),
-        "critic": critic.state_dict(),
         "optimizer": optimizer.state_dict(),
     }
     temporary = package.candidate_path.with_suffix(".pt.tmp")
@@ -339,7 +307,6 @@ def _save_candidate(
 def _load_candidate(
     package: MotorPackage,
     motor: nn.Module,
-    critic: SchoolCritic,
     optimizer: torch.optim.Optimizer,
 ) -> int:
     source = package.candidate_path if package.candidate_path.is_file() else package.brain_path
@@ -348,9 +315,12 @@ def _load_candidate(
     payload = torch.load(source, map_location="cpu")
     if not isinstance(payload, dict) or payload.get("motor_id") != package.motor_id:
         raise MotorPackageError(f"motor {package.motor_id}: invalid school artifact")
+    if payload.get("school") != SCHOOL_VERSION:
+        raise MotorPackageError(
+            f"motor {package.motor_id}: candidate belongs to "
+            f"{payload.get('school')!r}; rerun Motor School with --fresh"
+        )
     motor.load_state_dict(payload["model"])
-    if "critic" in payload:
-        critic.load_state_dict(payload["critic"])
     if "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload.get("episodes", 0))
@@ -374,6 +344,8 @@ def _finish_manifest(
         "seed": int(seed),
         "episodes_run": int(episodes_run),
         "school_seconds": SCHOOL_SECONDS,
+        "learning_rate": SCHOOL_LEARNING_RATE,
+        "credit_assignment": "one_motor_interval_error_improvement",
         "segment_seconds": SEGMENT_SECONDS,
         "target_levels": list(TARGET_LEVELS),
         "verification": verification,
@@ -404,24 +376,33 @@ def run_school(
     verify_only: bool = False,
 ) -> dict:
     package = get_motor_package(motor_id)
-    if (package.manifest.get("training") or {}).get("school") != SCHOOL_VERSION:
-        raise MotorPackageError(
-            f"motor {motor_id}: this school does not support its manifest"
-        )
+    training_manifest = dict(package.manifest.get("training") or {})
+    prior_school = training_manifest.get("school")
+    if prior_school != SCHOOL_VERSION:
+        if not fresh:
+            raise MotorPackageError(
+                f"motor {motor_id}: school changed from {prior_school!r} "
+                f"to {SCHOOL_VERSION!r}; rerun with --fresh"
+            )
+        training_manifest["school"] = SCHOOL_VERSION
+        if not package.brain_path.is_file():
+            training_manifest["status"] = "untrained"
+            training_manifest["verified"] = False
+        package.manifest["training"] = training_manifest
+        package.write_manifest()
 
     torch.manual_seed(seed)
     rng = random.Random(seed)
     motor = package.new_model()
-    critic = SchoolCritic()
     optimizer = torch.optim.Adam(
-        list(motor.parameters()) + list(critic.parameters()),
-        lr=PPO_LEARNING_RATE,
+        motor.parameters(),
+        lr=SCHOOL_LEARNING_RATE,
     )
     candidate_episodes = 0
     if fresh:
         package.candidate_path.unlink(missing_ok=True)
     else:
-        candidate_episodes = _load_candidate(package, motor, critic, optimizer)
+        candidate_episodes = _load_candidate(package, motor, optimizer)
 
     if verify_only:
         source = package.brain_path if package.brain_path.is_file() else package.candidate_path
@@ -433,18 +414,18 @@ def run_school(
 
     runtime, sequence = _new_world()
     episodes_run = 0
+    verification: dict | None = None
     try:
         for _ in range(episodes):
             transitions, sequence, rollout = _rollout(
-                runtime, motor, critic, rng=rng, sequence=sequence
+                runtime, motor, rng=rng, sequence=sequence
             )
-            metrics = _update(motor, critic, optimizer, transitions)
+            metrics = _update(motor, optimizer, transitions)
             candidate_episodes += 1
             episodes_run += 1
             _save_candidate(
                 package,
                 motor,
-                critic,
                 optimizer,
                 episodes=candidate_episodes,
                 seed=seed,
@@ -452,9 +433,20 @@ def run_school(
             print(
                 f"MotorSchool {package.motor_id} episode={candidate_episodes} "
                 f"velocity_mae={rollout['mean_abs_velocity_error']:.2f} "
-                f"loss={metrics['loss']:+.5f}",
+                f"policy_loss={metrics['policy_loss']:+.5f}",
                 flush=True,
             )
+            if candidate_episodes % VERIFY_EVERY_EPISODES == 0:
+                verification = _verify(motor)
+                print(
+                    f"MotorSchool VERIFY episode={candidate_episodes} "
+                    f"mae={verification['mean_abs_velocity_error']:.2f} "
+                    f"zero_speed={verification['zero_target_mean_abs_speed']:.2f} "
+                    f"{'PASS' if verification['passed'] else 'FAIL'}",
+                    flush=True,
+                )
+                if verification["passed"]:
+                    break
     except KeyboardInterrupt:
         _finish_manifest(
             package,
@@ -466,7 +458,8 @@ def run_school(
         )
         raise
 
-    verification = _verify(motor)
+    if verification is None or not verification.get("passed"):
+        verification = _verify(motor)
     promoted = bool(verification["passed"])
     if promoted:
         package.archive_verified_brain()

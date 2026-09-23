@@ -98,10 +98,11 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(first, 0.1635)
         self.assertAlmostEqual(repeated, -0.0005)
 
-    def test_joint_ppo_updates_continuous_motor_and_spine(self):
+    def test_spine_ppo_updates_spine_but_preserves_frozen_motor(self):
         torch.manual_seed(23)
         model = SpineMotorPolicy.fresh(23)
-        optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+        model.freeze_motor()
+        optimizer = torch.optim.Adam(model.trainable_parameters(), lr=3e-4)
         transitions: list[Transition] = []
 
         for index in range(24):
@@ -131,7 +132,7 @@ class TrainingTests(unittest.TestCase):
 
         self.assertTrue(all(math.isfinite(value) for value in metrics.values()))
         self.assertTrue(any(not torch.equal(a, b) for a, b in zip(spine_before, model.spine.parameters())))
-        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(motor_before, model.motor.parameters())))
+        self.assertTrue(all(torch.equal(a, b) for a, b in zip(motor_before, model.motor.parameters())))
 
 
 if __name__ == "__main__":

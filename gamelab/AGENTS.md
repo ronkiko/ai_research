@@ -62,3 +62,10 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Motor School may import canonical `ZoneRuntime` directly, like unpaced TRAIN,
   but it must train from measured physical consequences and must not inject
   teacher `motor_x` actions.
+
+- Motor School credit must stay local to the measured consequence of one Motor
+  interval. Do not reintroduce a critic/GAE horizon spanning later randomized
+  velocity goals; that obscures reflex credit assignment.
+- Keep an actual convergence regression for the default Motor School, not only
+  shape/update tests. A school that compiles but cannot promote a fresh Motor is
+  not acceptable.

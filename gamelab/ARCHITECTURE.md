@@ -112,9 +112,11 @@ substituted later.
 
 Motor School is an operator-only unpaced laboratory over the canonical
 `ZoneRuntime`. It gives the Motor only a normalized requested velocity plus
-local proprioception. Reward measures velocity-tracking error; no teacher emits
-the correct `motor_x`. A candidate is promoted to the package's verified
-`brain.pt` only after deterministic acceleration/braking/reversal verification.
+local proprioception. The v2 school assigns credit over exactly one Motor
+interval from the measured reduction in velocity error; it deliberately has no
+critic/GAE horizon spanning future velocity goals. No teacher emits the correct
+`motor_x`. Frozen acceleration/braking/reversal verification runs periodically,
+and only PASS may promote a candidate to the package's verified `brain.pt`.
 A failed candidate never overwrites an already verified brain.
 
 ## Continuous physical Motor

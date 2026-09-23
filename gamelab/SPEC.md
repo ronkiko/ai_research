@@ -84,10 +84,14 @@ runtime `manifest.json`, `brain.pt`, `candidate.pt`, `history.jsonl`, and
 `checkpoints/` in the same package directory. Those files form the portable
 learned organ.
 
-Motor School `velocity_tracking_ppo_v1` trains the Motor without Spine. Its
+Motor School `velocity_tracking_pg_v2` trains the Motor without Spine. Its
 goal socket receives a requested normalized velocity, local proprioception
 contains only measured velocity/current effort, and the Motor alone chooses
-`motor_x`. Frozen verification must pass before the candidate is promoted.
+`motor_x`. Credit assignment is local to one 60 Hz Motor interval: reward
+measures whether the physical velocity error decreased after that action,
+with only small residual error/effort costs. No critic or long return is allowed
+to mix credit across later randomly changed velocity goals. Frozen verification
+runs every 10 episodes and the first PASS may promote the candidate immediately.
 
 ## Learning
 

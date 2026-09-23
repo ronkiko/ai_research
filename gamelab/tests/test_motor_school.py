@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import shutil
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from gamelab.motor_school import (
-    SchoolCritic,
     _new_world,
     _rollout,
     _update,
     _verify,
+    run_school,
 )
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
+from gamelab.tests.motor_fixture import SOURCE
 
 
 class RuleMotor(torch.nn.Module):
@@ -32,26 +38,21 @@ class RuleMotor(torch.nn.Module):
 
 
 class MotorSchoolTests(unittest.TestCase):
-    def test_school_rollout_and_ppo_update_execute_on_canonical_world(self):
+    def test_school_rollout_and_local_policy_update_execute_on_canonical_world(self):
         torch.manual_seed(7)
         motor = Motor()
-        critic = SchoolCritic()
-        optimizer = torch.optim.Adam(
-            list(motor.parameters()) + list(critic.parameters()),
-            lr=3e-4,
-        )
+        optimizer = torch.optim.Adam(motor.parameters(), lr=1e-3)
         runtime, sequence = _new_world()
         import random
 
         transitions, sequence, rollout = _rollout(
             runtime,
             motor,
-            critic,
             rng=random.Random(7),
             sequence=sequence,
         )
         before = [parameter.detach().clone() for parameter in motor.parameters()]
-        metrics = _update(motor, critic, optimizer, transitions)
+        metrics = _update(motor, optimizer, transitions)
 
         self.assertEqual(len(transitions), 240)
         self.assertGreater(sequence, 0)
@@ -63,6 +64,21 @@ class MotorSchoolTests(unittest.TestCase):
                 for left, right in zip(before, motor.parameters())
             )
         )
+
+    def test_default_motor_school_converges_and_promotes_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            shutil.copytree(SOURCE, root / "continuous_1d_v1")
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                result = run_school(
+                    "continuous_1d_v1",
+                    episodes=100,
+                    seed=1,
+                    fresh=True,
+                )
+                self.assertTrue(result["promoted"], result)
+                self.assertLessEqual(result["candidate_episodes"], 100)
+                self.assertTrue((root / "continuous_1d_v1" / "brain.pt").is_file())
 
     def test_frozen_school_verification_accepts_physical_velocity_reflex(self):
         result = _verify(RuleMotor())

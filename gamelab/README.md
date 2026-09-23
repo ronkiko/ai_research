@@ -99,6 +99,11 @@ the local physical reflex against requested velocity; it never receives
 artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
+Motor School v2 uses local physical credit: each Motor action is scored by the
+measured reduction in velocity error over the next 1/60 second. It does not use
+a critic to propagate consequences from later velocity assignments. Frozen
+verification runs every 10 episodes and training stops early on PASS.
+
 A clean checkout intentionally contains no verified Motor brain. Train the
 default wheel first:
 

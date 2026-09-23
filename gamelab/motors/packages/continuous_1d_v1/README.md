@@ -18,3 +18,12 @@ as **untrained** until Motor School verifies and promotes a candidate.
 Socket v1 uses `MotorGoal[4]`. In Motor School, index 0 is normalized desired
 velocity and indexes 1..3 are zero/reserved. The deployed Motor also sees only
 local normalized velocity and current motor effort. It never receives target_x.
+
+## Motor School v2
+
+The active school uses local clipped policy-gradient credit. Each 60 Hz Motor
+action is scored from the measured change in velocity error over the following
+Motor interval. No critic propagates reward across later randomly changed
+velocity goals, and no teacher supplies a target motor effort. Frozen
+verification runs every 10 school episodes and the first PASS promotes the
+candidate immediately.
