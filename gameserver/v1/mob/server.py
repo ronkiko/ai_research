@@ -49,7 +49,7 @@ class MobService:
             else:
                 next_decision = time.monotonic()
 
-            move_x = self.next_intent()
+            motor_x = self.next_intent()
             self.sequence += 1
             try:
                 rpc(
@@ -59,7 +59,7 @@ class MobService:
                         "input",
                         entity_id="mob1",
                         sequence=self.sequence,
-                        move_x=move_x,
+                        motor_x=motor_x,
                         source="mob",
                     ),
                     timeout=0.5,

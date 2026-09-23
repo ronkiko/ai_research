@@ -13,8 +13,8 @@ See `gamelab/ARCHITECTURE.md` for the complete laboratory contract.
 
 The Zone Server is the only authority for mutable in-zone game state. Its
 fixed-step loop runs at 120 Hz whether there are zero, one, or many connected
-players. Input is current intent, not a future schedule: the latest accepted
-movement state remains latched until another command changes it.
+players. Input is current actuator effort, not a future schedule: the latest accepted
+`motor_x` remains latched until another command changes it.
 
 This deliberately carries forward the strongest Game2 Console rules from
 `game2/v2/console/SPEC.md` and `game2/v2/doc/REALTIME_SYSTEM.md`:
@@ -47,7 +47,7 @@ Authoritative entity motion state is:
 ```text
 x
 vx
-move_x    # -1 left, 0 stop, +1 right
+motor_x   # normalized actuator effort in [-1,+1]
 ```
 
 ## v1 topology
@@ -86,8 +86,24 @@ assigns a distinct entity ID such as `actor-player1`.
 
 ### Zone Server
 
+Physical motion is integrated rather than assigned by the command. For each
+120 Hz tick, Zone computes approximately:
+
+```text
+acceleration = max_acceleration * motor_x - drag * vx
+vx += acceleration * dt
+vx = clamp(vx, -max_speed, +max_speed)
+x += vx * dt
+```
+
+For the player, the current defaults are max speed 180 units/s, maximum motor
+acceleration 720 units/s² and linear drag coefficient 4/s. Releasing the motor
+(`motor_x=0`) therefore produces coasting and passive deceleration rather than
+an instantaneous stop; opposite effort may actively brake. Manual
+left/stop/right clients are only a compatibility UI mapping to effort -1/0/+1.
+
 Owns the authoritative mutable state of `zone1`: entities, one-dimensional
-position/velocity, latched movement state, and global `world_tick`. The zone
+position/velocity, latched motor effort, and global `world_tick`. The zone
 loop is 120 Hz. Only the tick loop mutates entities; network threads enqueue
 commands. The demo world is the bounded line `x in [0,1000]`. The player spawns at
 `x=100`; `mob1`, rendered to humans as the bomb marker `B`, starts at `x=900`.
@@ -97,8 +113,8 @@ commands. The demo world is the bounded line `x in [0,1000]`. The player spawns 
 A server-side NPC intent process. `mob1` is the laboratory mob/bomb (`B`) and
 starts at `x=900`. Until a real vision sensor contract exists, the mob is
 intentionally **blind**: it does not read player coordinates or Telemetry to
-decide movement. It performs a random walk by choosing `move_x=-1/0/+1` about
-once per second and sends that intent to Zone.
+decide movement. It performs a random walk by choosing full left/released/full right motor
+effort (`motor_x=-1/0/+1`) about once per second and sends that intent to Zone.
 
 It never writes `x` directly. Zone remains authority for the mob exactly as
 it remains authority for human players.
@@ -172,7 +188,7 @@ python -m unittest discover -s gameserver/v1/tests -v
 ```
 
 The core tests prove the properties that matter before a real client exists:
-world time advances without players, movement input is latched, command
+world time advances without players, motor effort is latched, command
 sequences are monotonic, sessions route to a distinct zone entity, and the
 Telemetry ring both rotates at 120 ticks and detects missing ticks.
 

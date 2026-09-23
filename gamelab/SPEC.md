@@ -31,8 +31,9 @@ The external authoritative world remains:
 
 - physics: 120 Hz;
 - world x interval: 0..1000;
-- player speed: 180 units/s;
-- movement intent: -1, 0, +1 and latched by GameServer.
+- player maximum speed: 180 units/s;
+- one normalized motor-effort input `motor_x in [-1,+1]`, latched by GameServer;
+- physical velocity is server state produced by acceleration, drag and integration.
 
 ## Learned hierarchy
 
@@ -54,19 +55,22 @@ hand-authored.
 
 ### Motor 1
 
-Motor 1 is an MLP evaluated at 60 Hz.
+The former discrete three-logit Motor is retained only as an archived
+implementation under `gamelab/motors/legacy_discrete.py` for a future
+configurator/migration path. It is not part of the active policy or VERIFY
+fallback.
+
+Motor 1 is a continuous 1D learned network evaluated at 60 Hz.
 
 Input is:
 
 ```text
-MotorGoal[4] + proprioception[vx, current_move]
+MotorGoal[4] + proprioception[vx, motor_x]
 ```
 
-Output is three logits corresponding to:
-
-```text
-LEFT / STOP / RIGHT
-```
+Output is one Gaussian policy mean plus one learned exploration scale. TRAIN
+samples the Gaussian and applies `tanh`; VERIFY/RUN use `tanh(mean)`. The
+single external action is normalized physical effort `motor_x in [-1,+1]`.
 
 Motor 1 does not receive target position or target displacement directly.
 
@@ -84,8 +88,8 @@ is counted in world ticks. Wall time is not part of reward, timeout, success or
 policy input.
 
 Near-goal shaping is state-based, not an actuator hint. The default shaping
-radius is ±5. A bonus exists only for a measured stopped state (`vx=0` and
-`move_x=0`) and rises monotonically with proximity. Each episode pays only the
+radius is ±5. A bonus exists only for a measured stopped state (`vx=0`) and rises
+monotonically with proximity. It does not reward any particular motor command. Each episode pays only the
 increase over its previously best stopped proximity, bounding the total shaping
 bonus and preventing reward farming by waiting. SUCCESS remains the distinct
 terminal objective.
@@ -100,13 +104,15 @@ success adds positive reward. Timeout adds negative terminal reward.
 
 The learned policy succeeds only when:
 
-- target error is within configured tolerance;
+- absolute target error is within configured tolerance (0.9 by default);
 - measured velocity is zero;
-- latched movement intent is zero;
-- that state remains stable for the configured physical hold period, supported
-  by fresh server ticks and unchanged applied sequence; repeated reads do not count.
+- that physical state remains stable for the configured hold period, supported
+  by fresh server ticks; repeated reads do not count.
 
-A post-terminal safety stop is not part of success classification.
+Continuous motor sequence changes do not independently reset the hold. If they
+cause physical motion, velocity/position evidence resets it.
+
+Post-terminal actuator relaxation is not part of success classification.
 
 ## Laboratory MCP interface
 
@@ -251,7 +257,7 @@ deleted by GameLab.
 
 TRAIN resets physical player state to spawn before every episode, and VERIFY
 does the same before every frozen run. This reset is a separate Host operation:
-it sets `x=100`, `vx=0`, and `move_x=0` while preserving session identity
+it sets `x=100`, `vx=0`, and `motor_x=0` while preserving session identity
 and Host command sequence. RUN never performs this reset.
 
 The MCP may expose reward instrumentation and experiment metadata, but it does
@@ -261,8 +267,8 @@ to GameLab.
 
 ## Verification
 
-VERIFY uses the saved checkpoint with learning disabled and greedy Motor action
-selection against the ordinary realtime Host/GameServer path. A checkpoint
+VERIFY uses the saved checkpoint with learning disabled and deterministic
+`tanh(mean)` Motor effort against the ordinary realtime Host/GameServer path. A checkpoint
 trained with the shell-only unpaced mode is accepted without conversion because
 both modes use the same model/checkpoint format.
 

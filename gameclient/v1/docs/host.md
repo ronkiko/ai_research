@@ -46,7 +46,7 @@ session. The initial shared-control rule is simple:
 1. Host receives commands from Clients.
 2. Host serializes accepted commands in receive order.
 3. Host assigns the GameServer sequence.
-4. The latest accepted movement intent is current.
+4. The latest accepted motor effort is current.
 5. Host publishes the resulting command/event so every Client can observe it.
 
 No Client is privileged merely because it is human, AI, CLI, MCP, or GUI.
@@ -63,6 +63,16 @@ GameServer does not wait for GameClient Host.
 GameClient Host does not wait for Clients.
 ```
 
+## Continuous actuator transport
+
+`motor(motor_x)` is the native AI/automation control operation and accepts one
+finite scalar in `[-1,+1]`. Host serializes it into the same monotonic command
+sequence as all other control clients. The legacy/manual `input(move_x)`
+operation remains for CLI/GUI compatibility and maps -1/0/+1 to full
+left/released/full right motor effort. A manual "stop" therefore releases the
+motor; physical velocity decays in GameServer rather than being set to zero by
+Host.
+
 ## Host Protocol
 
 Clients communicate with the Host through a separate **Host Protocol**. It is
@@ -70,13 +80,11 @@ not the GameServer Gateway Protocol and must not expose internal GameServer
 service addresses.
 
 Host binds only to loopback by default and uses newline-delimited JSON on
-`127.0.0.1:17700`. The implemented v1 operations are `health`, `describe`,
-`players`, `login`, `session`, `state`, `input`, `reset`, `events`,
-and `logout`.
+`127.0.0.1:17700`. The implemented v1 operations are `health`, `describe`, `players`, `login`,
+`session`, `state`, `input`, `motor`, `reset`, `events`, and `logout`.
 
 `reset` is a non-destructive physical-state reset for laboratory episode
-boundaries. It restores the active player to spawn state (`x=100`, `vx=0`,
-`move_x=0`) without replacing the GameServer session and without resetting
+boundaries. It restores the active player to spawn state (`x=100`, `vx=0`, `motor_x=0`) without replacing the GameServer session and without resetting
 or incrementing Host's monotonic command sequence. It is distinct from
 `logout/login`.
 

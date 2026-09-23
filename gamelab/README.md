@@ -15,7 +15,7 @@ The unified timing, sensing, evidence and upgrade contract is in
 The first experiment asks one concrete question:
 
 > Can a slow strategic agent provide only a target position while a learned
-> Spine CNN and one learned Motor MLP close the realtime control loop?
+> Spine CNN and one learned continuous 1D Motor close the realtime control loop?
 
 ## Architecture
 
@@ -28,21 +28,26 @@ OpenCode / LLM strategist
         |
         | learned 4-value motor goal
         v
- one Motor MLP @ 60 Hz
+ continuous Motor @ 60 Hz
         |
-        | LEFT / STOP / RIGHT
+        | motor_x effort [-1,+1]
         v
  GameClient Host
         |
         v
  GameServer physics @ 120 Hz
+ effort -> acceleration -> vx -> x
 ```
 
 The LLM is deliberately outside the motor loop. It sets goals and observes
 results. It does not time button presses.
 
-The first humanoid abstraction has exactly one Motor. A future experiment may
-add a second Motor and study learned coordination between them.
+The first humanoid abstraction has exactly one continuous Motor. Its scalar
+output is normalized physical effort, not a symbolic LEFT/STOP/RIGHT decision.
+The archived discrete v1 MLP lives only under `gamelab/motors/legacy_discrete.py`
+for a future motor configurator/migration experiment and is not an active
+fallback. A future experiment may add another Motor and study learned
+coordination between them.
 
 The current semantic vertical also provides a non-procedural character and
 volition experiment for Yuki. A stable Character Core conditions independent
@@ -59,11 +64,12 @@ distance-based action fallback, gait scheduler, or hidden procedural
 "finish the job" path.
 
 Procedural code is allowed only for the laboratory itself: measurement,
-reward calculation, rollout boundaries, logging, checkpointing, safety stop
+reward calculation, rollout boundaries, logging, checkpointing, terminal actuator relaxation
 after a terminal/cancel condition, and verification.
 
 A successful VERIFY run is frozen inference: no learning and no procedural
-controller.
+controller. TRAIN samples a one-dimensional Gaussian policy and squashes it
+through tanh; VERIFY/RUN use tanh(mean) deterministically.
 
 ## Information boundary
 
@@ -71,14 +77,14 @@ Spine sees a 32-frame temporal history with four measured/command channels:
 
 - normalized self `x`;
 - normalized self `vx`;
-- current actuator state `move_x`;
+- current normalized motor effort `motor_x`;
 - strategic goal displacement `target_x - x`.
 
 Motor does **not** receive `target_x` or `goal_dx`. It receives only:
 
 - the learned 4-value MotorGoal emitted by Spine;
 - normalized local `vx`;
-- current actuator state.
+- current motor effort.
 
 This forces the hierarchy to learn an internal language instead of letting the
 Motor solve the strategic task directly.
@@ -100,15 +106,15 @@ the same sensor history, reward, PPO update, reset semantics, success hold and
 checkpoint. Episode timeout is measured in simulated world ticks. Wall time is
 only a liveness watchdog/diagnostic and cannot change the learned trajectory.
 
-Default reward shaping does not reward STOP as an action. It rewards a measured
-state only when the player is physically stopped (`vx=0`, `move_x=0`) within
-±5 of the target. The bounded proximity bonus increases smoothly toward the
+Default reward shaping does not reward a particular motor command. It rewards a
+measured state only when the player is physically stopped (`vx=0`) within ±5
+of the target. The bounded proximity bonus increases smoothly toward the
 target and is paid only for improvement over the best stopped proximity already
 seen in that episode, so waiting or repeatedly stopping at the same point cannot
 farm reward. Exact SUCCESS remains a separate larger terminal bonus.
 
 Each TRAIN episode begins with a non-destructive Host episode reset to
-`x=100, vx=0, move_x=0`. VERIFY performs the same reset before every run.
+`x=100, vx=0, motor_x=0`. VERIFY performs the same reset before every run.
 The reset preserves the active Host/GameServer session and Host command
 sequence; GameLab never uses logout/login for episode boundaries. A live RUN
 does not reset and begins from the player's actual current state.
@@ -120,15 +126,14 @@ learned policy gets within tolerance and has actually stopped.
 Default success condition:
 
 ```text
-abs(target_x - x) <= 1
+abs(target_x - x) <= 0.9
 vx == 0
-move_x == 0
 held for 0.1 seconds of fresh server-tick evidence
 ```
 
-The terminal safety stop that runs after success/timeout/cancel is cleanup only.
-It is applied after outcome classification and cannot turn a failed episode
-into a success.
+The terminal actuator relaxation (`motor_x=0`) after success/timeout/cancel is
+cleanup only. It is applied after outcome classification and cannot turn a
+failed episode into a success.
 
 ## Python environment
 
@@ -186,6 +191,10 @@ in-process:
 ```bash
 ./gamelab/op/train-unpaced.sh --fresh --episodes 50 --target 987
 ```
+
+The continuous Motor uses checkpoint format v2. Discrete three-logit v1 weights
+are intentionally not loaded into it; replacing the active model archives the
+previous checkpoint bytes under `runtime/checkpoints/`.
 
 With `--fresh`, both shell TRAIN and realtime MCP TRAIN immediately reset the
 checkpoint model, optimizer metadata, episode counter, PRNG seed and persisted

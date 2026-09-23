@@ -5,11 +5,11 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - GameLab is an AI-model research laboratory, not a gameplay convenience layer.
 - Do not add PID, scripted teachers, heuristic steering, timed movement macros,
   procedural fallback controllers, or hidden auto-correction.
-- Spine CNN and Motor MLP must remain genuinely trainable models.
+- Spine CNN and the active continuous 1D Motor must remain genuinely trainable models.
 - In v1 there is exactly one Motor.
 - Motor must not receive strategic `target_x` or `goal_dx` directly.
 - LLM/OpenCode is the slow strategist. It may set/cancel goals and inspect
-  status, but it must not perform the realtime left/right/stop loop.
+  status, but it must not perform the realtime continuous `motor_x` loop.
 - Realtime/MCP GameLab is a normal downstream GameClient Host client. Use the
   official `gameclient.v1.clients.base.HostClient` API and never access
   GameServer internals directly. The sole exception is operator-only unpaced
@@ -20,14 +20,14 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   The control loop never logs in, logs out, or replaces that session. Deleting
   an owned extra Host is a separate advanced lifecycle operation.
 - TRAIN/VERIFY episode boundaries use Host's non-destructive physical reset
-  (spawn x=100, vx=0, move_x=0) while preserving session and sequence. RUN must
+  (spawn x=100, vx=0, motor_x=0) while preserving session and sequence. RUN must
   not reset.
 - Physics is 120 Hz, Motor is 60 Hz, Spine is 10 Hz unless the experiment
   explicitly changes the documented contract. These cadences are world-tick
   cadences: at 120 Hz Motor acts every 2 ticks and Spine every 12. Wall time
   must not alter reward, timeout, success, or policy observations.
 - Rollout boundaries, reward, logging, measurement, checkpointing, and terminal
-  safety stop are laboratory infrastructure, not learned control.
+  actuator relaxation are laboratory infrastructure, not learned control.
 - VERIFY means frozen weights. A procedural fallback must never make VERIFY
   pass.
 - Use the shared `control.py` executor for TRAIN/VERIFY/RUN. Require fresh
@@ -38,11 +38,14 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Before declaring a patch ready, run the real `./gamelab/op/check.sh`
   vertical, not only unit tests.
 - Brain Executive is strategic memory and research accounting only. It must never
-  emit LEFT/STOP/RIGHT, alter Motor/Spine outputs, start/cancel experiments by
-  itself, or choose a strategy for the LLM.
+  emit `motor_x`, alter Motor/Spine outputs, start/cancel experiments by itself,
+  or choose a strategy for the LLM.
 - Executive machine evidence comes from normal bounded TRAIN/VERIFY/RUN status.
   Brain-authored hypotheses and Director-signal notes must remain distinguishable
   from machine observations.
 - Executive research sessions are capped at 180 minutes. Phase and plateau
   signals are advisory; they may surface evidence and risks but must not become
   procedural steering.
+
+- Active Motor output is one normalized effort scalar in `[-1,+1]`; it must not set `vx` or `x` directly. The archived discrete motor under `gamelab/motors/legacy_discrete.py` is not an active fallback.
+- Default success tolerance is `±0.9`; the `±5` near-goal radius is reward shaping only and must never redefine success.

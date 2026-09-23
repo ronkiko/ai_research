@@ -21,7 +21,7 @@ Human-like behavior is the research outcome only when it emerges from the
 interaction and history of limited specialized subsystems.
 
 The currently implemented physical hierarchy establishes this principle with a
-slow LLM Brain, a temporal CNN Spine and a fast MLP Motor. Semantic subsystems
+slow LLM Brain, a temporal CNN Spine and a fast continuous 1D Motor network. Semantic subsystems
 do not need a second neural architecture merely to be distinct. For Yuki's
 Heart–Head conflict, OpenCode runs the same inherited LLM in two fresh child
 sessions with different bounded input packets; neither child receives the other
@@ -65,14 +65,14 @@ scientific verification; it must not secretly supply the behavior being studied.
 | Will/Ego: isolated LLM context | Intention, agency and behavior under pressure | Pressure/conflict-driven |
 | Social Chorus: isolated LLM critic | Visible environmental/social appraisal | Seeded 1–10 min while idle |
 | Spine: temporal CNN | Sensor history + strategic goal → learned MotorGoal | 10 Hz |
-| Motor: MLP | MotorGoal + local proprioception → actuator intent | 60 Hz |
+| Motor: continuous 1D network | MotorGoal + local proprioception → scalar effort [-1,+1] | 60 Hz |
 | Host | Session, command sequence, transport, attributed events | Request-driven |
 | Zone | Sole mutable physical authority | 120 Hz |
 | GameLab training infrastructure | Rollout, measured reward, PPO, checkpoints, evidence | Between rollouts |
 
-LLM latency never pauses the body or the world. CNN and MLP are jointly
-trainable; no scripted steering, teacher or procedural fallback completes the
-task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
+LLM latency never pauses the body or the world. Spine and continuous Motor are
+jointly trainable; no scripted steering, teacher or procedural fallback
+completes the task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
 Critic and optimizer are training infrastructure, not an additional actuator.
 
 The Brain has two roles: scientist during TRAIN/VERIFY, strategist during RUN.
@@ -90,6 +90,23 @@ require a future explicit perception sensor; raw world truth must not silently
 become controller perception. Tick/epoch/sequence metadata belongs to evidence
 and scheduling, not policy features. Nominal history span is about 0.53 seconds;
 effective intervals may be longer and are recorded, not synthetically filled.
+
+## Continuous physical Motor
+
+The active Motor does not classify LEFT/STOP/RIGHT. At 60 Hz it receives the
+current MotorGoal plus local proprioception and emits one scalar
+`motor_x in [-1,+1]`. During TRAIN this action is sampled from a Gaussian policy
+and tanh-squashed; frozen VERIFY/RUN use `tanh(mean)`.
+
+GameServer interprets `motor_x` as normalized actuator effort. Zone integrates
+`acceleration = max_acceleration * motor_x - drag * vx`, clamps velocity to the
+physical maximum, then integrates position at 120 Hz. Zero effort relaxes the
+actuator and drag dissipates velocity; opposite effort can actively brake. No
+controller sets `vx` or snaps `x` to a target.
+
+The former three-logit discrete MLP is archived under
+`gamelab/motors/legacy_discrete.py` only as a future configurable-motor
+specimen. It is not imported by the active policy and cannot act as a fallback.
 
 ## One tick-domain executor, two pacing modes
 
@@ -113,11 +130,11 @@ invalidates the experiment. In realtime mode, no fresh observation within 0.5
 wall seconds ends it as `stale`; this is only a transport/liveness watchdog.
 Episode timeout, reward duration, discounting and success hold use world ticks.
 
-Success requires target tolerance, zero velocity, STOP intent and at least
-0.1 simulated seconds of tick stability. Gaps over 0.1 simulated seconds restart
-hold measurement. A changed applied sequence also restarts it; independent
-intervening commands invalidate the run. Terminal safety STOP occurs after
-classification.
+Success requires target error within the configured tolerance (0.9 by default),
+zero physical velocity and at least 0.1 simulated seconds of tick stability.
+Gaps over 0.1 simulated seconds restart hold measurement. Continuous motor
+sequence changes do not by themselves invalidate the hold; any resulting motion
+does. Terminal actuator relaxation occurs only after classification.
 
 ## Causality and episode boundary
 
@@ -136,10 +153,10 @@ application tick. Effective discount is gamma^elapsed_steps; elapsed_steps is
 server tick delta divided by the nominal motor period. GAE uses the same time
 scale. Step cost scales with elapsed time; distance progress and terminal rewards
 retain their meanings. Stopped-near-goal shaping is a bounded episode potential:
-only measured states with `vx=0` and STOP intent inside the default ±5 radius
-qualify, proximity rises toward the target, and reward is paid only when that
-episode improves its best stopped proximity. Thus STOP itself is not rewarded
-away from the goal and a stationary agent cannot farm the same shaping signal.
+only measured states with `vx=0` inside the default ±5 radius qualify,
+proximity rises toward the target, and reward is paid only when that episode
+improves its best stopped proximity. No particular `motor_x` value is rewarded,
+and a stationary agent cannot farm the same shaping signal.
 Timeout remains terminal and strongly negative; invalid or cancelled rollouts
 are not optimized.
 

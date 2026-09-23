@@ -14,8 +14,8 @@ players and continues advancing independently of external consumers.
 ## Spatial contract
 
 GameServer v1 is intentionally one-dimensional. The complete normative spatial
-state is `x`, `vx`, and latched `move_x` in `{-1,0,1}` on the bounded
-interval `x in [0,1000]`.
+state is `x`, `vx`, and latched continuous `motor_x` in `[-1,+1]` on the
+bounded interval `x in [0,1000]`.
 
 There is no `y` axis in v1. Vertical movement, gravity, jumping, platforms,
 diagonal movement, and 2D physics are outside the v1 contract.
@@ -44,8 +44,8 @@ the world clock.
 
 Mob Server currently has no perception sensor. Therefore its movement policy
 must not inspect player coordinates, nearest-player distance, or Telemetry
-world truth. The v1 pre-vision behavior is blind random walking: periodically
-choose `move_x` from `{-1,0,1}` and submit that intent to Zone.
+world truth. The v1 pre-vision behavior is blind random walking: periodically choose
+`motor_x` from `{-1,0,1}` and submit that effort to Zone.
 
 When a vision sensor is introduced later, pursuit may depend on what that
 sensor reports. Direct access to authoritative player position remains
@@ -53,16 +53,22 @@ forbidden as a substitute for sensing. See [Mob Server](docs/mob-server.md).
 
 ## Command semantics
 
-A gameplay movement command contains an entity, positive monotonic sequence,
-and current `move_x` in `{-1,0,1}`. Accepted state stays latched until a
-later sequence changes it. Commands do not contain target ticks, durations,
-future action lists, positions, velocities, or physics results.
+A gameplay motor command contains an entity, positive monotonic sequence, and
+current normalized effort `motor_x` in `[-1,+1]`. Accepted effort stays latched
+until a later sequence changes it. Commands do not contain target ticks,
+durations, future action lists, positions, velocities, or physics results.
 
 Zone applies queued commands at a tick boundary before advancing entities.
+For each entity, `motor_x` produces acceleration rather than velocity:
+`a = max_acceleration * motor_x - drag * vx`; Zone integrates `vx`, clamps it
+to the entity's maximum speed, then integrates `x` using the 120 Hz fixed
+step. Near rest, zero motor effort permits a small deterministic rest threshold
+to settle numerical residue to exactly zero. No command may directly assign
+`vx` or `x`.
 Sorted entity IDs define deterministic update order. The line bounds are
 physical constraints: when motion would cross `x=0` or `x=1000`,
 authoritative `x` is clamped to that boundary and `vx` becomes zero while
-the latched `move_x` intent remains unchanged.
+the latched `motor_x` effort remains unchanged.
 
 ## Public boundary
 

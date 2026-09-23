@@ -55,13 +55,18 @@ class ScopeTests(unittest.TestCase):
         self.assertIn("client.login(player_id)", mcp)
         self.assertNotIn(".logout(", mcp)
 
-    def test_motor_source_has_no_strategic_target_input(self):
-        text = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")
-        start = text.index("class MotorMLP")
-        end = text.index("class CriticMLP")
-        motor_source = text[start:end]
+    def test_active_motor_has_no_strategic_target_and_legacy_is_not_active(self):
+        motor_source = (
+            ROOT / "gamelab/motors/continuous.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("class ContinuousMotor", motor_source)
         self.assertNotIn("target_x", motor_source)
         self.assertNotIn("goal_dx", motor_source)
+
+        models = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")
+        self.assertIn("from .motors.continuous import ContinuousMotor", models)
+        self.assertNotIn("legacy_discrete", models)
+        self.assertNotIn("LegacyDiscreteMotorMLP", models)
 
 
     def test_unpaced_adapter_is_the_only_canonical_gameserver_import(self):
