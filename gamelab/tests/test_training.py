@@ -28,6 +28,7 @@ from gamelab.reward import (
 from gamelab.training import (
     Transition,
     _prepare_reward_config,
+    _sample_training_task,
     collect_episode,
     ppo_update,
 )
@@ -149,6 +150,45 @@ class TrainingTests(unittest.TestCase):
         )
         self.assertAlmostEqual(first, 0.1635)
         self.assertAlmostEqual(repeated, -0.0005)
+
+    def test_training_task_sampler_covers_both_directions_and_near_goals(self):
+        import random
+
+        rng = random.Random(11)
+        tasks = [
+            _sample_training_task(
+                rng,
+                episode_index=index,
+                total_episodes=200,
+            )
+            for index in range(1, 201)
+        ]
+        deltas = [target - spawn for spawn, target in tasks]
+        self.assertTrue(any(delta > 80.0 for delta in deltas))
+        self.assertTrue(any(delta < -80.0 for delta in deltas))
+        self.assertTrue(any(abs(delta) <= 20.0 for delta in deltas))
+        for spawn, target in tasks:
+            self.assertGreaterEqual(spawn, 20.0)
+            self.assertLessEqual(spawn, 980.0)
+            self.assertGreaterEqual(target, 20.0)
+            self.assertLessEqual(target, 980.0)
+
+    def test_fixed_target_still_randomizes_training_spawn(self):
+        import random
+
+        rng = random.Random(5)
+        tasks = [
+            _sample_training_task(
+                rng,
+                episode_index=index,
+                total_episodes=20,
+                target_override=987.0,
+            )
+            for index in range(1, 21)
+        ]
+        self.assertTrue(all(target == 987.0 for _, target in tasks))
+        self.assertGreater(len({round(spawn, 3) for spawn, _ in tasks}), 1)
+        self.assertTrue(all(abs(987.0 - spawn) >= 30.0 for spawn, _ in tasks))
 
     def test_spine_ppo_updates_spine_but_preserves_frozen_motor(self):
         torch.manual_seed(23)

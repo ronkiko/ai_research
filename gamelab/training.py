@@ -46,6 +46,7 @@ from .control import Decision as Transition, control_loop
 
 @dataclass
 class EpisodeResult:
+    spawn_x: float
     target_x: float
     result: str
     final_x: float
@@ -63,11 +64,12 @@ def collect_episode(
     *,
     player_id: str,
     target_x: float,
+    spawn_x: float = 100.0,
     max_seconds: float = TRAIN_EPISODE_SECONDS,
     reward_config: RewardConfig | None = None,
     cancel: threading.Event | None = None,
 ) -> EpisodeResult:
-    state = reset_player_state(client, player_id)
+    state = reset_player_state(client, player_id, spawn_x=spawn_x)
     transitions: list[Transition] = []
     result = control_loop(
         model, client, state, target_x=target_x, tolerance=SUCCESS_TOLERANCE,
@@ -82,6 +84,7 @@ def collect_episode(
         transitions[-1].done = True
     final_x = float(result.get("x", player_from_state(state)["x"]))
     return EpisodeResult(
+        spawn_x=float(spawn_x),
         target_x=float(target_x), result=outcome, final_x=final_x,
         final_error=float(target_x)-final_x, reward=result["reward"],
         motor_steps=result["motor_steps"], controller_requests=result["controller_requests"],
@@ -202,6 +205,57 @@ def ppo_update(
     return metrics
 
 
+def _sample_training_task(
+    rng: random.Random,
+    *,
+    episode_index: int,
+    total_episodes: int,
+    target_override: float | None = None,
+) -> tuple[float, float]:
+    """Sample goal-conditioned tasks instead of repeating one trajectory."""
+    if episode_index <= 0 or total_episodes <= 0:
+        raise ValueError("episode indexes must be positive")
+    progress = min(
+        1.0,
+        max(0.0, (episode_index - 1) / max(1, total_episodes - 1)),
+    )
+    margin = 100.0 - 80.0 * progress
+    low = margin
+    high = WORLD_MAX_X - margin
+
+    def sample_spawn() -> float:
+        return rng.uniform(low, high)
+
+    spawn_x = sample_spawn()
+    if target_override is not None:
+        target_x = float(target_override)
+        for _ in range(32):
+            if abs(target_x - spawn_x) >= 30.0:
+                break
+            spawn_x = sample_spawn()
+        return spawn_x, target_x
+
+    # One fifth of episodes teach fine positioning / standing near the goal.
+    if rng.random() < 0.20:
+        target_x = min(
+            high,
+            max(low, spawn_x + rng.uniform(-20.0, 20.0)),
+        )
+        return spawn_x, target_x
+
+    # The rest are real transfers. Rejection sampling keeps left/right symmetric
+    # without encoding direction into the policy.
+    target_x = spawn_x
+    for _ in range(64):
+        candidate = rng.uniform(low, high)
+        if abs(candidate - spawn_x) >= 80.0:
+            target_x = candidate
+            break
+    if target_x == spawn_x:
+        target_x = low if spawn_x > WORLD_MAX_X / 2.0 else high
+    return spawn_x, target_x
+
+
 def _prepare_reward_config(store: RewardStore, *, fresh: bool) -> RewardConfig:
     """A fresh training experiment also starts from canonical reward defaults."""
     if fresh:
@@ -230,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--target must be within [0,1000]")
 
     random.seed(args.seed)
+    rng = random.Random(args.seed)
     torch.manual_seed(args.seed)
     path = checkpoint_path()
 
@@ -291,16 +346,18 @@ def main(argv: list[str] | None = None) -> int:
 
         for offset in range(1, args.episodes + 1):
             episode = completed + offset
-            target = (
-                float(args.target)
-                if args.target is not None
-                else float(random.randint(5, 995))
+            spawn_x, target = _sample_training_task(
+                rng,
+                episode_index=episode,
+                total_episodes=max(completed + args.episodes, episode),
+                target_override=args.target,
             )
             result = collect_episode(
                 model,
                 client,
                 player_id=args.player,
                 target_x=target,
+                spawn_x=spawn_x,
                 reward_config=reward_config,
             )
             if result.result not in {"success", "timeout"}:
@@ -317,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
             print(
-                f"Episode {episode} mode={args.mode} target={target:.1f} "
+                f"Episode {episode} mode={args.mode} "
+                f"spawn={result.spawn_x:.1f} target={target:.1f} "
                 f"{result.result.upper()} x={result.final_x:.2f} "
                 f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
                 f"vx={result.evidence.get('vx', 0.0):+.2f} "
