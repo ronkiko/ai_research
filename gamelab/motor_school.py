@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -39,16 +40,20 @@ from .motors.package import (
     get_motor_package,
 )
 
-SCHOOL_VERSION = "velocity_tracking_pg_v2"
+SCHOOL_VERSION = "velocity_tracking_pg_v3"
 SCHOOL_LEARNING_RATE = 1e-3
 VERIFY_EVERY_EPISODES = 10
 SCHOOL_SECONDS = 4.0
 SEGMENT_SECONDS = 0.5
-TARGET_LEVELS = (-0.75, -0.4, 0.0, 0.4, 0.75)
-VERIFY_LEVELS = (0.6, 0.0, -0.6, 0.0, 0.35, -0.35, 0.0)
+TARGET_MIN = -0.8
+TARGET_MAX = 0.8
+STAND_COMMAND_PROBABILITY = 0.25
+VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 VERIFY_SEGMENT_SECONDS = 0.6
-VERIFY_MAE_LIMIT = 18.0
-VERIFY_ZERO_SPEED_LIMIT = 8.0
+VERIFY_MAE_LIMIT = 12.0
+VERIFY_ZERO_SPEED_LIMIT = 4.0
+VERIFY_MAX_ERROR_LIMIT = 30.0
+VERIFY_ZERO_MAX_SPEED_LIMIT = 8.0
 
 
 @dataclass
@@ -189,14 +194,18 @@ def _rollout(
 
     for step in range(steps):
         if step % segment_steps == 0:
-            choices = [value for value in TARGET_LEVELS if value != desired]
-            desired = float(rng.choice(choices))
+            if rng.random() < STAND_COMMAND_PROBABILITY:
+                desired = 0.0
+            else:
+                candidate = desired
+                for _ in range(16):
+                    candidate = rng.uniform(TARGET_MIN, TARGET_MAX)
+                    if abs(candidate - desired) >= 0.1:
+                        break
+                desired = float(candidate)
         player = _player(runtime)
         goal = _goal(desired)
         prop = _proprioception(player)
-        before_error = (
-            desired * PLAYER_MAX_SPEED - float(player["vx"])
-        ) / PLAYER_MAX_SPEED
         with torch.no_grad():
             mean, log_std = motor.parameters_for(goal, prop)
             action_tensor, log_prob = squashed_action(
@@ -217,12 +226,8 @@ def _rollout(
         error_norm = (
             desired_vx - float(after["vx"])
         ) / PLAYER_MAX_SPEED
-        reward = (
-            before_error * before_error
-            - error_norm * error_norm
-            - 0.01 * error_norm * error_norm
-            - 0.0005 * action * action
-        )
+        tracking_reward = math.exp(-4.0 * error_norm * error_norm)
+        reward = tracking_reward - 0.0005 * action * action
         tracking_abs += abs(desired_vx - float(after["vx"]))
         transitions.append(
             SchoolTransition(
@@ -274,14 +279,25 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
                     zero_speeds.append(abs(vx))
 
     mae = sum(errors) / max(1, len(errors))
+    max_error = max(errors, default=0.0)
     zero_mae = sum(zero_speeds) / max(1, len(zero_speeds))
-    passed = mae <= VERIFY_MAE_LIMIT and zero_mae <= VERIFY_ZERO_SPEED_LIMIT
+    zero_max = max(zero_speeds, default=0.0)
+    passed = (
+        mae <= VERIFY_MAE_LIMIT
+        and max_error <= VERIFY_MAX_ERROR_LIMIT
+        and zero_mae <= VERIFY_ZERO_SPEED_LIMIT
+        and zero_max <= VERIFY_ZERO_MAX_SPEED_LIMIT
+    )
     return {
         "passed": passed,
         "mean_abs_velocity_error": mae,
+        "max_abs_velocity_error": max_error,
         "zero_target_mean_abs_speed": zero_mae,
+        "zero_target_max_abs_speed": zero_max,
         "mae_limit": VERIFY_MAE_LIMIT,
+        "max_error_limit": VERIFY_MAX_ERROR_LIMIT,
         "zero_speed_limit": VERIFY_ZERO_SPEED_LIMIT,
+        "zero_max_speed_limit": VERIFY_ZERO_MAX_SPEED_LIMIT,
     }
 
 
@@ -290,8 +306,12 @@ def _verification_quality(verification: dict) -> float:
     return (
         float(verification["mean_abs_velocity_error"])
         / float(verification["mae_limit"])
+        + float(verification["max_abs_velocity_error"])
+        / float(verification["max_error_limit"])
         + float(verification["zero_target_mean_abs_speed"])
         / float(verification["zero_speed_limit"])
+        + float(verification["zero_target_max_abs_speed"])
+        / float(verification["zero_max_speed_limit"])
     )
 
 
@@ -485,9 +505,10 @@ def _finish_manifest(
         "episodes_run": int(episodes_run),
         "school_seconds": SCHOOL_SECONDS,
         "learning_rate": SCHOOL_LEARNING_RATE,
-        "credit_assignment": "one_motor_interval_error_improvement",
+        "credit_assignment": "one_motor_interval_velocity_tracking",
         "segment_seconds": SEGMENT_SECONDS,
-        "target_levels": list(TARGET_LEVELS),
+        "target_range": [TARGET_MIN, TARGET_MAX],
+        "stand_command_probability": STAND_COMMAND_PROBABILITY,
         "final_verification": dict(final_verification),
         "best_verification": (
             dict(best_verification) if best_verification is not None else None
@@ -531,9 +552,16 @@ def run_school(
                 f"to {SCHOOL_VERSION!r}; rerun with --fresh"
             )
         training_manifest["school"] = SCHOOL_VERSION
-        if not package.brain_path.is_file():
-            training_manifest["status"] = "untrained"
-            training_manifest["verified"] = False
+        training_manifest["status"] = "untrained"
+        training_manifest["verified"] = False
+        for key in (
+            "best_verification",
+            "best_episode",
+            "best_quality",
+            "best_brain_sha256",
+            "last_result",
+        ):
+            training_manifest.pop(key, None)
         package.manifest["training"] = training_manifest
         package.write_manifest()
 
@@ -621,7 +649,9 @@ def run_school(
                 print(
                     f"MotorSchool VERIFY episode={candidate_episodes} "
                     f"mae={final_verification['mean_abs_velocity_error']:.2f} "
+                    f"max_error={final_verification['max_abs_velocity_error']:.2f} "
                     f"zero_speed={final_verification['zero_target_mean_abs_speed']:.2f} "
+                    f"zero_max={final_verification['zero_target_max_abs_speed']:.2f} "
                     f"{'PASS' if final_verification['passed'] else 'FAIL'}"
                     f"{' NEW_BEST' if improved else ''}{best_text}",
                     flush=True,

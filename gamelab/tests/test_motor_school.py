@@ -92,17 +92,25 @@ class MotorSchoolTests(unittest.TestCase):
             shutil.copytree(SOURCE, root / "continuous_1d_v1")
             first = {
                 "passed": True,
-                "mean_abs_velocity_error": 8.0,
-                "zero_target_mean_abs_speed": 2.0,
-                "mae_limit": 18.0,
-                "zero_speed_limit": 8.0,
+                "mean_abs_velocity_error": 6.0,
+                "max_abs_velocity_error": 14.0,
+                "zero_target_mean_abs_speed": 1.5,
+                "zero_target_max_abs_speed": 3.0,
+                "mae_limit": 12.0,
+                "max_error_limit": 30.0,
+                "zero_speed_limit": 4.0,
+                "zero_max_speed_limit": 8.0,
             }
             later = {
                 "passed": True,
-                "mean_abs_velocity_error": 12.0,
-                "zero_target_mean_abs_speed": 4.0,
-                "mae_limit": 18.0,
-                "zero_speed_limit": 8.0,
+                "mean_abs_velocity_error": 8.0,
+                "max_abs_velocity_error": 20.0,
+                "zero_target_mean_abs_speed": 2.0,
+                "zero_target_max_abs_speed": 5.0,
+                "mae_limit": 12.0,
+                "max_error_limit": 30.0,
+                "zero_speed_limit": 4.0,
+                "zero_max_speed_limit": 8.0,
             }
             with patch.dict(
                 os.environ,
@@ -141,6 +149,14 @@ class MotorSchoolTests(unittest.TestCase):
         self.assertLessEqual(
             result["zero_target_mean_abs_speed"],
             result["zero_speed_limit"],
+        )
+        self.assertLessEqual(
+            result["max_abs_velocity_error"],
+            result["max_error_limit"],
+        )
+        self.assertLessEqual(
+            result["zero_target_max_abs_speed"],
+            result["zero_max_speed_limit"],
         )
 
 
