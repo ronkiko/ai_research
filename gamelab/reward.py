@@ -28,7 +28,7 @@ class RewardConfig:
     distance_progress_scale: float = 1.0
     step_cost: float = 0.0005
     success_bonus: float = 1.0
-    timeout_penalty: float = 0.25
+    timeout_penalty: float = 1.0
     stopped_near_goal_bonus: float = 0.0
     near_goal_radius: float = 10.0
 

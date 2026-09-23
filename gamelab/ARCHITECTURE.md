@@ -135,8 +135,11 @@ decision. Transition records identify before/after tick, sequence, command and
 application tick. Effective discount is gamma^elapsed_steps; elapsed_steps is
 server tick delta divided by the nominal motor period. GAE uses the same time
 scale. Step cost and stopped-near-goal reward scale with elapsed time; distance
-progress and terminal rewards retain their meanings. Timeout is terminal for
-this finite-horizon experiment; invalid or cancelled rollouts are not optimized.
+progress and terminal rewards retain their meanings. Under the default reward,
+the timeout penalty is at least the maximum possible accumulated normalized
+distance-progress reward, so an unsuccessful episode cannot become net-positive
+merely by driving near or through the goal until the horizon. Timeout is terminal
+for this finite-horizon experiment; invalid or cancelled rollouts are not optimized.
 
 ## Shared control and lifecycle
 

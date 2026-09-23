@@ -34,7 +34,28 @@ class TrainingTests(unittest.TestCase):
             success=False,
             timeout=True,
         )
-        self.assertAlmostEqual(timeout, -0.2535)
+        self.assertAlmostEqual(timeout, -1.0035)
+
+    def test_default_timeout_cannot_be_profitable_from_progress_alone(self):
+        # Dense progress is normalized by WORLD_MAX_X, so its total episode
+        # contribution can never exceed +1.0. Default timeout penalty matches
+        # that upper bound; positive step cost makes every timeout net-negative.
+        config = RewardConfig()
+        total = 0.0
+        before = 1000.0
+        for step in range(480):
+            after = max(0.0, before - (1000.0 / 480.0))
+            total += step_reward(
+                config,
+                before_distance=before,
+                after_distance=after,
+                next_vx=180.0,
+                next_move_x=1,
+                success=False,
+                timeout=step == 479,
+            )
+            before = after
+        self.assertLess(total, 0.0)
 
     def test_reward_configuration_can_be_changed_without_steering(self):
         config = RewardConfig().updated(
