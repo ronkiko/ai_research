@@ -180,8 +180,12 @@ in-process:
 ./gamelab/op/train-unpaced.sh --fresh --episodes 50 --target 987
 ```
 
-With `--fresh`, GameLab now resets both model/optimizer state and the persisted
-reward configuration to canonical defaults, then prints the effective Reward
+With `--fresh`, both shell TRAIN and realtime MCP TRAIN immediately reset the
+checkpoint model, optimizer metadata, episode counter, PRNG seed and persisted
+reward configuration to canonical defaults. Every training episode then resets
+physical player state to x=100, vx=0, move=0. Host session/command sequence and
+append-only evidence journals are intentionally preserved because they are world
+identity/audit state, not learned state. Shell TRAIN prints the effective Reward
 JSON before episode 1. This prevents a prior Director/experiment reward override
 from silently contaminating a fresh learning test.
 

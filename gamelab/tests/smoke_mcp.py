@@ -441,6 +441,11 @@ async def run_flow(
             )
             payloads.append(strategy)
 
+            await tool(
+                session,
+                "reward_set",
+                {"timeout_penalty": 0.25},
+            )
             started = await tool(
                 session,
                 "training_start",
@@ -455,6 +460,8 @@ async def run_flow(
             payloads.append(started)
             if started.get("status") != "starting":
                 raise AssertionError(f"training did not start: {started}")
+            if started.get("reward", {}).get("timeout_penalty") != 1.0:
+                raise AssertionError(f"fresh realtime TRAIN did not reset reward defaults: {started}")
 
             trained = await wait_status(
                 session,

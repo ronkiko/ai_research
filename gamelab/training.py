@@ -220,7 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     model = SpineMotorPolicy.fresh(args.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
     completed = 0
-    if path.exists() and not args.fresh:
+    if args.fresh:
+        save_checkpoint(
+            path,
+            model,
+            optimizer=optimizer,
+            extra={"episodes": 0, "seed": args.seed},
+        )
+    elif path.exists():
         extra = load_checkpoint(path, model, optimizer=optimizer)
         completed = int(extra.get("episodes", 0))
 

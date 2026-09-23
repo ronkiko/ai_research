@@ -22,7 +22,7 @@ from .control import GoalMailbox
 from .journal import Journal
 from .reward import RewardConfig, RewardStore
 from .runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
-from .training import collect_episode, ppo_update
+from .training import _prepare_reward_config, collect_episode, ppo_update
 
 
 class LaboratoryBusyError(RuntimeError):
@@ -216,7 +216,7 @@ class Laboratory:
             raise ValueError("seed must be an integer")
         target = self._target(target_x)
         seconds = self._seconds(max_seconds, name="max_seconds")
-        reward = self.reward_store.load()
+        reward = _prepare_reward_config(self.reward_store, fresh=bool(fresh))
         player_id = self._require_attached_player(host_id)
         return self._start(
             "training",
