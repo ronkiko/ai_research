@@ -14,8 +14,11 @@ from gamelab.motor_school import (
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
 
 
-class RuleMotor:
+class RuleMotor(torch.nn.Module):
     """Test-only physical feedback reflex; never used by production training."""
+
+    def __init__(self):
+        super().__init__()
 
     def parameters_for(self, goal, proprioception):
         desired = goal[..., 0]
