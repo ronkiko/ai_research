@@ -1,6 +1,9 @@
-"""One measured realtime loop for sampled TRAIN and frozen VERIFY/RUN.
+"""One world-tick executor for realtime and unpaced TRAIN/VERIFY/RUN.
 
-Scheduling, evidence and terminal stops are infrastructure, never steering.
+The learned policy always lives on GameServer time: physics ticks schedule Motor,
+Spine, timeout, reward duration and success hold.  Realtime waits for those
+authoritative ticks; unpaced advances the same ZoneRuntime without wall-clock
+sleep.  Wall time is only liveness/diagnostic instrumentation.
 """
 from __future__ import annotations
 
@@ -65,7 +68,6 @@ class EventGuard:
         self.cursor = int((state.get("last_event") or {}).get("event_id", 0))
 
     def check(self) -> None:
-        # Bound work. An overflowing event stream invalidates the experiment.
         response = self.client.events(self.cursor, limit=256)
         if response.get("truncated_before") or response.get("has_more"):
             raise EvidenceError("Host event history lost; experiment contaminated")
@@ -74,6 +76,19 @@ class EventGuard:
                 if event.get("client_id") != self.client.client_id:
                     raise EvidenceError("external Host control; experiment contaminated")
         self.cursor = int(response.get("next_after_event_id", self.cursor))
+
+
+def _advance_or_wait(client, physics_hz: int) -> None:
+    """Progress one opportunity for a fresh authoritative world tick."""
+    advance = getattr(client, "advance_tick", None)
+    if callable(advance):
+        advance()
+        return
+    time.sleep(0.5 / physics_hz)
+
+
+def _execution_mode(client) -> str:
+    return "unpaced" if callable(getattr(client, "advance_tick", None)) else "realtime"
 
 
 def control_loop(
@@ -92,12 +107,27 @@ def control_loop(
     snapshot = state["snapshot"]
     epoch = snapshot.get("epoch")
     hz = snapshot.get("physics_hz")
-    if not isinstance(epoch, str) or type(hz) is not int or hz <= 0:
+    start_tick = snapshot.get("world_tick")
+    if (
+        not isinstance(epoch, str)
+        or type(hz) is not int
+        or hz <= 0
+        or type(start_tick) is not int
+    ):
         raise HostError("Host requires tick/epoch acknowledgement contract; restart backend")
-    start = time.monotonic()
-    last_fresh = start
-    next_motor = start
-    next_spine = start
+    if hz % MOTOR_HZ != 0 or hz % SPINE_HZ != 0:
+        raise HostError("physics_hz must divide exactly into Motor and Spine cadences")
+
+    motor_stride = hz // MOTOR_HZ
+    spine_stride = hz // SPINE_HZ
+    max_ticks = max(1, int(round(float(max_seconds) * hz)))
+    hold_gap_ticks = max(1, int(round(MAX_HOLD_GAP_SECONDS * hz)))
+
+    start_wall = time.monotonic()
+    last_fresh_wall = start_wall
+    current_state = state
+    next_motor_tick = start_tick
+    next_spine_tick = start_tick
     last_tick: int | None = None
     stable_since: int | None = None
     stable_sequence: int | None = None
@@ -111,95 +141,144 @@ def control_loop(
     result: dict[str, Any] = {}
     reward_config = reward_config or RewardConfig()
     can_stop = True
+    mode = _execution_mode(client)
+
     try:
         while True:
-            now = time.monotonic()
             if cancel is not None and cancel.is_set():
                 result["status"] = "cancelled"
                 break
-            if now < next_motor:
-                time.sleep(next_motor - now)
-            now = time.monotonic()
-            if now - next_motor >= 1.0 / MOTOR_HZ:
-                overruns += 1
-            # Drop missed slots. Never replay a backlog of actuator decisions.
-            next_motor = now + 1.0 / MOTOR_HZ
-            state = client.state()
-            guard.check()
-            current_identity = (state["session"].get("session_id"), state["session"].get("entity_id"))
-            if current_identity != identity:
-                raise EvidenceError("Host player/session changed")
-            snapshot = state["snapshot"]
+
+            snapshot = current_state.get("snapshot") or {}
             tick = snapshot.get("world_tick")
             if snapshot.get("epoch") != epoch or type(tick) is not int:
                 raise EvidenceError("world epoch or tick contract changed")
-            now = time.monotonic()
-            if last_tick is not None and tick < last_tick:
+            if tick < start_tick or (last_tick is not None and tick < last_tick):
                 raise EvidenceError("world tick moved backwards")
-            if now - last_fresh > STALE_SECONDS:
-                result["status"] = "stale"
-                break
-            if tick == last_tick:
-                duplicates += 1
-                if now - start >= max_seconds:
-                    result["status"] = "unconfirmed" if pending is not None else "timeout"
-                    break
+
+            # Motor/Spine cadence is defined only by authoritative world ticks.
+            # Realtime sleeps until the server advances; unpaced explicitly ticks
+            # the same ZoneRuntime.  No policy work happens on duplicate snapshots.
+            if tick < next_motor_tick:
+                previous_tick = tick
+                _advance_or_wait(client, hz)
+                current_state = client.state()
+                observed_tick = (current_state.get("snapshot") or {}).get("world_tick")
+                now = time.monotonic()
+                if observed_tick == previous_tick:
+                    duplicates += 1
+                    if now - last_fresh_wall > STALE_SECONDS:
+                        result["status"] = "stale"
+                        break
+                elif type(observed_tick) is int and observed_tick > previous_tick:
+                    last_fresh_wall = now
                 continue
-            last_fresh = now
-            player = player_from_state(state)
-            x, vx, current_move = float(player["x"]), float(player["vx"]), int(player["move_x"])
+
+            if tick > next_motor_tick:
+                overruns += 1
+            next_motor_tick = tick + motor_stride
+
+            guard.check()
+            current_identity = (
+                current_state["session"].get("session_id"),
+                current_state["session"].get("entity_id"),
+            )
+            if current_identity != identity:
+                raise EvidenceError("Host player/session changed")
+
+            player = player_from_state(current_state)
+            x = float(player["x"])
+            vx = float(player["vx"])
+            current_move = int(player["move_x"])
             sequence = player.get("last_sequence")
             if type(sequence) is not int:
                 raise HostError("missing applied sequence; restart backend")
+
             new_target, new_revision = goals.read() if goals else (target_x, 1)
             changed = new_revision != revision
             if changed:
                 target_x, revision = new_target, new_revision
                 stable_since = stable_sequence = None
-                next_spine = now
+                next_spine_tick = tick
                 if history is not None:
                     history.set_target(target_x)
+
             gap = tick - last_tick if last_tick is not None else 0
-            if gap > hz * MAX_HOLD_GAP_SECONDS:
+            if gap > hold_gap_ticks:
                 stable_since = None
+
             error = target_x - x
             if abs(error) <= tolerance and abs(vx) < 1e-9 and current_move == 0:
                 if stable_since is None or stable_sequence != sequence:
                     stable_since, stable_sequence = tick, sequence
             else:
                 stable_since = stable_sequence = None
+
             stable_ticks = tick - stable_since if stable_since is not None else 0
-            reached = stable_since is not None and stable_ticks / hz >= SUCCESS_HOLD_STEPS / MOTOR_HZ
-            timed_out = now - start >= max_seconds
+            reached = stable_since is not None and stable_ticks >= int(
+                round(SUCCESS_HOLD_STEPS * hz / MOTOR_HZ)
+            )
+            simulated_ticks = tick - start_tick
+            timed_out = simulated_ticks >= max_ticks
+            simulation_seconds = simulated_ticks / hz
+            wall_seconds = time.monotonic() - start_wall
+
             result = dict(
                 status="reached" if reached else "timeout" if timed_out else "active",
-                target_x=target_x, goal_revision=revision, x=x, vx=vx, move_x=current_move,
-                error=error, world_tick=tick, epoch=epoch, stable_ticks=stable_ticks,
-                motor_steps=steps, spine_calls=spine_calls, controller_requests=requests,
-                duplicate_snapshots=duplicates, overruns=overruns,
-                elapsed_seconds=now-start, effective_motor_hz=steps/max(now-start, 1e-9),
-                effective_spine_hz=spine_calls/max(now-start, 1e-9),
+                execution_mode=mode,
+                target_x=target_x,
+                goal_revision=revision,
+                x=x,
+                vx=vx,
+                move_x=current_move,
+                error=error,
+                world_tick=tick,
+                start_world_tick=start_tick,
+                simulated_ticks=simulated_ticks,
+                simulation_seconds=simulation_seconds,
+                elapsed_seconds=simulation_seconds,
+                wall_seconds=wall_seconds,
+                speedup=simulation_seconds / max(wall_seconds, 1e-9),
+                epoch=epoch,
+                stable_ticks=stable_ticks,
+                motor_steps=steps,
+                spine_calls=spine_calls,
+                controller_requests=requests,
+                duplicate_snapshots=duplicates,
+                overruns=overruns,
+                effective_motor_hz=steps / max(simulation_seconds, 1.0 / hz),
+                effective_spine_hz=spine_calls / max(simulation_seconds, 1.0 / hz),
+                wall_motor_hz=steps / max(wall_seconds, 1e-9),
+                wall_spine_hz=spine_calls / max(wall_seconds, 1e-9),
             )
+
             if pending is not None:
                 if sequence < pending.sequence:
-                    # A queued input is not yet applied. Keep observing, do not
-                    # invent another action or reward for a repeated decision.
-                    if now - start >= max_seconds:
+                    if timed_out:
                         result["status"] = "unconfirmed"
                         break
                     last_tick = tick
+                    _advance_or_wait(client, hz)
+                    current_state = client.state()
                     continue
                 if sequence != pending.sequence:
                     raise EvidenceError("applied sequence does not match policy")
-                if pending.command_id is not None and player.get("last_input_command_id") != pending.command_id:
+                if (
+                    pending.command_id is not None
+                    and player.get("last_input_command_id") != pending.command_id
+                ):
                     raise EvidenceError("applied command does not match policy")
                 pending.next_tick = tick
                 pending.elapsed_steps = (tick - pending.tick) * MOTOR_HZ / hz
                 pending.applied_tick = player.get("last_input_tick")
                 pending.reward = step_reward(
-                    reward_config, before_distance=before_distance,
-                    after_distance=abs(error), next_vx=vx, next_move_x=current_move,
-                    success=reached, timeout=timed_out and not reached,
+                    reward_config,
+                    before_distance=before_distance,
+                    after_distance=abs(error),
+                    next_vx=vx,
+                    next_move_x=current_move,
+                    success=reached,
+                    timeout=timed_out and not reached,
                     elapsed_steps=pending.elapsed_steps,
                 )
                 pending.done = reached or timed_out
@@ -207,27 +286,36 @@ def control_loop(
                 if on_transition is not None:
                     on_transition(pending)
                 pending = None
+
             if on_status is not None:
                 on_status(dict(result))
             if reached or timed_out:
                 break
-            frame = sensor_frame(x=x, vx=vx, move_x=current_move, target_x=target_x)
+
+            frame = sensor_frame(
+                x=x,
+                vx=vx,
+                move_x=current_move,
+                target_x=target_x,
+            )
             if history is None:
                 history = SensorHistory(frame)
             else:
                 history.push(frame)
             proprioception = motor_state(vx=vx, move_x=current_move)
+
             with torch.no_grad():
-                if cached_goal is None or now >= next_spine:
+                if cached_goal is None or tick >= next_spine_tick:
                     latched_history = history.tensor().clone()
                     cached_goal, hidden = model.spine(latched_history)
-                    next_spine = now + 1.0 / SPINE_HZ
+                    next_spine_tick = tick + spine_stride
                     spine_calls += 1
                 logits = model.motor(cached_goal, proprioception)
                 distribution = Categorical(logits=logits)
                 action_tensor = distribution.sample() if sampled else logits.argmax()
                 action = int(action_tensor.item())
                 value = model.critic(hidden, proprioception)
+
             move_x = model.action_to_move(action)
             command_id = None
             if move_x != current_move:
@@ -235,32 +323,62 @@ def control_loop(
                 sequence = response["sequence"]
                 command_id = response["event"]["command_id"]
                 requests += 1
+
             pending = Decision(
-                latched_history.clone(), proprioception.clone(), action,
-                float(distribution.log_prob(action_tensor)), float(value),
-                tick=tick, sequence=sequence, command_id=command_id,
+                latched_history.clone(),
+                proprioception.clone(),
+                action,
+                float(distribution.log_prob(action_tensor)),
+                float(value),
+                tick=tick,
+                sequence=sequence,
+                command_id=command_id,
             )
             before_distance = abs(error)
             steps += 1
             last_tick = tick
+            _advance_or_wait(client, hz)
+            current_state = client.state()
+
     except EvidenceError as exc:
-        can_stop = False  # Do not overwrite an intervening controller's input.
+        can_stop = False
         result.update(status="contaminated", error_detail=str(exc))
     finally:
         if can_stop:
             try:
                 guard.check()
                 end = client.state()
-                if (end["session"].get("session_id"), end["session"].get("entity_id")) == identity:
+                if (
+                    end["session"].get("session_id"),
+                    end["session"].get("entity_id"),
+                ) == identity:
                     if int(player_from_state(end)["move_x"]) != 0:
                         client.input(0)
+                        advance = getattr(client, "advance_tick", None)
+                        if callable(advance):
+                            advance()
             except HostError:
                 pass
-    result.update(reward=total_reward, motor_steps=steps, spine_calls=spine_calls,
-                  controller_requests=requests, duplicate_snapshots=duplicates,
-                  overruns=overruns)
-    elapsed = time.monotonic() - start
-    result.update(elapsed_seconds=elapsed,
-                  effective_motor_hz=steps / max(elapsed, 1e-9),
-                  effective_spine_hz=spine_calls / max(elapsed, 1e-9))
+
+    final_wall = time.monotonic() - start_wall
+    final_tick = int(result.get("world_tick", start_tick))
+    simulation_seconds = max(0, final_tick - start_tick) / hz
+    result.update(
+        reward=total_reward,
+        motor_steps=steps,
+        spine_calls=spine_calls,
+        controller_requests=requests,
+        duplicate_snapshots=duplicates,
+        overruns=overruns,
+        execution_mode=mode,
+        simulated_ticks=max(0, final_tick - start_tick),
+        simulation_seconds=simulation_seconds,
+        elapsed_seconds=simulation_seconds,
+        wall_seconds=final_wall,
+        speedup=simulation_seconds / max(final_wall, 1e-9),
+        effective_motor_hz=steps / max(simulation_seconds, 1.0 / hz),
+        effective_spine_hz=spine_calls / max(simulation_seconds, 1.0 / hz),
+        wall_motor_hz=steps / max(final_wall, 1e-9),
+        wall_spine_hz=spine_calls / max(final_wall, 1e-9),
+    )
     return result

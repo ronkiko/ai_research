@@ -91,23 +91,33 @@ become controller perception. Tick/epoch/sequence metadata belongs to evidence
 and scheduling, not policy features. Nominal history span is about 0.53 seconds;
 effective intervals may be longer and are recorded, not synthetically filled.
 
-## One realtime executor
+## One tick-domain executor, two pacing modes
 
-`control_loop` serves sampled TRAIN and greedy frozen VERIFY/RUN. Motor and
-Spine have independent monotonic deadlines; missed slots are dropped rather
-than replayed as a burst. Cached MotorGoal and critic features remain fixed
-between Spine calls. PPO may recompute Spine on saved inputs for backpropagation.
-Reported effective rates are measured, not guarantees that the OS meets deadlines.
+`control_loop` serves sampled TRAIN and greedy frozen VERIFY/RUN. Policy
+semantics are scheduled exclusively from authoritative world ticks, not wall
+time. With 120 Hz physics, Motor runs every 2 ticks and Spine every 12 ticks.
+Cached MotorGoal and critic features remain fixed between Spine calls. If a
+realtime observation skips a scheduled slot, the missed slot is dropped rather
+than replayed as a burst. PPO may recompute Spine on saved inputs for
+backpropagation.
 
-Repeated ticks produce no new decisions/transitions or hold credit. An epoch
-change, backwards tick, session change or missing event history invalidates the
-experiment. No fresh observation within 0.5 seconds ends it as `stale`. These
-limits detect a failed observation/control path; they do not pause the world.
+Realtime pacing receives those ticks through GameClient Host while the external
+ZoneService sleeps to maintain 120 Hz. Operator-only unpaced TRAIN uses the same
+`gameserver.v1.zone.model.ZoneRuntime` but calls `tick()` directly, so the
+same simulated eight seconds may complete much faster than eight wall seconds.
+There is no alternate physics, reward function, success rule, model or PPO path.
+
+Repeated reads of one tick produce no new decisions/transitions or hold credit.
+An epoch change, backwards tick, session change or missing event history
+invalidates the experiment. In realtime mode, no fresh observation within 0.5
+wall seconds ends it as `stale`; this is only a transport/liveness watchdog.
+Episode timeout, reward duration, discounting and success hold use world ticks.
 
 Success requires target tolerance, zero velocity, STOP intent and at least
-0.1 seconds of server-tick stability. Gaps over 0.1 seconds restart hold
-measurement. A changed applied sequence also restarts it; independent intervening
-commands invalidate the run. Terminal safety STOP occurs after classification.
+0.1 simulated seconds of tick stability. Gaps over 0.1 simulated seconds restart
+hold measurement. A changed applied sequence also restarts it; independent
+intervening commands invalidate the run. Terminal safety STOP occurs after
+classification.
 
 ## Causality and episode boundary
 
@@ -311,8 +321,11 @@ compare fresh/trained policy on held-out goals and seeds, then run from the live
 state without reset. VERIFY from x=100 alone does not demonstrate arbitrary-state
 generalization. No test relaxes the criterion or supplies hidden steering.
 
-The current world persists while its processes run; durable world recovery,
-vision, another Motor, parallel training and multi-zone routing are future work.
+The current realtime world persists while its processes run. Unpaced TRAIN is
+an operator diagnostic only and owns an isolated in-process instance of the same
+ZoneRuntime; it is not persisted and is not visible to GameTable. Durable world
+recovery, vision, another Motor, parallel training and multi-zone routing are
+future work.
 
 ## Upgrade
 

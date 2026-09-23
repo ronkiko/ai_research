@@ -64,8 +64,34 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn("goal_dx", motor_source)
 
 
+    def test_unpaced_adapter_is_the_only_canonical_gameserver_import(self):
+        unpaced = (ROOT / "gamelab/unpaced.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "from gameserver.v1.zone.model import ZoneRuntime",
+            unpaced,
+        )
+        self.assertNotIn("ZoneService", unpaced)
+        self.assertNotIn("Gateway", unpaced)
+
+        for relative in (
+            "gamelab/host.py",
+            "gamelab/hosts.py",
+            "gamelab/models.py",
+            "gamelab/runtime.py",
+            "gamelab/training.py",
+            "gamelab/mcp.py",
+            "gamelab/lab_service.py",
+            "gamelab/reward.py",
+            "gamelab/control.py",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("import gameserver", text, relative)
+            self.assertNotIn("from gameserver", text, relative)
+
     def test_operator_launchers_default_to_current_python(self):
-        for name in ("check.sh", "train.sh", "verify.sh", "run.sh", "mcp.sh"):
+        for name in (
+            "check.sh", "train.sh", "train-unpaced.sh", "verify.sh", "run.sh", "mcp.sh"
+        ):
             text = (ROOT / "gamelab/op" / name).read_text(encoding="utf-8")
             self.assertIn('GAMELAB_PYTHON:-python3', text, name)
             self.assertNotIn('gamelab/.venv/bin/python', text, name)

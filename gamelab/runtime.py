@@ -62,6 +62,14 @@ def ensure_player(client: HostClient, player_id: str) -> dict[str, Any]:
         )
     return wait_player(client)
 
+def _progress_world_wait(client, delay: float = 0.01) -> None:
+    advance = getattr(client, "advance_tick", None)
+    if callable(advance):
+        advance()
+    else:
+        time.sleep(delay)
+
+
 def reset_player_state(
     client: HostClient,
     player_id: str,
@@ -99,7 +107,7 @@ def reset_player_state(
             and int(player["move_x"]) == 0
         ):
             return state
-        time.sleep(0.01)
+        _progress_world_wait(client, 0.01)
     raise HostError(f"GameLab episode reset did not settle: {last_state}")
 
 

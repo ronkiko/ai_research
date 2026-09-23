@@ -10,8 +10,12 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Motor must not receive strategic `target_x` or `goal_dx` directly.
 - LLM/OpenCode is the slow strategist. It may set/cancel goals and inspect
   status, but it must not perform the realtime left/right/stop loop.
-- GameLab is a normal downstream GameClient Host client. Use the official
-  `gameclient.v1.clients.base.HostClient` API; never access GameServer internals directly.
+- Realtime/MCP GameLab is a normal downstream GameClient Host client. Use the
+  official `gameclient.v1.clients.base.HostClient` API and never access
+  GameServer internals directly. The sole exception is operator-only unpaced
+  TRAIN in `gamelab/unpaced.py`, which may import exactly the canonical
+  `gameserver.v1.zone.model.ZoneRuntime` to remove wall-clock pacing without
+  creating a second simulator.
 - Explicit setup login through MCP may create/reuse the selected Host session.
   The control loop never logs in, logs out, or replaces that session. Deleting
   an owned extra Host is a separate advanced lifecycle operation.
@@ -19,7 +23,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   (spawn x=100, vx=0, move_x=0) while preserving session and sequence. RUN must
   not reset.
 - Physics is 120 Hz, Motor is 60 Hz, Spine is 10 Hz unless the experiment
-  explicitly changes the documented contract.
+  explicitly changes the documented contract. These cadences are world-tick
+  cadences: at 120 Hz Motor acts every 2 ticks and Spine every 12. Wall time
+  must not alter reward, timeout, success, or policy observations.
 - Rollout boundaries, reward, logging, measurement, checkpointing, and terminal
   safety stop are laboratory infrastructure, not learned control.
 - VERIFY means frozen weights. A procedural fallback must never make VERIFY

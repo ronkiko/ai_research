@@ -20,9 +20,12 @@ default is the game-owned Host `game-v1-default` at `127.0.0.1:17700`.
 GameLab may create additional ordinary Host processes on separate local ports.
 Every Host remains an independent GameServer-facing client.
 
-GameLab may import only the public Host client primitive
+Realtime GameLab may import only the public Host client primitive
 `gameclient.v1.clients.base.HostClient`; it must not access GameServer
-internals directly.
+internals directly. The sole exception is the operator-only unpaced TRAIN
+adapter, which imports exactly `gameserver.v1.zone.model.ZoneRuntime` so it can
+run the canonical fixed-step world without the ZoneService wall-clock scheduler.
+It does not provide a low-level GameServer path to MCP/GameTable.
 
 The external authoritative world remains:
 
@@ -71,6 +74,14 @@ Motor 1 does not receive target position or target displacement directly.
 
 Spine, Motor, and critic are optimized jointly with PPO. Training action labels
 must not come from a scripted controller.
+
+Realtime and unpaced TRAIN share the same rollout, sensor, reward, PPO and
+checkpoint code. Their only execution difference is how the next authoritative
+Zone tick arrives. Realtime waits for the external 120 Hz world; unpaced calls
+the canonical ZoneRuntime tick directly. Motor cadence is every 2 world ticks
+(60 Hz), Spine cadence every 12 world ticks (10 Hz), and finite episode timeout
+is counted in world ticks. Wall time is not part of reward, timeout, success or
+policy input.
 
 Reward and success measurement may use authoritative state because they belong
 to the training laboratory, not the deployed controller.
@@ -244,7 +255,9 @@ to GameLab.
 ## Verification
 
 VERIFY uses the saved checkpoint with learning disabled and greedy Motor action
-selection.
+selection against the ordinary realtime Host/GameServer path. A checkpoint
+trained with the shell-only unpaced mode is accepted without conversion because
+both modes use the same model/checkpoint format.
 
 No heuristic, teacher, PID, scripted trajectory, or procedural correction may
 participate in VERIFY.

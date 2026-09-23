@@ -86,6 +86,8 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(result["status"], "reached")
         self.assertGreaterEqual(result["stable_ticks"], 12)
         self.assertLess(result["spine_calls"], result["motor_steps"])
+        self.assertEqual(result["execution_mode"], "realtime")
+        self.assertAlmostEqual(result["effective_motor_hz"], 60.0, delta=15.0)
 
     def test_external_control_invalidates_run(self):
         result = self.run_loop(Client(external=True))
@@ -117,9 +119,10 @@ class ControlTests(unittest.TestCase):
         result = self.run_loop(client)
         self.assertEqual(result["status"], "contaminated")
 
-    def test_short_timeout_does_not_validate_unobserved_transition(self):
+    def test_frozen_world_never_consumes_virtual_episode_time(self):
         result = self.run_loop(Client(frozen=True), max_seconds=0.2)
-        self.assertEqual(result["status"], "unconfirmed")
+        self.assertEqual(result["status"], "stale")
+        self.assertEqual(result["simulation_seconds"], 0.0)
 
     def test_delayed_input_is_acknowledged_before_next_decision(self):
         class RightModel(StopModel):

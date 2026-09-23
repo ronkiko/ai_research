@@ -4,8 +4,10 @@ GameLab is a laboratory for a composite artificial organism. Its primary goal
 is to study how limited AI models representing different human-like subsystems
 can jointly produce one coherent individual without a procedural behavior
 script. Learned hierarchical motor control is the first implemented vertical.
-GameLab uses the existing realtime GameServer v1 world through the official
-GameClient Host client API.
+Realtime GameLab uses the existing GameServer v1 world through the official
+GameClient Host client API. The operator-only unpaced TRAIN mode imports that
+same canonical `ZoneRuntime` in-process and advances its 120 Hz ticks without
+wall-clock sleeps; it is not a second simulator.
 
 The unified timing, sensing, evidence and upgrade contract is in
 [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -86,6 +88,18 @@ Motor solve the strategic task directly.
 Spine and Motor are optimized jointly with PPO. No demonstration or scripted
 action labels are used.
 
+TRAIN has two pacing modes over one control/training implementation:
+
+- realtime: authoritative Zone ticks arrive through GameClient Host while the
+  GameServer scheduler waits for wall time;
+- unpaced: the same canonical `gameserver.v1.zone.model.ZoneRuntime` is ticked
+  directly as fast as CPU/model inference allows.
+
+Both modes use 120 Hz physical ticks, Motor every 2 ticks, Spine every 12 ticks,
+the same sensor history, reward, PPO update, reset semantics, success hold and
+checkpoint. Episode timeout is measured in simulated world ticks. Wall time is
+only a liveness watchdog/diagnostic and cannot change the learned trajectory.
+
 Each TRAIN episode begins with a non-destructive Host episode reset to
 `x=100, vx=0, move_x=0`. VERIFY performs the same reset before every run.
 The reset preserves the active Host/GameServer session and Host command
@@ -150,12 +164,30 @@ GameLab disables PyTorch's optional NNPACK CPU backend. Unsupported CPUs would
 otherwise print an NNPACK initialization warning before using the normal CPU
 fallback; disabling it does not hide other PyTorch warnings or errors.
 
-Start the existing realtime backend in separate terminals:
+Start the existing realtime backend in separate terminals for realtime TRAIN,
+VERIFY, RUN, MCP, and GameTable:
 
 ```bash
 ./gameserver/v1/op/server.sh
 ./gameclient/v1/op/host.sh
 ```
+
+The first unpaced diagnostic is intentionally shell-only and needs no running
+GameServer or GameClient Host because it executes the canonical ZoneRuntime
+in-process:
+
+```bash
+./gamelab/op/train-unpaced.sh --fresh --episodes 50 --target 987
+```
+
+It writes the normal GameLab checkpoint. Test that checkpoint against the real
+paced world with ordinary frozen VERIFY:
+
+```bash
+./gamelab/op/verify.sh --target 987 --runs 3
+```
+
+Unpaced mode is not exposed through MCP or GameTable yet.
 
 ## MCP laboratory service
 
@@ -195,7 +227,9 @@ character_state
 volition_state
 audience_observation
 volition_appraise
-volition_decide
+volition_cycle_begin
+volition_will_appraise
+volition_commit
 ```
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.
@@ -229,6 +263,7 @@ Shell scripts remain available for maintainers, CI, and direct diagnostics:
 ```bash
 ./gamelab/op/check.sh
 ./gamelab/op/train.sh
+./gamelab/op/train-unpaced.sh
 ./gamelab/op/verify.sh
 ./gamelab/op/run.sh
 ./gamelab/op/mcp.sh
@@ -252,7 +287,11 @@ The gate verifies:
 - Python compilation;
 - model shapes and the Spine -> Motor gradient path;
 - real PPO parameter updates;
-- use of the official GameClient Host client API with no direct GameServer access;
+- realtime use of the official GameClient Host API, with the sole direct
+  GameServer import restricted to the operator-only unpaced adapter and its
+  canonical `ZoneRuntime`;
+- tick-domain parity: 120 Hz physics, 60 Hz Motor and 10 Hz Spine are scheduled
+  from world ticks rather than wall-clock deadlines;
 - Motor source has no strategic target input;
 - real fresh-model inference as a second joystick through the shared GameClient Host;
 - real stdio MCP laboratory flow with non-destructive TRAIN/VERIFY resets,

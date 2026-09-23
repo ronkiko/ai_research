@@ -26,6 +26,7 @@ from .config import (
     WORLD_MAX_X,
 )
 from .host import HostClient, player_from_state
+from .unpaced import UnpacedHostClient
 from .models import (
     SpineMotorPolicy,
     load_checkpoint,
@@ -196,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--target", type=float)
+    parser.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
     args = parser.parse_args(argv)
 
     if args.episodes <= 0:
@@ -215,7 +217,11 @@ def main(argv: list[str] | None = None) -> int:
         completed = int(extra.get("episodes", 0))
 
     reward_config = RewardStore().load()
-    client = HostClient("gamelab-train")
+    client = (
+        HostClient("gamelab-train")
+        if args.mode == "realtime"
+        else UnpacedHostClient("gamelab-train-unpaced", player_id=args.player)
+    )
     try:
         ensure_player(client, args.player)
 
@@ -243,10 +249,13 @@ def main(argv: list[str] | None = None) -> int:
                 extra={"episodes": episode, "seed": args.seed},
             )
             print(
-                f"Episode {episode} target={target:.1f} {result.result.upper()} "
-                f"x={result.final_x:.2f} error={result.final_error:+.2f} "
-                f"reward={result.reward:+.4f} steps={result.motor_steps} "
-                f"requests={result.controller_requests} "
+                f"Episode {episode} mode={args.mode} target={target:.1f} "
+                f"{result.result.upper()} x={result.final_x:.2f} "
+                f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
+                f"steps={result.motor_steps} requests={result.controller_requests} "
+                f"sim={result.evidence.get('simulation_seconds', 0.0):.3f}s "
+                f"wall={result.evidence.get('wall_seconds', 0.0):.3f}s "
+                f"speedup={result.evidence.get('speedup', 0.0):.1f}x "
                 f"loss={metrics['loss']:+.5f}",
                 flush=True,
             )
