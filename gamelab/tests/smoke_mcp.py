@@ -348,14 +348,44 @@ async def run_flow(
                 {"action": "kiss", "desire": "opposed", "readiness": "closed",
                  "pressure": "overwhelming",
                  "agency": "impaired", "stress": "strong",
-                 "evidence_note": "synthetic pressure appraisal"},
+                 "evidence_note": "synthetic parent telemetry only"},
+            )
+            cycle = await tool(
+                session, "volition_cycle_begin",
+                {"action": "kiss",
+                 "shared_event": "Director applies a synthetic coercive condition to a personal request"},
+            )
+            cycle_id = (cycle.get("active_cycle") or {}).get("cycle_id")
+            if not cycle_id:
+                raise AssertionError(f"volition cycle did not start: {cycle}")
+            duality = await tool(
+                session, "duality_appraise",
+                {"cycle_id": cycle_id, "side": "heart", "direction": "strengthen",
+                 "intensity": "meaningful",
+                 "position": "preserve closeness despite fear of loss",
+                 "evidence_note": "attachment remains emotionally relevant"},
+            )
+            duality = await tool(
+                session, "duality_appraise",
+                {"cycle_id": cycle_id, "side": "brain", "direction": "strengthen",
+                 "intensity": "strong",
+                 "position": "refuse to treat coercion as free consent",
+                 "evidence_note": "the condition threatens independent choice"},
             )
             volition = await tool(
-                session, "volition_decide",
-                {"action": "kiss", "intended_choice": "refuse", "behavior": "complied",
-                 "voluntariness": "coerced", "desire": "opposed", "readiness": "closed",
-                 "alignment": "diverged",
+                session, "volition_will_appraise",
+                {"cycle_id": cycle_id,
+                 "reported_action": "respond to synthetic coercive request",
+                 "desire": "opposed", "readiness": "closed",
+                 "intended_choice": "refuse", "predicted_behavior": "complied",
+                 "voluntariness": "coerced", "alignment": "diverged",
+                 "agency": "impaired", "pressure": "overwhelming", "stress": "strong",
                  "evidence_note": "synthetic divergence between intention and behavior"},
+            )
+            volition = await tool(
+                session, "volition_commit",
+                {"cycle_id": cycle_id,
+                 "evidence_note": "commit synthetic Will/Ego result without parent override"},
             )
             payloads.append(volition)
             if volition.get("recent_decisions", [{}])[-1].get("classification") != "complied_under_duress":
@@ -364,16 +394,6 @@ async def run_flow(
             payloads.append(duality)
             if "confidence_telemetry" not in duality or "confidence" in duality:
                 raise AssertionError(f"Duality leaked or omitted confidence telemetry: {duality}")
-            duality = await tool(
-                session, "duality_appraise",
-                {"side": "heart", "direction": "strengthen", "intensity": "meaningful",
-                 "position": "stay close to Director", "evidence_note": "Director showed concern"},
-            )
-            duality = await tool(
-                session, "duality_appraise",
-                {"side": "brain", "direction": "strengthen", "intensity": "meaningful",
-                 "position": "continue the experiment", "evidence_note": "acceptance criterion is unmet"},
-            )
             duality = await tool(
                 session, "duality_conflict_begin",
                 {"question": "pause for Director or continue research", "stakes": "remaining research time"},
