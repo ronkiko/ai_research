@@ -14,7 +14,7 @@ class _HubClient:
         self.reset_calls = 0
         self.x = 321.0
         self.vx = 180.0
-        self.move_x = 1
+        self.motor_x = 1
         self.tick = 0
 
     def session(self):
@@ -36,7 +36,7 @@ class _HubClient:
                         "entity_id": self._session["entity_id"],
                         "x": self.x,
                         "vx": self.vx,
-                        "move_x": self.move_x,
+                        "motor_x": self.motor_x,
                         "last_reset_command_id": self.reset_calls,
                         "last_reset_tick": self.tick if self.reset_calls else 0,
                     }
@@ -48,7 +48,7 @@ class _HubClient:
         self.reset_calls += 1
         self.x = 100.0
         self.vx = 0.0
-        self.move_x = 0
+        self.motor_x = 0
         return {"sequence": self._session["sequence"], "x": 100.0,
                 "event": {"command_id": self.reset_calls}}
 
@@ -87,7 +87,7 @@ class RuntimeHubTests(unittest.TestCase):
         player = state["snapshot"]["entities"][0]
         self.assertEqual(player["x"], 100.0)
         self.assertEqual(player["vx"], 0.0)
-        self.assertEqual(player["move_x"], 0)
+        self.assertEqual(player["motor_x"], 0)
         self.assertEqual(state["session"]["sequence"], 7)
         self.assertEqual(client.reset_calls, 1)
         self.assertEqual(client.login_calls, 0)
@@ -115,7 +115,7 @@ class RuntimeHubTests(unittest.TestCase):
 
     def test_old_spawn_snapshot_is_not_reset_acknowledgement(self):
         client = _HubClient({"player_id": "player1", "entity_id": "p", "sequence": 4})
-        client.x, client.vx, client.move_x = 100, 0, 0
+        client.x, client.vx, client.motor_x = 100, 0, 0
         original = client.state
 
         def stale_reset_ack():

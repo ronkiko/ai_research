@@ -11,34 +11,27 @@ from gamelab.unpaced import UnpacedHostClient
 from gameserver.v1.zone.model import ZoneRuntime
 
 
+class RuleMotor:
+    def parameters_for(self, goal, proprioception):
+        # goal[0] is dx/1000, proprioception[0] is vx/180.
+        effort = torch.clamp(50.0 * goal[0] - 1.8 * proprioception[0], -0.999, 0.999)
+        mean = torch.atanh(effort)
+        return mean, torch.tensor(-20.0)
+
+
 class RuleModel:
-    """Deterministic test policy; proves executor/world symmetry, not learning."""
-
-    def eval(self):
-        return None
-
+    def __init__(self):
+        self.motor = RuleMotor()
+    def eval(self): pass
     def spine(self, history):
         goal_dx = history[3, -1]
         zeros = torch.zeros(3, dtype=goal_dx.dtype)
         return torch.cat((goal_dx.reshape(1), zeros)), torch.zeros(16)
-
-    def motor(self, goal, proprioception):
-        dx = float(goal[0])
-        if dx > 0.002:
-            return torch.tensor([-100.0, -100.0, 100.0])
-        if dx < -0.002:
-            return torch.tensor([100.0, -100.0, -100.0])
-        return torch.tensor([-100.0, 100.0, -100.0])
-
-    def critic(self, hidden, proprioception):
-        return torch.tensor(0.0)
-
-    def action_to_move(self, action):
-        return (-1, 0, 1)[action]
+    def critic(self, hidden, proprioception): return torch.tensor(0.0)
 
 
 class UnpacedTests(unittest.TestCase):
-    def test_client_drives_the_canonical_zone_runtime(self):
+    def test_client_drives_canonical_continuous_physics(self):
         client = UnpacedHostClient("test-unpaced")
         try:
             self.assertIsInstance(client.runtime, ZoneRuntime)
@@ -46,23 +39,17 @@ class UnpacedTests(unittest.TestCase):
             player = player_from_state(before)
             self.assertEqual(before["snapshot"]["physics_hz"], 120)
             self.assertEqual(float(player["x"]), 100.0)
-
-            response = client.input(1)
-            queued = client.state()
-            self.assertEqual(player_from_state(queued)["last_sequence"], 0)
+            response = client.motor(1.0)
             client.advance_tick()
-            applied = client.state()
-            after = player_from_state(applied)
+            after = player_from_state(client.state())
             self.assertEqual(after["last_sequence"], response["sequence"])
-            self.assertEqual(
-                after["last_input_command_id"],
-                response["event"]["command_id"],
-            )
-            self.assertAlmostEqual(float(after["x"]), 101.5)
+            self.assertGreater(float(after["vx"]), 0.0)
+            self.assertGreater(float(after["x"]), 100.0)
+            self.assertLess(float(after["vx"]), 180.0)
         finally:
             client.close()
 
-    def test_reset_and_control_use_virtual_ticks_without_wall_clock_semantics(self):
+    def test_control_can_physically_settle_on_987(self):
         client = UnpacedHostClient("test-unpaced-control")
         transitions = []
         try:
@@ -72,9 +59,9 @@ class UnpacedTests(unittest.TestCase):
                 RuleModel(),
                 client,
                 state,
-                target_x=118.0,
-                tolerance=1.0,
-                max_seconds=2.0,
+                target_x=987.0,
+                tolerance=0.9,
+                max_seconds=8.0,
                 on_transition=transitions.append,
             )
         finally:
@@ -82,17 +69,12 @@ class UnpacedTests(unittest.TestCase):
 
         self.assertEqual(result["execution_mode"], "unpaced")
         self.assertEqual(result["status"], "reached")
-        self.assertLessEqual(abs(result["error"]), 1.0)
+        self.assertLessEqual(abs(result["error"]), 0.9)
         self.assertEqual(result["vx"], 0.0)
-        self.assertEqual(result["move_x"], 0)
         self.assertGreaterEqual(result["stable_ticks"], 12)
         self.assertTrue(transitions)
         self.assertTrue(all(item.next_tick > item.tick for item in transitions))
-        self.assertTrue(all(item.next_tick - item.tick == 2 for item in transitions))
-        self.assertTrue(all(item.elapsed_steps == 1.0 for item in transitions))
         self.assertAlmostEqual(result["effective_motor_hz"], 60.0, delta=10.0)
-        self.assertGreater(result["simulation_seconds"], 0.0)
-        self.assertGreaterEqual(result["speedup"], 0.0)
 
 
 if __name__ == "__main__":

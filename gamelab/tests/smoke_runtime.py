@@ -103,20 +103,19 @@ def main() -> int:
                     sensor_frame(
                         x=player["x"],
                         vx=player["vx"],
-                        move_x=player["move_x"],
+                        motor_x=player["motor_x"],
                         target_x=987.0,
                     )
                 )
                 with torch.no_grad():
                     goal, _ = model.spine(history.tensor())
-                    logits = model.motor(
+                    mean, _ = model.motor.parameters_for(
                         goal,
-                        motor_state(vx=player["vx"], move_x=player["move_x"]),
+                        motor_state(vx=player["vx"], motor_x=player["motor_x"]),
                     )
-                    action = int(logits.argmax().item())
-                move_x = model.action_to_move(action)
+                    motor_x = float(torch.tanh(mean).item())
 
-                queued = lab.input(move_x)
+                queued = lab.motor(motor_x)
                 if queued.get("sequence") != 1:
                     raise AssertionError(f"first lab command must share Host sequence 1: {queued}")
 
@@ -137,7 +136,7 @@ def main() -> int:
                     if (
                         float(reset_player["x"]) == 100.0
                         and float(reset_player["vx"]) == 0.0
-                        and int(reset_player["move_x"]) == 0
+                        and float(reset_player["motor_x"]) == 0.0
                     ):
                         break
                     time.sleep(0.01)
@@ -174,7 +173,7 @@ def main() -> int:
 
                 print(
                     "PASS gamelab shared-Host joystick smoke "
-                    f"action={move_x} moved_x={observed_player['x']} "
+                    f"motor={motor_x:+.3f} moved_x={observed_player['x']} "
                     "episode_reset_x=100 session_preserved=yes"
                 )
                 return 0

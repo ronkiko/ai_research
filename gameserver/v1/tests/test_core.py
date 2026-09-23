@@ -53,31 +53,34 @@ class ZoneRuntimeTests(unittest.TestCase):
 
     def test_latched_input_moves_player_until_changed(self):
         runtime = ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1", owner_id="player1"); runtime.tick()
-        runtime.enqueue_input(entity_id="actor-player1", sequence=1, move_x=1, source="player")
+        runtime.enqueue_input(entity_id="actor-player1", sequence=1, motor_x=1, source="player")
         first=runtime.tick(); second=runtime.tick()
         fx=next(e for e in first["entities"] if e["entity_id"]=="actor-player1")["x"]
         sx=next(e for e in second["entities"] if e["entity_id"]=="actor-player1")["x"]
         self.assertGreater(sx,fx)
-        runtime.enqueue_input(entity_id="actor-player1", sequence=2, move_x=0, source="player")
-        stopped=runtime.tick(); again=runtime.tick()
-        stx=next(e for e in stopped["entities"] if e["entity_id"]=="actor-player1")["x"]
-        ax=next(e for e in again["entities"] if e["entity_id"]=="actor-player1")["x"]
-        self.assertAlmostEqual(stx,ax)
+        runtime.enqueue_input(entity_id="actor-player1", sequence=2, motor_x=0, source="player")
+        released=runtime.tick()
+        rv=next(e for e in released["entities"] if e["entity_id"]=="actor-player1")["vx"]
+        self.assertGreater(rv, 0.0)
+        for _ in range(300):
+            snapshot=runtime.tick()
+        entity=next(e for e in snapshot["entities"] if e["entity_id"]=="actor-player1")
+        self.assertEqual(entity["vx"], 0.0)
 
     def test_line_boundaries_zero_velocity_but_keep_latched_intent(self):
-        for name,x,move_x,expected_x in (("right",999.0,1,1000.0),("left",1.0,-1,0.0)):
+        for name,x,motor_x,expected_x in (("right",999.99,1,1000.0),("left",0.01,-1,0.0)):
             with self.subTest(name=name):
                 runtime=ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1",x=x); runtime.tick()
-                runtime.enqueue_input(entity_id="actor-player1",sequence=1,move_x=move_x,source="player")
+                runtime.enqueue_input(entity_id="actor-player1",sequence=1,motor_x=motor_x,source="player")
                 snapshot=runtime.tick(); entity=next(item for item in snapshot["entities"] if item["entity_id"]=="actor-player1")
-                self.assertAlmostEqual(entity["x"],expected_x); self.assertEqual(entity["vx"],0.0); self.assertEqual(entity["move_x"],move_x)
+                self.assertAlmostEqual(entity["x"],expected_x); self.assertEqual(entity["vx"],0.0); self.assertEqual(entity["motor_x"],motor_x)
 
     def test_snapshot_is_strictly_one_dimensional(self):
         runtime=ZoneRuntime(); runtime.enqueue_spawn(entity_id="actor-player1",owner_id="player1"); snapshot=runtime.tick()
         self.assertEqual(snapshot["line_length"],1000.0)
         for entity in snapshot["entities"]:
             self.assertEqual(set(entity),{
-                "entity_id","kind","owner_id","x","vx","move_x",
+                "entity_id","kind","owner_id","x","vx","motor_x",
                 "last_sequence", "last_input_command_id", "last_input_tick",
                 "last_reset_command_id", "last_reset_tick",
             })
@@ -94,7 +97,7 @@ class ZoneRuntimeTests(unittest.TestCase):
         runtime.enqueue_input(
             entity_id="actor-player1",
             sequence=1,
-            move_x=1,
+            motor_x=1,
             source="player",
         )
         runtime.tick()
@@ -109,7 +112,7 @@ class ZoneRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(player["x"], 100.0)
         self.assertEqual(player["vx"], 0.0)
-        self.assertEqual(player["move_x"], 0)
+        self.assertEqual(player["motor_x"], 0)
         applied = next(
             item
             for item in reset_snapshot["commands_applied"]
@@ -121,7 +124,7 @@ class ZoneRuntimeTests(unittest.TestCase):
         runtime.enqueue_input(
             entity_id="actor-player1",
             sequence=2,
-            move_x=-1,
+            motor_x=-1,
             source="player",
         )
         after = runtime.tick()
@@ -133,9 +136,9 @@ class ZoneRuntimeTests(unittest.TestCase):
         self.assertLess(player["x"], 100.0)
 
     def test_sequence_must_increase(self):
-        runtime=ZoneRuntime(); runtime.enqueue_input(entity_id="mob1",sequence=1,move_x=-1,source="mob")
+        runtime=ZoneRuntime(); runtime.enqueue_input(entity_id="mob1",sequence=1,motor_x=-1,source="mob")
         with self.assertRaisesRegex(ProtocolError,"sequence must increase"):
-            runtime.enqueue_input(entity_id="mob1",sequence=1,move_x=1,source="mob")
+            runtime.enqueue_input(entity_id="mob1",sequence=1,motor_x=1,source="mob")
 
 
 class MobServiceTests(unittest.TestCase):

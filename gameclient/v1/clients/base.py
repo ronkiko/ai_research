@@ -1,6 +1,7 @@
 """Shared Host-facing client primitives used by CLI, GUI, MCP, and tests."""
 from __future__ import annotations
 
+import math
 import socket
 import threading
 from typing import Any
@@ -123,7 +124,20 @@ class HostClient:
     def state(self) -> dict[str, Any]:
         return self.connection.request("state", client_id=self.client_id)
 
+    def motor(self, motor_x: float) -> dict[str, Any]:
+        if isinstance(motor_x, bool) or not isinstance(motor_x, (int, float)):
+            raise ValueError("motor_x must be numeric")
+        motor_x = float(motor_x)
+        if not math.isfinite(motor_x) or not -1.0 <= motor_x <= 1.0:
+            raise ValueError("motor_x must be finite within [-1,1]")
+        return self.connection.request(
+            "motor",
+            client_id=self.client_id,
+            motor_x=motor_x,
+        )
+
     def input(self, move_x: int) -> dict[str, Any]:
+        """Compatibility/manual control: -1/0/+1 maps to full continuous effort."""
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise ValueError("move_x must be -1, 0, or 1")
         return self.connection.request(

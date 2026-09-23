@@ -51,7 +51,14 @@ class Laboratory:
     def ensure_model(self) -> None:
         path = checkpoint_path()
         if path.is_file():
-            return
+            candidate = SpineMotorPolicy.fresh(1)
+            try:
+                load_checkpoint(path, candidate)
+                return
+            except ValueError:
+                # A motor architecture migration cannot reuse old actor weights.
+                # save_checkpoint archives the previous bytes before replacement.
+                pass
         model = SpineMotorPolicy.fresh(1)
         save_checkpoint(path, model, extra={"episodes": 0, "seed": 1})
 
@@ -64,6 +71,7 @@ class Laboratory:
             "checkpoint": checkpoint_path().name,
             "trainable": True,
             "goal_interface": "target_x",
+            "motor_interface": "continuous_1d_effort",
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
             "policy_id": policy_id(model),

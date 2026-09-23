@@ -1,4 +1,4 @@
-"""Realtime learned controller: strategic target -> Spine -> one Motor."""
+"""Realtime learned controller: strategic target -> Spine -> continuous Motor."""
 from __future__ import annotations
 
 import argparse
@@ -104,7 +104,7 @@ def reset_player_state(
             and player.get("last_reset_tick", 0) > before_tick
             and float(player["x"]) == 100.0
             and float(player["vx"]) == 0.0
-            and int(player["move_x"]) == 0
+            and abs(float(player["motor_x"])) < 1e-9
         ):
             return state
         _progress_world_wait(client, 0.01)

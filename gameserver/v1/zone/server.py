@@ -39,10 +39,13 @@ class ZoneService:
             return message("command_queued", command_id=command_id,
                            world_tick=self.runtime.world_tick)
         if kind == "input":
+            raw_motor = request.get("motor_x")
+            if raw_motor is None and "move_x" in request:
+                raw_motor = float(request["move_x"])
             command_id = self.runtime.enqueue_input(
                 entity_id=str(request.get("entity_id", "")),
                 sequence=request.get("sequence"),
-                move_x=request.get("move_x"),
+                motor_x=raw_motor,
                 source=str(request.get("source", "")),
             )
             return message("command_queued", command_id=command_id,

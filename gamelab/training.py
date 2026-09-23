@@ -9,7 +9,6 @@ import random
 import threading
 
 import torch
-from torch.distributions import Categorical
 from torch.nn import functional as F
 
 from .config import (
@@ -34,6 +33,7 @@ from .models import (
     save_checkpoint,
 )
 from .reward import RewardConfig, RewardStore
+from .motors.continuous import squashed_log_prob
 from .runtime import checkpoint_path, ensure_player, reset_player_state
 
 
@@ -120,7 +120,7 @@ def ppo_update(
 
     histories = torch.stack([item.history for item in transitions])
     proprioception = torch.stack([item.proprioception for item in transitions])
-    actions = torch.tensor([item.action for item in transitions], dtype=torch.long)
+    actions = torch.tensor([item.action for item in transitions], dtype=torch.float32)
     old_log_probs = torch.tensor(
         [item.old_log_prob for item in transitions],
         dtype=torch.float32,
@@ -139,13 +139,16 @@ def ppo_update(
         order = torch.randperm(count)
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = order[start : start + PPO_BATCH_SIZE]
-            logits, values, _ = model.evaluate(
+            mean, log_std, values, _ = model.evaluate(
                 histories[indexes],
                 proprioception[indexes],
             )
-            distribution = Categorical(logits=logits)
-            log_probs = distribution.log_prob(actions[indexes])
-            entropy = distribution.entropy().mean()
+            log_probs, base_entropy = squashed_log_prob(
+                mean,
+                log_std,
+                actions[indexes],
+            )
+            entropy = base_entropy.mean()
             ratio = torch.exp(log_probs - old_log_probs[indexes])
             unclipped = ratio * advantages[indexes]
             clipped = torch.clamp(
@@ -182,7 +185,7 @@ def ppo_update(
             metrics[key] /= updates
     model.eval()
     with torch.no_grad():
-        _, predicted, _ = model.evaluate(histories, proprioception)
+        _, _, predicted, _ = model.evaluate(histories, proprioception)
         variance = returns.var(unbiased=False)
         metrics["explained_variance"] = (
             float(1 - (returns - predicted).var(unbiased=False) / variance)
@@ -275,8 +278,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"Episode {episode} mode={args.mode} target={target:.1f} "
                 f"{result.result.upper()} x={result.final_x:.2f} "
                 f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
-                f"vx={result.evidence.get('vx', 0.0):+.1f} "
-                f"move={result.evidence.get('move_x', 0)} "
+                f"vx={result.evidence.get('vx', 0.0):+.2f} "
+                f"motor={result.evidence.get('motor_x', 0.0):+.3f} "
                 f"best_stop={result.evidence.get('closest_stopped_distance')} "
                 f"stable={result.evidence.get('stable_ticks', 0)} "
                 f"steps={result.motor_steps} requests={result.controller_requests} "

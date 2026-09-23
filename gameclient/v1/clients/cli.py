@@ -29,7 +29,7 @@ def _print_state(response: dict[str, Any]) -> None:
         print(
             f"ENTITY marker={marker} id={entity.get('entity_id')} "
             f"x={float(entity.get('x', 0.0)):.3f} "
-            f"vx={float(entity.get('vx', 0.0)):.3f} move={entity.get('move_x')}"
+            f"vx={float(entity.get('vx', 0.0)):.3f} motor={float(entity.get('motor_x', 0.0)):+.3f}"
         )
     event = response.get("last_event")
     if event:
@@ -52,8 +52,10 @@ def _print_events(response: dict[str, Any]) -> None:
         ]
         if "sequence" in event:
             fields.append(f"sequence={event.get('sequence')}")
+        if "motor_x" in event:
+            fields.append(f"motor={float(event.get('motor_x', 0.0)):+.3f}")
         if "move_x" in event:
-            fields.append(f"move={event.get('move_x')}")
+            fields.append(f"manual_move={event.get('move_x')}")
         print("EVENT " + " ".join(fields))
 
 

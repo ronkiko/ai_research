@@ -55,6 +55,7 @@ def _public_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "player_id",
         "sequence",
         "move_x",
+        "motor_x",
         "x",
         "command_id",
         "queued_at_tick",
@@ -79,7 +80,7 @@ def _compact_state(state: dict[str, Any]) -> dict[str, Any]:
             return None
         return {
             key: entity.get(key)
-            for key in ("x", "vx", "move_x")
+            for key in ("x", "vx", "motor_x")
         }
 
     session = state.get("session") or {}

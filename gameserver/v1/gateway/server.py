@@ -50,11 +50,14 @@ class GatewayService:
             return session
         if kind == "input":
             session = self._session(request.get("session_id"))
+            raw_motor = request.get("motor_x")
+            if raw_motor is None and "move_x" in request:
+                raw_motor = float(request["move_x"])
             return rpc(self.host, self.zone_port, message(
                 "input",
                 entity_id=session["entity_id"],
                 sequence=request.get("sequence"),
-                move_x=request.get("move_x"),
+                motor_x=raw_motor,
                 source="player",
             ))
         if kind == "reset":

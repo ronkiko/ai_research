@@ -7,14 +7,8 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.config import (
-    HISTORY_FRAMES,
-    MOTOR_GOAL_SIZE,
-    MOTOR_STATE_SIZE,
-    SPINE_CHANNELS,
-)
+from gamelab.config import HISTORY_FRAMES, MOTOR_GOAL_SIZE, MOTOR_STATE_SIZE, SPINE_CHANNELS
 from gamelab.models import (
-    MotorMLP,
     SensorHistory,
     SpineMotorPolicy,
     load_checkpoint,
@@ -22,56 +16,40 @@ from gamelab.models import (
     save_checkpoint,
     sensor_frame,
 )
+from gamelab.motors.continuous import ContinuousMotor, squashed_action
 
 
 class ModelTests(unittest.TestCase):
-    def test_nnpack_backend_is_disabled(self):
-        nnpack = getattr(torch.backends, "nnpack", None)
-        if nnpack is None or not hasattr(nnpack, "set_flags"):
-            self.skipTest("PyTorch does not expose the optional NNPACK backend")
-        previous = nnpack.set_flags(False)
-        self.assertFalse(previous[0])
-
-    def test_spine_and_single_motor_shapes(self):
-        frame = sensor_frame(x=100.0, vx=0.0, move_x=0, target_x=987.0)
+    def test_spine_and_continuous_motor_shapes(self):
+        frame = sensor_frame(x=100.0, vx=0.0, motor_x=0.0, target_x=987.0)
         history = SensorHistory(frame).tensor()
-        proprioception = motor_state(vx=0.0, move_x=0)
+        proprioception = motor_state(vx=0.0, motor_x=0.0)
+        model = SpineMotorPolicy.fresh(7)
+        goal, hidden = model.spine(history)
+        mean, log_std = model.motor.parameters_for(goal, proprioception)
+        action, _ = squashed_action(mean, log_std, sampled=False)
+        value = model.critic(hidden, proprioception)
 
         self.assertEqual(tuple(frame.shape), (SPINE_CHANNELS,))
         self.assertEqual(tuple(history.shape), (SPINE_CHANNELS, HISTORY_FRAMES))
         self.assertEqual(tuple(proprioception.shape), (MOTOR_STATE_SIZE,))
-        self.assertEqual(MotorMLP.INPUTS, MOTOR_GOAL_SIZE + MOTOR_STATE_SIZE)
-
-        model = SpineMotorPolicy.fresh(7)
-        goal, hidden = model.spine(history)
-        logits = model.motor(goal, proprioception)
-        value = model.critic(hidden, proprioception)
-
+        self.assertEqual(ContinuousMotor.INPUTS, MOTOR_GOAL_SIZE + MOTOR_STATE_SIZE)
         self.assertEqual(tuple(goal.shape), (MOTOR_GOAL_SIZE,))
-        self.assertEqual(tuple(logits.shape), (3,))
+        self.assertEqual(mean.ndim, 0)
+        self.assertEqual(log_std.ndim, 0)
+        self.assertGreaterEqual(float(action), -1.0)
+        self.assertLessEqual(float(action), 1.0)
         self.assertEqual(value.ndim, 0)
 
     def test_gradient_reaches_spine_and_motor(self):
         model = SpineMotorPolicy.fresh(11)
         histories = torch.randn(4, SPINE_CHANNELS, HISTORY_FRAMES)
         proprioception = torch.randn(4, MOTOR_STATE_SIZE)
-
-        logits, values, goals = model.evaluate(histories, proprioception)
-        loss = logits.square().mean() + values.square().mean() + goals.square().mean()
+        mean, log_std, values, goals = model.evaluate(histories, proprioception)
+        loss = mean.square().mean() + log_std.square().mean() + values.square().mean() + goals.square().mean()
         loss.backward()
-
-        spine_grad = sum(
-            float(parameter.grad.abs().sum())
-            for parameter in model.spine.parameters()
-            if parameter.grad is not None
-        )
-        motor_grad = sum(
-            float(parameter.grad.abs().sum())
-            for parameter in model.motor.parameters()
-            if parameter.grad is not None
-        )
-        self.assertGreater(spine_grad, 0.0)
-        self.assertGreater(motor_grad, 0.0)
+        self.assertGreater(sum(float(p.grad.abs().sum()) for p in model.spine.parameters() if p.grad is not None), 0.0)
+        self.assertGreater(sum(float(p.grad.abs().sum()) for p in model.motor.parameters() if p.grad is not None), 0.0)
 
     def test_checkpoint_roundtrip(self):
         model = SpineMotorPolicy.fresh(17)

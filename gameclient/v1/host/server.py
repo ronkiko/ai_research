@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 import json
+import math
 import signal
 import socketserver
 import threading
@@ -113,7 +114,7 @@ class HostService:
                 role_to_clients="server",
                 host_protocol_version=HOST_PROTOCOL_VERSION,
                 gameplay_ready=True,
-                capabilities=["players", "login", "session", "state", "input", "reset", "events", "logout"],
+                capabilities=["players", "login", "session", "state", "input", "motor", "reset", "events", "logout"],
                 upstream={
                     "entity": "GameServer Gateway",
                     "host": self.gateway_host,
@@ -138,6 +139,8 @@ class HostService:
             return self._state()
         if kind == "input":
             return self._input(request)
+        if kind == "motor":
+            return self._motor(request)
         if kind == "reset":
             return self._reset(request)
         if kind == "events":
@@ -213,10 +216,30 @@ class HostService:
         )
 
     def _input(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Compatibility/manual input: -1/0/+1 becomes full motor effort."""
         client_id = self._client_id(request)
         move_x = request.get("move_x")
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise HostProtocolError("move_x must be -1, 0, or 1")
+        return self._submit_motor(client_id, float(move_x), move_x=move_x)
+
+    def _motor(self, request: dict[str, Any]) -> dict[str, Any]:
+        client_id = self._client_id(request)
+        value = request.get("motor_x")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HostProtocolError("motor_x must be numeric")
+        motor_x = float(value)
+        if not math.isfinite(motor_x) or not -1.0 <= motor_x <= 1.0:
+            raise HostProtocolError("motor_x must be finite within [-1,1]")
+        return self._submit_motor(client_id, motor_x)
+
+    def _submit_motor(
+        self,
+        client_id: str,
+        motor_x: float,
+        *,
+        move_x: int | None = None,
+    ) -> dict[str, Any]:
         with self._operation_lock:
             session = self._session_copy()
             with self._state_lock:
@@ -226,18 +249,26 @@ class HostService:
                 "input",
                 session_id=session["session_id"],
                 sequence=sequence,
-                move_x=move_x,
+                motor_x=motor_x,
             )
-            event = self._append_event(
-                "input",
+            fields = dict(
                 client_id=client_id,
                 player_id=session["player_id"],
                 sequence=sequence,
-                move_x=move_x,
+                motor_x=motor_x,
                 command_id=response.get("command_id"),
                 queued_at_tick=response.get("world_tick"),
             )
-            return message("input", sequence=sequence, move_x=move_x, event=event)
+            if move_x is not None:
+                fields["move_x"] = move_x
+            event = self._append_event("input", **fields)
+            return message(
+                "motor" if move_x is None else "input",
+                sequence=sequence,
+                motor_x=motor_x,
+                **({"move_x": move_x} if move_x is not None else {}),
+                event=event,
+            )
 
     def _reset(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)

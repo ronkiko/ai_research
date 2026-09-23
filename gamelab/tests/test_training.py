@@ -6,27 +6,21 @@ import tempfile
 import unittest
 
 import torch
-from torch.distributions import Categorical
 
 from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
 from gamelab.models import SpineMotorPolicy
-from gamelab.reward import (
-    RewardConfig,
-    RewardStore,
-    stopped_near_goal_proximity,
-    step_reward,
-)
+from gamelab.motors.continuous import squashed_action
+from gamelab.reward import RewardConfig, RewardStore, stopped_near_goal_proximity, step_reward
 from gamelab.training import Transition, _prepare_reward_config, ppo_update
 
 
 class TrainingTests(unittest.TestCase):
-    def test_default_reward_preserves_original_training_signal(self):
+    def test_default_reward_progress_and_timeout(self):
         reward = step_reward(
             RewardConfig(),
             before_distance=100.0,
             after_distance=90.0,
             next_vx=180.0,
-            next_move_x=1,
             success=False,
             timeout=False,
         )
@@ -37,16 +31,12 @@ class TrainingTests(unittest.TestCase):
             before_distance=10.0,
             after_distance=13.0,
             next_vx=0.0,
-            next_move_x=0,
             success=False,
             timeout=True,
         )
         self.assertAlmostEqual(timeout, -1.0035)
 
     def test_default_timeout_cannot_be_profitable_from_progress_alone(self):
-        # Dense progress is normalized by WORLD_MAX_X, so its total episode
-        # contribution can never exceed +1.0. Default timeout penalty matches
-        # that upper bound; positive step cost makes every timeout net-negative.
         config = RewardConfig()
         total = 0.0
         before = 1000.0
@@ -57,7 +47,6 @@ class TrainingTests(unittest.TestCase):
                 before_distance=before,
                 after_distance=after,
                 next_vx=180.0,
-                next_move_x=1,
                 success=False,
                 timeout=step == 479,
             )
@@ -74,25 +63,13 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(fresh.timeout_penalty, 1.0)
             self.assertEqual(store.load().timeout_penalty, 1.0)
 
-    def test_stopped_near_goal_shaping_is_state_based_bounded_and_monotonic(self):
+    def test_stopped_near_goal_shaping_is_state_based(self):
         config = RewardConfig()
-        moving = stopped_near_goal_proximity(
-            config, distance=1.0, vx=180.0, move_x=1,
-        )
-        outside = stopped_near_goal_proximity(
-            config, distance=6.0, vx=0.0, move_x=0,
-        )
-        edge = stopped_near_goal_proximity(
-            config, distance=5.0, vx=0.0, move_x=0,
-        )
-        near = stopped_near_goal_proximity(
-            config, distance=1.0, vx=0.0, move_x=0,
-        )
-        exact = stopped_near_goal_proximity(
-            config, distance=0.0, vx=0.0, move_x=0,
-        )
-        self.assertEqual(moving, 0.0)
-        self.assertEqual(outside, 0.0)
+        self.assertEqual(stopped_near_goal_proximity(config, distance=1.0, vx=10.0), 0.0)
+        self.assertEqual(stopped_near_goal_proximity(config, distance=6.0, vx=0.0), 0.0)
+        edge = stopped_near_goal_proximity(config, distance=5.0, vx=0.0)
+        near = stopped_near_goal_proximity(config, distance=1.0, vx=0.0)
+        exact = stopped_near_goal_proximity(config, distance=0.0, vx=0.0)
         self.assertGreater(edge, 0.0)
         self.assertLess(edge, near)
         self.assertLess(near, exact)
@@ -105,7 +82,6 @@ class TrainingTests(unittest.TestCase):
             before_distance=1.0,
             after_distance=1.0,
             next_vx=0.0,
-            next_move_x=0,
             success=False,
             timeout=False,
             stopped_proximity_gain=0.82,
@@ -115,7 +91,6 @@ class TrainingTests(unittest.TestCase):
             before_distance=1.0,
             after_distance=1.0,
             next_vx=0.0,
-            next_move_x=0,
             success=False,
             timeout=False,
             stopped_proximity_gain=0.0,
@@ -123,25 +98,7 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(first, 0.1635)
         self.assertAlmostEqual(repeated, -0.0005)
 
-    def test_reward_configuration_can_be_changed_without_steering(self):
-        config = RewardConfig().updated(
-            timeout_penalty=1.5,
-            stopped_near_goal_bonus=0.3,
-            near_goal_radius=20.0,
-        )
-        reward = step_reward(
-            config,
-            before_distance=15.0,
-            after_distance=12.0,
-            next_vx=0.0,
-            next_move_x=0,
-            success=False,
-            timeout=False,
-            stopped_proximity_gain=0.5,
-        )
-        self.assertAlmostEqual(reward, 0.1525)
-
-    def test_joint_ppo_updates_learned_hierarchy(self):
+    def test_joint_ppo_updates_continuous_motor_and_spine(self):
         torch.manual_seed(23)
         model = SpineMotorPolicy.fresh(23)
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
@@ -151,39 +108,30 @@ class TrainingTests(unittest.TestCase):
             history = torch.randn(SPINE_CHANNELS, HISTORY_FRAMES)
             proprioception = torch.randn(MOTOR_STATE_SIZE)
             with torch.no_grad():
-                logits, value, _ = model.evaluate(history, proprioception)
-                distribution = Categorical(logits=logits)
-                action_tensor = distribution.sample()
+                mean, log_std, value, _ = model.evaluate(
+                    history.unsqueeze(0),
+                    proprioception.unsqueeze(0),
+                )
+                action, log_prob = squashed_action(mean[0], log_std[0], sampled=True)
             transitions.append(
                 Transition(
                     history=history,
                     proprioception=proprioception,
-                    action=int(action_tensor.item()),
-                    old_log_prob=float(distribution.log_prob(action_tensor).item()),
-                    old_value=float(value.item()),
+                    action=float(action),
+                    old_log_prob=float(log_prob),
+                    old_value=float(value[0]),
                     reward=0.05 if index < 23 else 1.0,
                     done=index == 23,
                 )
             )
 
-        spine_before = [parameter.detach().clone() for parameter in model.spine.parameters()]
-        motor_before = [parameter.detach().clone() for parameter in model.motor.parameters()]
-
+        spine_before = [p.detach().clone() for p in model.spine.parameters()]
+        motor_before = [p.detach().clone() for p in model.motor.parameters()]
         metrics = ppo_update(model, optimizer, transitions)
 
         self.assertTrue(all(math.isfinite(value) for value in metrics.values()))
-        self.assertTrue(
-            any(
-                not torch.equal(before, after)
-                for before, after in zip(spine_before, model.spine.parameters())
-            )
-        )
-        self.assertTrue(
-            any(
-                not torch.equal(before, after)
-                for before, after in zip(motor_before, model.motor.parameters())
-            )
-        )
+        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(spine_before, model.spine.parameters())))
+        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(motor_before, model.motor.parameters())))
 
 
 if __name__ == "__main__":

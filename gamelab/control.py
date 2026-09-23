@@ -1,9 +1,8 @@
 """One world-tick executor for realtime and unpaced TRAIN/VERIFY/RUN.
 
-The learned policy always lives on GameServer time: physics ticks schedule Motor,
-Spine, timeout, reward duration and success hold.  Realtime waits for those
-authoritative ticks; unpaced advances the same ZoneRuntime without wall-clock
-sleep.  Wall time is only liveness/diagnostic instrumentation.
+Policy semantics live on authoritative world ticks.  The continuous Motor emits
+one effort scalar in [-1,+1]; GameServer physics turns effort into acceleration,
+velocity and position.
 """
 from __future__ import annotations
 
@@ -13,20 +12,19 @@ import time
 from typing import Any, Callable
 
 import torch
-from torch.distributions import Categorical
 
 from .config import MOTOR_HZ, SPINE_HZ, SUCCESS_HOLD_STEPS
 from .host import HostError, player_from_state
 from .models import SensorHistory, motor_state, sensor_frame
+from .motors.continuous import squashed_action
 from .reward import RewardConfig, stopped_near_goal_proximity, step_reward
 
 STALE_SECONDS = 0.5
 MAX_HOLD_GAP_SECONDS = 0.1
+MOTOR_SEND_EPS = 1e-6
 
 
 class GoalMailbox:
-    """One current strategic goal, not a queued movement plan."""
-
     def __init__(self, target_x: float) -> None:
         self._lock = threading.Lock()
         self._goal = (float(target_x), 1)
@@ -45,7 +43,7 @@ class GoalMailbox:
 class Decision:
     history: torch.Tensor
     proprioception: torch.Tensor
-    action: int
+    action: float
     old_log_prob: float
     old_value: float
     reward: float = 0.0
@@ -79,7 +77,6 @@ class EventGuard:
 
 
 def _advance_or_wait(client, physics_hz: int) -> None:
-    """Progress one opportunity for a fresh authoritative world tick."""
     advance = getattr(client, "advance_tick", None)
     if callable(advance):
         advance()
@@ -92,8 +89,14 @@ def _execution_mode(client) -> str:
 
 
 def control_loop(
-    model, client, state: dict, *, target_x: float, tolerance: float,
-    max_seconds: float, sampled: bool = False,
+    model,
+    client,
+    state: dict,
+    *,
+    target_x: float,
+    tolerance: float,
+    max_seconds: float,
+    sampled: bool = False,
     reward_config: RewardConfig | None = None,
     cancel: threading.Event | None = None,
     goals: GoalMailbox | None = None,
@@ -130,7 +133,6 @@ def control_loop(
     next_spine_tick = start_tick
     last_tick: int | None = None
     stable_since: int | None = None
-    stable_sequence: int | None = None
     revision = 0
     history = None
     cached_goal = hidden = latched_history = None
@@ -142,7 +144,7 @@ def control_loop(
     total_reward = 0.0
     result: dict[str, Any] = {}
     reward_config = reward_config or RewardConfig()
-    can_stop = True
+    can_relax = True
     mode = _execution_mode(client)
 
     try:
@@ -158,9 +160,6 @@ def control_loop(
             if tick < start_tick or (last_tick is not None and tick < last_tick):
                 raise EvidenceError("world tick moved backwards")
 
-            # Motor/Spine cadence is defined only by authoritative world ticks.
-            # Realtime sleeps until the server advances; unpaced explicitly ticks
-            # the same ZoneRuntime.  No policy work happens on duplicate snapshots.
             if tick < next_motor_tick:
                 previous_tick = tick
                 _advance_or_wait(client, hz)
@@ -191,7 +190,7 @@ def control_loop(
             player = player_from_state(current_state)
             x = float(player["x"])
             vx = float(player["vx"])
-            current_move = int(player["move_x"])
+            current_motor = float(player["motor_x"])
             sequence = player.get("last_sequence")
             if type(sequence) is not int:
                 raise HostError("missing applied sequence; restart backend")
@@ -200,7 +199,7 @@ def control_loop(
             changed = new_revision != revision
             if changed:
                 target_x, revision = new_target, new_revision
-                stable_since = stable_sequence = None
+                stable_since = None
                 next_spine_tick = tick
                 if history is not None:
                     history.set_target(target_x)
@@ -210,11 +209,12 @@ def control_loop(
                 stable_since = None
 
             error = target_x - x
-            if abs(error) <= tolerance and abs(vx) < 1e-9 and current_move == 0:
-                if stable_since is None or stable_sequence != sequence:
-                    stable_since, stable_sequence = tick, sequence
+            physically_stopped = abs(vx) < 1e-9
+            if abs(error) <= tolerance and physically_stopped:
+                if stable_since is None:
+                    stable_since = tick
             else:
-                stable_since = stable_sequence = None
+                stable_since = None
 
             stable_ticks = tick - stable_since if stable_since is not None else 0
             reached = stable_since is not None and stable_ticks >= int(
@@ -232,7 +232,7 @@ def control_loop(
                 goal_revision=revision,
                 x=x,
                 vx=vx,
-                move_x=current_move,
+                motor_x=current_motor,
                 error=error,
                 world_tick=tick,
                 start_world_tick=start_tick,
@@ -272,11 +272,12 @@ def control_loop(
                     and player.get("last_input_command_id") != pending.command_id
                 ):
                     raise EvidenceError("applied command does not match policy")
+
                 pending.next_tick = tick
                 pending.elapsed_steps = (tick - pending.tick) * MOTOR_HZ / hz
                 pending.applied_tick = player.get("last_input_tick")
-                stopped_now = abs(vx) < 1e-9 and current_move == 0
-                if stopped_now:
+
+                if physically_stopped:
                     distance_now = abs(error)
                     if closest_stopped_distance is None or distance_now < closest_stopped_distance:
                         closest_stopped_distance = distance_now
@@ -284,16 +285,15 @@ def control_loop(
                     reward_config,
                     distance=abs(error),
                     vx=vx,
-                    move_x=current_move,
                 )
                 proximity_gain = max(0.0, proximity - best_stopped_proximity)
                 best_stopped_proximity = max(best_stopped_proximity, proximity)
+
                 pending.reward = step_reward(
                     reward_config,
                     before_distance=before_distance,
                     after_distance=abs(error),
                     next_vx=vx,
-                    next_move_x=current_move,
                     success=reached,
                     timeout=timed_out and not reached,
                     elapsed_steps=pending.elapsed_steps,
@@ -313,14 +313,14 @@ def control_loop(
             frame = sensor_frame(
                 x=x,
                 vx=vx,
-                move_x=current_move,
+                motor_x=current_motor,
                 target_x=target_x,
             )
             if history is None:
                 history = SensorHistory(frame)
             else:
                 history.push(frame)
-            proprioception = motor_state(vx=vx, move_x=current_move)
+            proprioception = motor_state(vx=vx, motor_x=current_motor)
 
             with torch.no_grad():
                 if cached_goal is None or tick >= next_spine_tick:
@@ -328,16 +328,18 @@ def control_loop(
                     cached_goal, hidden = model.spine(latched_history)
                     next_spine_tick = tick + spine_stride
                     spine_calls += 1
-                logits = model.motor(cached_goal, proprioception)
-                distribution = Categorical(logits=logits)
-                action_tensor = distribution.sample() if sampled else logits.argmax()
-                action = int(action_tensor.item())
+                mean, log_std = model.motor.parameters_for(cached_goal, proprioception)
+                action_tensor, log_prob = squashed_action(
+                    mean,
+                    log_std,
+                    sampled=sampled,
+                )
+                motor_x = float(action_tensor.item())
                 value = model.critic(hidden, proprioception)
 
-            move_x = model.action_to_move(action)
             command_id = None
-            if move_x != current_move:
-                response = client.input(move_x)
+            if abs(motor_x - current_motor) > MOTOR_SEND_EPS:
+                response = client.motor(motor_x)
                 sequence = response["sequence"]
                 command_id = response["event"]["command_id"]
                 requests += 1
@@ -345,8 +347,8 @@ def control_loop(
             pending = Decision(
                 latched_history.clone(),
                 proprioception.clone(),
-                action,
-                float(distribution.log_prob(action_tensor)),
+                motor_x,
+                float(log_prob.item()),
                 float(value),
                 tick=tick,
                 sequence=sequence,
@@ -359,10 +361,10 @@ def control_loop(
             current_state = client.state()
 
     except EvidenceError as exc:
-        can_stop = False
+        can_relax = False
         result.update(status="contaminated", error_detail=str(exc))
     finally:
-        if can_stop:
+        if can_relax:
             try:
                 guard.check()
                 end = client.state()
@@ -370,8 +372,8 @@ def control_loop(
                     end["session"].get("session_id"),
                     end["session"].get("entity_id"),
                 ) == identity:
-                    if int(player_from_state(end)["move_x"]) != 0:
-                        client.input(0)
+                    if abs(float(player_from_state(end)["motor_x"])) > MOTOR_SEND_EPS:
+                        client.motor(0.0)
                         advance = getattr(client, "advance_tick", None)
                         if callable(advance):
                             advance()

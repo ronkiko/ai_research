@@ -281,7 +281,7 @@ async def run_flow(
 
             rewards = await tool(session, "reward_get")
             payloads.append(rewards)
-            if rewards.get("timeout_penalty") != 0.25:
+            if rewards.get("timeout_penalty") != 1.0:
                 raise AssertionError(f"unexpected default reward: {rewards}")
 
             rewards = await tool(

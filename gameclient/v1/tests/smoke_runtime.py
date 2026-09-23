@@ -138,14 +138,25 @@ def main() -> int:
                 if stopped.get("sequence") != 2:
                     raise AssertionError(f"stop sequence must be 2: {stopped}")
 
+                # Zero motor effort relaxes the actuator; velocity decays through
+                # physical drag instead of snapping to zero.
                 time.sleep(0.05)
+                coasting = run_cli("state")
+                coasting_player = entity(coasting["snapshot"], "actor-player1")
+                if not float(coasting_player["vx"]) > 0.0:
+                    raise AssertionError(f"P should still coast after motor release: {coasting_player}")
+
+                time.sleep(2.2)
                 stopped_state = run_cli("state")
-                stopped_x = float(entity(stopped_state["snapshot"], "actor-player1")["x"])
-                time.sleep(0.15)
+                stopped_player = entity(stopped_state["snapshot"], "actor-player1")
+                if float(stopped_player["vx"]) != 0.0:
+                    raise AssertionError(f"P did not settle to rest: {stopped_player}")
+                stopped_x = float(stopped_player["x"])
+                time.sleep(0.1)
                 again = run_cli("state")
                 again_x = float(entity(again["snapshot"], "actor-player1")["x"])
                 if abs(again_x - stopped_x) > 1e-9:
-                    raise AssertionError(f"P moved after stop: {stopped_x} -> {again_x}")
+                    raise AssertionError(f"P moved after physical rest: {stopped_x} -> {again_x}")
 
                 events = run_cli("events")
                 input_events = [
