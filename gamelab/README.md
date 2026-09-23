@@ -103,12 +103,15 @@ the local physical reflex against requested velocity; it never receives
 artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
-Motor School v2 uses local physical credit: each Motor action is scored by the
-measured reduction in velocity error over the next 1/60 second. It does not use
-a critic to propagate consequences from later velocity assignments. Frozen verification runs every 10 episodes. A PASS certifies the candidate and
-may update `brain.pt`, but normal training continues through the full requested
-`--episodes` budget. The best passing brain is retained even if later training
-regresses. `--stop-on-pass` is an explicit quick/CI mode.
+Motor School v3 samples continuous normalized velocity commands from
+`[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
+Motor action receives local measured velocity-tracking credit over the next
+1/60 second, so the reflex still does not depend on a long strategic horizon.
+Frozen verification uses unseen velocity levels and checks mean error, worst-case
+error, mean rest speed and worst rest speed. A PASS may update `brain.pt`, but
+normal training continues through the full requested `--episodes` budget. The
+best passing brain is retained even if later training regresses.
+`--stop-on-pass` remains an explicit quick/CI mode.
 
 A clean checkout intentionally contains no verified Motor brain. Train the
 default wheel first:
@@ -134,8 +137,25 @@ state as one unit.
 Spine TRAIN must explicitly select a Motor:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100 --target 987
+./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100
 ```
+
+Normal Spine training samples both spawn and target positions. Early episodes
+stay away from world edges; the curriculum expands from roughly `[100,900]`
+toward `[20,980]`. The task mixture contains both travel directions, long
+transfers and short fine-positioning episodes. `--target 987` is still
+supported for a focused experiment, but only fixes the target: spawn positions
+continue to vary.
+
+Spine reward combines distance progress with a smooth potential over the desired
+physical state `(x=target, vx=0)`. Entering a world boundary while the goal is
+elsewhere is penalized as a collision rather than treated as a free brake.
+
+After the requested PPO budget, TRAIN runs frozen deterministic Spine VERIFY.
+The default suite contains left/right, short/long and near-boundary tasks; a
+fixed `--target` verifies that target from several starting positions. PASS
+requires physical success at the normal `±0.9` tolerance, zero velocity and no
+wall contact. A direction-only improvement is not considered learned.
 
 TRAIN refuses an untrained/unverified package, a missing brain, a brain hash
 mismatch, an incompatible physical/socket manifest, or a checkpoint created

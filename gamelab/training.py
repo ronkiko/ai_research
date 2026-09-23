@@ -58,6 +58,16 @@ class EpisodeResult:
     evidence: dict
 
 
+SPINE_VERIFY_CASES = (
+    (200.0, 800.0),
+    (800.0, 200.0),
+    (420.0, 520.0),
+    (580.0, 480.0),
+    (100.0, 987.0),
+    (900.0, 25.0),
+)
+
+
 def collect_episode(
     model: SpineMotorPolicy,
     client: HostClient,
@@ -68,12 +78,13 @@ def collect_episode(
     max_seconds: float = TRAIN_EPISODE_SECONDS,
     reward_config: RewardConfig | None = None,
     cancel: threading.Event | None = None,
+    sampled: bool = True,
 ) -> EpisodeResult:
     state = reset_player_state(client, player_id, spawn_x=spawn_x)
     transitions: list[Transition] = []
     result = control_loop(
         model, client, state, target_x=target_x, tolerance=SUCCESS_TOLERANCE,
-        max_seconds=max_seconds, sampled=True, reward_config=reward_config,
+        max_seconds=max_seconds, sampled=sampled, reward_config=reward_config,
         cancel=cancel, on_transition=transitions.append,
     )
     outcome = "success" if result["status"] == "reached" else result["status"]
@@ -256,6 +267,70 @@ def _sample_training_task(
     return spawn_x, target_x
 
 
+def _verification_cases(
+    target_override: float | None,
+) -> tuple[tuple[float, float], ...]:
+    if target_override is None:
+        return SPINE_VERIFY_CASES
+    candidates = (100.0, 300.0, 700.0, 900.0)
+    cases = tuple(
+        (spawn, float(target_override))
+        for spawn in candidates
+        if abs(float(target_override) - spawn) >= 30.0
+    )
+    if not cases:
+        fallback = 100.0 if float(target_override) >= WORLD_MAX_X / 2.0 else 900.0
+        return ((fallback, float(target_override)),)
+    return cases
+
+
+def verify_spine_policy(
+    model: SpineMotorPolicy,
+    client: HostClient,
+    *,
+    player_id: str,
+    reward_config: RewardConfig | None = None,
+    target_override: float | None = None,
+    max_seconds: float = TRAIN_EPISODE_SECONDS,
+) -> dict:
+    cases: list[dict] = []
+    for spawn_x, target_x in _verification_cases(target_override):
+        result = collect_episode(
+            model,
+            client,
+            player_id=player_id,
+            target_x=target_x,
+            spawn_x=spawn_x,
+            max_seconds=max_seconds,
+            reward_config=reward_config,
+            sampled=False,
+        )
+        vx = float(result.evidence.get("vx", 0.0))
+        wall_contacts = int(result.evidence.get("wall_contacts", 0))
+        passed = (
+            result.result == "success"
+            and abs(result.final_error) <= SUCCESS_TOLERANCE
+            and abs(vx) < 1e-9
+            and wall_contacts == 0
+        )
+        cases.append(
+            {
+                "spawn_x": spawn_x,
+                "target_x": target_x,
+                "passed": passed,
+                "result": result.result,
+                "final_x": result.final_x,
+                "error": result.final_error,
+                "vx": vx,
+                "wall_contacts": wall_contacts,
+            }
+        )
+    return {
+        "passed": bool(cases) and all(case["passed"] for case in cases),
+        "cases": cases,
+    }
+
+
 def _prepare_reward_config(store: RewardStore, *, fresh: bool) -> RewardConfig:
     """A fresh training experiment also starts from canonical reward defaults."""
     if fresh:
@@ -390,7 +465,30 @@ def main(argv: list[str] | None = None) -> int:
                 f"loss={metrics['loss']:+.5f}",
                 flush=True,
             )
-        return 0
+        verification = verify_spine_policy(
+            model,
+            client,
+            player_id=args.player,
+            reward_config=reward_config,
+            target_override=args.target,
+        )
+        final_episode = completed + args.episodes
+        save_checkpoint(
+            path,
+            model,
+            optimizer=optimizer,
+            extra={
+                "episodes": final_episode,
+                "seed": args.seed,
+                "spine_verification": verification,
+                **motor_checkpoint_extra(motor_package),
+            },
+        )
+        print(
+            "SPINE VERIFY " + json.dumps(verification, sort_keys=True),
+            flush=True,
+        )
+        return 0 if verification["passed"] else 2
     finally:
         client.close()
 

@@ -20,8 +20,8 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   The control loop never logs in, logs out, or replaces that session. Deleting
   an owned extra Host is a separate advanced lifecycle operation.
 - TRAIN/VERIFY episode boundaries use Host's non-destructive physical reset
-  (spawn x=100, vx=0, motor_x=0) while preserving session and sequence. RUN must
-  not reset.
+  with an explicit episode spawn x while preserving session and sequence;
+  reset state is vx=0 and motor_x=0. RUN must not reset.
 - Physics is 120 Hz, Motor is 60 Hz, Spine is 10 Hz unless the experiment
   explicitly changes the documented contract. These cadences are world-tick
   cadences: at 120 Hz Motor acts every 2 ticks and Spine every 12. Wall time
@@ -78,3 +78,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   treating each 60 Hz `motor_x` as a Spine PPO action.
 - Fresh Spine policy must start directionally neutral; its final desired-velocity
   mean layer has zero weight/bias while exploration supplies symmetric trials.
+- Spine TRAIN must use varied goal-conditioned spawn/target tasks in both
+  directions, including fine-positioning cases. A fixed target may be used for
+  a focused experiment, but do not regress to one fixed spawn/target trajectory.
+- Spine VERIFY must be frozen deterministic inference and must require physical
+  target reach at the normal tolerance, rest, and zero wall contacts. A
+  regression that only proves movement in the correct direction is insufficient.

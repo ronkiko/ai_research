@@ -31,6 +31,7 @@ from gamelab.training import (
     _sample_training_task,
     collect_episode,
     ppo_update,
+    verify_spine_policy,
 )
 
 
@@ -228,54 +229,87 @@ class TrainingTests(unittest.TestCase):
 
 
 
-    def test_fresh_spine_learns_direction_over_frozen_physical_motor(self):
-        class TrackingMotor(nn.Module):
+    def test_spine_verify_requires_goal_reach_rest_and_no_wall_contact(self):
+        class RuleMotor(nn.Module):
             def parameters_for(self, goal, proprioception):
-                desired = goal[..., 0]
-                current = proprioception[..., 0]
                 effort = torch.clamp(
-                    desired + 2.0 * (desired - current),
-                    -0.99,
-                    0.99,
+                    50.0 * goal[..., 0] - 1.8 * proprioception[..., 0],
+                    -0.999,
+                    0.999,
                 )
                 return torch.atanh(effort), torch.full_like(effort, -20.0)
 
-        torch.manual_seed(1)
-        model = SpineMotorPolicy.fresh(1, motor=TrackingMotor())
-        model.freeze_motor()
-        optimizer = torch.optim.Adam(model.trainable_parameters(), lr=3e-4)
-        client = UnpacedHostClient("spine-learning-regression")
+        class RuleSpine:
+            @staticmethod
+            def motor_goal(desired_vx):
+                value = desired_vx.unsqueeze(-1)
+                reserved = torch.zeros(
+                    (*value.shape[:-1], 3),
+                    dtype=value.dtype,
+                    device=value.device,
+                )
+                return torch.cat((value, reserved), dim=-1)
+
+        class GoalConditionedRuleModel:
+            def __init__(self):
+                self.motor = RuleMotor()
+                self.spine = RuleSpine()
+
+            def eval(self):
+                return self
+
+            def spine_parameters(self, history):
+                desired = torch.clamp(history[3, -1], -0.999, 0.999)
+                return (
+                    torch.atanh(desired),
+                    torch.tensor(-20.0),
+                    torch.zeros(16),
+                )
+
+            def deterministic_motor(self, goal, proprioception):
+                mean, _ = self.motor.parameters_for(goal, proprioception)
+                return torch.tanh(mean)
+
+            def critic(self, hidden, proprioception):
+                return torch.tensor(0.0)
+
+        class AlwaysRightModel(GoalConditionedRuleModel):
+            def spine_parameters(self, history):
+                desired = torch.tensor(0.9)
+                return (
+                    torch.atanh(desired),
+                    torch.tensor(-20.0),
+                    torch.zeros(16),
+                )
+
+        client = UnpacedHostClient("spine-verify-contract")
         try:
             ensure_player(client, "player1")
-            first_x = None
-            last_x = None
-            for _ in range(100):
-                result = collect_episode(
-                    model,
-                    client,
-                    player_id="player1",
-                    target_x=987.0,
-                    max_seconds=4.0,
-                )
-                if first_x is None:
-                    first_x = result.final_x
-                last_x = result.final_x
-                ppo_update(model, optimizer, result.transitions)
-
-            initial = sensor_frame(
-                x=100.0,
-                vx=0.0,
-                motor_x=0.0,
-                target_x=987.0,
+            good = verify_spine_policy(
+                GoalConditionedRuleModel(),
+                client,
+                player_id="player1",
+                max_seconds=8.0,
             )
-            history = SensorHistory(initial).tensor()
-            with torch.no_grad():
-                mean, _, _ = model.spine_parameters(history)
-                learned_desired = float(torch.tanh(mean))
-            self.assertGreater(learned_desired, 0.10)
-            self.assertGreater(last_x, first_x)
+            bad = verify_spine_policy(
+                AlwaysRightModel(),
+                client,
+                player_id="player1",
+                max_seconds=8.0,
+            )
         finally:
             client.close()
+
+        self.assertTrue(good["passed"], good)
+        self.assertFalse(bad["passed"], bad)
+        self.assertTrue(
+            any(
+                case["wall_contacts"] > 0 or case["result"] != "success"
+                for case in bad["cases"]
+            ),
+            bad,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,8 +72,11 @@ scientific verification; it must not secretly supply the behavior being studied.
 
 LLM latency never pauses the body or the world. Motor and Spine are learned in
 separate stages: Motor School first teaches a local physical reflex, then Spine
-PPO mounts that verified Motor frozen. No scripted steering, teacher action or
-procedural fallback completes either task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
+PPO mounts that verified Motor frozen. Motor School samples a continuous
+requested-velocity distribution including explicit rest commands; frozen
+verification uses unseen commands and checks both average and worst-case
+tracking/rest error. No scripted steering, teacher action or procedural fallback
+completes either task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
 Critic and optimizer are training infrastructure, not an additional actuator.
 
 The Brain has two roles: scientist during TRAIN/VERIFY, strategist during RUN.
@@ -82,8 +85,12 @@ Those are responsibilities of the same OpenCode, not new server processes.
 ## Observation boundary
 
 The deployed controller consumes only measured self x/vx/current actuator state
-and the strategic target. CNN is temporal Conv1d over 32 observations, not a
-vision network. For `continuous_1d_v1`, Spine reduces that strategic context to
+and the strategic target. Spine TRAIN is goal-conditioned across varied
+spawn/target pairs rather than one memorized route. Its curriculum begins away
+from world edges, then expands toward them, and includes both directions plus
+short fine-positioning tasks. Frozen VERIFY uses deterministic policy output and
+requires the body to reach the target at rest without using a world boundary as
+a brake. CNN is temporal Conv1d over 32 observations, not a vision network. For `continuous_1d_v1`, Spine reduces that strategic context to
 one learned normalized desired velocity and the socket maps it to
 `[desired_vx,0,0,0]`. Motor never directly receives target_x/goal_dx. Goal changes
 replace the command channel of history without erasing measured body history.
