@@ -12,11 +12,22 @@ from typing import Any, Callable
 
 import torch
 
-from .config import MOTOR_HZ, SPINE_HZ, SUCCESS_HOLD_STEPS
+from .config import (
+    MOTOR_HZ,
+    SPINE_HZ,
+    SUCCESS_HOLD_STEPS,
+    WORLD_MAX_X,
+    WORLD_MIN_X,
+)
 from .host import HostError, player_from_state
 from .models import SensorHistory, motor_state, sensor_frame
 from .motors.continuous import squashed_action
-from .reward import RewardConfig, stopped_near_goal_proximity, step_reward
+from .reward import (
+    RewardConfig,
+    goal_state_potential,
+    stopped_near_goal_proximity,
+    step_reward,
+)
 
 STALE_SECONDS = 0.5
 MAX_HOLD_GAP_SECONDS = 0.1
@@ -62,6 +73,8 @@ class PendingMotor:
     tick: int
     sequence: int
     command_id: int | None
+    before_x: float
+    before_vx: float
     before_distance: float
 
 
@@ -171,7 +184,7 @@ def control_loop(
     pending_motor: PendingMotor | None = None
     best_stopped_proximity = 0.0
     closest_stopped_distance: float | None = None
-    steps = spine_calls = requests = duplicates = overruns = 0
+    steps = spine_calls = requests = duplicates = overruns = wall_contacts = 0
     total_reward = 0.0
     result: dict[str, Any] = {}
     reward_config = reward_config or RewardConfig()
@@ -292,6 +305,28 @@ def control_loop(
                 best_stopped_proximity = max(
                     best_stopped_proximity, proximity
                 )
+                before_goal_state = goal_state_potential(
+                    reward_config,
+                    distance=pending_motor.before_distance,
+                    vx=pending_motor.before_vx,
+                )
+                after_goal_state = goal_state_potential(
+                    reward_config,
+                    distance=abs(error),
+                    vx=vx,
+                )
+                entered_wall = (
+                    (
+                        x <= WORLD_MIN_X
+                        and pending_motor.before_x > WORLD_MIN_X
+                    )
+                    or (
+                        x >= WORLD_MAX_X
+                        and pending_motor.before_x < WORLD_MAX_X
+                    )
+                ) and abs(error) > tolerance
+                if entered_wall:
+                    wall_contacts += 1
                 motor_reward = step_reward(
                     reward_config,
                     before_distance=pending_motor.before_distance,
@@ -301,6 +336,8 @@ def control_loop(
                     timeout=timed_out and not reached,
                     elapsed_steps=(tick - pending_motor.tick) * MOTOR_HZ / hz,
                     stopped_proximity_gain=proximity_gain,
+                    goal_state_delta=after_goal_state - before_goal_state,
+                    wall_contact=entered_wall,
                 )
                 total_reward += motor_reward
                 if active_decision is not None:
@@ -336,6 +373,7 @@ def control_loop(
                 controller_requests=requests,
                 duplicate_snapshots=duplicates,
                 overruns=overruns,
+                wall_contacts=wall_contacts,
                 effective_motor_hz=steps / max(simulation_seconds, 1.0 / hz),
                 effective_spine_hz=spine_calls / max(simulation_seconds, 1.0 / hz),
                 wall_motor_hz=steps / max(wall_seconds, 1e-9),
@@ -424,6 +462,8 @@ def control_loop(
                 tick=tick,
                 sequence=command_sequence,
                 command_id=command_id,
+                before_x=x,
+                before_vx=vx,
                 before_distance=abs(error),
             )
             steps += 1
@@ -464,6 +504,7 @@ def control_loop(
         controller_requests=requests,
         duplicate_snapshots=duplicates,
         overruns=overruns,
+        wall_contacts=wall_contacts,
         closest_stopped_distance=closest_stopped_distance,
         best_stopped_proximity=best_stopped_proximity,
         desired_vx=desired_vx,

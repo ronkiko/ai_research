@@ -25,6 +25,10 @@ class RewardConfig:
     timeout_penalty: float = 1.0
     stopped_near_goal_bonus: float = 0.2
     near_goal_radius: float = 5.0
+    goal_state_scale: float = 0.5
+    goal_position_sigma: float = 50.0
+    goal_speed_sigma: float = 60.0
+    wall_contact_penalty: float = 0.5
 
     def validated(self) -> "RewardConfig":
         values = asdict(self)
@@ -40,6 +44,10 @@ class RewardConfig:
             "timeout_penalty": (0.0, 20.0),
             "stopped_near_goal_bonus": (-20.0, 20.0),
             "near_goal_radius": (0.1, 250.0),
+            "goal_state_scale": (0.0, 20.0),
+            "goal_position_sigma": (0.1, 500.0),
+            "goal_speed_sigma": (0.1, 500.0),
+            "wall_contact_penalty": (0.0, 20.0),
         }
         for name, (lower, upper) in bounded.items():
             value = float(values[name])
@@ -95,6 +103,23 @@ def stopped_near_goal_proximity(
     return 0.1 + 0.9 * max(0.0, min(1.0, closeness))
 
 
+def goal_state_potential(
+    config: RewardConfig,
+    *,
+    distance: float,
+    vx: float,
+) -> float:
+    """Smooth desirability of the physical goal state (position + rest)."""
+    config = config.validated()
+    position = math.exp(
+        -((abs(float(distance)) / config.goal_position_sigma) ** 2)
+    )
+    speed = math.exp(
+        -((abs(float(vx)) / config.goal_speed_sigma) ** 2)
+    )
+    return float(position * speed)
+
+
 def step_reward(
     config: RewardConfig,
     *,
@@ -105,6 +130,8 @@ def step_reward(
     timeout: bool,
     elapsed_steps: float = 1.0,
     stopped_proximity_gain: float = 0.0,
+    goal_state_delta: float = 0.0,
+    wall_contact: bool = False,
 ) -> float:
     config = config.validated()
     reward = (
@@ -116,6 +143,9 @@ def step_reward(
     reward += config.stopped_near_goal_bonus * max(
         0.0, min(1.0, float(stopped_proximity_gain))
     )
+    reward += config.goal_state_scale * float(goal_state_delta)
+    if wall_contact:
+        reward -= config.wall_contact_penalty
     if success:
         reward += config.success_bonus
     if timeout:
@@ -126,6 +156,7 @@ def step_reward(
 __all__ = [
     "RewardConfig",
     "RewardStore",
+    "goal_state_potential",
     "reward_path",
     "stopped_near_goal_proximity",
     "step_reward",

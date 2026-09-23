@@ -18,7 +18,13 @@ from gamelab.models import (
 from gamelab.runtime import ensure_player
 from gamelab.unpaced import UnpacedHostClient
 from gamelab.motors.continuous import squashed_action
-from gamelab.reward import RewardConfig, RewardStore, stopped_near_goal_proximity, step_reward
+from gamelab.reward import (
+    RewardConfig,
+    RewardStore,
+    goal_state_potential,
+    stopped_near_goal_proximity,
+    step_reward,
+)
 from gamelab.training import (
     Transition,
     _prepare_reward_config,
@@ -65,6 +71,39 @@ class TrainingTests(unittest.TestCase):
             )
             before = after
         self.assertLess(total, 0.0)
+
+    def test_goal_state_potential_prefers_stopped_and_centered_state(self):
+        config = RewardConfig()
+        fast_near = goal_state_potential(config, distance=1.0, vx=120.0)
+        stopped_far = goal_state_potential(config, distance=50.0, vx=0.0)
+        stopped_near = goal_state_potential(config, distance=1.0, vx=0.0)
+        exact = goal_state_potential(config, distance=0.0, vx=0.0)
+        self.assertGreater(stopped_near, fast_near)
+        self.assertGreater(stopped_near, stopped_far)
+        self.assertAlmostEqual(exact, 1.0)
+
+    def test_goal_state_gain_and_wall_contact_are_rewarded_separately(self):
+        config = RewardConfig()
+        improved = step_reward(
+            config,
+            before_distance=20.0,
+            after_distance=20.0,
+            next_vx=10.0,
+            success=False,
+            timeout=False,
+            goal_state_delta=0.4,
+        )
+        wall = step_reward(
+            config,
+            before_distance=20.0,
+            after_distance=20.0,
+            next_vx=0.0,
+            success=False,
+            timeout=False,
+            goal_state_delta=0.4,
+            wall_contact=True,
+        )
+        self.assertAlmostEqual(improved - wall, config.wall_contact_penalty)
 
     def test_fresh_training_resets_persisted_reward_to_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
