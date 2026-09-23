@@ -250,7 +250,9 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
     motor.eval()
     motor_stride = PHYSICS_HZ // MOTOR_HZ
     segment_steps = max(1, int(round(VERIFY_SEGMENT_SECONDS * MOTOR_HZ)))
-    settle_steps = segment_steps // 2
+    # VERIFY metrics describe the settled response, not the intentional
+    # transient immediately after each new velocity command.
+    settle_steps = max(1, (3 * segment_steps) // 4)
     errors: list[float] = []
     zero_speeds: list[float] = []
 
