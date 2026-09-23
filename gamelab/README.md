@@ -180,6 +180,11 @@ in-process:
 ./gamelab/op/train-unpaced.sh --fresh --episodes 50 --target 987
 ```
 
+With `--fresh`, GameLab now resets both model/optimizer state and the persisted
+reward configuration to canonical defaults, then prints the effective Reward
+JSON before episode 1. This prevents a prior Director/experiment reward override
+from silently contaminating a fresh learning test.
+
 It writes the normal GameLab checkpoint. Test that checkpoint against the real
 paced world with ordinary frozen VERIFY:
 

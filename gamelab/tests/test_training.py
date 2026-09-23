@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import tempfile
 import unittest
 
 import torch
@@ -8,8 +10,8 @@ from torch.distributions import Categorical
 
 from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
 from gamelab.models import SpineMotorPolicy
-from gamelab.reward import RewardConfig, step_reward
-from gamelab.training import Transition, ppo_update
+from gamelab.reward import RewardConfig, RewardStore, step_reward
+from gamelab.training import Transition, _prepare_reward_config, ppo_update
 
 
 class TrainingTests(unittest.TestCase):
@@ -56,6 +58,16 @@ class TrainingTests(unittest.TestCase):
             )
             before = after
         self.assertLess(total, 0.0)
+
+    def test_fresh_training_resets_persisted_reward_to_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = RewardStore(Path(directory) / "reward.json")
+            store.save(RewardConfig().updated(timeout_penalty=0.25))
+            loaded = _prepare_reward_config(store, fresh=False)
+            self.assertEqual(loaded.timeout_penalty, 0.25)
+            fresh = _prepare_reward_config(store, fresh=True)
+            self.assertEqual(fresh.timeout_penalty, 1.0)
+            self.assertEqual(store.load().timeout_penalty, 1.0)
 
     def test_reward_configuration_can_be_changed_without_steering(self):
         config = RewardConfig().updated(

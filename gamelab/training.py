@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -190,6 +191,13 @@ def ppo_update(
     return metrics
 
 
+def _prepare_reward_config(store: RewardStore, *, fresh: bool) -> RewardConfig:
+    """A fresh training experiment also starts from canonical reward defaults."""
+    if fresh:
+        return store.save(RewardConfig())
+    return store.load()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train GameLab Spine + Motor")
     parser.add_argument("--episodes", type=int, default=50)
@@ -216,7 +224,12 @@ def main(argv: list[str] | None = None) -> int:
         extra = load_checkpoint(path, model, optimizer=optimizer)
         completed = int(extra.get("episodes", 0))
 
-    reward_config = RewardStore().load()
+    reward_store = RewardStore()
+    reward_config = _prepare_reward_config(reward_store, fresh=args.fresh)
+    print(
+        "Reward " + json.dumps(reward_config.public(), sort_keys=True),
+        flush=True,
+    )
     client = (
         HostClient("gamelab-train")
         if args.mode == "realtime"
