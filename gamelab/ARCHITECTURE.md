@@ -61,6 +61,9 @@ scientific verification; it must not secretly supply the behavior being studied.
 | --- | --- | --- |
 | Director | Research objective and acceptance criterion | Human timescale |
 | Brain: OpenCode/LLM | Research design, strategic goal, interpretation | Asynchronous |
+| Heart + Head: isolated LLM contexts | Independent affective and rational appraisal | Event-driven |
+| Will/Ego: isolated LLM context | Intention, agency and behavior under pressure | Pressure/conflict-driven |
+| Social Chorus: isolated LLM critic | Visible environmental/social appraisal | Seeded 1–10 min while idle |
 | Spine: temporal CNN | Sensor history + strategic goal → learned MotorGoal | 10 Hz |
 | Motor: MLP | MotorGoal + local proprioception → actuator intent | 60 Hz |
 | Host | Session, command sequence, transport, attributed events | Request-driven |
@@ -176,8 +179,10 @@ Yuki's internship goal but does not imply romance or consent.
 The runtime deliberately stores no trust, warmth, attraction or relationship
 stage scores. It applies no emotional deltas and has no threshold that activates
 romance or yandere behaviour. Contact counts describe only observed history.
-Yuki's moe/yandere temperament is an LLM prior; Heart, Head and parent Yuki
-interpret each event from context without a required direction or pace. Elapsed
+Yuki's moe/yandere temperament is a versioned Character Core supplied as real
+conditioning to Heart, Head, Will, Audience and parent Yuki. Its numeric traits
+describe stable tendencies but never select an action. Each model interprets an
+event from its bounded context without a required direction or pace. Elapsed
 time changes opportunity cost and the hard shift budget, never trust.
 
 The factual Executive summary is frozen before the Director's employment
@@ -186,6 +191,38 @@ decision. The decision is a separate relationship-journal event with `hired`,
 At the relationship deadline, new narrative writes close automatically while
 the factual history remains readable and an explicit employment decision may
 still be recorded.
+
+## Character, Audience and Will
+
+Character Core is immutable during a shift and identified by a profile hash.
+This makes a moe/yandere Yuki and a future character distinct experimental
+conditions without hard-coding either character's response. Traits such as
+attachment intensity, authority deference, self-integrity, reactance, stress
+tolerance and personality plasticity are model inputs. There is deliberately no
+`kiss_threshold`, weighted response formula or guaranteed path from an event to
+an action.
+
+Audience separates measurement from lived social context. Observer critics are
+invisible post-hoc evaluators and cannot report a pressure mechanism. Social
+Chorus critics are visible to Yuki and may introduce approval, guilt, threat,
+authority, conformity or abandonment pressure. GameTable schedules a seeded
+one-to-ten-minute tick only while the Brain is idle; the schedule selects a lens,
+not a reaction. The Audience LLM evaluates a bounded new event window, and Yuki
+may accept, reject, resent, ignore or internalize its report.
+
+For materially pressured decisions, Heart and Head first complete independent
+appraisals using the same Character Core but otherwise different bounded context.
+Will/Ego then receives both completed positions, current volition memory and the
+same core. It assesses whether the intended choice survives pressure. This is a
+model judgment, not an arithmetic sum of traits and stimulus labels.
+
+The volition journal keeps six concepts separate: current desire, current
+action readiness, intended choice, outward behavior, voluntariness and explicit consent. Resistance,
+free-but-reluctant action, pressured behavior, freezing and compliance under
+duress therefore remain distinguishable. A threat may cause behavior to diverge
+from desire in the simulation, but neither the Audience nor Will can grant
+consent. Coerced physical behavior is recorded as an adverse non-consensual
+incident and never becomes evidence of affection or willingness.
 
 ## Heart–Head arbitration
 

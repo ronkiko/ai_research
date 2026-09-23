@@ -54,6 +54,14 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(state["status"], "active")
         self.assertNotIn("relationship_stage", state)
 
+    def test_character_id_follows_configured_character_core(self):
+        root = Path(self.temp.name) / "custom-character"
+        runtime = RelationshipRuntime(root, clock=self.clock, character_id="future-03")
+        state = runtime.begin(first_impression="First words", duration_minutes=180)
+        self.assertEqual(state["character_id"], "future-03")
+        with self.assertRaises(RelationshipError):
+            RelationshipRuntime(root, clock=self.clock, character_id="different-04")
+
     def test_v1_state_migrates_physical_meeting_without_changing_meaning(self):
         old_root = Path(self.temp.name) / "old"
         old_root.mkdir()

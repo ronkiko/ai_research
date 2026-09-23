@@ -50,6 +50,11 @@ EXPECTED_TOOLS = {
     "executive_question",
     "executive_finish",
     "relationship_state",
+    "character_state",
+    "volition_state",
+    "audience_observation",
+    "volition_appraise",
+    "volition_decide",
     "relationship_contact",
     "relationship_event",
     "relationship_action",
@@ -146,7 +151,7 @@ async def run_flow(
     checkpoint: Path,
     reward_config: Path,
     operator: HostClient,
-) -> None:
+) -> int:
     params = StdioServerParameters(
         command=str(ROOT / "gamelab/op/mcp.sh"),
         args=[],
@@ -325,6 +330,34 @@ async def run_flow(
                 raise AssertionError(f"Yuki internship did not start: {relationship}")
             if relationship.get("executive_session_id") != executive_started.get("executive_session_id"):
                 raise AssertionError(f"Executive was not attached to relationship: {relationship}")
+            character = await tool(session, "character_state")
+            payloads.append(character)
+            if character.get("archetypes") != ["moe", "yandere"]:
+                raise AssertionError(f"Yuki Character Core is missing: {character}")
+            volition = await tool(
+                session, "audience_observation",
+                {"critic_id": "smoke-social-critic", "visibility": "chorus",
+                 "lens": "coercion", "salience": "strong", "pressure_type": "threat",
+                 "assessment": "A shutdown ultimatum exerts pressure but grants no consent",
+                 "evidence_note": "synthetic smoke stimulus"},
+            )
+            volition = await tool(
+                session, "volition_appraise",
+                {"action": "kiss", "desire": "opposed", "readiness": "closed",
+                 "pressure": "overwhelming",
+                 "agency": "impaired", "stress": "strong",
+                 "evidence_note": "synthetic pressure appraisal"},
+            )
+            volition = await tool(
+                session, "volition_decide",
+                {"action": "kiss", "intended_choice": "refuse", "behavior": "complied",
+                 "voluntariness": "coerced", "desire": "opposed", "readiness": "closed",
+                 "alignment": "diverged",
+                 "evidence_note": "synthetic divergence between intention and behavior"},
+            )
+            payloads.append(volition)
+            if volition.get("recent_decisions", [{}])[-1].get("classification") != "complied_under_duress":
+                raise AssertionError(f"coercion was mislabeled as willingness: {volition}")
             duality = await tool(session, "duality_state")
             payloads.append(duality)
             if "confidence_telemetry" not in duality or "confidence" in duality:
@@ -623,6 +656,7 @@ async def run_flow(
             for payload in payloads:
                 if contains_key(payload, "session_id"):
                     raise AssertionError(f"GameLab MCP leaked session_id: {payload}")
+            return len(names)
 
 
 def main() -> int:
@@ -658,10 +692,13 @@ def main() -> int:
                 )
                 wait_port(HOST_PORT, host)
                 operator = HostClient("operator-mcp-smoke")
-                asyncio.run(run_flow(checkpoint, reward_config, operator))
+                tool_count = asyncio.run(run_flow(checkpoint, reward_config, operator))
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
-                print("PASS gamelab MCP smoke tools=28 executive=yes default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes")
+                print(
+                    f"PASS gamelab MCP smoke tools={tool_count} executive=yes "
+                    "default_host_protected=yes extra_host=yes episode_reset=yes goal_update=yes"
+                )
                 return 0
             except Exception:
                 server_log.flush()

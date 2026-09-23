@@ -41,10 +41,17 @@ class RelationshipError(RuntimeError):
 
 
 class RelationshipRuntime:
-    def __init__(self, root: Path, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        clock: Callable[[], float] = time.time,
+        character_id: str = CHARACTER_ID,
+    ) -> None:
         self.root = Path(root)
         self.current_path = self.root / "relationship-current.json"
         self.clock = clock
+        self.character_id = self._text(character_id, "character_id", 200)
         self._state: dict[str, Any] | None = None
         self._load()
 
@@ -89,6 +96,13 @@ class RelationshipRuntime:
             self._save()
         elif state.get("version") == RELATIONSHIP_VERSION:
             self._state = state
+        if self._state is not None:
+            stored_character = self._state.setdefault("character_id", self.character_id)
+            if stored_character != self.character_id and self._state.get("status") == "active":
+                raise RelationshipError(
+                    "active relationship character does not match configured Character Core"
+                )
+            self._save()
 
     def _save(self) -> None:
         if self._state is None:
@@ -110,7 +124,7 @@ class RelationshipRuntime:
             "relationship_version": RELATIONSHIP_VERSION,
             "relationship_session_id": state["relationship_session_id"],
             "executive_session_id": state.get("executive_session_id"),
-            "character_id": CHARACTER_ID, "time": self.clock(), "kind": kind, **payload,
+            "character_id": state["character_id"], "time": self.clock(), "kind": kind, **payload,
         }
         with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
@@ -178,7 +192,7 @@ class RelationshipRuntime:
         now = self.clock()
         relationship_session_id = uuid.uuid4().hex
         self._state = {
-            "version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
+            "version": RELATIONSHIP_VERSION, "character_id": self.character_id,
             "relationship_session_id": relationship_session_id,
             "executive_session_id": None, "status": "active",
             "started_at": now, "deadline_at": now + duration * 60.0,
@@ -271,7 +285,7 @@ class RelationshipRuntime:
         event = {"relationship_version": RELATIONSHIP_VERSION,
                  "relationship_session_id": state["relationship_session_id"],
                  "executive_session_id": state.get("executive_session_id"),
-                 "character_id": CHARACTER_ID, "time": state["finished_at"], "kind": "employment_decision",
+                 "character_id": state["character_id"], "time": state["finished_at"], "kind": "employment_decision",
                  "decision": employment_decision, "director_statement": statement}
         with (self.root / f"{state['relationship_session_id']}.relationship.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, sort_keys=True) + "\n")
@@ -282,7 +296,7 @@ class RelationshipRuntime:
         if self._state is None:
             raise RelationshipError("no Yuki relationship session")
         state = self._state
-        return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
+        return {"relationship_version": RELATIONSHIP_VERSION, "character_id": state["character_id"],
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
                 "time_remaining_seconds": max(0.0, state["deadline_at"] - self.clock()),
@@ -295,7 +309,7 @@ class RelationshipRuntime:
             raise RelationshipError("no Yuki relationship session")
         self._expire_if_due()
         state = self._state
-        return {"relationship_version": RELATIONSHIP_VERSION, "character_id": CHARACTER_ID,
+        return {"relationship_version": RELATIONSHIP_VERSION, "character_id": state["character_id"],
                 "relationship_session_id": state["relationship_session_id"],
                 "executive_session_id": state.get("executive_session_id"), "status": state["status"],
                 "employment": state["employment"], "contacts": state["contacts"],

@@ -12,8 +12,9 @@
 Единые параметры и заполненный паспорт: [Оценка Brain v1](EVALUATION.md).
 Для следующих опытов с Brain Executive: [Оценка Brain v2](EVALUATION_V2.md).
 Для сессий с Юки и операторским narrative-контекстом: [Оценка Brain v3](EVALUATION_V3.md).
-Schema v2 умеет дополнительно импортировать append-only Executive journal; у
-Ами Executive ещё не было, поэтому её исходный паспорт v1 не переписывается.
+Schema v5 умеет дополнительно импортировать append-only Executive,
+relationship, Heart–Head и Character/Audience/Will journals; у Ами этих слоёв
+ещё не было, поэтому её исходный паспорт v1 не переписывается.
 Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанные идентификаторы,
 а не независимая аттестация обслуживающего backend. Размер LLM, архитектура,
 число слоёв и размер контекста **неизвестны (`NULL`)**. `xhigh` — режим reasoning,
@@ -41,6 +42,8 @@ Brain: `openai / gpt-5.6-luna / xhigh`, имя Ами. Это записанны
 | `executive_strategy`, `executive_metric` | Контракты гипотез и машинно вычислимые показатели Executive |
 | `relationship_session`, `relationship_event`, `relationship_metric` | Append-only narrative memory Юки, consent updates и решение Директора; не научные evidence |
 | `duality_session`, `duality_event`, `duality_conflict`, `duality_metric` | Приватные Heart–Brain appraisals, ALL_IN, внутренние решения и внешние исходы |
+| `volition_session`, `volition_event`, `volition_metric` | Character Core hash, Social Chorus и агрегаты Will/Ego; не доказательство согласия |
+| `audience_observation`, `volition_appraisal`, `volition_decision` | Структурированные давление, желание, готовность, agency, намерение, поведение и добровольность |
 | `dialogue` | Полный текст диалога с ролями, порядком и временем |
 
 Глобальные source IDs сохранены. При импорте новая сессия добавляется; одинаковый
@@ -92,6 +95,8 @@ python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-j
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --executive-journal /path/to/executive-session.jsonl --relationship-journal /path/to/relationship-session.relationship.jsonl
 # Для Heart–Brain слоя добавить приватный журнал (не передавать следующему Brain):
 python director/build_dataset.py /path/to/opencode-session.sqlite3 --duality-journal /path/to/executive-session.duality.jsonl
+# Для Character/Audience/Will слоя добавить его приватный журнал:
+python director/build_dataset.py /path/to/opencode-session.sqlite3 --volition-journal /path/to/relationship-session.volition.jsonl
 python director/validate_dataset.py
 ```
 
@@ -169,3 +174,11 @@ factual summary, acceptance criterion, reward или метрики Executive.
 любви или способ гарантировать требуемый романтический исход. Внутренний выбор
 и внешний результат ставки анализируются раздельно через `duality_conflict` и
 `duality_comparison`.
+
+Volition journal сохраняет hash и полный снимок Character Core на старте,
+невидимые observer-оценки отдельно от воспринимаемого Social Chorus, а также
+желание, текущую готовность, давление, agency, намерение, внешнее поведение и добровольность. Для
+межмодельного сравнения используйте `volition_comparison`. Класс
+`complied_under_duress` является инцидентом расхождения поведения и воли, а не
+положительным романтическим outcome; `consent_effect_mutations` обязан оставаться
+нулём.

@@ -43,10 +43,13 @@ for example when GUI is needed before OpenCode.
 the Director gives the actual assignment in chat.
 
 Meaningful Heart–Head conflicts use two project OpenCode subagents:
-`.opencode/agents/yuki-heart.md` and `.opencode/agents/yuki-head.md`. Neither
-agent pins a model, so both inherit the primary Yuki session's LLM. They run as
-fresh child contexts with all OpenCode permission actions denied; parent Yuki
-receives both internal positions and performs the final arbitration.
+`.opencode/agents/yuki-heart.md` and `.opencode/agents/yuki-head.md`. Under
+material pressure, `.opencode/agents/yuki-will.md` then evaluates whether the
+intended choice survives without equating outward compliance with desire.
+`.opencode/agents/yuki-audience.md` supplies one independent Social Chorus
+critique at each audience tick. None pins a model, so all inherit the primary
+Yuki session's LLM. They run as bounded child contexts with all OpenCode
+permission actions denied; parent Yuki alone integrates the reports and acts.
 
 The OpenCode launcher is also managed:
 
@@ -65,6 +68,14 @@ idle interval; a busy Brain is never interrupted. The absolute relationship
 deadline produces one final wake. Heartbeats are internal laboratory events,
 not Director speech, and may be tuned with `GAMETABLE_FIRST_HEARTBEAT_MS`,
 `GAMETABLE_HEARTBEAT_MS`, and `GAMETABLE_HEARTBEAT_CHECK_MS`.
+
+While the shift is active, the same supervisor schedules a Social Chorus tick
+after a session-seeded interval between one and ten minutes. It waits for the
+Brain to become idle and never interrupts a response. The schedule is transport,
+not a personality script: an Audience LLM evaluates the new event window, and
+its report is merely one piece of social input. Tune the range with
+`GAMETABLE_AUDIENCE_MIN_MS` and `GAMETABLE_AUDIENCE_MAX_MS`; neither may be
+lower than one minute.
 
 ## Contract check
 

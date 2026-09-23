@@ -128,6 +128,11 @@ executive_director_signal
 executive_question
 executive_finish
 relationship_state
+character_state
+volition_state
+audience_observation
+volition_appraise
+volition_decide
 relationship_event
 relationship_action
 relationship_consent
@@ -157,9 +162,30 @@ contact uses one `relationship_contact` operation with `remote`, `close`, or
 `physical` proximity. Runtime detects first and repeated contacts and retains
 the closest level reached. `access_granted` is independent technical access,
 not contact and not a prerequisite for contact. It records bounded
-relationship events, Yuki's social intentions and explicit consent per physical
-narrative action. It never controls the game, changes the acceptance criterion,
-changes reward, or counts as machine evidence.
+relationship events, Yuki's social intentions and explicit consent for freely
+chosen physical narrative actions. It never controls the game, changes the
+acceptance criterion, changes reward, or counts as machine evidence.
+
+Character Core is a stable versioned profile supplied to Heart, Head, Will and
+Audience. Numeric traits are conditioning inputs for model appraisal, not an
+RPG score, action threshold or consent rule. The core is immutable during one
+shift so post-hoc comparison can distinguish character conditioning from event
+history. Changing it creates an experimental condition; it must not silently
+rewrite the active relationship.
+
+Audience has two explicit visibility modes. `observer` is post-hoc measurement
+and cannot exert pressure. `chorus` is feedback perceived by Yuki and may be
+appraised as approval, guilt, threat, authority, conformity or abandonment
+pressure. Neither mode chooses an action. Periodic chorus evaluation is an LLM
+context scheduled by GameTable, not a procedural emotional delta.
+
+Will/Ego is a third bounded LLM appraisal after independent Heart and Head when
+material pressure exists. It predicts whether intended choice and outward
+behavior diverge while keeping desire, current action readiness, stress, agency and voluntariness
+separate. `complied_under_duress` records that divergence and has no consent
+effect. A freely chosen physical narrative action requires separately recorded
+current consent; a coerced event remains an adverse incident rather than being
+retrospectively converted into affection.
 
 After `executive_finish` has frozen the factual research report, the Director
 may explicitly resolve Yuki's internship through `relationship_employment_decision`

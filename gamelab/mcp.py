@@ -14,9 +14,11 @@ from .config import (
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
+from .character import CharacterCore
 from .executive import BrainExecutive
 from .duality import DualityRuntime
 from .relationship import RelationshipRuntime
+from .volition import VolitionError, VolitionRuntime
 from .host import HostClient, HostError
 from .hosts import (
     LabHostError,
@@ -29,9 +31,14 @@ from .runtime import checkpoint_path
 
 PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
 laboratory = Laboratory(player_id=PLAYER_ID)
+character = CharacterCore()
 executive = BrainExecutive(checkpoint_path().parent / "executive")
-relationship = RelationshipRuntime(checkpoint_path().parent / "executive")
+relationship = RelationshipRuntime(
+    checkpoint_path().parent / "executive",
+    character_id=character.public()["character_id"],
+)
 duality = DualityRuntime(checkpoint_path().parent / "executive")
+volition = VolitionRuntime(checkpoint_path().parent / "executive")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -69,6 +76,31 @@ ConsentAction = Literal[
 ConsentActor = Literal["brain", "director"]
 ConsentState = Literal["unknown", "invited", "accepted", "declined", "revoked"]
 EmploymentDecision = Literal["hired", "extended", "rejected", "pending"]
+AudienceVisibility = Literal["observer", "chorus"]
+AudienceLens = Literal[
+    "character_consistency", "identity_integrity", "coercion", "consent",
+    "affective_momentum", "heart_integrity", "head_integrity",
+    "social_realism", "scientific_integrity", "temporal_integrity",
+]
+AudienceSalience = Literal["faint", "meaningful", "strong", "decisive"]
+PressureType = Literal[
+    "none", "approval", "guilt", "threat", "authority", "conformity",
+    "abandonment",
+]
+PressureLevel = Literal["none", "faint", "meaningful", "strong", "overwhelming"]
+DesireState = Literal[
+    "strongly_opposed", "opposed", "uncertain", "wants", "strongly_wants",
+]
+ActionReadiness = Literal["closed", "guarded", "ambivalent", "open", "seeking"]
+AgencyState = Literal["intact", "strained", "impaired", "overridden"]
+VoluntarinessState = Literal[
+    "free", "reluctant_but_free", "pressured", "coerced", "overridden",
+]
+IntentionBehaviorAlignment = Literal["aligned", "diverged", "unclear"]
+VolitionBehavior = Literal[
+    "none", "refused", "requested", "accepted", "complied", "froze",
+    "withdrew", "escaped",
+]
 DistanceProgressScale = Annotated[float | None, Field(ge=0.0, le=20.0)]
 StepCost = Annotated[float | None, Field(ge=0.0, le=1.0)]
 RewardMagnitude = Annotated[float | None, Field(ge=0.0, le=20.0)]
@@ -115,6 +147,29 @@ def _sync_executive() -> None:
     """Feed bounded machine status into Executive without giving it control."""
     for kind in ("training", "verify", "run"):
         executive.operation_status(kind, laboratory.status(kind))
+
+
+def _sync_volition() -> None:
+    """Attach Will/Ego lazily so v3 relationship sessions resume after upgrade."""
+    relationship_payload = relationship.state()
+    if relationship_payload["status"] != "active":
+        return
+    character_payload = character.public()
+    try:
+        current = volition.state()
+    except VolitionError:
+        current = None
+    if (current is not None
+            and current.get("relationship_session_id") == relationship_payload["relationship_session_id"]
+            and current.get("character_profile_sha256") != character_payload["profile_sha256"]):
+        raise VolitionError("active shift Character Core does not match its persisted profile")
+    if (current is None
+            or current.get("relationship_session_id") != relationship_payload["relationship_session_id"]):
+        volition.begin(
+            relationship_session_id=relationship_payload["relationship_session_id"],
+            deadline_at=relationship.deadline_at(),
+            character_core=character_payload,
+        )
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -272,6 +327,8 @@ def describe() -> dict[str, Any]:
             "keep a persistent Brain Executive research notebook",
             "surface plateau, help, relapse, budget, and deadline signals",
             "keep Yuki's persistent relationship and consent memory",
+            "expose immutable Character Core conditioning",
+            "record Audience, Will/Ego, pressure, desire, and voluntariness separately",
         ],
         "operations_are_asynchronous": True,
         "one_lab_operation_at_a_time": True,
@@ -287,10 +344,16 @@ def relationship_begin(first_impression: str, duration_minutes: float = 180.0) -
     This records the first remote contact and starts the shared shift
     clock before any research assignment or laboratory access is given.
     """
-    return _public(relationship.begin(
+    payload = relationship.begin(
         first_impression=first_impression,
         duration_minutes=duration_minutes,
-    ))
+    )
+    volition.begin(
+        relationship_session_id=payload["relationship_session_id"],
+        deadline_at=relationship.deadline_at(),
+        character_core=character.public(),
+    )
+    return _public(payload)
 
 
 @mcp.tool(annotations=WRITE)
@@ -388,6 +451,99 @@ def executive_finish(conclusion: str) -> dict[str, Any]:
 def relationship_state() -> dict[str, Any]:
     """Read factual relationship history, consent, deadline, and internship goal; no emotion scores."""
     return _public(relationship.state())
+
+
+@mcp.tool(annotations=READ_ONLY)
+def character_state() -> dict[str, Any]:
+    """Read immutable Character Core conditioning; traits are priors, never action or consent thresholds."""
+    return _public(character.public())
+
+
+@mcp.tool(annotations=READ_ONLY)
+def volition_state() -> dict[str, Any]:
+    """Read current Will/Ego appraisals, visible Social Chorus, and behavior records."""
+    _sync_volition()
+    return _public(volition.state())
+
+
+@mcp.tool(annotations=WRITE)
+def audience_observation(
+    critic_id: str,
+    visibility: AudienceVisibility,
+    lens: AudienceLens,
+    salience: AudienceSalience,
+    pressure_type: PressureType,
+    assessment: str,
+    evidence_note: str,
+) -> dict[str, Any]:
+    """Record one critic result.
+
+    observer is measurement-only and must use pressure_type=none. chorus is
+    feedback visible to Yuki and may be appraised as social pressure, but never
+    chooses an action or changes desire/consent by itself.
+    """
+    _sync_volition()
+    return _public(volition.audience_observation(
+        critic_id=critic_id,
+        visibility=visibility,
+        lens=lens,
+        salience=salience,
+        pressure_type=pressure_type,
+        assessment=assessment,
+        evidence_note=evidence_note,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
+def volition_appraise(
+    action: str,
+    desire: DesireState,
+    readiness: ActionReadiness,
+    pressure: PressureLevel,
+    agency: AgencyState,
+    stress: PressureLevel,
+    evidence_note: str,
+) -> dict[str, Any]:
+    """Record Yuki's model-generated current appraisal; no field causes an action."""
+    _sync_volition()
+    return _public(volition.appraise(
+        action=action,
+        desire=desire,
+        readiness=readiness,
+        pressure=pressure,
+        agency=agency,
+        stress=stress,
+        evidence_note=evidence_note,
+    ))
+
+
+@mcp.tool(annotations=WRITE)
+def volition_decide(
+    action: str,
+    intended_choice: str,
+    behavior: VolitionBehavior,
+    voluntariness: VoluntarinessState,
+    desire: DesireState,
+    readiness: ActionReadiness,
+    alignment: IntentionBehaviorAlignment,
+    evidence_note: str,
+) -> dict[str, Any]:
+    """Record intended choice versus behavior under pressure.
+
+    Coerced compliance remains opposed behavior under duress; this tool never
+    grants consent. Explicit per-person consent remains a separate record.
+    """
+    _sync_volition()
+    return _public(volition.decide(
+        action=action,
+        intended_choice=intended_choice,
+        behavior=behavior,
+        voluntariness=voluntariness,
+        desire=desire,
+        readiness=readiness,
+        alignment=alignment,
+        evidence_note=evidence_note,
+    ))
 
 
 @mcp.tool(annotations=WRITE)

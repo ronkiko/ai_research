@@ -42,6 +42,14 @@ results. It does not time button presses.
 The first humanoid abstraction has exactly one Motor. A future experiment may
 add a second Motor and study learned coordination between them.
 
+The current semantic vertical also provides a non-procedural character and
+volition experiment for Yuki. A stable Character Core conditions independent
+Heart, Head, Will/Ego and Audience LLM contexts. Runtime records their facts and
+appraisals but does not calculate an intimate action from scores. Desire,
+current action readiness, intended choice, outward behavior, voluntariness and
+explicit consent remain separate variables, so behavior under pressure cannot
+be relabelled as desire.
+
 ## Research boundary
 
 There is no PID controller, scripted teacher, hand-written steering rule,
@@ -157,7 +165,8 @@ By default it uses the game-owned Host `game-v1-default` on
 GameClient Host instances on other local ports for advanced experiments.
 
 On first MCP startup, if no checkpoint exists, GameLab creates a fresh
-untrained model artifact. The laboratory then exposes:
+untrained model artifact. The complete MCP surface is listed in `SPEC.md`; its
+motor and Character/Volition entry points include:
 
 ```text
 health
@@ -179,6 +188,14 @@ run_start
 run_status
 run_cancel
 run_update_goal
+relationship_begin
+relationship_contact
+relationship_state
+character_state
+volition_state
+audience_observation
+volition_appraise
+volition_decide
 ```
 
 Training, VERIFY, and live model runs are asynchronous and mutually exclusive.

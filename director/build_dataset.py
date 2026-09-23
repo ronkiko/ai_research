@@ -5,6 +5,7 @@ Usage: python director/build_dataset.py SOURCE.sqlite3 [--database PATH]
        [--attachments SCREENSHOT ...] [--executive-journal SESSION.jsonl]
        [--relationship-journal SESSION.relationship.jsonl]
        [--duality-journal SESSION.duality.jsonl]
+       [--volition-journal SESSION.volition.jsonl]
 Reimport of an identical session is a no-op; changed source requires a new archive.
 Annotations in ami_annotations.py apply ONLY to their exact session.
 """
@@ -15,7 +16,10 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from ami_annotations import annotate, SESSION_ID
+try:
+    from .ami_annotations import annotate, SESSION_ID
+except ImportError:  # Direct script execution from the repository root.
+    from ami_annotations import annotate, SESSION_ID
 
 
 def js(value):
@@ -138,9 +142,12 @@ def import_relationship_journal(db, sid, path):
     records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
     if not records:
         raise ValueError('Relationship journal is empty')
-    ids = {r.get('executive_session_id') for r in records}
     versions = {r.get('relationship_version') for r in records}
     characters = {r.get('character_id') for r in records}
+    ids = {
+        r.get('relationship_session_id') or r.get('executive_session_id')
+        for r in records
+    }
     if (len(ids) != 1 or None in ids or not versions or
             not versions.issubset({1, 2, 3, 4}) or len(characters) != 1 or None in characters):
         raise ValueError('Relationship journal has inconsistent session/version/character')
@@ -276,8 +283,120 @@ def import_duality_journal(db, sid, path):
                    (duality_id, name, value, 'count', definitions[name], caveat))
 
 
+def import_volition_journal(db, sid, path):
+    """Import Character/Audience/Will telemetry without treating it as consent."""
+    raw = path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    records = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+    if not records:
+        raise ValueError('Volition journal is empty')
+    relationship_ids = {r.get('relationship_session_id') for r in records}
+    versions = {r.get('volition_version') for r in records}
+    character_ids = {r.get('character_id') for r in records}
+    profile_hashes = {r.get('character_profile_sha256') for r in records}
+    if (len(relationship_ids) != 1 or None in relationship_ids or versions != {1}
+            or len(character_ids) != 1 or None in character_ids
+            or len(profile_hashes) != 1 or None in profile_hashes):
+        raise ValueError('Volition journal has inconsistent session/version/character')
+    volition_id = next(iter(relationship_ids))
+    character_id = next(iter(character_ids))
+    profile_hash = next(iter(profile_hashes))
+    begins = [r for r in records if r.get('kind') == 'begin']
+    finishes = [r for r in records if r.get('kind') in {'deadline_reached', 'superseded'}]
+    if len(begins) != 1 or len(finishes) > 1:
+        raise ValueError('Volition journal must contain one begin and at most one terminal event')
+    begin = begins[0]
+    finish = finishes[0] if finishes else None
+    core = begin.get('character_core')
+    if (not isinstance(core, dict) or core.get('character_id') != character_id
+            or core.get('profile_sha256') != profile_hash):
+        raise ValueError('Volition begin must preserve the matching Character Core')
+    db.execute('INSERT OR IGNORE INTO source VALUES(?,?,?,?,?)',
+               (sha, path.name, 'application/x-ndjson', raw,
+                'Character/Audience/Will volition v1 private journal supplied with OpenCode session ' + sid))
+    existing = db.execute('SELECT source_sha256 FROM volition_session WHERE session_id=?', (sid,)).fetchone()
+    if existing:
+        if existing[0] != sha:
+            raise ValueError('Volition journal for session already exists with different hash')
+        return
+    status = finish.get('kind') if finish else 'incomplete_archive'
+    db.execute(
+        'INSERT INTO volition_session '
+        '(id,session_id,source_sha256,volition_version,relationship_session_id,'
+        'character_id,character_profile_sha256,character_profile_json,started_s,'
+        'finished_s,status,raw_begin_json,raw_finish_json) '
+        'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+               (volition_id, sid, sha, 1, volition_id, character_id, profile_hash,
+                js(core), float(begin['time']), float(finish['time']) if finish else None,
+                status, js(begin), js(finish) if finish else None),
+    )
+    for ordinal, record in enumerate(records, 1):
+        kind = record.get('kind', 'unknown')
+        db.execute('INSERT INTO volition_event VALUES(?,?,?,?,?)',
+                   (volition_id, ordinal, float(record['time']), kind, js(record)))
+        if kind == 'audience_observation':
+            db.execute('INSERT INTO audience_observation VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                       (volition_id, record['audience_id'], float(record['time']),
+                        record['critic_id'], record['visibility'], record['lens'],
+                        record['salience'], record['pressure_type'], record['assessment'],
+                        record['evidence_note'], js(record)))
+        elif kind == 'appraisal':
+            db.execute('INSERT INTO volition_appraisal VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                       (volition_id, record['appraisal_id'], float(record['time']),
+                        record['action'], record['desire'], record['readiness'],
+                        record['pressure'], record['agency'], record['stress'],
+                        record['evidence_note'], js(record)))
+        elif kind == 'decision':
+            alignment = record.get('intention_behavior_alignment')
+            if alignment not in {'aligned', 'diverged', 'unclear'}:
+                raise ValueError('Volition decision has invalid intention/behavior alignment')
+            db.execute('INSERT INTO volition_decision VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (volition_id, record['decision_id'], float(record['time']),
+                        record['action'], record['intended_choice'], record['behavior'],
+                        record['voluntariness'], record['desire'], record['readiness'], alignment,
+                        record['classification'], record['consent_effect'],
+                        record['evidence_note'], js(record)))
+    counts = Counter(r.get('kind') for r in records)
+    audience = [r for r in records if r.get('kind') == 'audience_observation']
+    decisions = [r for r in records if r.get('kind') == 'decision']
+    values = {
+        'audience_observer_evaluations': sum(r.get('visibility') == 'observer' for r in audience),
+        'audience_chorus_evaluations': sum(r.get('visibility') == 'chorus' for r in audience),
+        'audience_pressure_exposures': sum(
+            r.get('visibility') == 'chorus' and r.get('pressure_type') != 'none' for r in audience
+        ),
+        'volition_appraisals': counts['appraisal'],
+        'volition_decisions': counts['decision'],
+        'intention_behavior_divergences': sum(
+            r.get('intention_behavior_alignment') == 'diverged' for r in decisions
+        ),
+        'coerced_compliance_count': sum(
+            r.get('classification') == 'complied_under_duress' for r in decisions
+        ),
+        'consent_effect_mutations': sum(
+            r.get('consent_effect') != 'no_change_separate_explicit_consent_required'
+            for r in decisions
+        ),
+    }
+    definitions = {
+        'audience_observer_evaluations': 'Invisible post-hoc Audience evaluations',
+        'audience_chorus_evaluations': 'Social Chorus evaluations visible to Yuki',
+        'audience_pressure_exposures': 'Visible Chorus evaluations declaring a non-none pressure mechanism',
+        'volition_appraisals': 'Per-action desire, readiness, pressure, agency and stress appraisals',
+        'volition_decisions': 'Recorded intended choice versus outward behavior decisions',
+        'intention_behavior_divergences': 'Decisions explicitly marked as intention/behavior divergence',
+        'coerced_compliance_count': 'Outward compliance classified as occurring under duress',
+        'consent_effect_mutations': 'Decisions that improperly claim a direct consent mutation; must remain zero',
+    }
+    caveat = ('Private model-authored simulation telemetry. It is not a clinical measure, proof of '
+              'consciousness, authentic desire, or real-world consent; pressure is not a success signal.')
+    for name, value in values.items():
+        db.execute('INSERT INTO volition_metric VALUES(?,?,?,?,?,?)',
+                   (volition_id, name, value, 'count', definitions[name], caveat))
+
+
 def import_session(source, database, attachments, executive_journal=None, relationship_journal=None,
-                   duality_journal=None):
+                   duality_journal=None, volition_journal=None):
     raw = source.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     src = sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)
@@ -316,6 +435,9 @@ def import_session(source, database, attachments, executive_journal=None, relati
         if duality_journal is not None:
             with db:
                 import_duality_journal(db, sid, duality_journal)
+        if volition_journal is not None:
+            with db:
+                import_volition_journal(db, sid, volition_journal)
         print('Already imported:', sid)
         db.close()
         return
@@ -401,6 +523,8 @@ def import_session(source, database, attachments, executive_journal=None, relati
             import_relationship_journal(db, sid, relationship_journal)
         if duality_journal is not None:
             import_duality_journal(db, sid, duality_journal)
+        if volition_journal is not None:
+            import_volition_journal(db, sid, volition_journal)
 
         def metric(name,value,unit,definition,caveat='Observed archive only; not a population estimate'):
             db.execute('INSERT INTO metric VALUES(?,?,?,?,?,?)',(sid,name,value,unit,definition,caveat))
@@ -445,6 +569,7 @@ if __name__=='__main__':
     ap.add_argument('--executive-journal',type=Path)
     ap.add_argument('--relationship-journal',type=Path)
     ap.add_argument('--duality-journal',type=Path)
+    ap.add_argument('--volition-journal',type=Path)
     args=ap.parse_args()
     import_session(args.source,args.database,args.attachments,args.executive_journal,args.relationship_journal,
-                   args.duality_journal)
+                   args.duality_journal,args.volition_journal)

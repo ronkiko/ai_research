@@ -130,6 +130,11 @@ class GameTableTests(unittest.TestCase):
             "gamelab_v1_executive_question",
             "gamelab_v1_executive_finish",
             "gamelab_v1_relationship_state",
+            "gamelab_v1_character_state",
+            "gamelab_v1_volition_state",
+            "gamelab_v1_audience_observation",
+            "gamelab_v1_volition_appraise",
+            "gamelab_v1_volition_decide",
             "gamelab_v1_relationship_contact",
             "gamelab_v1_relationship_event",
             "gamelab_v1_relationship_action",
@@ -177,6 +182,7 @@ class GameTableTests(unittest.TestCase):
             self.assertIn("same inherited LLM", text)
             self.assertIn("Do not choose Yuki's final action", text)
             self.assertIn("Do not use or infer the other voice", text)
+            self.assertIn("CHARACTER_CORE", text)
 
         heart = HEART_AGENT.read_text(encoding="utf-8")
         head = HEAD_AGENT.read_text(encoding="utf-8")
@@ -190,6 +196,20 @@ class GameTableTests(unittest.TestCase):
         self.assertIn("сформированы до получения первого ответа", normalized)
         self.assertIn("не передавай heart черновик head", normalized.lower())
         self.assertIn("side=brain", normalized)
+
+    def test_will_and_periodic_audience_are_model_layers_not_action_formulas(self):
+        will = (TABLE / ".opencode" / "agents" / "yuki-will.md").read_text(encoding="utf-8")
+        audience = (TABLE / ".opencode" / "agents" / "yuki-audience.md").read_text(encoding="utf-8")
+        plugin = (TABLE / ".opencode" / "plugins" / "shift-supervisor.js").read_text(encoding="utf-8")
+        profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        self.assertIn("Will/Ego", will)
+        self.assertIn("Never relabel coerced", will)
+        self.assertIn("not as a table of mandatory reactions", " ".join(audience.split()))
+        self.assertIn("INTERNAL_AUDIENCE_TICK", plugin)
+        self.assertIn("GAMETABLE_AUDIENCE_MIN_MS", plugin)
+        self.assertIn("GAMETABLE_AUDIENCE_MAX_MS", plugin)
+        self.assertIn("visibility=chorus", plugin)
+        self.assertIn("complied_under_duress", profile)
 
     def test_advanced_manual_documents_host_instances(self):
         text = (SKILLS / SKILL_003_ADV / "SKILL.md").read_text(encoding="utf-8")
@@ -222,10 +242,11 @@ class GameTableTests(unittest.TestCase):
     def test_yuki_profile_is_mandatory_and_does_not_change_science(self):
         agents = (TABLE / "AGENTS.md").read_text(encoding="utf-8")
         profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")
+        normalized = " ".join(profile.split())
         self.assertIn("002-yuki.md", agents)
         self.assertIn("совершеннолетняя", profile)
         self.assertIn("не заменяет машинное evidence", profile)
-        self.assertIn("не являются согласием", profile)
+        self.assertIn("не являются согласием", normalized)
 
     def test_yuki_keeps_moe_yandere_temperament_without_scripted_relationships(self):
         profile = (TABLE / "characters" / "002-yuki.md").read_text(encoding="utf-8")

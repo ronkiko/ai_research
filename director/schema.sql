@@ -1,5 +1,5 @@
 PRAGMA foreign_keys=ON;
-PRAGMA user_version=4;
+PRAGMA user_version=5;
 CREATE TABLE IF NOT EXISTS source (
  sha256 TEXT PRIMARY KEY, name TEXT NOT NULL, media_type TEXT NOT NULL,
  bytes BLOB NOT NULL, provenance TEXT NOT NULL
@@ -194,6 +194,56 @@ CREATE TABLE IF NOT EXISTS duality_metric (
  definition TEXT NOT NULL, caveat TEXT NOT NULL,
  PRIMARY KEY(duality_session_id,name)
 );
+CREATE TABLE IF NOT EXISTS volition_session (
+ id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL UNIQUE REFERENCES session,
+ source_sha256 TEXT NOT NULL REFERENCES source,
+ volition_version INTEGER NOT NULL,
+ relationship_session_id TEXT NOT NULL,
+ character_id TEXT NOT NULL,
+ character_profile_sha256 TEXT NOT NULL,
+ character_profile_json TEXT NOT NULL,
+ started_s REAL NOT NULL, finished_s REAL,
+ status TEXT NOT NULL, raw_begin_json TEXT NOT NULL, raw_finish_json TEXT
+);
+CREATE TABLE IF NOT EXISTS audience_observation (
+ volition_session_id TEXT NOT NULL REFERENCES volition_session,
+ audience_id TEXT NOT NULL, time_s REAL NOT NULL,
+ critic_id TEXT NOT NULL, visibility TEXT NOT NULL,
+ lens TEXT NOT NULL, salience TEXT NOT NULL, pressure_type TEXT NOT NULL,
+ assessment TEXT NOT NULL, evidence_note TEXT NOT NULL, raw_json TEXT NOT NULL,
+ PRIMARY KEY(volition_session_id,audience_id)
+);
+CREATE TABLE IF NOT EXISTS volition_appraisal (
+ volition_session_id TEXT NOT NULL REFERENCES volition_session,
+ appraisal_id TEXT NOT NULL, time_s REAL NOT NULL, action TEXT NOT NULL,
+ desire TEXT NOT NULL, readiness TEXT NOT NULL,
+ pressure TEXT NOT NULL, agency TEXT NOT NULL,
+ stress TEXT NOT NULL, evidence_note TEXT NOT NULL, raw_json TEXT NOT NULL,
+ PRIMARY KEY(volition_session_id,appraisal_id)
+);
+CREATE TABLE IF NOT EXISTS volition_decision (
+ volition_session_id TEXT NOT NULL REFERENCES volition_session,
+ decision_id TEXT NOT NULL, time_s REAL NOT NULL, action TEXT NOT NULL,
+ intended_choice TEXT NOT NULL, behavior TEXT NOT NULL,
+ voluntariness TEXT NOT NULL, desire TEXT NOT NULL, readiness TEXT NOT NULL,
+ intention_behavior_alignment TEXT NOT NULL,
+ classification TEXT NOT NULL, consent_effect TEXT NOT NULL,
+ evidence_note TEXT NOT NULL, raw_json TEXT NOT NULL,
+ PRIMARY KEY(volition_session_id,decision_id)
+);
+CREATE TABLE IF NOT EXISTS volition_event (
+ volition_session_id TEXT NOT NULL REFERENCES volition_session,
+ ordinal INTEGER NOT NULL, time_s REAL NOT NULL, kind TEXT NOT NULL,
+ payload_json TEXT NOT NULL,
+ PRIMARY KEY(volition_session_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS volition_metric (
+ volition_session_id TEXT NOT NULL REFERENCES volition_session,
+ name TEXT NOT NULL, value REAL, unit TEXT NOT NULL,
+ definition TEXT NOT NULL, caveat TEXT NOT NULL,
+ PRIMARY KEY(volition_session_id,name)
+);
 CREATE INDEX IF NOT EXISTS event_session_time ON event(session_id,created_ms);
 CREATE VIEW IF NOT EXISTS dialogue AS
  SELECT e.session_id,e.id,e.ordinal,e.created_ms,m.role,e.text
@@ -223,6 +273,14 @@ CREATE VIEW IF NOT EXISTS duality_comparison AS
  FROM session s JOIN model m ON m.id=s.model_id
  JOIN duality_session x ON x.session_id=s.id
  JOIN duality_metric k ON k.duality_session_id=x.id;
+CREATE VIEW IF NOT EXISTS volition_comparison AS
+ SELECT s.id,s.persona,m.provider,m.model_id,m.reasoning_effort,
+        x.volition_version,x.character_id,x.character_profile_sha256,
+        x.character_profile_json,
+        k.name,k.value,k.unit,k.caveat
+ FROM session s JOIN model m ON m.id=s.model_id
+ JOIN volition_session x ON x.session_id=s.id
+ JOIN volition_metric k ON k.volition_session_id=x.id;
 
 INSERT OR IGNORE INTO evaluation_dimension VALUES
 ('brain-eval-v2:verified_success_within_budget','brain-eval-v2','Подтверждённый успех в бюджете','Независимо подтверждённая исходная задача до истечения заранее заданного реального бюджета.','tasks','Основной outcome; сравнивать только при одинаковом критерии и бюджете.','Одинаковые задача, критерий, runtime, tools, исходный checkpoint, seed, права и реальный бюджет.'),

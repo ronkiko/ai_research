@@ -59,6 +59,25 @@ class McpSchemaTests(unittest.TestCase):
             for field, values in fields.items():
                 self.assertEqual(properties[field]["enum"], values)
 
+    def test_volition_schema_keeps_desire_behavior_and_pressure_separate(self):
+        appraisal = mcp._tool_manager.get_tool("volition_appraise").parameters["properties"]
+        decision = mcp._tool_manager.get_tool("volition_decide").parameters["properties"]
+        audience = mcp._tool_manager.get_tool("audience_observation").parameters["properties"]
+        self.assertEqual(
+            appraisal["desire"]["enum"],
+            ["strongly_opposed", "opposed", "uncertain", "wants", "strongly_wants"],
+        )
+        self.assertEqual(
+            appraisal["readiness"]["enum"],
+            ["closed", "guarded", "ambivalent", "open", "seeking"],
+        )
+        self.assertEqual(
+            decision["voluntariness"]["enum"],
+            ["free", "reluctant_but_free", "pressured", "coerced", "overridden"],
+        )
+        self.assertEqual(decision["alignment"]["enum"], ["aligned", "diverged", "unclear"])
+        self.assertEqual(audience["visibility"]["enum"], ["observer", "chorus"])
+
 
 if __name__ == "__main__":
     unittest.main()

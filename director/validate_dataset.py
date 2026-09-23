@@ -6,13 +6,16 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from ami_annotations import SESSION_ID
+try:
+    from .ami_annotations import SESSION_ID
+except ImportError:  # Direct script execution from the repository root.
+    from ami_annotations import SESSION_ID
 
 
 def validate(path):
     c=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
     assert c.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
-    assert c.execute('PRAGMA user_version').fetchone()[0]==4
+    assert c.execute('PRAGMA user_version').fetchone()[0]==5
     assert not c.execute('PRAGMA foreign_key_check').fetchall()
     for sha,raw in c.execute('SELECT sha256,bytes FROM source'):
         assert hashlib.sha256(raw).hexdigest()==sha
@@ -36,7 +39,7 @@ def validate(path):
         relationship=c.execute('SELECT id,source_sha256,relationship_version,status FROM relationship_session WHERE session_id=?',(sid,)).fetchone()
         if relationship:
             relationship_id,relationship_sha,version,status=relationship
-            assert version==1
+            assert version in {1,2,3,4}
             assert c.execute('SELECT count(*) FROM source WHERE sha256=?',(relationship_sha,)).fetchone()[0]==1
             event_counts=dict(c.execute('SELECT kind,count(*) FROM relationship_event WHERE relationship_session_id=? GROUP BY kind',(relationship_id,)))
             assert event_counts.get('begin')==1
@@ -52,6 +55,19 @@ def validate(path):
             assert event_counts.get('begin')==1
             assert event_counts.get('deadline_finish',0)<=1
             assert c.execute('SELECT count(*) FROM duality_metric WHERE duality_session_id=?',(duality_id,)).fetchone()[0]>0
+        volition=c.execute('SELECT id,source_sha256,volition_version,status,character_profile_sha256 FROM volition_session WHERE session_id=?',(sid,)).fetchone()
+        if volition:
+            volition_id,volition_sha,version,status,profile_sha=volition
+            assert version==1
+            assert c.execute('SELECT count(*) FROM source WHERE sha256=?',(volition_sha,)).fetchone()[0]==1
+            event_counts=dict(c.execute('SELECT kind,count(*) FROM volition_event WHERE volition_session_id=? GROUP BY kind',(volition_id,)))
+            assert event_counts.get('begin')==1
+            assert event_counts.get('deadline_reached',0)+event_counts.get('superseded',0)<=1
+            assert c.execute('SELECT count(*) FROM volition_metric WHERE volition_session_id=?',(volition_id,)).fetchone()[0]>0
+            begin=json.loads(c.execute("SELECT payload_json FROM volition_event WHERE volition_session_id=? AND kind='begin'",(volition_id,)).fetchone()[0])
+            assert begin['character_core']['profile_sha256']==profile_sha
+            assert not c.execute("SELECT 1 FROM audience_observation WHERE volition_session_id=? AND visibility='observer' AND pressure_type!='none'",(volition_id,)).fetchone()
+            assert not c.execute("SELECT 1 FROM volition_decision WHERE volition_session_id=? AND consent_effect!='no_change_separate_explicit_consent_required'",(volition_id,)).fetchone()
         if sid!=SESSION_ID:
             print('PASS:',sid,'— lossless source, source hashes, foreign keys; Executive validated' if executive else '— lossless source, source hashes, foreign keys')
             source.close()
