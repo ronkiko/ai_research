@@ -49,3 +49,16 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 
 - Active Motor output is one normalized effort scalar in `[-1,+1]`; it must not set `vx` or `x` directly. The archived discrete motor under `gamelab/motors/legacy_discrete.py` is not an active fallback.
 - Default success tolerance is `±0.9`; the `±5` near-goal radius is reward shaping only and must never redefine success.
+
+- Motors are portable packages under `gamelab/motors/packages/<motor_id>/`.
+  Keep code, manifest, verified brain, candidate, school history and archived
+  brains package-local so the Motor can be copied/removed as one unit.
+- Do not mark a Motor trained from weight updates alone. Only frozen Motor School
+  verification may promote `candidate.pt` to `brain.pt` and set manifest
+  status to trained.
+- Spine TRAIN must mount an explicitly selected verified Motor, freeze its
+  parameters, and bind Motor id + brain SHA into the Spine checkpoint. Never
+  silently substitute or auto-create an untrained Motor.
+- Motor School may import canonical `ZoneRuntime` directly, like unpaced TRAIN,
+  but it must train from measured physical consequences and must not inject
+  teacher `motor_x` actions.

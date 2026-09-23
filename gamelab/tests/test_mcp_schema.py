@@ -6,6 +6,10 @@ from gamelab.mcp import mcp
 
 
 class McpSchemaTests(unittest.TestCase):
+    def test_training_start_exposes_motor_package_selector(self):
+        schema = mcp._tool_manager.get_tool("training_start").parameters
+        self.assertIn("motor_id", schema["properties"])
+
     def test_director_signal_exposes_allowed_kinds(self):
         schema = mcp._tool_manager.get_tool("executive_director_signal").parameters
         self.assertEqual(

@@ -138,9 +138,7 @@ class GoalRunner:
 
 def load_runtime_model(path: Path | None = None) -> SpineMotorPolicy:
     actual = path or checkpoint_path()
-    model = SpineMotorPolicy()
-    load_checkpoint(actual, model)
-    model.eval()
+    model, _ = model_for_checkpoint(actual)
     return model
 
 

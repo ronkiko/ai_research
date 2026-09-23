@@ -9,7 +9,12 @@ from gameclient.v1.host.config import HOST_EVENT_LIMIT
 from gameserver.v1.common.config import PHYSICS_HZ, WORLD_ID, ZONE_ID
 from gameserver.v1.zone.model import ZoneRuntime
 
-from .config import PLAYER_MAX_SPEED, WORLD_MAX_X
+from .config import (
+    PLAYER_DRAG,
+    PLAYER_MAX_ACCELERATION,
+    PLAYER_MAX_SPEED,
+    WORLD_MAX_X,
+)
 
 
 class UnpacedHostClient:
@@ -28,6 +33,10 @@ class UnpacedHostClient:
             raise RuntimeError("GameLab world length differs from canonical ZoneRuntime")
         if float(self.runtime.line.player_max_speed) != float(PLAYER_MAX_SPEED):
             raise RuntimeError("GameLab max speed differs from canonical ZoneRuntime")
+        if float(self.runtime.line.player_max_acceleration) != float(PLAYER_MAX_ACCELERATION):
+            raise RuntimeError("GameLab max acceleration differs from canonical ZoneRuntime")
+        if float(self.runtime.line.player_drag) != float(PLAYER_DRAG):
+            raise RuntimeError("GameLab drag differs from canonical ZoneRuntime")
 
         self._session_id = f"unpaced-{player_id}"
         self._sequence = 0

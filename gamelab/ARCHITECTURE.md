@@ -70,9 +70,10 @@ scientific verification; it must not secretly supply the behavior being studied.
 | Zone | Sole mutable physical authority | 120 Hz |
 | GameLab training infrastructure | Rollout, measured reward, PPO, checkpoints, evidence | Between rollouts |
 
-LLM latency never pauses the body or the world. Spine and continuous Motor are
-jointly trainable; no scripted steering, teacher or procedural fallback
-completes the task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
+LLM latency never pauses the body or the world. Motor and Spine are learned in
+separate stages: Motor School first teaches a local physical reflex, then Spine
+PPO mounts that verified Motor frozen. No scripted steering, teacher action or
+procedural fallback completes either task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
 Critic and optimizer are training infrastructure, not an additional actuator.
 
 The Brain has two roles: scientist during TRAIN/VERIFY, strategist during RUN.
@@ -82,7 +83,9 @@ Those are responsibilities of the same OpenCode, not new server processes.
 
 The deployed controller consumes only measured self x/vx/current actuator state
 and the strategic target. CNN is temporal Conv1d over 32 observations, not a
-vision network. Motor never directly receives target_x/goal_dx. Goal changes
+vision network. For `continuous_1d_v1`, Spine reduces that strategic context to
+one learned normalized desired velocity and the socket maps it to
+`[desired_vx,0,0,0]`. Motor never directly receives target_x/goal_dx. Goal changes
 replace the command channel of history without erasing measured body history.
 The x sensor and fixed normalization scales are explicit calibration of the
 current 1D apparatus, not inferred universal world boundaries. Other entities
@@ -90,6 +93,29 @@ require a future explicit perception sensor; raw world truth must not silently
 become controller perception. Tick/epoch/sequence metadata belongs to evidence
 and scheduling, not policy features. Nominal history span is about 0.53 seconds;
 effective intervals may be longer and are recorded, not synthetically filled.
+
+## Portable Motor packages and Motor School
+
+A Motor is an installable unit, not a hard-coded submodule of Spine. Each motor
+lives in `gamelab/motors/packages/<motor_id>/` and owns its implementation,
+compatibility manifest, verified brain, candidate, append-only school history
+and archived verified brains. Runtime files remain inside that directory so the
+whole learned organ can be copied or removed as one package.
+
+The manifest is the socket contract. It records MotorGoal width and semantics,
+proprioception fields, actuator output/range, physics cadence and the physical
+body constants for which the motor was verified. Spine TRAIN requires
+`training.status=trained`, a successful frozen Motor School verification,
+an existing `brain.pt`, and a matching brain SHA. Checkpoints additionally bind
+the selected `motor_id` and brain SHA so a different wheel cannot be silently
+substituted later.
+
+Motor School is an operator-only unpaced laboratory over the canonical
+`ZoneRuntime`. It gives the Motor only a normalized requested velocity plus
+local proprioception. Reward measures velocity-tracking error; no teacher emits
+the correct `motor_x`. A candidate is promoted to the package's verified
+`brain.pt` only after deterministic acceleration/braking/reversal verification.
+A failed candidate never overwrites an already verified brain.
 
 ## Continuous physical Motor
 
@@ -115,8 +141,9 @@ semantics are scheduled exclusively from authoritative world ticks, not wall
 time. With 120 Hz physics, Motor runs every 2 ticks and Spine every 12 ticks.
 Cached MotorGoal and critic features remain fixed between Spine calls. If a
 realtime observation skips a scheduled slot, the missed slot is dropped rather
-than replayed as a burst. PPO may recompute Spine on saved inputs for
-backpropagation.
+than replayed as a burst. PPO may recompute Spine on saved inputs for backpropagation. During Spine
+training the mounted Motor weights are frozen, but gradients may pass through
+its differentiable mapping to the Spine output.
 
 Realtime pacing receives those ticks through GameClient Host while the external
 ZoneService sleeps to maintain 120 Hz. Operator-only unpaced TRAIN uses the same

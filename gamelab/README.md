@@ -26,9 +26,9 @@ OpenCode / LLM strategist
         v
    Spine CNN @ 10 Hz
         |
-        | learned 4-value motor goal
+        | desired_vx packed as [v,0,0,0]
         v
- continuous Motor @ 60 Hz
+ verified frozen Motor @ 60 Hz
         |
         | motor_x effort [-1,+1]
         v
@@ -42,12 +42,14 @@ OpenCode / LLM strategist
 The LLM is deliberately outside the motor loop. It sets goals and observes
 results. It does not time button presses.
 
-The first humanoid abstraction has exactly one continuous Motor. Its scalar
+The first humanoid abstraction mounts exactly one portable Motor package. A
+Motor package is a copyable/removable directory under
+`gamelab/motors/packages/<motor_id>/` containing its model implementation,
+manifest, verified brain, Motor School history and archived brains. Its scalar
 output is normalized physical effort, not a symbolic LEFT/STOP/RIGHT decision.
-The archived discrete v1 MLP lives only under `gamelab/motors/legacy_discrete.py`
-for a future motor configurator/migration experiment and is not an active
-fallback. A future experiment may add another Motor and study learned
-coordination between them.
+The archived discrete v1 MLP remains only as a historical implementation and
+is not an active fallback. A future configurator may mount another compatible
+Motor package without changing the laboratory's physical transport.
 
 The current semantic vertical also provides a non-procedural character and
 volition experiment for Yuki. A stable Character Core conditions independent
@@ -89,10 +91,47 @@ Motor does **not** receive `target_x` or `goal_dx`. It receives only:
 This forces the hierarchy to learn an internal language instead of letting the
 Motor solve the strategic task directly.
 
-## Training
+## Motor School and Spine Training
 
-Spine and Motor are optimized jointly with PPO. No demonstration or scripted
-action labels are used.
+Motor and Spine are trained in two explicit stages. Motor School trains only
+the local physical reflex against requested velocity; it never receives
+`target_x` and never receives teacher motor actions. It writes all mutable
+artifacts inside the selected Motor package and promotes a candidate to
+`brain.pt` only after frozen velocity-tracking verification.
+
+A clean checkout intentionally contains no verified Motor brain. Train the
+default wheel first:
+
+```bash
+./gamelab/op/motor-school.sh --motor continuous_1d_v1 --fresh --episodes 200
+```
+
+The package runtime files are:
+
+```text
+manifest.json
+brain.pt
+candidate.pt
+history.jsonl
+checkpoints/
+```
+
+They are ignored by Git but live inside the Motor directory, so copying or
+removing that directory copies or removes the installed wheel and its learned
+state as one unit.
+
+Spine TRAIN must explicitly select a Motor:
+
+```bash
+./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100 --target 987
+```
+
+TRAIN refuses an untrained/unverified package, a missing brain, a brain hash
+mismatch, an incompatible physical/socket manifest, or a checkpoint created
+with a different Motor brain. The verified Motor is frozen during Spine PPO;
+`--fresh` resets Spine, critic and optimizer, not the mounted Motor.
+
+No demonstration or scripted action labels are used in either stage.
 
 TRAIN has two pacing modes over one control/training implementation:
 
@@ -189,7 +228,7 @@ GameServer or GameClient Host because it executes the canonical ZoneRuntime
 in-process:
 
 ```bash
-./gamelab/op/train-unpaced.sh --fresh --episodes 50 --target 987
+./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 50 --target 987
 ```
 
 The continuous Motor uses checkpoint format v2. Discrete three-logit v1 weights
@@ -197,8 +236,9 @@ are intentionally not loaded into it; replacing the active model archives the
 previous checkpoint bytes under `runtime/checkpoints/`.
 
 With `--fresh`, both shell TRAIN and realtime MCP TRAIN immediately reset the
-checkpoint model, optimizer metadata, episode counter, PRNG seed and persisted
-reward configuration to canonical defaults. Every training episode then resets
+Spine/critic checkpoint, optimizer metadata, episode counter, PRNG seed and
+persisted reward configuration to canonical defaults. The selected verified
+Motor brain is mounted frozen and is never reset by Spine TRAIN. Every training episode then resets
 physical player state to x=100, vx=0, move=0. Host session/command sequence and
 append-only evidence journals are intentionally preserved because they are world
 identity/audit state, not learned state. Shell TRAIN prints the effective Reward
@@ -289,6 +329,7 @@ Shell scripts remain available for maintainers, CI, and direct diagnostics:
 ./gamelab/op/check.sh
 ./gamelab/op/train.sh
 ./gamelab/op/train-unpaced.sh
+./gamelab/op/motor-school.sh
 ./gamelab/op/verify.sh
 ./gamelab/op/run.sh
 ./gamelab/op/mcp.sh

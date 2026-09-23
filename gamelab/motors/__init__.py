@@ -1,5 +1,19 @@
-"""GameLab motor implementations."""
+"""Portable GameLab Motor packages and package registry."""
 
-from .continuous import ContinuousMotor
+from .package import (
+    DEFAULT_MOTOR_ID,
+    MotorPackage,
+    MotorPackageError,
+    get_motor_package,
+    list_motor_packages,
+    require_trained_motor,
+)
 
-__all__ = ["ContinuousMotor"]
+__all__ = [
+    "DEFAULT_MOTOR_ID",
+    "MotorPackage",
+    "MotorPackageError",
+    "get_motor_package",
+    "list_motor_packages",
+    "require_trained_motor",
+]

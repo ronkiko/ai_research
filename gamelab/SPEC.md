@@ -50,8 +50,10 @@ Input shape:
 Channels are normalized self position, self velocity, current actuator state,
 and strategic target displacement.
 
-Output is a learned 4-dimensional continuous MotorGoal. Its semantics are not
-hand-authored.
+For the mounted `continuous_1d_v1` socket, Spine learns one normalized
+`desired_vx`. The adapter presents it to the Motor as
+`MotorGoal=[desired_vx,0,0,0]`; the remaining channels are reserved by this
+package contract.
 
 ### Motor 1
 
@@ -74,10 +76,26 @@ single external action is normalized physical effort `motor_x in [-1,+1]`.
 
 Motor 1 does not receive target position or target displacement directly.
 
+## Motor package lifecycle
+
+A Motor package is a directory under `gamelab/motors/packages/<motor_id>/`.
+The default manifest is immutable source configuration; Motor School creates
+runtime `manifest.json`, `brain.pt`, `candidate.pt`, `history.jsonl`, and
+`checkpoints/` in the same package directory. Those files form the portable
+learned organ.
+
+Motor School `velocity_tracking_ppo_v1` trains the Motor without Spine. Its
+goal socket receives a requested normalized velocity, local proprioception
+contains only measured velocity/current effort, and the Motor alone chooses
+`motor_x`. Frozen verification must pass before the candidate is promoted.
+
 ## Learning
 
-Spine, Motor, and critic are optimized jointly with PPO. Training action labels
-must not come from a scripted controller.
+Spine and critic are optimized with PPO over a selected verified Motor package.
+The Motor is frozen during Spine TRAIN. TRAIN must reject missing, untrained,
+unverified, hash-mismatched or physically incompatible Motor packages and must
+bind `motor_id` plus verified brain SHA into the Spine checkpoint. Training
+action labels must not come from a scripted controller.
 
 Realtime and unpaced TRAIN share the same rollout, sensor, reward, PPO and
 checkpoint code. Their only execution difference is how the next authoritative

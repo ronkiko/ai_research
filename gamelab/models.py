@@ -1,13 +1,13 @@
-"""Learned Spine CNN + active one-dimensional continuous Motor."""
+"""Learned Spine CNN mounted on a portable verified Motor package."""
 from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-import os
-import tempfile
 import hashlib
+import os
 import shutil
-from typing import Any
+import tempfile
+from typing import Any, Iterable
 
 import torch
 from torch import nn
@@ -27,20 +27,14 @@ from .config import (
     WORLD_MAX_X,
 )
 from .motors.continuous import ContinuousMotor
+from .motors.package import MotorPackage, get_motor_package, require_trained_motor
 
 
 def _bounded(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, float(value)))
 
 
-def sensor_frame(
-    *,
-    x: float,
-    vx: float,
-    motor_x: float,
-    target_x: float,
-) -> torch.Tensor:
-    """Measured body state plus strategic goal, consumed only by Spine."""
+def sensor_frame(*, x: float, vx: float, motor_x: float, target_x: float) -> torch.Tensor:
     x_norm = (2.0 * float(x) / WORLD_MAX_X) - 1.0
     vx_norm = _bounded(float(vx) / PLAYER_MAX_SPEED)
     goal_dx = _bounded((float(target_x) - float(x)) / WORLD_MAX_X)
@@ -51,7 +45,6 @@ def sensor_frame(
 
 
 def motor_state(*, vx: float, motor_x: float) -> torch.Tensor:
-    """Local proprioception visible to Motor; strategic target is absent."""
     return torch.tensor(
         [_bounded(float(vx) / PLAYER_MAX_SPEED), _bounded(motor_x)],
         dtype=torch.float32,
@@ -81,8 +74,6 @@ class SensorHistory:
 
 
 class SpineCNN(nn.Module):
-    """Slow learned spinal model: temporal sensor history -> latent MotorGoal."""
-
     def __init__(self) -> None:
         super().__init__()
         self.conv = nn.Sequential(
@@ -98,7 +89,7 @@ class SpineCNN(nn.Module):
             nn.ReLU(),
         )
         self.goal = nn.Sequential(
-            nn.Linear(16, MOTOR_GOAL_SIZE),
+            nn.Linear(16, 1),
             nn.Tanh(),
         )
 
@@ -114,10 +105,16 @@ class SpineCNN(nn.Module):
                 f"Spine history must have shape [B,{SPINE_CHANNELS},{HISTORY_FRAMES}]"
             )
         hidden = self.hidden(self.conv(history))
-        goal = self.goal(hidden)
+        desired_vx = self.goal(hidden)
+        reserved = torch.zeros(
+            (*desired_vx.shape[:-1], MOTOR_GOAL_SIZE - 1),
+            dtype=desired_vx.dtype,
+            device=desired_vx.device,
+        )
+        motor_goal = torch.cat((desired_vx, reserved), dim=-1)
         if single:
-            return goal[0], hidden[0]
-        return goal, hidden
+            return motor_goal[0], hidden[0]
+        return motor_goal, hidden
 
 
 class CriticMLP(nn.Module):
@@ -129,30 +126,39 @@ class CriticMLP(nn.Module):
             nn.Linear(16, 1),
         )
 
-    def forward(
-        self,
-        spine_hidden: torch.Tensor,
-        proprioception: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, spine_hidden: torch.Tensor, proprioception: torch.Tensor) -> torch.Tensor:
         return self.net(
             torch.cat((spine_hidden, proprioception), dim=-1)
         ).squeeze(-1)
 
 
 class SpineMotorPolicy(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, motor: nn.Module | None = None) -> None:
         super().__init__()
         self.spine = SpineCNN()
-        self.motor = ContinuousMotor()
+        self.motor = motor if motor is not None else ContinuousMotor()
         self.critic = CriticMLP()
 
     @classmethod
-    def fresh(cls, seed: int) -> "SpineMotorPolicy":
+    def fresh(
+        cls,
+        seed: int,
+        *,
+        motor: nn.Module | None = None,
+    ) -> "SpineMotorPolicy":
         if type(seed) is not int:
             raise TypeError("seed must be an int")
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed)
-            return cls()
+            return cls(motor=motor)
+
+    def freeze_motor(self) -> None:
+        self.motor.eval()
+        for parameter in self.motor.parameters():
+            parameter.requires_grad_(False)
+
+    def trainable_parameters(self) -> list[nn.Parameter]:
+        return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
     def evaluate(
         self,
@@ -163,6 +169,57 @@ class SpineMotorPolicy(nn.Module):
         mean, log_std = self.motor.parameters_for(goal, proprioception)
         value = self.critic(hidden, proprioception)
         return mean, log_std, value, goal
+
+
+def build_spine_policy(
+    motor_id: str,
+    *,
+    seed: int,
+) -> tuple[SpineMotorPolicy, MotorPackage]:
+    package = require_trained_motor(get_motor_package(motor_id))
+    motor = package.load_verified_model()
+    model = SpineMotorPolicy.fresh(seed, motor=motor)
+    model.freeze_motor()
+    return model, package
+
+
+def motor_checkpoint_extra(package: MotorPackage) -> dict[str, Any]:
+    return {
+        "motor_id": package.motor_id,
+        "motor_brain_sha256": package.brain_sha256,
+    }
+
+
+def checkpoint_metadata(path: Path) -> dict[str, Any]:
+    payload = torch.load(path, map_location="cpu")
+    if not isinstance(payload, dict):
+        raise ValueError("invalid GameLab checkpoint")
+    extra = payload.get("extra")
+    return dict(extra) if isinstance(extra, dict) else {}
+
+
+def package_for_checkpoint(path: Path) -> MotorPackage:
+    extra = checkpoint_metadata(path)
+    motor_id = extra.get("motor_id")
+    brain_sha = extra.get("motor_brain_sha256")
+    if not isinstance(motor_id, str) or not motor_id:
+        raise ValueError("GameLab checkpoint has no Motor package identity")
+    package = require_trained_motor(get_motor_package(motor_id))
+    if package.brain_sha256 != brain_sha:
+        raise ValueError(
+            f"GameLab checkpoint expects motor {motor_id!r} brain {brain_sha!r}, "
+            f"installed package has {package.brain_sha256!r}"
+        )
+    return package
+
+
+def model_for_checkpoint(path: Path, *, seed: int = 1) -> tuple[SpineMotorPolicy, MotorPackage]:
+    package = package_for_checkpoint(path)
+    model = SpineMotorPolicy.fresh(seed, motor=package.load_verified_model())
+    model.freeze_motor()
+    load_checkpoint(path, model)
+    model.eval()
+    return model, package
 
 
 def save_checkpoint(
@@ -220,7 +277,29 @@ def load_checkpoint(
         raise ValueError("unsupported GameLab checkpoint version")
     if payload.get("configuration") != MODEL_CONFIGURATION:
         raise ValueError("GameLab checkpoint model configuration mismatch")
+    frozen_motor = bool(list(model.motor.parameters())) and all(
+        not parameter.requires_grad for parameter in model.motor.parameters()
+    )
+    expected_motor = (
+        {
+            name: value.detach().clone()
+            for name, value in model.motor.state_dict().items()
+        }
+        if frozen_motor
+        else None
+    )
     model.load_state_dict(payload["model"])
+    if expected_motor is not None:
+        actual_motor = model.motor.state_dict()
+        if any(
+            name not in actual_motor
+            or not torch.equal(expected, actual_motor[name])
+            for name, expected in expected_motor.items()
+        ):
+            raise ValueError(
+                "GameLab checkpoint embeds Motor weights that differ from "
+                "the installed verified brain"
+            )
     if optimizer is not None and "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     extra = payload.get("extra")
@@ -231,8 +310,13 @@ __all__ = [
     "SensorHistory",
     "SpineCNN",
     "SpineMotorPolicy",
+    "build_spine_policy",
+    "checkpoint_metadata",
     "load_checkpoint",
+    "model_for_checkpoint",
+    "motor_checkpoint_extra",
     "motor_state",
+    "package_for_checkpoint",
     "policy_id",
     "save_checkpoint",
     "sensor_frame",

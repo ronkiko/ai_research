@@ -16,6 +16,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from gamelab.host import HostClient
+from gamelab.tests.motor_fixture import create_verified_motor_fixture
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -152,6 +153,7 @@ async def wait_status(
 async def run_flow(
     checkpoint: Path,
     reward_config: Path,
+    motor_root: Path,
     operator: HostClient,
 ) -> int:
     params = StdioServerParameters(
@@ -162,6 +164,7 @@ async def run_flow(
             **os.environ,
             "GAMELAB_CHECKPOINT": str(checkpoint),
             "GAMELAB_REWARD_CONFIG": str(reward_config),
+            "GAMELAB_MOTOR_ROOT": str(motor_root),
             "GAMELAB_PLAYER": "player1",
             "GAMELAB_HOST_REGISTRY": str(reward_config.parent / "hosts.json"),
         },
@@ -234,8 +237,10 @@ async def run_flow(
 
             health = await tool(session, "health")
             payloads.append(health)
-            if not health.get("backend_ready") or not health.get("model_ready"):
-                raise AssertionError(f"bad GameLab health: {health}")
+            if not health.get("backend_ready") or health.get("model_ready"):
+                raise AssertionError(
+                    f"fresh laboratory should have backend but no Spine checkpoint yet: {health}"
+                )
             if health.get("host_session_active") or health.get("attached_to_player"):
                 raise AssertionError(f"fresh Host unexpectedly has an active session: {health}")
 
@@ -271,8 +276,15 @@ async def run_flow(
 
             info = await tool(session, "model_info")
             payloads.append(info)
-            if info.get("trainable") is not True or info.get("episodes_trained") != 0:
-                raise AssertionError(f"initial model is not fresh/trainable: {info}")
+            if info.get("checkpoint_ready") is not False:
+                raise AssertionError(f"fresh laboratory unexpectedly has a Spine checkpoint: {info}")
+            motors = info.get("motors") or []
+            if not any(
+                item.get("motor_id") == "continuous_1d_v1"
+                and item.get("status") == "trained"
+                for item in motors
+            ):
+                raise AssertionError(f"verified Motor fixture is not visible: {info}")
             for hidden in ("architecture", "spine_hz", "motor_hz", "motor_count"):
                 if hidden in info:
                     raise AssertionError(
@@ -693,6 +705,8 @@ def main() -> int:
         temp_path = Path(temp)
         checkpoint = temp_path / "spine_motor.pt"
         reward_config = temp_path / "reward.json"
+        motor_root = temp_path / "motors"
+        create_verified_motor_fixture(motor_root)
 
         server_log_path = temp_path / "server.log"
         host_log_path = temp_path / "host.log"
@@ -721,7 +735,9 @@ def main() -> int:
                 )
                 wait_port(HOST_PORT, host)
                 operator = HostClient("operator-mcp-smoke")
-                tool_count = asyncio.run(run_flow(checkpoint, reward_config, operator))
+                tool_count = asyncio.run(
+                    run_flow(checkpoint, reward_config, motor_root, operator)
+                )
                 if server.poll() is not None or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
                 print(

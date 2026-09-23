@@ -12,6 +12,8 @@ HOST_MAX_LINE_BYTES = 1024 * 1024
 WORLD_MIN_X = 0.0
 WORLD_MAX_X = 1000.0
 PLAYER_MAX_SPEED = 180.0
+PLAYER_MAX_ACCELERATION = 720.0
+PLAYER_DRAG = 4.0
 # Compatibility name for calibration code; this is now a limit, not commanded vx.
 PLAYER_SPEED = PLAYER_MAX_SPEED
 PHYSICS_HZ = 120
@@ -39,5 +41,5 @@ PPO_VALUE_COEF = 0.5
 PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
 
-CHECKPOINT_VERSION = 2
-MODEL_CONFIGURATION = "spine-cnn4x32-goal4-continuous1d-v2"
+CHECKPOINT_VERSION = 3
+MODEL_CONFIGURATION = "spine-cnn4x32-goal4-modular-motor-v3"

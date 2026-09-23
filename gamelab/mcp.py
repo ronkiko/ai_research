@@ -8,6 +8,7 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from .motors.package import DEFAULT_MOTOR_ID
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
     DEFAULT_HOST_ID,
@@ -184,7 +185,7 @@ def health(host_id: str = DEFAULT_HOST_ID) -> dict[str, Any]:
             "status": "not_ready",
             "host_id": host_id,
             "host_ready": False,
-            "model_ready": checkpoint_path().is_file(),
+            "model_ready": laboratory.ensure_model(),
             "active_operation": laboratory.active_operation(),
             "error": str(exc),
         }
@@ -203,7 +204,7 @@ def health(host_id: str = DEFAULT_HOST_ID) -> dict[str, Any]:
             "host_id": host_id,
             "host_ready": True,
             "backend_ready": host.get("gameplay_ready") is True,
-            "model_ready": checkpoint_path().is_file(),
+            "model_ready": laboratory.ensure_model(),
             "player_id": session_player,
             "default_player_id": PLAYER_ID,
             "default_player_available": PLAYER_ID in players,
@@ -742,8 +743,9 @@ def training_start(
     seed: int = 1,
     max_seconds: float = TRAIN_EPISODE_SECONDS,
     host_id: str = DEFAULT_HOST_ID,
+    motor_id: str = DEFAULT_MOTOR_ID,
 ) -> dict[str, Any]:
-    """Start asynchronous model training in the live game."""
+    """Start asynchronous Spine training with one verified Motor package."""
     payload = laboratory.start_training(
         episodes=episodes,
         target_x=target_x,
@@ -751,6 +753,7 @@ def training_start(
         seed=seed,
         max_seconds=max_seconds,
         host_id=host_id,
+        motor_id=motor_id,
     )
     executive.operation_started("training", payload)
     return _public(payload)

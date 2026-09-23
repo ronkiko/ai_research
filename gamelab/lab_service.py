@@ -17,7 +17,16 @@ from .config import (
     WORLD_MIN_X,
 )
 from .host import HostClient, HostError
-from .models import SpineMotorPolicy, load_checkpoint, save_checkpoint, policy_id
+from .models import (
+    build_spine_policy,
+    load_checkpoint,
+    model_for_checkpoint,
+    motor_checkpoint_extra,
+    package_for_checkpoint,
+    policy_id,
+    save_checkpoint,
+)
+from .motors.package import DEFAULT_MOTOR_ID, MotorPackageError, list_motor_packages
 from .control import GoalMailbox
 from .journal import Journal
 from .reward import RewardConfig, RewardStore
@@ -48,33 +57,42 @@ class Laboratory:
         }
         self.ensure_model()
 
-    def ensure_model(self) -> None:
+    def ensure_model(self) -> bool:
         path = checkpoint_path()
-        if path.is_file():
-            candidate = SpineMotorPolicy.fresh(1)
-            try:
-                load_checkpoint(path, candidate)
-                return
-            except ValueError:
-                # A motor architecture migration cannot reuse old actor weights.
-                # save_checkpoint archives the previous bytes before replacement.
-                pass
-        model = SpineMotorPolicy.fresh(1)
-        save_checkpoint(path, model, extra={"episodes": 0, "seed": 1})
+        if not path.is_file():
+            return False
+        try:
+            model_for_checkpoint(path)
+            return True
+        except (ValueError, MotorPackageError):
+            return False
 
     def model_info(self) -> dict[str, Any]:
-        self.ensure_model()
-        model = SpineMotorPolicy()
-        extra = load_checkpoint(checkpoint_path(), model)
+        path = checkpoint_path()
+        if not self.ensure_model():
+            motors = list_motor_packages()
+            return {
+                "checkpoint_ready": False,
+                "checkpoint": path.name,
+                "trainable": any(item.get("status") == "trained" for item in motors),
+                "goal_interface": "target_x",
+                "motor_interface": "portable_motor_package",
+                "episodes_trained": 0,
+                "motors": motors,
+            }
+        model, package = model_for_checkpoint(path)
+        extra = load_checkpoint(path, model)
         return {
             "checkpoint_ready": True,
-            "checkpoint": checkpoint_path().name,
+            "checkpoint": path.name,
             "trainable": True,
             "goal_interface": "target_x",
-            "motor_interface": "continuous_1d_effort",
+            "motor_interface": "portable_motor_package",
+            "motor_id": package.motor_id,
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
             "policy_id": policy_id(model),
+            "motors": list_motor_packages(),
         }
 
     def _require_attached_player(self, host_id: str) -> str:
@@ -217,6 +235,7 @@ class Laboratory:
         seed: int,
         max_seconds: float,
         host_id: str,
+        motor_id: str = DEFAULT_MOTOR_ID,
     ) -> dict[str, Any]:
         if type(episodes) is not int or not 1 <= episodes <= 500:
             raise ValueError("episodes must be within [1,500]")
@@ -225,6 +244,10 @@ class Laboratory:
         target = self._target(target_x)
         seconds = self._seconds(max_seconds, name="max_seconds")
         player_id = self._require_attached_player(host_id)
+        try:
+            _, motor_package = build_spine_policy(motor_id, seed=seed)
+        except MotorPackageError as exc:
+            raise ValueError(str(exc)) from exc
         reward = _prepare_reward_config(self.reward_store, fresh=bool(fresh))
         return self._start(
             "training",
@@ -239,6 +262,8 @@ class Laboratory:
                 "recent_episodes": [],
                 "host_id": host_id,
                 "player_id": player_id,
+                "motor_id": motor_package.motor_id,
+                "motor_brain_sha256": motor_package.brain_sha256,
             },
             self._training_worker,
             episodes,
@@ -249,6 +274,7 @@ class Laboratory:
             reward,
             host_id,
             player_id,
+            motor_package.motor_id,
         )
 
     def _training_worker(
@@ -261,21 +287,32 @@ class Laboratory:
         reward: RewardConfig,
         host_id: str,
         player_id: str,
+        motor_id: str,
     ) -> None:
         random.seed(seed)
         torch.manual_seed(seed)
         path = checkpoint_path()
-        model = SpineMotorPolicy.fresh(seed)
-        optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
+        model, motor_package = build_spine_policy(motor_id, seed=seed)
+        optimizer = torch.optim.Adam(
+            model.trainable_parameters(),
+            lr=PPO_LEARNING_RATE,
+        )
+        motor_extra = motor_checkpoint_extra(motor_package)
         prior = 0
         if fresh:
             save_checkpoint(
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": 0, "seed": seed},
+                extra={"episodes": 0, "seed": seed, **motor_extra},
             )
         elif path.exists():
+            installed = package_for_checkpoint(path)
+            if installed.motor_id != motor_package.motor_id:
+                raise RuntimeError(
+                    f"checkpoint uses motor {installed.motor_id!r}, "
+                    f"requested {motor_package.motor_id!r}"
+                )
             extra = load_checkpoint(path, model, optimizer=optimizer)
             prior = int(extra.get("episodes", 0))
         else:
@@ -283,7 +320,7 @@ class Laboratory:
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": 0, "seed": seed},
+                extra={"episodes": 0, "seed": seed, **motor_extra},
             )
 
         client = HostClient("gamelab-mcp-train", host_id=host_id)
@@ -336,7 +373,11 @@ class Laboratory:
                     path,
                     model,
                     optimizer=optimizer,
-                    extra={"episodes": prior + completed, "seed": seed},
+                    extra={
+                        "episodes": prior + completed,
+                        "seed": seed,
+                        **motor_checkpoint_extra(motor_package),
+                    },
                 )
                 summary = {
                     "episode": episode_number,
@@ -397,7 +438,8 @@ class Laboratory:
         if not 0.0 < tolerance <= 25.0:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
-        self.ensure_model()
+        if not self.ensure_model():
+            raise ValueError("no compatible Spine checkpoint; train with a verified Motor first")
         player_id = self._require_attached_player(host_id)
         return self._start(
             "verify",
@@ -430,9 +472,7 @@ class Laboratory:
         host_id: str,
         player_id: str,
     ) -> None:
-        model = SpineMotorPolicy()
-        load_checkpoint(checkpoint_path(), model)
-        model.eval()
+        model, _ = model_for_checkpoint(checkpoint_path())
         with self._lock:
             self._records["verify"]["policy_id"] = policy_id(model)
         client = HostClient("gamelab-mcp-verify", host_id=host_id)
@@ -501,7 +541,8 @@ class Laboratory:
         if not 0.0 < tolerance <= 25.0:
             raise ValueError("tolerance must be within (0,25]")
         seconds = self._seconds(max_seconds, name="max_seconds")
-        self.ensure_model()
+        if not self.ensure_model():
+            raise ValueError("no compatible Spine checkpoint; train with a verified Motor first")
         player_id = self._require_attached_player(host_id)
         return self._start(
             "run",
@@ -528,9 +569,7 @@ class Laboratory:
         host_id: str,
         player_id: str,
     ) -> None:
-        model = SpineMotorPolicy()
-        load_checkpoint(checkpoint_path(), model)
-        model.eval()
+        model, _ = model_for_checkpoint(checkpoint_path())
         client = HostClient("gamelab-mcp-run", host_id=host_id)
         try:
             with self._lock:

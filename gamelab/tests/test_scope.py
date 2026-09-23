@@ -57,19 +57,21 @@ class ScopeTests(unittest.TestCase):
 
     def test_active_motor_has_no_strategic_target_and_legacy_is_not_active(self):
         motor_source = (
-            ROOT / "gamelab/motors/continuous.py"
+            ROOT / "gamelab/motors/packages/continuous_1d_v1/model.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("class ContinuousMotor", motor_source)
+        self.assertIn("class Motor", motor_source)
         self.assertNotIn("target_x", motor_source)
         self.assertNotIn("goal_dx", motor_source)
 
         models = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")
         self.assertIn("from .motors.continuous import ContinuousMotor", models)
+        registry = (ROOT / "gamelab/motors/package.py").read_text(encoding="utf-8")
+        self.assertIn("require_trained_motor", registry)
         self.assertNotIn("legacy_discrete", models)
         self.assertNotIn("LegacyDiscreteMotorMLP", models)
 
 
-    def test_unpaced_adapter_is_the_only_canonical_gameserver_import(self):
+    def test_only_operator_unpaced_and_motor_school_import_canonical_gameserver(self):
         unpaced = (ROOT / "gamelab/unpaced.py").read_text(encoding="utf-8")
         self.assertIn(
             "from gameserver.v1.zone.model import ZoneRuntime",
@@ -79,6 +81,13 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn("import gameserver.v1.zone.server", unpaced)
         self.assertNotIn("from gameserver.v1.gateway", unpaced)
         self.assertNotIn("import gameserver.v1.gateway", unpaced)
+        school = (ROOT / "gamelab/motor_school.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "from gameserver.v1.zone.model import ZoneRuntime",
+            school,
+        )
+        self.assertNotIn("from gameserver.v1.zone.server", school)
+        self.assertNotIn("from gameserver.v1.gateway", school)
 
         for relative in (
             "gamelab/host.py",
@@ -97,7 +106,8 @@ class ScopeTests(unittest.TestCase):
 
     def test_operator_launchers_default_to_current_python(self):
         for name in (
-            "check.sh", "train.sh", "train-unpaced.sh", "verify.sh", "run.sh", "mcp.sh"
+            "check.sh", "train.sh", "train-unpaced.sh", "motor-school.sh",
+            "verify.sh", "run.sh", "mcp.sh"
         ):
             text = (ROOT / "gamelab/op" / name).read_text(encoding="utf-8")
             self.assertIn('GAMELAB_PYTHON:-python3', text, name)

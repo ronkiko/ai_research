@@ -1,4 +1,4 @@
-"""Joint PPO training for learned Spine CNN + one Motor MLP."""
+"""PPO training for Spine over one verified frozen Motor package."""
 from __future__ import annotations
 
 import argparse
@@ -29,9 +29,13 @@ from .host import HostClient, player_from_state
 from .unpaced import UnpacedHostClient
 from .models import (
     SpineMotorPolicy,
+    build_spine_policy,
     load_checkpoint,
+    motor_checkpoint_extra,
+    package_for_checkpoint,
     save_checkpoint,
 )
+from .motors.package import MotorPackageError
 from .reward import RewardConfig, RewardStore
 from .motors.continuous import squashed_log_prob
 from .runtime import checkpoint_path, ensure_player, reset_player_state
@@ -128,6 +132,7 @@ def ppo_update(
     advantages, returns = _advantages(transitions)
 
     model.train()
+    model.motor.eval()
     metrics = {key: 0.0 for key in (
         "loss", "policy_loss", "value_loss", "entropy", "approx_kl",
         "clip_fraction", "grad_norm", "value_mae",
@@ -208,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--target", type=float)
+    parser.add_argument(
+        "--motor",
+        required=True,
+        help="verified Motor package id under gamelab/motors/packages",
+    )
     parser.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
     args = parser.parse_args(argv)
 
@@ -230,20 +240,45 @@ def main(argv: list[str] | None = None) -> int:
         # passes preflight. A dead realtime Host must not erase a good checkpoint.
         ensure_player(client, args.player)
 
-        model = SpineMotorPolicy.fresh(args.seed)
-        optimizer = torch.optim.Adam(model.parameters(), lr=PPO_LEARNING_RATE)
+        try:
+            model, motor_package = build_spine_policy(args.motor, seed=args.seed)
+        except MotorPackageError as exc:
+            raise SystemExit(str(exc)) from exc
+        optimizer = torch.optim.Adam(
+            model.trainable_parameters(),
+            lr=PPO_LEARNING_RATE,
+        )
         completed = 0
+        motor_extra = motor_checkpoint_extra(motor_package)
         if args.fresh:
             save_checkpoint(
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": 0, "seed": args.seed},
+                extra={"episodes": 0, "seed": args.seed, **motor_extra},
             )
         elif path.exists():
+            installed = package_for_checkpoint(path)
+            if installed.motor_id != motor_package.motor_id:
+                raise SystemExit(
+                    f"checkpoint uses motor {installed.motor_id!r}; "
+                    f"requested {motor_package.motor_id!r}"
+                )
             extra = load_checkpoint(path, model, optimizer=optimizer)
             completed = int(extra.get("episodes", 0))
+        else:
+            save_checkpoint(
+                path,
+                model,
+                optimizer=optimizer,
+                extra={"episodes": 0, "seed": args.seed, **motor_extra},
+            )
 
+        print(
+            f"Motor {motor_package.motor_id} verified=yes "
+            f"brain={motor_package.brain_sha256} frozen=yes",
+            flush=True,
+        )
         reward_store = RewardStore()
         reward_config = _prepare_reward_config(reward_store, fresh=args.fresh)
         print(
@@ -272,7 +307,11 @@ def main(argv: list[str] | None = None) -> int:
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": episode, "seed": args.seed},
+                extra={
+                    "episodes": episode,
+                    "seed": args.seed,
+                    **motor_checkpoint_extra(motor_package),
+                },
             )
             print(
                 f"Episode {episode} mode={args.mode} target={target:.1f} "
@@ -280,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
                 f"vx={result.evidence.get('vx', 0.0):+.2f} "
                 f"motor={result.evidence.get('motor_x', 0.0):+.3f} "
-                f"best_stop={result.evidence.get('closest_stopped_distance')} "
+                f"best_stop_error={result.evidence.get('closest_stopped_distance')} "
                 f"stable={result.evidence.get('stable_ticks', 0)} "
                 f"steps={result.motor_steps} requests={result.controller_requests} "
                 f"sim={result.evidence.get('simulation_seconds', 0.0):.3f}s "
