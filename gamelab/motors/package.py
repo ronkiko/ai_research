@@ -26,6 +26,7 @@ from ..config import (
 DEFAULT_MOTOR_ID = "continuous_1d_v1"
 DEFAULT_MOTOR_ROOT = Path(__file__).resolve().parent / "packages"
 MOTOR_PACKAGE_SCHEMA = 1
+CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v3"
 
 
 class MotorPackageError(RuntimeError):
@@ -84,6 +85,7 @@ class MotorPackage:
         return (
             training.get("status") == "trained"
             and training.get("verified") is True
+            and training.get("school") == CURRENT_MOTOR_SCHOOL_VERSION
             and self.brain_path.is_file()
             and bool(self.brain_sha256)
         )
@@ -247,9 +249,11 @@ def require_trained_motor(package: MotorPackage | str) -> MotorPackage:
     if not package.trained:
         training = package.manifest.get("training") or {}
         raise MotorPackageError(
-            f"motor {package.motor_id!r} is not verified-trained "
-            f"(status={training.get('status', 'unknown')!r}); "
-            f"run ./gamelab/op/motor-school.sh --motor {package.motor_id}"
+            f"motor {package.motor_id!r} is not verified-trained for "
+            f"{CURRENT_MOTOR_SCHOOL_VERSION!r} "
+            f"(status={training.get('status', 'unknown')!r}, "
+            f"school={training.get('school')!r}); "
+            f"run ./gamelab/op/motor-school.sh --motor {package.motor_id} --fresh"
         )
     actual = _sha256(package.brain_path)
     expected = package.brain_sha256
@@ -267,6 +271,7 @@ def require_trained_motor(package: MotorPackage | str) -> MotorPackage:
 
 
 __all__ = [
+    "CURRENT_MOTOR_SCHOOL_VERSION",
     "DEFAULT_MOTOR_ID",
     "MotorPackage",
     "MotorPackageError",

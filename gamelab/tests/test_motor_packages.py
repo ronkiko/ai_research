@@ -14,6 +14,7 @@ from gamelab.models import (
     save_checkpoint,
 )
 from gamelab.motors.package import (
+    CURRENT_MOTOR_SCHOOL_VERSION,
     MotorPackageError,
     get_motor_package,
     require_trained_motor,
@@ -43,6 +44,32 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertTrue(package.trained)
                 self.assertTrue(all(not p.requires_grad for p in model.motor.parameters()))
                 self.assertTrue(any(p.requires_grad for p in model.spine.parameters()))
+
+    def test_old_school_verification_is_rejected(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_path = create_verified_motor_fixture(root)
+            manifest_path = package_path / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["training"]["school"],
+                CURRENT_MOTOR_SCHOOL_VERSION,
+            )
+            manifest["training"]["school"] = "velocity_tracking_pg_v2"
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package("continuous_1d_v1")
+                self.assertFalse(package.trained)
+                with self.assertRaisesRegex(
+                    MotorPackageError,
+                    "velocity_tracking_pg_v3",
+                ):
+                    require_trained_motor(package)
 
     def test_checkpoint_cannot_override_verified_motor_brain(self):
         import torch

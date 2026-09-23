@@ -34,13 +34,14 @@ from .config import (
 )
 from .motors.continuous import squashed_action, squashed_log_prob
 from .motors.package import (
+    CURRENT_MOTOR_SCHOOL_VERSION,
     DEFAULT_MOTOR_ID,
     MotorPackage,
     MotorPackageError,
     get_motor_package,
 )
 
-SCHOOL_VERSION = "velocity_tracking_pg_v3"
+SCHOOL_VERSION = CURRENT_MOTOR_SCHOOL_VERSION
 SCHOOL_LEARNING_RATE = 1e-3
 VERIFY_EVERY_EPISODES = 10
 SCHOOL_SECONDS = 4.0
