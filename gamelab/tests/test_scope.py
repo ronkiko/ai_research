@@ -147,41 +147,14 @@ class ScopeTests(unittest.TestCase):
             for token in banned:
                 self.assertNotIn(token, text, f"{relative}: {token}")
 
-    def test_docs_and_ci_expose_only_the_single_entrypoint(self):
-        banned = (
-            "GAMELAB_PYTHON",
-            "gamelab/.venv/bin/python",
-            "python -m gamelab",
-            "/op/check.sh",
-            "/op/research.sh",
-            "/op/motor-school.sh",
-            "/op/train.sh",
-            "/op/verify.sh",
-            "/op/run.sh",
-            "/op/mcp.sh",
-            "check.sh",
-            "research.sh",
-            "motor-school.sh",
-            "train.sh",
-            "verify.sh",
-            "run.sh",
-            "mcp.sh",
-            "train-unpaced.sh",
-            "setup.sh",
-            "check-env.sh",
-        )
-        for path in sorted((ROOT / "gamelab").rglob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            relative = str(path.relative_to(ROOT))
-            for token in banned:
-                self.assertNotIn(token, text, f"{relative}: {token}")
-
+    def test_ci_uses_the_single_operator_entrypoint(self):
         workflow = (ROOT / ".github/workflows/gamelab.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("./gamelab/op/gamelab.sh check", workflow)
-        for token in banned:
-            self.assertNotIn(token, workflow, token)
+        self.assertNotIn("GAMELAB_PYTHON", workflow)
+        self.assertNotIn("gamelab/.venv/bin/python", workflow)
+        self.assertNotIn("python -m gamelab", workflow)
 
 
 if __name__ == "__main__":

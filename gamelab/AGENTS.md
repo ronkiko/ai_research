@@ -51,6 +51,11 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   under `train`, test depth under `check`, service options under `serve`.
 - CI must invoke the same public `./gamelab/op/gamelab.sh check` path as the
   Operator; it must not create a parallel environment or execution route.
+- Documentation is not a test target. Do not add tests that inspect Markdown
+  text, headings, links, wording, document structure, or cross-document
+  references. Documentation quality is maintained by review and clear ownership,
+  not by executable assertions. Tests may verify code/runtime/CLI contracts and
+  CI execution paths only.
 
 - Brain Executive is strategic memory and research accounting only. It must never
   emit `motor_x`, alter Motor/Spine outputs, start/cancel experiments by itself,
