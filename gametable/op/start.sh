@@ -8,8 +8,10 @@ export GAMELAB_BRAIN_STATE_ROOT="$GAMETABLE_STATE_ROOT"
 export GAMETABLE_RELATIONSHIP_STATE="$GAMETABLE_STATE_ROOT/relationship-current.json"
 
 ACTION="start"
+FRESH=0
 case "${1:-}" in
   --start) ACTION="start"; shift ;;
+  --fresh) ACTION="start"; FRESH=1; shift ;;
   --stop) ACTION="stop"; shift ;;
   --restart) ACTION="restart"; shift ;;
   --status) ACTION="status"; shift ;;
@@ -28,6 +30,19 @@ fi
 
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
+
+if [[ "$FRESH" -eq 1 ]]; then
+  op_managed_process \
+    stop \
+    "gametable-opencode" \
+    "$ROOT" \
+    "opencode" \
+    "$ROOT/gametable" \
+    "GameTable OpenCode"
+  rm -rf -- "$GAMETABLE_STATE_ROOT"
+  echo "GameTable Yuki2 state: fresh"
+fi
+
 op_managed_process \
   "$ACTION" \
   "gametable-opencode" \

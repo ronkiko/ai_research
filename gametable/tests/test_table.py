@@ -54,6 +54,13 @@ class GameTableTests(unittest.TestCase):
         ):
             self.assertIn(expected, plugin)
 
+    def test_fresh_start_resets_only_yuki2_runtime_state(self):
+        launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")
+        self.assertIn('--fresh) ACTION="start"; FRESH=1', launcher)
+        self.assertIn('GAMETABLE_STATE_ROOT="$ROOT/gametable/runtime/$GAMETABLE_BRAIN_ID"', launcher)
+        self.assertIn('rm -rf -- "$GAMETABLE_STATE_ROOT"', launcher)
+        self.assertNotIn('rm -rf -- "$ROOT/gamelab/runtime"', launcher)
+
     def test_gameclient_mcp_launcher_self_bootstraps(self):
         launcher = (ROOT / "gameclient/v1/op/mcp.sh").read_text(encoding="utf-8")
         self.assertIn("mcp_env_ready", launcher)

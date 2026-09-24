@@ -62,7 +62,16 @@ The OpenCode launcher is also managed:
 ./gametable/op/start.sh --restart
 ```
 
-Without a management flag it starts OpenCode normally.
+For a deliberately new Yuki2 trial, discard the current Yuki2
+relationship/Executive/volition runtime and start a clean OpenCode process:
+
+```bash
+./gametable/op/start.sh --fresh
+```
+
+`--fresh` resets only `gametable/runtime/yuki-02`. It does not remove Motor,
+Spine, GameServer, or other learned/runtime artifacts. Without a management flag
+the launcher starts/resumes the existing Yuki2 workspace normally.
 
 The project-level Shift Supervisor wakes an idle current relationship session
 without waiting for another Director message. The first idle wake defaults to
