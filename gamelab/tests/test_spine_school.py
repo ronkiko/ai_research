@@ -210,7 +210,7 @@ class SpineSchoolTests(unittest.TestCase):
         paths = [self.root / "whole.pt", self.root / "split.pt"]
         for path, budgets in zip(paths, ((2,), (1, 1))):
             for i, budget in enumerate(budgets):
-                train_school(self.client, motor_id=FIXTURE_MOTOR_ID, episodes=budget,
+                train_school(self.client, motor_id="best" if i else FIXTURE_MOTOR_ID, episodes=budget,
                              seed=3, fresh=i == 0, player_id="player1", max_seconds=1.,
                              path=path, final_verify=False)
         states = [torch.load(path, weights_only=False) for path in paths]

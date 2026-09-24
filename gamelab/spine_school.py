@@ -42,8 +42,8 @@ REFINEMENT_CASES = (*VALIDATION_CASES, (900., 650.), (100., 350.),
                     (100., 890.), (900., 110.))
 # Latency is an environment condition, not a separate policy capability.
 # Refinement keeps Astra's fixed 0/1 extra-tick cases and adds one variable
-# server-latency case. At 120 Hz, six extra ticks add 50 ms of waiting and
-# produce about 58.3 ms policy-decision->authoritative-application latency.
+# server-latency case. At 120 Hz, five extra ticks plus next-tick application
+# produce about 50 ms policy-decision->authoritative-application latency.
 MAX_VARIABLE_DELAY_TICKS = 5
 DELAY_MODES = ("0", "1", "variable")
 
@@ -518,7 +518,7 @@ def train_school(client, *, motor_id: str, episodes: int, seed: int, fresh: bool
     prior = 0
     if not fresh and path.exists():
         extra = load_checkpoint(path, model)
-        if extra.get("motor_id") != motor_id:
+        if extra.get("motor_id") != package.motor_id:
             raise ValueError("checkpoint Motor identity mismatch")
         if "spine_school" not in extra:
             raise ValueError("checkpoint uses legacy PPO; use --fresh for model-based training")

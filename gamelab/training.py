@@ -607,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--motor",
         required=True,
-        help="verified Motor package id under gamelab/motors/packages",
+        help="certified Motor UUID under gamelab/motors/instances, or best",
     )
     parser.add_argument("--mode", choices=("realtime", "unpaced"), default="realtime")
     args = parser.parse_args(argv)

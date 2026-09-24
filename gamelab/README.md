@@ -311,7 +311,8 @@ GAMELAB_PYTHON=./gamelab/.venv/bin/python \
 
 That full operator/research gate mirrors the normal full training order rather
 than the CI quick-stop shortcut: it trains Motor School for the complete
-200-episode budget while retaining its best verified brain, then trains a fresh
+minimum 200 episodes until three consecutive development passes (10,000-episode
+safety cap), retaining its best verified brain, then trains a fresh
 Spine for 200 episodes. It checks the complete 0/1/variable latency validation,
 final VERIFY/recovery, held-out goals and paced Host/Zone verification. Its
 result should be reported explicitly; a passing normal CI smoke must not be
@@ -462,8 +463,9 @@ The gate verifies:
 - model shapes and the Spine -> Motor gradient path;
 - real PPO parameter updates;
 - measured predictor validation and Spine gradients with frozen Motor weights;
-- fresh Motor + Spine convergence, randomized held-out goals, and the same
-  learned weights reaching targets through the real paced Host/Zone;
+- quick Motor convergence and short Spine training/resume regression;
+- full Motor + Spine convergence, randomized held-out goals and paced learned
+  acceptance are checked separately by `gamelab.tests.convergence_spine`;
 - realtime use of the official GameClient Host API, with the sole direct
   GameServer import restricted to the operator-only unpaced adapter and its
   canonical `ZoneRuntime`;

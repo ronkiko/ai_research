@@ -411,7 +411,7 @@ class Laboratory:
                     max_seconds=max_seconds,
                     cancel=self._cancel,
                 )
-                ok = result.get("status") == "reached"
+                ok = result.get("status") == "reached" and result.get("wall_contacts") == 0
                 passed += int(ok)
                 item = {"run": index, "pass": ok, **result}
                 results.append(item)

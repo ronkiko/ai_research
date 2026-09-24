@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
                 tolerance=args.tolerance,
                 max_seconds=args.timeout,
             )
-            ok = result.get("status") == "reached"
+            ok = result.get("status") == "reached" and result.get("wall_contacts") == 0
             passed += int(ok)
             print(
                 json.dumps(
