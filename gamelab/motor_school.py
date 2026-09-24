@@ -29,6 +29,7 @@ from .config import (
     MOTOR_HZ,
     PHYSICS_HZ,
     PLAYER_MAX_SPEED,
+    SPINE_HZ,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
     PPO_EPOCHS,
@@ -301,13 +302,15 @@ def _sample_motion_command(
     previous: float,
     *,
     prefer_opposite: bool = False,
+    target_limit: float = TARGET_MAX,
 ) -> float:
+    target_limit = max(0.08, min(TARGET_MAX, abs(float(target_limit))))
     candidate = previous
     for _ in range(32):
         candidate = (
-            rng.choice((TARGET_MIN, TARGET_MAX))
+            rng.choice((-target_limit, target_limit))
             if rng.random() < 0.15
-            else rng.uniform(TARGET_MIN, TARGET_MAX)
+            else rng.uniform(-target_limit, target_limit)
         )
         if abs(candidate) < 0.08:
             continue
@@ -319,7 +322,12 @@ def _sample_motion_command(
     return float(candidate)
 
 
-def _school_program(rng: random.Random, segment_count: int) -> tuple[float, ...]:
+def _school_program(
+    rng: random.Random,
+    segment_count: int,
+    *,
+    target_limit: float = TARGET_MAX,
+) -> tuple[float, ...]:
     """Sample physical command curriculum with explicit motion->rest coverage."""
     if segment_count <= 0:
         return ()
@@ -343,6 +351,7 @@ def _school_program(rng: random.Random, segment_count: int) -> tuple[float, ...]
                     rng,
                     previous_motion,
                     prefer_opposite=previous_motion != 0.0,
+                    target_limit=target_limit,
                 )
         else:
             # Tracking episodes still include rest, but never waste a stand
@@ -355,6 +364,7 @@ def _school_program(rng: random.Random, segment_count: int) -> tuple[float, ...]
                     rng,
                     previous,
                     prefer_opposite=previous != 0.0 and rng.random() < 0.5,
+                    target_limit=target_limit,
                 )
         commands.append(float(desired))
         previous = float(desired)
@@ -367,6 +377,7 @@ def _rollout(
     *,
     rng: random.Random,
     sequence: int,
+    target_limit: float = TARGET_MAX,
 ) -> tuple[list[SchoolTransition], int, dict[str, float]]:
     _reset_world(runtime)
     _require_physics_contract(motor, runtime)
@@ -375,7 +386,7 @@ def _rollout(
     steps = int(round(SCHOOL_SECONDS * MOTOR_HZ))
     segment_steps = max(1, int(round(SEGMENT_SECONDS * MOTOR_HZ)))
     segment_count = max(1, math.ceil(steps / segment_steps))
-    program = _school_program(rng, segment_count)
+    program = _school_program(rng, segment_count, target_limit=target_limit)
     desired = float(program[0])
     tracking_abs = 0.0
     rest_entries: list[float] = []
@@ -1024,8 +1035,22 @@ def run_school(
 
     try:
         for _ in range(episodes):
+            # Keep the proven basic reflex curriculum intact, then widen the
+            # requested-velocity envelope smoothly to the generation-2 socket
+            # boundary. The full development suite still gates BEST promotion.
+            if candidate_episodes < 100:
+                target_limit = 0.8
+            else:
+                target_limit = min(
+                    TARGET_MAX,
+                    0.8 + 0.2 * (candidate_episodes - 100) / 100.0,
+                )
             transitions, sequence, rollout = _rollout(
-                runtime, motor, rng=rng, sequence=sequence
+                runtime,
+                motor,
+                rng=rng,
+                sequence=sequence,
+                target_limit=target_limit,
             )
             metrics = _update(motor, optimizer, transitions)
             candidate_episodes += 1
@@ -1041,6 +1066,7 @@ def run_school(
             print(
                 f"MotorSchool {package.motor_id} episode={candidate_episodes} "
                 f"velocity_mae={rollout['mean_abs_velocity_error']:.2f} "
+                f"target_limit={target_limit:.3f} "
                 f"policy_loss={metrics['policy_loss']:+.5f}",
                 flush=True,
             )
