@@ -66,9 +66,30 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertFalse(package.trained)
                 with self.assertRaisesRegex(
                     MotorPackageError,
-                    "velocity_tracking_pg_v4",
+                    CURRENT_MOTOR_SCHOOL_VERSION,
                 ):
                     require_trained_motor(package)
+
+    def test_best_without_certification_is_rejected_by_spine(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_path = create_verified_motor_fixture(root)
+            manifest_path = package_path / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["training"]["qualification"] = "best"
+            manifest["training"]["certified"] = False
+            manifest["training"].pop("certification", None)
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package("continuous_1d_v1")
+                self.assertFalse(package.trained)
+                with self.assertRaisesRegex(MotorPackageError, "not certified"):
+                    build_spine_policy("continuous_1d_v1", seed=4)
 
     def test_checkpoint_cannot_override_verified_motor_brain(self):
         import torch
