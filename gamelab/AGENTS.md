@@ -70,9 +70,14 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   coefficients into Motor-manifest tuning knobs; document those school
   constants instead. Compare quality directly only within the same certificate
   generation.
-- A new promoted BEST invalidates any certification tied to the previous brain
-  SHA. `--fresh` must archive the old verified brain and clear active BEST and
-  certification evidence so a new school never inherits old qualification.
+- A certified Motor is immutable. Do not resume training it in place: any new
+  learning requires explicit `--fresh`. A new promoted BEST invalidates any
+  certification tied to the previous brain SHA. Successful certification must
+  remove transient `candidate.pt` and intermediate `checkpoints/`; keep only
+  runtime brain/source plus manifests/history evidence. `--fresh` must work
+  from that cleaned certified state: archive the current verified brain, clear
+  active brain/candidate, BEST quality/SHA and certification evidence, then
+  start the new school without inherited qualification.
 - Spine TRAIN must mount an explicitly selected CERTIFIED Motor, freeze its
   parameters, and bind Motor id + brain SHA into the Spine checkpoint. Never
   silently substitute or auto-create an uncertified Motor.

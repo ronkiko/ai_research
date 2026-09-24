@@ -132,6 +132,17 @@ class MotorPackage:
             shutil.copyfile(self.brain_path, archive)
         return digest
 
+    def cleanup_training_artifacts(self) -> None:
+        """Leave a certified package with runtime brain + certificate evidence only."""
+        self.candidate_path.unlink(missing_ok=True)
+        if self.checkpoints_path.exists():
+            shutil.rmtree(self.checkpoints_path)
+        for temporary in self.path.glob("*.tmp"):
+            temporary.unlink(missing_ok=True)
+        pycache = self.path / "__pycache__"
+        if pycache.exists():
+            shutil.rmtree(pycache)
+
     def load_module(self) -> ModuleType:
         model_file = self.path / str(self.manifest["model"]["file"])
         if not model_file.is_file():

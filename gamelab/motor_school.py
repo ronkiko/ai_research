@@ -844,6 +844,11 @@ def run_school(
 ) -> dict:
     package = get_motor_package(motor_id)
     training_manifest = dict(package.manifest.get("training") or {})
+    if package.trained and not fresh and not verify_only:
+        raise MotorPackageError(
+            f"motor {motor_id}: certified Motor is frozen; "
+            f"start a new school explicitly with --fresh"
+        )
     prior_school = training_manifest.get("school")
     if prior_school != SCHOOL_VERSION and not fresh:
         raise MotorPackageError(
@@ -1129,6 +1134,8 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "programs": programs,
     }
+    if passed:
+        package.cleanup_training_artifacts()
     training["certification"] = certification
     training["certified"] = passed
     training["qualification"] = "certified" if passed else "best"

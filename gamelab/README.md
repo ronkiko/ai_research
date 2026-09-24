@@ -186,23 +186,33 @@ suite:
 ./gamelab/op/motor-school.sh
 ```
 
-A true fresh start archives any previous verified brain under `checkpoints/`
-and removes its BEST/certification from the active manifest before learning.
-Old `best@...` evidence therefore cannot leak into a new fresh school.
+A successfully certified Motor is immutable as an installed runtime artifact.
+Its brain SHA, model implementation SHA, certificate generation and
+`certificate_id` define that certified instance. Motor School refuses to
+resume learning on it without explicit `--fresh`.
 
-The package runtime files are:
+After successful certification, transient school state is removed:
+`candidate.pt`, archived intermediate `checkpoints/`, temporary files and
+Python bytecode caches are deleted. The package keeps its verified `brain.pt`,
+model/source contract, manifests and `history.jsonl` certificate evidence.
+
+A true `--fresh` start first archives the currently verified brain, then
+removes the active brain/candidate and clears BEST quality, brain SHA and
+certification metadata before learning from a new candidate. Old
+`best@...` evidence therefore cannot leak into the new school.
+
+During training the package may also contain `candidate.pt` and
+`checkpoints/`. A certified package's persistent runtime/evidence state is:
 
 ```text
 manifest.json
 brain.pt
-candidate.pt
 history.jsonl
-checkpoints/
 ```
 
-They are ignored by Git but live inside the Motor directory, so copying or
-removing that directory copies or removes the installed wheel and its learned
-state as one unit.
+alongside the package's tracked source/contract files such as `model.py` and
+`manifest.default.json`. Copying or removing the Motor directory therefore
+copies or removes the certified Motor and its evidence as one unit.
 
 Spine TRAIN must explicitly select a CERTIFIED Motor:
 

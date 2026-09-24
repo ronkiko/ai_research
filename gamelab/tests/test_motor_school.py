@@ -314,6 +314,8 @@ class MotorSchoolTests(unittest.TestCase):
                 package = get_motor_package("continuous_1d_v1")
                 old_sha = package.brain_sha256
                 self.assertTrue(package.trained)
+                package.cleanup_training_artifacts()
+                self.assertFalse(package.checkpoints_path.exists())
                 _reset_fresh_school(package)
                 self.assertFalse(package.brain_path.exists())
                 self.assertFalse(package.candidate_path.exists())
@@ -322,7 +324,22 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertIsNone(training["qualification"])
                 self.assertFalse(training["certified"])
                 self.assertNotIn("best_episode", training)
+                self.assertNotIn("best_quality", training)
+                self.assertNotIn("best_brain_sha256", training)
                 self.assertNotIn("certification", training)
+
+    def test_certified_motor_cannot_resume_training_without_fresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            create_verified_motor_fixture(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                with self.assertRaisesRegex(Exception, "certified Motor is frozen"):
+                    run_school(
+                        "continuous_1d_v1",
+                        episodes=1,
+                        seed=1,
+                        fresh=False,
+                    )
 
     def test_auto_safety_cap_is_emergency_scale(self):
         self.assertEqual(AUTO_SAFETY_MAX_EPISODES, 10_000)
@@ -384,6 +401,11 @@ class MotorSchoolTests(unittest.TestCase):
             copy_clean_motor(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
                 package = get_motor_package("continuous_1d_v1")
+                package.candidate_path.write_bytes(b"transient candidate")
+                package.checkpoints_path.mkdir(parents=True, exist_ok=True)
+                (package.checkpoints_path / "old.pt").write_bytes(b"old checkpoint")
+                (package.path / "__pycache__").mkdir(exist_ok=True)
+                (package.path / "__pycache__" / "stale.pyc").write_bytes(b"stale")
                 motor = Motor()
                 import torch
                 torch.save(
@@ -422,6 +444,12 @@ class MotorSchoolTests(unittest.TestCase):
                 parsed = uuid.UUID(result["certificate_id"])
                 self.assertEqual(parsed.version, 4)
                 self.assertEqual(str(parsed), result["certificate_id"])
+                self.assertFalse(package.candidate_path.exists())
+                self.assertFalse(package.checkpoints_path.exists())
+                self.assertFalse((package.path / "__pycache__").exists())
+                self.assertTrue(package.brain_path.exists())
+                self.assertTrue(package.history_path.exists())
+                self.assertTrue(get_motor_package(package.motor_id).trained)
 
     def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program
