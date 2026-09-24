@@ -49,7 +49,7 @@ SCHOOL_SECONDS = 4.0
 SEGMENT_SECONDS = 0.5
 TARGET_MIN = -0.8
 TARGET_MAX = 0.8
-STAND_COMMAND_PROBABILITY = 0.25
+STAND_COMMAND_PROBABILITY = 0.35
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 VERIFY_SEGMENT_SECONDS = 0.6
 VERIFY_REST_SEGMENT_SECONDS = 1.0
@@ -58,9 +58,11 @@ VERIFY_ZERO_SPEED_LIMIT = REST_VELOCITY_EPS
 VERIFY_MAX_ERROR_LIMIT = 30.0
 VERIFY_ZERO_MAX_SPEED_LIMIT = REST_VELOCITY_EPS
 VERIFY_ZERO_EFFORT_LIMIT = REST_MOTOR_EPS
-REST_REWARD_SPEED_SCALE = 1.0
-REST_REWARD_WEIGHT = 0.5
-REST_EFFORT_COST = 0.05
+REST_REWARD_SPEED_SCALE = 2.0
+REST_REWARD_WEIGHT = 1.0
+REST_PROGRESS_SCALE = 4.0
+REST_RELEASE_COST = 0.5
+REST_EXACT_BONUS = 0.5
 
 
 @dataclass
@@ -184,6 +186,42 @@ def _update(
     return metrics
 
 
+def _local_tracking_reward(
+    *,
+    desired: float,
+    before_vx: float,
+    after_vx: float,
+    action: float,
+) -> float:
+    """Local Motor credit from the next measured physical state."""
+    desired_vx = float(desired) * PLAYER_MAX_SPEED
+    error_norm = (desired_vx - float(after_vx)) / PLAYER_MAX_SPEED
+    tracking_reward = math.exp(-4.0 * error_norm * error_norm)
+    if float(desired) != 0.0:
+        return float(tracking_reward - 0.0005 * action * action)
+
+    # A zero command is a physical braking/release skill, not just another
+    # point on a 180-unit velocity scale. Reward reducing speed from any entry
+    # velocity, increasingly resolve sub-unit drift near rest, and once near
+    # rest prefer releasing actuator effort. Exact GameServer rest gets a
+    # terminal-like local bonus, but no action is prescribed.
+    before_speed = abs(float(before_vx))
+    after_speed = abs(float(after_vx))
+    rest_progress = (before_speed - after_speed) / PLAYER_MAX_SPEED
+    near_rest = math.exp(-after_speed / REST_REWARD_SPEED_SCALE)
+    released = near_rest * abs(float(action))
+    exact_rest = (
+        float(after_vx) == 0.0 and abs(float(action)) <= VERIFY_ZERO_EFFORT_LIMIT
+    )
+    return float(
+        tracking_reward
+        + REST_PROGRESS_SCALE * rest_progress
+        + REST_REWARD_WEIGHT * near_rest
+        - REST_RELEASE_COST * released
+        + (REST_EXACT_BONUS if exact_rest else 0.0)
+    )
+
+
 def _rollout(
     runtime: ZoneRuntime,
     motor: nn.Module,
@@ -230,25 +268,12 @@ def _rollout(
             runtime.tick()
         after = _player(runtime)
         desired_vx = desired * PLAYER_MAX_SPEED
-        error_norm = (
-            desired_vx - float(after["vx"])
-        ) / PLAYER_MAX_SPEED
-        tracking_reward = math.exp(-4.0 * error_norm * error_norm)
-        if desired == 0.0:
-            # Normal velocity tracking is intentionally broad (scaled by the
-            # body's 180-unit max speed). Add a local near-rest term so the
-            # Motor can distinguish vx=4, vx=0.4 and the server's true vx=0
-            # state instead of treating all three as equally excellent.
-            rest_reward = math.exp(
-                -abs(float(after["vx"])) / REST_REWARD_SPEED_SCALE
-            )
-            reward = (
-                tracking_reward
-                + REST_REWARD_WEIGHT * rest_reward
-                - REST_EFFORT_COST * action * action
-            )
-        else:
-            reward = tracking_reward - 0.0005 * action * action
+        reward = _local_tracking_reward(
+            desired=desired,
+            before_vx=float(player["vx"]),
+            after_vx=float(after["vx"]),
+            action=action,
+        )
         tracking_abs += abs(desired_vx - float(after["vx"]))
         transitions.append(
             SchoolTransition(

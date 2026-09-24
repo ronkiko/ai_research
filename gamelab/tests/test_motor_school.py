@@ -10,6 +10,7 @@ from unittest.mock import patch
 import torch
 
 from gamelab.motor_school import (
+    _local_tracking_reward,
     _new_world,
     _rollout,
     _update,
@@ -38,6 +39,34 @@ class RuleMotor(torch.nn.Module):
 
 
 class MotorSchoolTests(unittest.TestCase):
+    def test_zero_command_local_credit_prefers_braking_then_true_rest(self):
+        coasting = _local_tracking_reward(
+            desired=0.0,
+            before_vx=20.0,
+            after_vx=20.0,
+            action=0.0,
+        )
+        braking = _local_tracking_reward(
+            desired=0.0,
+            before_vx=20.0,
+            after_vx=10.0,
+            action=-0.5,
+        )
+        near_drift = _local_tracking_reward(
+            desired=0.0,
+            before_vx=0.4,
+            after_vx=0.4,
+            action=0.01,
+        )
+        exact_rest = _local_tracking_reward(
+            desired=0.0,
+            before_vx=0.04,
+            after_vx=0.0,
+            action=0.0,
+        )
+        self.assertGreater(braking, coasting)
+        self.assertGreater(exact_rest, near_drift)
+
     def test_school_rollout_and_local_policy_update_execute_on_canonical_world(self):
         torch.manual_seed(7)
         motor = Motor()
@@ -94,7 +123,7 @@ class MotorSchoolTests(unittest.TestCase):
                 "passed": True,
                 "mean_abs_velocity_error": 6.0,
                 "max_abs_velocity_error": 14.0,
-                "zero_target_mean_abs_speed": 1.5,
+                "zero_target_mean_abs_speed": 0.0,
                 "zero_target_max_abs_speed": 0.0,
                 "zero_target_max_abs_effort": 0.01,
                 "zero_target_rest_fraction": 1.0,
@@ -109,7 +138,7 @@ class MotorSchoolTests(unittest.TestCase):
                 "passed": True,
                 "mean_abs_velocity_error": 8.0,
                 "max_abs_velocity_error": 20.0,
-                "zero_target_mean_abs_speed": 2.0,
+                "zero_target_mean_abs_speed": 0.0,
                 "zero_target_max_abs_speed": 0.0,
                 "zero_target_max_abs_effort": 0.015,
                 "zero_target_rest_fraction": 1.0,
