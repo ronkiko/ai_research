@@ -12,6 +12,7 @@ from gamelab.motor_school import (
     SchoolTransition,
     CERTIFICATION_REQUIRED_PASSES,
     DEVELOPMENT_PROGRAMS,
+    _auto_ready_for_certification,
     _development_verify,
     _local_tracking_reward,
     _new_world,
@@ -256,6 +257,12 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertFalse(training["certified"])
                 self.assertNotIn("best_episode", training)
                 self.assertNotIn("certification", training)
+
+    def test_auto_requires_three_consecutive_development_passes(self):
+        self.assertFalse(_auto_ready_for_certification({"development_streak": 0}))
+        self.assertFalse(_auto_ready_for_certification({"development_streak": 2}))
+        self.assertTrue(_auto_ready_for_certification({"development_streak": 3}))
+        self.assertTrue(_auto_ready_for_certification({"development_streak": 4}))
 
     def test_standard_quick_pass_is_not_certifiable_best(self):
         with tempfile.TemporaryDirectory() as directory:

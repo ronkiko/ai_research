@@ -1144,6 +1144,14 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
     }
 
 
+def _auto_ready_for_certification(training: dict) -> bool:
+    """AUTO certifies only after live candidate stability, never merely at cap."""
+    return (
+        int(training.get("development_streak", 0))
+        >= AUTO_STABLE_DEVELOPMENT_CHECKS
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Train and certify one portable GameLab Motor"
@@ -1228,12 +1236,17 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             fresh=True,
         )
-        if not training["trained"]:
+        if not training["trained"] or not _auto_ready_for_certification(training):
             result = {
                 "scenario": "auto",
                 "training": training,
                 "certification": None,
                 "certified": False,
+                "auto_status": (
+                    "no_development_best"
+                    if not training["trained"]
+                    else "development_unstable_at_hard_cap"
+                ),
             }
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 2

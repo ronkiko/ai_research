@@ -81,7 +81,8 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   10 held-out certification programs. Certification data must never steer
   training, early stopping, or BEST selection. AUTO may extend beyond its
   minimum episode budget only from development evidence, with a documented
-  hard cap.
+  hard cap. The hard cap is a stop condition, never a certification bypass:
+  AUTO may certify only after the required consecutive development PASS streak.
 - Keep an actual convergence regression for the default Motor School, not only
   shape/update tests. A school that compiles but cannot promote a fresh Motor is
   not acceptable.

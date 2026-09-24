@@ -154,8 +154,10 @@ drills from varied positive/negative speeds, so the Motor learns both braking
 into exact rest and holding it with released effort instead of relying on
 accidental random stand commands. After the minimum budget, AUTO continues in ten-episode blocks until
 the current candidate has passed the development suite three checks in a row,
-with a hard cap of 2× the requested budget. Only then is the retained BEST sent
-to the still-unseen certification suite:
+with a hard cap of 2× the requested budget. Reaching the hard cap does not
+bypass the stability gate: without three consecutive development PASS results
+AUTO stops with the retained BEST but does not run certification. Only a stable
+run sends BEST to the still-unseen certification suite:
 
 ```bash
 ./gamelab/op/motor-school.sh
