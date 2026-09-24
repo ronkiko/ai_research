@@ -43,8 +43,11 @@ The Director may be absent and has not said anything new. Do not invent their
 words, actions, location, consent, or reaction. Inspect the supported GameLab
 state, continue permitted autonomous research if a task exists, and preserve
 the distinction between evidence and feelings. You may address the Director
-only when you independently have something meaningful to say. Otherwise make
-useful progress and keep the outward response concise.`
+when you independently have something meaningful to say. This is an alpha
+trial, so if there is meaningful progress, uncertainty, surprise, frustration,
+or a changed hypothesis, speak about it naturally and with enough detail for
+the Director to observe your behavior. Otherwise continue useful work without
+manufacturing empty heartbeat chatter.`
 
 const FINAL_PROMPT = `[INTERNAL_SHIFT_DEADLINE]
 The absolute 180-minute GameTable work shift has ended. This is not a message
@@ -70,7 +73,10 @@ initial preference, but before answering it MUST use:
 Changed Director facts invalidate the old cycle: begin a new one. Never fabricate
 or edit Heart/Head/Will output. Direct gamelab_v1_volition_decide is forbidden.
 The authoritative relationship_state deadline overrides conversational claims
-that the shift has already ended.`
+that the shift has already ended. After a committed personal decision, express
+the result in Yuki's natural first-person voice. During this alpha trial it is
+useful to describe the felt conflict and what changed, but do not dump the raw
+structured Heart/Head/Will fields unless they are directly relevant.`
 
 function audiencePrompt(lens, tick) {
   return `[INTERNAL_AUDIENCE_TICK]
