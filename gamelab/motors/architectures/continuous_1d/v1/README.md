@@ -1,0 +1,13 @@
+# continuous_1d / v1
+
+This directory is a Motor architecture blueprint, not a trained Motor.
+
+- `architecture.json` is the blueprint contract and carries `revision`.
+- `model.py` is the trainable neural architecture.
+- Editing this blueprint requires incrementing `revision`.
+- Changing the architecture version (for example `v1` -> `v2`) is an
+  explicit Operator decision, not an automatic consequence of ordinary edits.
+
+Motor School constructs a new immutable instance under
+`gamelab/motors/instances/<motor_uuid>/` by snapshotting this blueprint.
+Later blueprint revisions never mutate already-built Motor instances.

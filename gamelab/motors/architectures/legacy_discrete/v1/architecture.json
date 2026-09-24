@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
-  "motor_id": "legacy_discrete_v1",
+  "architecture_id": "legacy_discrete",
+  "version": "v1",
+  "revision": 1,
   "name": "Legacy discrete three-action Motor",
-  "description": "Archived pre-continuous LEFT/STOP/RIGHT Motor. Retained only for future configurator/migration research.",
+  "description": "Archived pre-continuous LEFT/STOP/RIGHT blueprint retained only for research.",
   "model": {
     "file": "model.py",
     "class": "Motor",
@@ -23,9 +25,5 @@
   },
   "compatibility": {
     "world": "legacy_instant_velocity_body"
-  },
-  "training": {
-    "status": "retired",
-    "verified": false
   }
 }

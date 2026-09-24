@@ -1,4 +1,4 @@
-"""Continuous 1D Motor implementation stored inside its portable package."""
+"""Continuous 1D Motor implementation architecture blueprint copied into each built instance."""
 from __future__ import annotations
 
 import torch

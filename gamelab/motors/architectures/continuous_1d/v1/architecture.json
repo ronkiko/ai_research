@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
-  "motor_id": "continuous_1d_v1",
+  "architecture_id": "continuous_1d",
+  "version": "v1",
+  "revision": 1,
   "name": "Continuous 1D physical effort motor",
-  "description": "One learned scalar physical-effort actuator for the GameServer v1 x-axis body.",
+  "description": "Learned scalar physical-effort actuator blueprint for the GameServer v1 x-axis body.",
   "model": {
     "file": "model.py",
     "class": "Motor",
@@ -40,26 +42,5 @@
     "player_max_speed": 180,
     "player_max_acceleration": 720,
     "player_drag": 4
-  },
-  "files": {
-    "brain": "brain.pt",
-    "candidate": "candidate.pt",
-    "history": "history.jsonl",
-    "checkpoints": "checkpoints"
-  },
-  "training": {
-    "status": "untrained",
-    "school": "velocity_tracking_pg_v6",
-    "sessions": 0,
-    "episodes_total": 0,
-    "verified": false,
-    "last_result": null,
-    "best_episode": null,
-    "best_verification": null,
-    "best_quality": null,
-    "best_brain_sha256": null,
-    "qualification": null,
-    "certified": false,
-    "certification": null
   }
 }
