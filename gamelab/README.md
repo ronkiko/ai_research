@@ -220,7 +220,7 @@ Motor UUID and brain SHA.
 Spine TRAIN must explicitly select a CERTIFIED Motor:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor <motor_uuid> --fresh --episodes 200
+./gamelab/op/train.sh --mode unpaced --motor <motor_uuid> --fresh --episodes 200
 ```
 
 The default Spine trainer uses measured dynamics policy search: it learns a
@@ -265,64 +265,66 @@ policy decision to authoritative application. The policy may condition only on
 the **previous measured** application delay; the next delay remains unknown.
 This is latency adaptation from feedback, not latency prediction.
 
-## Python environment
+## Operator execution contract
 
-By default GameLab uses the current `python3` environment. It does not create
-a virtual environment and does not install or download packages automatically.
+GameLab has one supported human/CI execution boundary: the scripts under
+`./gamelab/op/`. The Operator never selects a Python interpreter, activates a
+virtual environment, injects a Python-path environment variable, or invokes a
+GameLab Python module directly.
 
-Required versions are checked by the setup, check, train, verify, and run
-operator scripts:
+Every public operator command enters through the same private runtime launcher.
+On first use it creates `gamelab/.venv` and installs the required versions;
+later runs validate and reuse that same runtime. Environment policy is therefore
+changed in one internal place rather than duplicated across commands.
 
-```text
-torch >=2.1,<3
-numpy >=1.26,<3
-mcp ==2.2.0
-```
-
-Check the current environment without installing anything:
+The public commands are intentionally non-overlapping:
 
 ```bash
-./gamelab/op/setup.sh
+# fast compile/unit/integration regression gate
+./gamelab/op/check.sh
+
+# full learned Motor + Spine research acceptance (multi-seed by default)
+./gamelab/op/research.sh
+./gamelab/op/research.sh --seeds 1,2,3
+
+# construct/train/certify Motor instances
+./gamelab/op/motor-school.sh
+
+# the only Spine training entry point; pacing is a mode, not another script
+./gamelab/op/train.sh --mode unpaced --motor <motor_uuid> --fresh --episodes 200
+./gamelab/op/train.sh --mode realtime --motor <motor_uuid> --fresh --episodes 200
+
+# frozen acceptance / live execution / MCP service
+./gamelab/op/verify.sh --target 987 --runs 3
+./gamelab/op/run.sh --target 987
+./gamelab/op/mcp.sh
 ```
 
-A different existing Python may be selected explicitly:
-
-```bash
-GAMELAB_PYTHON=/path/to/python ./gamelab/op/check.sh
-```
-
-An isolated environment remains available only when explicitly requested:
-
-```bash
-./gamelab/op/setup.sh --isolated
-GAMELAB_PYTHON=./gamelab/.venv/bin/python ./gamelab/op/check.sh
-```
-
-The isolated mode may download CPU PyTorch and is used by CI to prove
-reproducibility. It is not required for normal local work when the global
-environment already satisfies the version contract.
+There is deliberately no public setup command and no separate unpaced-training
+launcher. New execution modes must be options of the existing owning command;
+new test depth must belong either to `check.sh` (short regression) or
+`research.sh` (full learned acceptance), never to a parallel invocation path.
 
 The normal machine gate is intentionally a smoke/regression gate, not a full
 Spine research experiment. `./gamelab/op/check.sh` runs compile/unit coverage,
 the quick default Motor convergence regression, a short fresh/resume Spine
 training smoke, real Host/GameServer runtime smoke and MCP smoke. It does **not**
-run the 200-episode Spine convergence suite on every commit.
+run the long multi-seed learned convergence experiment on every commit.
 
-Run the full learned research acceptance separately when intentionally
-evaluating a training change. It defaults to three independent seeds:
+Run the full learned research acceptance only through:
 
 ```bash
-GAMELAB_PYTHON=./gamelab/.venv/bin/python \
-  ./gamelab/.venv/bin/python -m gamelab.tests.convergence_spine --seeds 1,2,3
+./gamelab/op/research.sh
 ```
 
-That operator/research gate repeats the complete pipeline independently for
-every requested seed: Motor School trains for at least 200 episodes until three
+That research gate repeats the complete pipeline independently for every
+requested seed: Motor School trains for at least 200 episodes until three
 consecutive generation-2 development passes (10,000-episode safety cap),
-certifies the frozen BEST, then trains a fresh Spine for 200 episodes. It checks the complete 0/1/variable latency validation,
-final VERIFY/recovery, held-out goals and paced Host/Zone verification. Its
-result should be reported explicitly; a passing normal CI smoke must not be
-described as proof of full convergence.
+certifies the frozen BEST, then trains a fresh Spine for 200 episodes. It checks
+the complete 0/1/variable latency validation, final VERIFY/recovery, held-out
+goals and paced Host/Zone verification. Its result should be reported
+explicitly; a passing normal CI smoke must not be described as proof of full
+convergence.
 
 GameLab disables PyTorch's optional NNPACK CPU backend. Unsupported CPUs would
 otherwise print an NNPACK initialization warning before using the normal CPU
@@ -341,7 +343,7 @@ GameServer or GameClient Host because it executes the canonical ZoneRuntime
 in-process:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor <motor_uuid> --fresh --episodes 200 --target 987
+./gamelab/op/train.sh --mode unpaced --motor <motor_uuid> --fresh --episodes 200 --target 987
 ```
 
 The modular Spine checkpoint uses format v6 (measured-delay conditioning).
@@ -438,17 +440,20 @@ without giving the MCP caller low-level LEFT/STOP/RIGHT controls.
 
 ## Operator and CI entry points
 
-Shell scripts remain available for maintainers, CI, and direct diagnostics:
+The supported operator/CI surface is exactly:
 
 ```bash
 ./gamelab/op/check.sh
-./gamelab/op/train.sh
-./gamelab/op/train-unpaced.sh
+./gamelab/op/research.sh
 ./gamelab/op/motor-school.sh
+./gamelab/op/train.sh
 ./gamelab/op/verify.sh
 ./gamelab/op/run.sh
 ./gamelab/op/mcp.sh
 ```
+
+Execution variants are command options (for example `train.sh --mode unpaced`);
+they must not grow into parallel launcher scripts.
 
 They are not the GameTable laboratory assistant interface; that assistant uses
 `gamelab_v1` MCP tools.
@@ -459,9 +464,9 @@ They are not the GameTable laboratory assistant interface; that assistant uses
 ./gamelab/op/check.sh
 ```
 
-The stdio MCP launcher starts the configured Python directly. If an import or
-dependency is broken, the MCP process fails at its actual import site instead
-of running a separate preflight Python process first.
+All public commands resolve the same private GameLab runtime before dispatch.
+The Operator and CI therefore exercise the same interpreter and dependency
+contract.
 
 The gate verifies:
 
@@ -471,7 +476,7 @@ The gate verifies:
 - measured predictor validation and Spine gradients with frozen Motor weights;
 - quick Motor convergence and short Spine training/resume regression;
 - full Motor + Spine convergence, randomized held-out goals and paced learned
-  acceptance are checked separately by `gamelab.tests.convergence_spine`;
+  acceptance are checked separately by `./gamelab/op/research.sh`;
 - realtime use of the official GameClient Host API, with the sole direct
   GameServer import restricted to the operator-only unpaced adapter and its
   canonical `ZoneRuntime`;

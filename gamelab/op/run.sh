@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/gamelab/op/_env.sh"
 cd "$ROOT"
-PY="${GAMELAB_PYTHON:-python3}"
-./gamelab/op/check-env.sh "$PY" >/dev/null
-exec "$PY" -m gamelab.runtime "$@"
+exec "$GAMELAB_PY" -m gamelab.runtime "$@"

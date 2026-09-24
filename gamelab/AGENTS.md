@@ -38,9 +38,21 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Before declaring an ordinary patch ready, run the real `./gamelab/op/check.sh`
   vertical, not only unit tests. This is intentionally a short machine smoke,
   not proof of full Spine convergence. For changes whose acceptance depends on
-  learning quality, the Operator runs `python -m gamelab.tests.convergence_spine`
-  separately and supplies that full research result; do not make every commit
-  pay for a 200-episode Spine experiment.
+  learning quality, use only `./gamelab/op/research.sh`; do not expose or
+  document a direct Python/module invocation for that experiment.
+- Operator execution has one public shell boundary: `./gamelab/op/*.sh`.
+  Public commands are exactly check, research, motor-school, train, verify, run,
+  and mcp. The private `op/_env.sh` is the sole interpreter/dependency
+  resolver and is never an Operator command.
+- Never add interpreter-selection environment variables, direct `python -m`
+  instructions, a public setup/environment command, or a second launcher for
+  an execution mode. Modes belong to the owning command (for example
+  `train.sh --mode unpaced`). Test depth belongs to exactly one of
+  `check.sh` (short regression) or `research.sh` (full learned acceptance).
+- CI must invoke the same public `./gamelab/op/check.sh` path as the Operator;
+  it must not pre-create a different GameLab environment or inject a different
+  Python executable.
+
 - Brain Executive is strategic memory and research accounting only. It must never
   emit `motor_x`, alter Motor/Spine outputs, start/cancel experiments by itself,
   or choose a strategy for the LLM.
