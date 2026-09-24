@@ -140,12 +140,22 @@ Spine TRAIN must explicitly select a Motor:
 ./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100
 ```
 
-Normal Spine training samples both spawn and target positions. Early episodes
-stay away from world edges; the curriculum expands from roughly `[100,900]`
-toward `[20,980]`. The task mixture contains both travel directions, long
-transfers and short fine-positioning episodes. `--target 987` is still
-supported for a focused experiment, but only fixes the target: spawn positions
-continue to vary.
+Normal Spine training uses a competence-gated curriculum rather than increasing
+difficulty because an episode counter advanced. The five frontier bands are
+`precision 5..40`, `short 20..100`, `medium 60..220`,
+`long 150..450`, and `full 300..900` world units. Their rollout horizons
+grow with difficulty as `3/4/5/6/8` simulated seconds. A stage advances only
+after at least 60% SUCCESS over the most recent 10 frontier attempts.
+
+From the second stage onward, 20% of episodes replay precision tasks and 15%
+review a randomly selected earlier stage; replay episodes train the policy but
+cannot promote the current frontier. This keeps exact stopping alive while
+longer transfers are learned. Non-fixed tasks sample left/right symmetrically.
+The safe edge margin expands with the frontier from `[100,900]` to
+`[20,980]`. Curriculum stage, recent frontier results and task RNG state are
+checkpointed, so resume continues the same course instead of silently restarting
+the task sequence. `--target 987` remains a focused experiment: the target is
+fixed while curriculum-compatible spawn positions vary.
 
 Spine reward combines distance progress with a smooth potential over the desired
 physical state `(x=target, vx=0)`. Entering a world boundary while the goal is

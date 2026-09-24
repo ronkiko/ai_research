@@ -86,9 +86,13 @@ Those are responsibilities of the same OpenCode, not new server processes.
 
 The deployed controller consumes only measured self x/vx/current actuator state
 and the strategic target. Spine TRAIN is goal-conditioned across varied
-spawn/target pairs rather than one memorized route. Its curriculum begins away
-from world edges, then expands toward them, and includes both directions plus
-short fine-positioning tasks. Frozen VERIFY uses deterministic policy output and
+spawn/target pairs rather than one memorized route. Its competence-gated
+curriculum starts with short precision transfers, advances through increasing
+distance/horizon bands only after measured frontier SUCCESS, and interleaves
+precision/prior-stage replay after advancement. The task region expands from
+the interior toward the world edges while ordinary goals remain symmetric in
+travel direction. Curriculum chooses task initial conditions and episode horizon
+only; it never emits a controller action. Frozen VERIFY uses deterministic policy output and
 requires the body to reach the target at rest without using a world boundary as
 a brake. CNN is temporal Conv1d over 32 observations, not a vision network. For `continuous_1d_v1`, Spine reduces that strategic context to
 one learned normalized desired velocity and the socket maps it to

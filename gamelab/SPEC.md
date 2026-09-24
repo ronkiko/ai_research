@@ -90,17 +90,19 @@ runtime `manifest.json`, `brain.pt`, `candidate.pt`, `history.jsonl`, and
 `checkpoints/` in the same package directory. Those files form the portable
 learned organ.
 
-Motor School `velocity_tracking_pg_v2` trains the Motor without Spine. Its
-goal socket receives a requested normalized velocity, local proprioception
-contains only measured velocity/current effort, and the Motor alone chooses
-`motor_x`. Credit assignment is local to one 60 Hz Motor interval: reward
-measures whether the physical velocity error decreased after that action,
-with only small residual error/effort costs. No critic or long return is allowed
-to mix credit across later randomly changed velocity goals. Frozen verification runs every 10 episodes. Every PASS is compared with the
-best certified brain using normalized overall velocity MAE plus normalized
-zero-speed MAE. A better PASS replaces `brain.pt` while the live candidate
-continues training. Normal mode consumes the full requested episode budget;
-`--stop-on-pass` is reserved for quick/CI runs.
+Motor School `velocity_tracking_pg_v3` trains the Motor without Spine. Its
+goal socket receives continuous normalized velocity commands from
+`[-0.8,+0.8]`, with explicit rest commands mixed into training; local
+proprioception contains only measured velocity/current effort, and the Motor
+alone chooses `motor_x`. Credit assignment stays local to one 60 Hz Motor
+interval using smooth measured velocity-tracking reward plus a small effort
+cost. No critic or long return is allowed to mix credit across later randomized
+velocity goals. Frozen verification runs on unseen command levels and checks
+mean velocity error, worst velocity error, mean rest speed and worst rest speed.
+Every PASS is compared with the best certified brain; a better PASS replaces
+`brain.pt` while the live candidate continues training. Normal mode consumes
+the full requested episode budget; `--stop-on-pass` is reserved for quick/CI
+runs.
 
 ## Learning
 
@@ -109,6 +111,19 @@ The Motor is frozen during Spine TRAIN. TRAIN must reject missing, untrained,
 unverified, hash-mismatched or physically incompatible Motor packages and must
 bind `motor_id` plus verified brain SHA into the Spine checkpoint. Training
 action labels must not come from a scripted controller.
+
+Spine task generation is a competence-gated curriculum. Frontier distance/horizon
+pairs are `5..40/3s`, `20..100/4s`, `60..220/5s`,
+`150..450/6s`, and `300..900/8s`. Advancement requires at least 60%
+SUCCESS over the last 10 current-frontier attempts; elapsed episode count alone
+never advances difficulty. Starting with the second stage, training interleaves
+20% precision replay and 15% randomly selected prior-stage review. Replay
+contributes PPO experience but never counts toward frontier promotion. Default
+task sampling is symmetric in travel direction and progressively expands the
+safe spawn/target region from `[100,900]` to `[20,980]`. Curriculum and
+task-RNG state persist in the checkpoint. This scheduler chooses only task
+initial conditions and rollout horizon; it never supplies actions or desired
+velocity.
 
 Realtime and unpaced TRAIN share the same rollout, sensor, reward, PPO and
 checkpoint code. Their only execution difference is how the next authoritative
