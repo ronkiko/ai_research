@@ -92,13 +92,15 @@ learned organ.
 
 Motor School `velocity_tracking_pg_v4` trains the Motor without Spine. Its
 goal socket receives continuous normalized velocity commands from
-`[-0.8,+0.8]`, with rest commands used for 35% of training segments; local
+`[-0.8,+0.8]`, with explicit rest commands mixed into one quarter of training segments; local
 proprioception contains only measured velocity/current effort, and the Motor
 alone chooses `motor_x`. Credit assignment stays local to one 60 Hz Motor
 interval. Ordinary commands use smooth velocity-tracking reward; zero commands get local
 credit for measured braking progress, increasingly precise near-rest state,
-actuator release near rest, and exact physical rest. This resolves sub-unit
-drift without prescribing a braking action. No critic or long return may mix credit across
+actuator release near rest, and exact physical rest. Rest and motion rewards
+are advantage-normalized separately before the local policy-gradient update, so
+the finer rest shaping cannot dominate ordinary velocity tracking. This resolves
+sub-unit drift without prescribing a braking action. No critic or long return may mix credit across
 later randomized velocity goals. Frozen verification uses unseen command levels
 and requires zero-command settled samples to hold the GameServer rest contract:
 `vx=0` and `|motor_x|<=0.02`. Every PASS is compared with the best certified

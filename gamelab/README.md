@@ -104,14 +104,16 @@ artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
 Motor School v4 samples continuous normalized velocity commands from
-`[-0.8,+0.8]`; 35% of command segments explicitly request rest. Each
+`[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
 Motor action receives local measured velocity-tracking credit over the next
 1/60 second, so the reflex still does not depend on a long strategic horizon.
 Zero-velocity commands receive local credit for reducing measured speed from
 any entry velocity, increasingly precise near-rest credit, release pressure on
-residual actuator effort, and an exact-rest bonus. This lets the Motor
-distinguish "slow" from the GameServer's actual physical rest state without a
-teacher action. Frozen verification uses unseen velocity levels and, for zero commands,
+residual actuator effort, and an exact-rest bonus. Rest and non-rest rewards are
+advantage-normalized as separate command classes before the local policy update,
+so precision-rest shaping cannot overwhelm ordinary velocity tracking. This lets
+the Motor distinguish "slow" from the GameServer's actual physical rest state
+without a teacher action. Frozen verification uses unseen velocity levels and, for zero commands,
 requires the settled samples to hold `vx=0` with `|motor_x|<=0.02`; an old
 Motor that merely drifts slowly no longer certifies. A PASS may update
 `brain.pt`, but normal training continues through the full requested

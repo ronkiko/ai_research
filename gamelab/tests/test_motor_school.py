@@ -10,6 +10,7 @@ from unittest.mock import patch
 import torch
 
 from gamelab.motor_school import (
+    SchoolTransition,
     _local_tracking_reward,
     _new_world,
     _rollout,
@@ -39,6 +40,34 @@ class RuleMotor(torch.nn.Module):
 
 
 class MotorSchoolTests(unittest.TestCase):
+    def test_motor_update_accepts_mixed_rest_and_motion_credit_classes(self):
+        motor = Motor()
+        optimizer = torch.optim.Adam(motor.parameters(), lr=1e-3)
+        transitions = []
+        for index in range(8):
+            goal = torch.zeros(4)
+            is_rest = index < 4
+            if not is_rest:
+                goal[0] = 0.5
+            prop = torch.zeros(2)
+            with torch.no_grad():
+                mean, log_std = motor.parameters_for(goal, prop)
+                action = torch.tanh(mean)
+                from gamelab.motors.continuous import squashed_log_prob
+                log_prob, _ = squashed_log_prob(mean, log_std, action)
+            transitions.append(
+                SchoolTransition(
+                    goal=goal,
+                    proprioception=prop,
+                    action=float(action),
+                    old_log_prob=float(log_prob),
+                    reward=float(index + 1),
+                    is_rest=is_rest,
+                )
+            )
+        metrics = _update(motor, optimizer, transitions)
+        self.assertTrue(all(torch.isfinite(torch.tensor(v)) for v in metrics.values()))
+
     def test_zero_command_local_credit_prefers_braking_then_true_rest(self):
         coasting = _local_tracking_reward(
             desired=0.0,

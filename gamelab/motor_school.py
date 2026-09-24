@@ -49,7 +49,7 @@ SCHOOL_SECONDS = 4.0
 SEGMENT_SECONDS = 0.5
 TARGET_MIN = -0.8
 TARGET_MAX = 0.8
-STAND_COMMAND_PROBABILITY = 0.35
+STAND_COMMAND_PROBABILITY = 0.25
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 VERIFY_SEGMENT_SECONDS = 0.6
 VERIFY_REST_SEGMENT_SECONDS = 1.0
@@ -72,6 +72,7 @@ class SchoolTransition:
     action: float
     old_log_prob: float
     reward: float
+    is_rest: bool
 
 
 def _now() -> str:
@@ -141,10 +142,21 @@ def _update(
     advantages = torch.tensor(
         [item.reward for item in transitions], dtype=torch.float32
     )
-    if len(transitions) > 1:
-        std = advantages.std(unbiased=False)
+    # Rest shaping intentionally has finer physical resolution than ordinary
+    # velocity tracking. Normalize the two command classes independently so a
+    # useful rest signal cannot dominate the gradient scale of motion tracking,
+    # and vice versa.
+    rest_mask = torch.tensor(
+        [item.is_rest for item in transitions], dtype=torch.bool
+    )
+    for mask in (rest_mask, ~rest_mask):
+        indexes = mask.nonzero(as_tuple=False).squeeze(-1)
+        if indexes.numel() <= 1:
+            continue
+        group = advantages[indexes]
+        std = group.std(unbiased=False)
         if float(std) > 1e-8:
-            advantages = (advantages - advantages.mean()) / (std + 1e-8)
+            advantages[indexes] = (group - group.mean()) / (std + 1e-8)
 
     metrics = {"loss": 0.0, "policy_loss": 0.0, "reward_mean": 0.0}
     updates = 0
@@ -282,6 +294,7 @@ def _rollout(
                 action=action,
                 old_log_prob=float(log_prob.item()),
                 reward=float(reward),
+                is_rest=desired == 0.0,
             )
         )
 
