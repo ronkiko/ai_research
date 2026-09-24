@@ -115,8 +115,9 @@ Resume therefore continues the same stochastic training stream and requires the
 original seed. BEST promotion writes a clean deployable `brain.pt` containing
 only Motor weights and immutable provenance, never optimizer/RNG state.
 
-Motor School v6 samples continuous normalized velocity commands from
-`[-0.8,+0.8]`. Most training episodes include explicit 0.5-second motion →
+Motor School v7 learns the declared normalized velocity envelope `[-1,+1]`.
+The first 100 episodes preserve the proven ±0.8 basic-reflex curriculum; the
+training envelope then expands smoothly to ±1.0 by episode 200. Most training episodes include explicit 0.5-second motion →
 1.0-second physical-rest drills, while the remaining tracking episodes retain
 varied velocity changes and additional stop transitions. Each
 Motor action receives local measured velocity-tracking credit over the next
@@ -129,7 +130,7 @@ so precision-rest shaping cannot overwhelm ordinary velocity tracking.
 
 The current school parameters are code-fixed, not Motor-manifest tuning
 knobs. Training uses learning rate `0.001`, 4.0-second episodes, 0.5-second
-command segments, command range `[-0.8,+0.8]`, 25% stand-command probability
+command segments, a staged ±0.8→±1.0 command envelope, 25% stand-command probability
 in ordinary tracking and 65% motion→rest drill probability. Exact-rest reward
 shaping uses speed scale `2.0`, rest weight `1.0`, progress scale `4.0`,
 release cost `0.5`, and exact-rest bonus `0.5`. Verification uses
@@ -156,10 +157,10 @@ Motor School has three evidence grades:
   PASS is retained even if the continuing candidate later regresses.
 - **CERTIFIED** — the frozen BEST must pass **10/10 distinct held-out command
   programs** containing different velocities, reversals and physical-rest
-  transitions. The current Motor School issues certificate `generation: 1`
-  plus a unique UUIDv4 `certificate_id`. A future stricter/additional course
-  may issue generation 2 with a different
-  test contract. Only CERTIFIED Motor brains may be mounted by serious Spine
+  transitions. Generation 2 is the current certificate. Each of its 10 held-out programs
+  combines full-range steady tracking/rest with a separate 10 Hz transient
+  MotorGoal sequence, matching the command cadence Spine may present. Generation
+  1 remains historical evidence; `best` prefers the higher generation. Only CERTIFIED Motor brains may be mounted by serious Spine
   TRAIN/RUN.
 
 The scenarios are explicit:
@@ -208,7 +209,7 @@ After successful certification `work/` is deleted in one operation. The
 persistent Motor contains only its immutable architecture/model snapshot,
 verified `brain.pt`, `manifest.json`, and `history.jsonl` evidence. The
 certificate binds Motor UUID, brain SHA, architecture SHA, model SHA,
-`generation: 1`, measured `quality`, and a unique UUIDv4
+`generation: 2`, measured `quality`, and a unique UUIDv4
 `certificate_id`.
 
 The registry selector `best` considers only valid certified instances and
@@ -307,19 +308,18 @@ the quick default Motor convergence regression, a short fresh/resume Spine
 training smoke, real Host/GameServer runtime smoke and MCP smoke. It does **not**
 run the 200-episode Spine convergence suite on every commit.
 
-Run the full learned Spine acceptance separately when intentionally evaluating a
-training change:
+Run the full learned research acceptance separately when intentionally
+evaluating a training change. It defaults to three independent seeds:
 
 ```bash
 GAMELAB_PYTHON=./gamelab/.venv/bin/python \
-  ./gamelab/.venv/bin/python -m gamelab.tests.convergence_spine
+  ./gamelab/.venv/bin/python -m gamelab.tests.convergence_spine --seeds 1,2,3
 ```
 
-That full operator/research gate mirrors the normal full training order rather
-than the CI quick-stop shortcut: it trains Motor School for the complete
-minimum 200 episodes until three consecutive development passes (10,000-episode
-safety cap), retaining its best verified brain, then trains a fresh
-Spine for 200 episodes. It checks the complete 0/1/variable latency validation,
+That operator/research gate repeats the complete pipeline independently for
+every requested seed: Motor School trains for at least 200 episodes until three
+consecutive generation-2 development passes (10,000-episode safety cap),
+certifies the frozen BEST, then trains a fresh Spine for 200 episodes. It checks the complete 0/1/variable latency validation,
 final VERIFY/recovery, held-out goals and paced Host/Zone verification. Its
 result should be reported explicitly; a passing normal CI smoke must not be
 described as proof of full convergence.

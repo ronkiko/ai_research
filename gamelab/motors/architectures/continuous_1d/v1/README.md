@@ -11,3 +11,7 @@ This directory is a Motor architecture blueprint, not a trained Motor.
 Motor School constructs a new immutable instance under
 `gamelab/motors/instances/<motor_uuid>/` by snapshotting this blueprint.
 Later blueprint revisions never mutate already-built Motor instances.
+
+Revision 3 binds the generation-2 Motor socket to the GameServer physics
+contract fingerprint, including exact-rest semantics. The architecture remains
+`continuous_1d/v1`; this is a compatible blueprint revision, not v2.

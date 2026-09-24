@@ -71,7 +71,7 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   standard frozen VERIFY; BEST is the best development PASS retained during
   training; CERTIFIED means that exact frozen BEST brain passes 10/10 distinct
   held-out certification programs. The current certification contract is
-  generation 1 and must be stored explicitly in the certificate together with
+  generation 2 and must be stored explicitly in the certificate together with
   a unique UUIDv4 `certificate_id`; do not infer missing generations or
   certificate ids for compatibility. Quick CI may stop at PASS, but serious
   Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
@@ -89,7 +89,7 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   Successful certification deletes the entire transient `work/` directory;
   runtime/evidence files remain.
 - Certificate generation describes achieved school level, not architecture
-  version. Generation 1 is the current contract. Every successful certificate
+  version. Generation 2 is current; generation 1 is historical evidence. Every successful certificate
   has a UUIDv4 `certificate_id` and binds brain/model/architecture hashes plus
   the Motor quality score.
 - Spine TRAIN must mount an explicitly selected CERTIFIED Motor, freeze its
@@ -111,7 +111,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   required consecutive development PASS streak. A 10,000-episode safety cap is
   only an emergency runaway guard and never a certification bypass.
 - Keep an actual convergence regression for the default Motor School, not only
-  shape/update tests. A school that compiles but cannot promote a fresh Motor is
+  shape/update tests. A scientific convergence claim must use independent seeds;
+  the manual research gate defaults to seeds 1,2,3. Single-seed execution is a
+  diagnostic/reproduction mode, not evidence of method-level robustness. A school that compiles but cannot promote a fresh Motor is
   not acceptable.
 - Motor School VERIFY for a zero velocity goal must certify the GameServer's
   physical rest state, not a loose low-speed proxy. A verified rest sample must

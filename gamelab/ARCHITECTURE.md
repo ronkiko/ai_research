@@ -134,8 +134,9 @@ immutable; any brain, model, or architecture snapshot change invalidates the
 certificate.
 
 The manifest is the built Motor contract and records the immutable socket/body
-compatibility, current BEST quality, and certification evidence. Generation 1
-requires 10/10 held-out programs. The certificate has its own UUIDv4
+compatibility, current BEST quality, and certification evidence. Generation 2 requires 10/10 held-out programs. Each program includes both
+steady full-range tracking/rest and a 10 Hz transient MotorGoal sequence.
+Generation 1 is retained only as the historical narrower course. The certificate has its own UUIDv4
 `certificate_id` and binds the brain SHA, architecture SHA, model SHA and
 quality. Spine checkpoints bind the concrete Motor UUID and brain SHA.
 

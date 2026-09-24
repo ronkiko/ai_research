@@ -1,6 +1,7 @@
-"""End-to-end convergence, not a scripted-controller infrastructure fixture."""
+"""Multi-seed end-to-end learned Motor + Spine research acceptance."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -19,14 +20,28 @@ from gamelab.motors.package import create_motor_instance
 from gamelab.tests.motor_fixture import copy_architectures
 
 
-def main() -> int:
-    torch.set_num_threads(1)
-    with tempfile.TemporaryDirectory(prefix="gamelab-convergence-") as temp:
+def _parse_seeds(value: str) -> tuple[int, ...]:
+    try:
+        seeds = tuple(dict.fromkeys(int(item.strip()) for item in value.split(",") if item.strip()))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("seeds must be comma-separated integers") from exc
+    if not seeds:
+        raise argparse.ArgumentTypeError("at least one seed is required")
+    return seeds
+
+
+def run_seed(seed: int) -> dict:
+    with tempfile.TemporaryDirectory(prefix=f"gamelab-convergence-{seed}-") as temp:
         root = Path(temp)
         motor_root = root / "motors"
         copy_architectures(motor_root)
-        with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(motor_root),
-                                    "GAMELAB_REWARD_CONFIG": str(root / "reward.json")}):
+        with patch.dict(
+            os.environ,
+            {
+                "GAMELAB_MOTOR_ROOT": str(motor_root),
+                "GAMELAB_REWARD_CONFIG": str(root / "reward.json"),
+            },
+        ):
             package = create_motor_instance()
             motor_id = package.motor_id
             motor = run_school(
@@ -34,30 +49,50 @@ def main() -> int:
                 episodes=10_000,
                 minimum_episodes=200,
                 stable_development_checks=3,
-                seed=1,
+                seed=seed,
             )
             if not motor["trained"]:
-                raise AssertionError(f"fresh adaptive Motor did not converge: {motor}")
+                raise AssertionError(
+                    f"seed {seed}: fresh adaptive Motor did not converge: {motor}"
+                )
             certification = certify_motor(motor_id)
             if not certification["certified"]:
                 raise AssertionError(
-                    f"fresh adaptive Motor did not certify 10/10: {certification}"
+                    f"seed {seed}: Motor did not certify "
+                    f"{certification['pass_count']}/{certification['required_passes']}: "
+                    f"{certification}"
                 )
+
             path = root / "spine.pt"
-            client = UnpacedHostClient("convergence")
+            client = UnpacedHostClient(f"convergence-{seed}")
 
             def report(row):
-                if row["episode"] % 10 == 0:
-                    best = row["best_validation"]
-                    print(f"CONVERGENCE episode={row['episode']} "
-                          f"validation={sum(c['passed'] for c in best['cases'])}/{len(best['cases'])}", flush=True)
+                if row["episode"] % 10 != 0:
+                    return
+                best = row.get("best_validation") or {}
+                cases = best.get("cases") or []
+                passed = sum(bool(case.get("passed")) for case in cases)
+                print(
+                    f"CONVERGENCE seed={seed} episode={row['episode']} "
+                    f"validation={passed}/{len(cases)}",
+                    flush=True,
+                )
 
             try:
-                result = train_school(client, motor_id=motor_id, episodes=200,
-                                      seed=1, fresh=True, player_id="player1", path=path,
-                                      on_episode=report)
+                result = train_school(
+                    client,
+                    motor_id=motor_id,
+                    episodes=200,
+                    seed=seed,
+                    fresh=True,
+                    player_id="player1",
+                    path=path,
+                    on_episode=report,
+                )
                 if not result["verification"]["passed"]:
-                    raise AssertionError(f"fresh Spine did not converge: {result}")
+                    raise AssertionError(
+                        f"seed {seed}: fresh Spine did not converge: {result}"
+                    )
                 delayed = result.get("best_validation") or {}
                 delayed_cases = delayed.get("cases") or []
                 if (
@@ -66,30 +101,88 @@ def main() -> int:
                     or not all(case.get("passed") for case in delayed_cases)
                 ):
                     raise AssertionError(
-                        f"0/1/variable latency validation did not reach 36/36: {delayed}"
+                        f"seed {seed}: latency validation did not reach 36/36: {delayed}"
                     )
+
                 model, _ = model_for_checkpoint(path)
-                rng = random.Random(983)
+                rng = random.Random(983 + 1009 * seed)
                 errors = []
                 for i in range(40):
-                    spawn = rng.uniform(20., 980.)
-                    target = (rng.uniform(20., 980.) if i % 2 else
-                              max(20., min(980., spawn + rng.uniform(-40., 40.))))
-                    episode = collect_episode(model, client, player_id="player1", spawn_x=spawn,
-                                              target_x=target, max_seconds=8., sampled=False)
-                    if episode.result != "success" or episode.evidence["wall_contacts"]:
-                        raise AssertionError(f"held-out goal failed: {episode.evidence}")
+                    spawn = rng.uniform(20.0, 980.0)
+                    target = (
+                        rng.uniform(20.0, 980.0)
+                        if i % 2
+                        else max(
+                            20.0,
+                            min(980.0, spawn + rng.uniform(-40.0, 40.0)),
+                        )
+                    )
+                    episode = collect_episode(
+                        model,
+                        client,
+                        player_id="player1",
+                        spawn_x=spawn,
+                        target_x=target,
+                        max_seconds=8.0,
+                        sampled=False,
+                    )
+                    if (
+                        episode.result != "success"
+                        or episode.evidence["wall_contacts"]
+                    ):
+                        raise AssertionError(
+                            f"seed {seed}: held-out goal failed: {episode.evidence}"
+                        )
                     errors.append(abs(episode.final_error))
-                print("PASS fresh Motor + Spine convergence " + json.dumps({
-                    "verify": result["verification"], "latency_0_1_variable_passed": len(delayed_cases),
-                    "heldout_passed": len(errors), "heldout_max_error": max(errors),
-                }), flush=True)
             finally:
                 client.close()
-            # Prove the very same saved learned weights through the real paced
-            # Host/Zone transport as well, without conversion or extra learning.
+
+            # Prove the same saved learned weights through paced Host/Zone
+            # transport without conversion or extra learning.
             from gamelab.tests.smoke_runtime import main as paced_smoke
+
             paced_smoke(learned_checkpoint=path)
+            summary = {
+                "seed": seed,
+                "motor_id": motor_id,
+                "motor_episode": motor["best_episode"],
+                "motor_quality": certification["quality"],
+                "generation": certification["generation"],
+                "latency_0_1_variable_passed": len(delayed_cases),
+                "heldout_passed": len(errors),
+                "heldout_max_error": max(errors),
+            }
+            print("PASS convergence seed " + json.dumps(summary, sort_keys=True), flush=True)
+            return summary
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Run independent learned Motor + Spine convergence trials"
+    )
+    parser.add_argument(
+        "--seeds",
+        type=_parse_seeds,
+        default=(1, 2, 3),
+        help="comma-separated independent seeds; default: 1,2,3",
+    )
+    args = parser.parse_args(argv)
+
+    torch.set_num_threads(1)
+    results = [run_seed(seed) for seed in args.seeds]
+    print(
+        "PASS multi-seed Motor + Spine research gate "
+        + json.dumps(
+            {
+                "seeds": list(args.seeds),
+                "runs": len(results),
+                "heldout_max_error": max(row["heldout_max_error"] for row in results),
+                "motor_quality": [row["motor_quality"] for row in results],
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return 0
 
 

@@ -167,3 +167,12 @@ Host and reuses its active `player1` session without logging it out. Tests reset
 and control that avatar; a human observer can stay connected but must not send
 competing actions. MCP lifecycle smoke additionally creates an owned Host for
 `player2` and removes it afterward. No second GameServer is started.
+
+## Research acceptance across seeds
+
+The normal CI gate remains intentionally short. Method-level convergence is
+checked separately with `python -m gamelab.tests.convergence_spine --seeds
+1,2,3`. Each seed constructs and generation-2-certifies a fresh Motor, trains a
+fresh Spine, runs 36-case latency validation, 40 seed-specific held-out goals,
+and paced Host/Zone verification. A single seed may be requested for diagnosis
+or exact reproduction, but is not treated as robustness evidence.
