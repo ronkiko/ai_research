@@ -38,9 +38,10 @@ from .motors.continuous import squashed_action, squashed_log_prob
 from .motors.package import (
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
     CURRENT_MOTOR_SCHOOL_VERSION,
-    DEFAULT_MOTOR_ID,
+    DEFAULT_MOTOR_ARCHITECTURE,
     MotorPackage,
     MotorPackageError,
+    create_motor_instance,
     get_motor_package,
 )
 
@@ -573,6 +574,7 @@ def _save_candidate(
         "model": motor.state_dict(),
         "optimizer": optimizer.state_dict(),
     }
+    package.candidate_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = package.candidate_path.with_suffix(".pt.tmp")
     torch.save(payload, temporary)
     os.replace(temporary, package.candidate_path)
@@ -604,40 +606,6 @@ def _load_candidate(
     if "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload.get("episodes", 0))
-
-
-def _reset_fresh_school(package: MotorPackage) -> None:
-    """Start a new school without inheriting an old BEST or certification."""
-    archived = package.archive_verified_brain()
-    package.brain_path.unlink(missing_ok=True)
-    package.candidate_path.unlink(missing_ok=True)
-    package.manifest.pop("brain_sha256", None)
-
-    training = dict(package.manifest.get("training") or {})
-    training["school"] = SCHOOL_VERSION
-    training["status"] = "untrained"
-    training["verified"] = False
-    training["qualification"] = None
-    training["certified"] = False
-    for key in (
-        "best_verification",
-        "best_episode",
-        "best_quality",
-        "best_brain_sha256",
-        "certification",
-        "last_result",
-    ):
-        training.pop(key, None)
-    package.manifest["training"] = training
-    package.write_manifest()
-    package.append_history(
-        {
-            "at": _now(),
-            "kind": "fresh_reset",
-            "school": SCHOOL_VERSION,
-            "archived_brain_sha256": archived,
-        }
-    )
 
 
 def _existing_best(
@@ -702,9 +670,7 @@ def _promote_if_better(
     shutil.copyfile(package.candidate_path, package.brain_path)
     brain_sha = _sha256(package.brain_path)
     package.manifest["brain_sha256"] = brain_sha
-    package.manifest["model_sha256"] = _sha256(
-        package.path / str(package.manifest["model"]["file"])
-    )
+    package.manifest["quality"] = candidate_quality
 
     training = dict(package.manifest.get("training") or {})
     training["status"] = "trained"
@@ -714,7 +680,6 @@ def _promote_if_better(
     training.pop("certification", None)
     training["best_episode"] = int(episode)
     training["best_verification"] = dict(verification)
-    training["best_quality"] = candidate_quality
     training["best_brain_sha256"] = brain_sha
     package.manifest["training"] = training
     package.write_manifest()
@@ -789,7 +754,7 @@ def _finish_manifest(
             training["certified"] = False
         training["best_verification"] = dict(best_verification)
         training["best_episode"] = best_episode
-        training["best_quality"] = _verification_quality(best_verification)
+        package.manifest["quality"] = _verification_quality(best_verification)
         if package.brain_sha256:
             training["best_brain_sha256"] = package.brain_sha256
     elif not package.brain_path.is_file():
@@ -824,9 +789,6 @@ def _finish_manifest(
     )
     training["last_result"] = result
     package.manifest["training"] = training
-    package.manifest["model_sha256"] = _sha256(
-        package.path / str(package.manifest["model"]["file"])
-    )
     package.write_manifest()
     package.append_history({"kind": "session", **result})
 
@@ -836,27 +798,24 @@ def run_school(
     *,
     episodes: int,
     seed: int,
-    fresh: bool,
-    verify_only: bool = False,
     stop_on_pass: bool = False,
     minimum_episodes: int | None = None,
     stable_development_checks: int = 0,
 ) -> dict:
     package = get_motor_package(motor_id)
+    package.validate_source_snapshot()
     training_manifest = dict(package.manifest.get("training") or {})
-    if package.trained and not fresh and not verify_only:
+    if package.trained:
         raise MotorPackageError(
-            f"motor {motor_id}: certified Motor is frozen; "
-            f"start a new school explicitly with --fresh"
+            f"motor {motor_id}: certified Motor is immutable; "
+            f"construct a new Motor instance instead"
         )
     prior_school = training_manifest.get("school")
-    if prior_school != SCHOOL_VERSION and not fresh:
+    if prior_school != SCHOOL_VERSION:
         raise MotorPackageError(
             f"motor {motor_id}: school changed from {prior_school!r} "
-            f"to {SCHOOL_VERSION!r}; rerun with --fresh"
+            f"to {SCHOOL_VERSION!r}; construct a new Motor instance"
         )
-    if fresh:
-        _reset_fresh_school(package)
 
     torch.manual_seed(seed)
     rng = random.Random(seed)
@@ -865,23 +824,7 @@ def run_school(
         motor.parameters(),
         lr=SCHOOL_LEARNING_RATE,
     )
-    candidate_episodes = 0
-    if not fresh:
-        candidate_episodes = _load_candidate(package, motor, optimizer)
-
-    if verify_only:
-        source = (
-            package.brain_path
-            if package.brain_path.is_file()
-            else package.candidate_path
-        )
-        if not source.is_file():
-            raise MotorPackageError(
-                f"motor {motor_id}: no brain/candidate to verify"
-            )
-        payload = torch.load(source, map_location="cpu")
-        motor.load_state_dict(payload["model"])
-        return _verify(motor)
+    candidate_episodes = _load_candidate(package, motor, optimizer)
 
     best_verification, best_episode = _existing_best(package)
     runtime, sequence = _new_world()
@@ -1066,9 +1009,10 @@ def run_school(
     }
 
 
-def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
+def certify_motor(motor_id: str) -> dict:
     """Certify the frozen BEST brain on ten distinct held-out programs."""
     package = get_motor_package(motor_id)
+    package.validate_source_snapshot()
     training = dict(package.manifest.get("training") or {})
     best = training.get("best_verification")
     if (
@@ -1088,7 +1032,7 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
     if payload.get("school") != SCHOOL_VERSION:
         raise MotorPackageError(
             f"motor {motor_id}: BEST belongs to {payload.get('school')!r}; "
-            f"rerun Motor School auto or train --fresh"
+            f"construct and train a new Motor instance"
         )
 
     actual_sha = _sha256(package.brain_path)
@@ -1123,12 +1067,18 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
 
     pass_count = sum(1 for item in programs if item["passed"])
     passed = pass_count == CERTIFICATION_REQUIRED_PASSES
+    quality = package.quality
+    if quality is None:
+        raise MotorPackageError(f"motor {motor_id}: BEST has no quality score")
     certification = {
-        "certificate_id": str(uuid.uuid4()),
+        "certificate_id": str(uuid.uuid4()) if passed else None,
         "at": _now(),
         "school": SCHOOL_VERSION,
         "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
         "brain_sha256": actual_sha,
+        "architecture_sha256": package.manifest["architecture_sha256"],
+        "model_sha256": package.manifest["model_sha256"],
+        "quality": quality,
         "passed": passed,
         "pass_count": pass_count,
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
@@ -1150,6 +1100,8 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
         "qualification": training["qualification"],
         "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
         "certificate_id": certification["certificate_id"],
+        "quality": quality,
+        "architecture": package.architecture,
         "pass_count": pass_count,
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "brain_sha256": actual_sha,
@@ -1165,9 +1117,18 @@ def _auto_ready_for_certification(training: dict) -> bool:
     )
 
 
+def _candidate_episode_count(package: MotorPackage) -> int:
+    if not package.candidate_path.is_file():
+        return 0
+    payload = torch.load(package.candidate_path, map_location="cpu")
+    if not isinstance(payload, dict) or payload.get("motor_id") != package.motor_id:
+        raise MotorPackageError(f"motor {package.motor_id}: invalid candidate artifact")
+    return int(payload.get("episodes", 0))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Train and certify one portable GameLab Motor"
+        description="Construct, train and certify one GameLab Motor instance"
     )
     parser.add_argument(
         "scenario",
@@ -1175,89 +1136,94 @@ def main(argv: list[str] | None = None) -> int:
         choices=("auto", "quick", "train", "certify"),
         default="auto",
         help=(
-            "auto (default): fresh train >= budget until development is stable, then certify; "
-            "quick: stop on first standard PASS; "
-            "train: consume full episode budget and keep BEST; "
-            "certify: frozen BEST must pass 10/10 held-out programs"
+            "auto (default): construct/resume until development is stable, then certify; "
+            "quick: construct/resume until first standard PASS; "
+            "train: construct/resume for the requested additional episodes; "
+            "certify: certify an existing frozen BEST"
         ),
     )
-    parser.add_argument("--motor", default=DEFAULT_MOTOR_ID)
+    parser.add_argument(
+        "--architecture",
+        default=DEFAULT_MOTOR_ARCHITECTURE,
+        help="blueprint <name>/<version> used only when constructing a new Motor",
+    )
+    parser.add_argument(
+        "--motor",
+        help="existing Motor UUID to resume or certify; omit to construct a new instance",
+    )
     parser.add_argument("--episodes", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--fresh", action="store_true")
-    # Compatibility aliases for older operator/CI invocations.
-    parser.add_argument("--verify-only", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--stop-on-pass", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.episodes <= 0:
         raise SystemExit("--episodes must be positive")
 
-    scenario = args.scenario
-    if args.verify_only:
-        package = get_motor_package(args.motor)
-        source = package.brain_path if package.brain_path.is_file() else package.candidate_path
-        if not source.is_file():
-            raise SystemExit(f"motor {args.motor}: no brain/candidate to verify")
-        payload = torch.load(source, map_location="cpu")
-        motor = package.new_model()
-        motor.load_state_dict(payload["model"])
-        result = _verify(motor)
-        print("MotorSchool VERIFY result " + json.dumps(result, sort_keys=True), flush=True)
-        return 0 if result.get("passed") else 2
-    if args.stop_on_pass:
-        scenario = "quick"
-
     try:
-        if scenario == "certify":
-            if args.fresh:
-                raise MotorPackageError("--fresh cannot be combined with certify")
+        if args.scenario == "certify":
+            if not args.motor:
+                raise MotorPackageError("certify requires --motor <uuid>")
             result = certify_motor(args.motor)
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 0 if result["certified"] else 2
 
-        if scenario == "quick":
+        package = (
+            get_motor_package(args.motor)
+            if args.motor
+            else create_motor_instance(args.architecture)
+        )
+        if not args.motor:
+            print(
+                f"MotorSchool CREATED motor_id={package.motor_id} "
+                f"architecture={package.architecture['architecture_id']}/"
+                f"{package.architecture['version']} "
+                f"revision={package.architecture['revision']}",
+                flush=True,
+            )
+        motor_id = package.motor_id
+
+        if args.scenario == "quick":
             result = run_school(
-                args.motor,
+                motor_id,
                 episodes=args.episodes,
                 seed=args.seed,
-                fresh=args.fresh,
                 stop_on_pass=True,
             )
             result["scenario"] = "quick"
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 0 if result["trained"] else 2
 
-        if scenario == "train":
+        if args.scenario == "train":
             result = run_school(
-                args.motor,
+                motor_id,
                 episodes=args.episodes,
                 seed=args.seed,
-                fresh=args.fresh,
             )
             result["scenario"] = "train"
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 0 if result["qualification"] in {"best", "certified"} else 2
 
-        # AUTO keeps certification held out. The requested/default episode
-        # count is only the minimum curriculum. After that, keep learning until
-        # development is stable. 10k is an emergency runaway guard, not a
-        # normal training budget.
         if args.episodes > AUTO_SAFETY_MAX_EPISODES:
             raise MotorPackageError(
                 f"--episodes minimum cannot exceed AUTO safety cap "
                 f"{AUTO_SAFETY_MAX_EPISODES}"
             )
+        already = _candidate_episode_count(package)
+        remaining = AUTO_SAFETY_MAX_EPISODES - already
+        if remaining <= 0:
+            raise MotorPackageError(
+                f"motor {motor_id}: AUTO safety cap {AUTO_SAFETY_MAX_EPISODES} "
+                f"already reached without stable development"
+            )
         training = run_school(
-            args.motor,
-            episodes=AUTO_SAFETY_MAX_EPISODES,
+            motor_id,
+            episodes=remaining,
             minimum_episodes=args.episodes,
             stable_development_checks=AUTO_STABLE_DEVELOPMENT_CHECKS,
             seed=args.seed,
-            fresh=True,
         )
         if not training["trained"] or not _auto_ready_for_certification(training):
             result = {
                 "scenario": "auto",
+                "motor_id": motor_id,
                 "training": training,
                 "certification": None,
                 "certified": False,
@@ -1269,9 +1235,11 @@ def main(argv: list[str] | None = None) -> int:
             }
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 2
-        certification = certify_motor(args.motor)
+
+        certification = certify_motor(motor_id)
         result = {
             "scenario": "auto",
+            "motor_id": motor_id,
             "training": training,
             "certification": certification,
             "certified": certification["certified"],
