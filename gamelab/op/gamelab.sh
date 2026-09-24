@@ -207,7 +207,9 @@ case "$command" in
     exec "$GAMELAB_PY" -m gamelab.runtime "$@"
     ;;
   serve)
-    load_env
+    # stdio MCP owns stdout; all bootstrap diagnostics stay on stderr.
+    load_env 1>&2
+    export PYTHONUNBUFFERED=1
     exec "$GAMELAB_PY" -m gamelab.mcp "$@"
     ;;
   *)
