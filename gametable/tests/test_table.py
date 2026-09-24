@@ -58,7 +58,10 @@ class GameTableTests(unittest.TestCase):
     def test_start_go_creates_fresh_trial_with_immediate_director_prompt(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
         self.assertIn('DEFAULT_PROMPT=$(cat <<\'EOF\'', launcher)
-        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
+        self.assertIn("/tui/append-prompt", launcher)
+        self.assertIn("/tui/submit-prompt", launcher)
+        self.assertIn('mcp[name].get("status") != "connected"', launcher)
+        self.assertNotIn('--fresh --prompt "$PROMPT"', launcher)
         self.assertIn("--prompt-file", launcher)
 
     def test_fresh_start_resets_only_yuki2_runtime_state(self):
