@@ -21,9 +21,6 @@ echo "CHECK GameLab unit tests"
 echo "CHECK real GameLab model -> Host -> GameServer smoke"
 "$PY" -m gamelab.tests.smoke_runtime
 
-echo "CHECK short fresh/resume training smoke"
-"$PY" -m unittest gamelab.tests.test_spine_school.SpineSchoolTests.test_train_resume_preserves_candidate_optimizer_and_random_streams -v
-
 echo "CHECK real OpenCode-facing MCP goal smoke"
 "$PY" -m gamelab.tests.smoke_mcp
 
