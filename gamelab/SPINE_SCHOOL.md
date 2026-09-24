@@ -1,5 +1,13 @@
 # Spine School: measured dynamics policy search
 
+## Related docs
+
+- [README.md](README.md) — project overview.
+- [RUNBOOK.md](RUNBOOK.md) — how to train, resume, verify, and run.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — timing, sensing, evidence, and deployment boundaries.
+- [SPEC.md](SPEC.md) — MCP/service semantics.
+
+
 The default shell and MCP trainer is `measured_dynamics_policy_search_v1`.
 The deployment remains the same learned temporal CNN -> frozen learned Motor,
 at 10/60 Hz, on the canonical 120 Hz world. No model of physics, planner,

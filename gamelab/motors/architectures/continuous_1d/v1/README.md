@@ -1,5 +1,13 @@
 # continuous_1d / v1
 
+## Related docs
+
+- [GameLab overview](../../../../README.md)
+- [Operator runbook](../../../../RUNBOOK.md)
+- [Architecture and Motor lifecycle](../../../../ARCHITECTURE.md)
+- [Spine School](../../../../SPINE_SCHOOL.md)
+
+
 This directory is a Motor architecture blueprint, not a trained Motor.
 
 - `architecture.json` is the blueprint contract and carries `revision`.

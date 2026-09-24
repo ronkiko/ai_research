@@ -1,5 +1,13 @@
 # GameLab v1 Specification
 
+## Related docs
+
+- [README.md](README.md) — project overview.
+- [RUNBOOK.md](RUNBOOK.md) — operator procedures.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — cross-component timing/evidence contract.
+- [SPINE_SCHOOL.md](SPINE_SCHOOL.md) — default Spine training method.
+
+
 Status: first hierarchical learned-control experiment.
 
 The cross-component timing and evidence contract is specified in
@@ -55,7 +63,7 @@ extra input delay, `(applied_tick - decision_tick - 1) / motor_stride`, bounded
 to `[0,4]`. No future latency is observable. The initial value is zero and a
 no-send interval retains the last measurement. Motor's socket stays unchanged.
 
-For the mounted `continuous_1d_v1` socket, Spine learns one normalized
+For the mounted `continuous_1d/v1` socket, Spine learns one normalized
 `desired_vx`. The adapter presents it to the Motor as
 `MotorGoal=[desired_vx,0,0,0]`; the remaining channels are reserved by this
 package contract.
@@ -100,7 +108,7 @@ SHA-256 values.
 
 Motor School without `--motor` constructs a new instance. An uncertified
 instance can be resumed by UUID. There is no in-place fresh reset of a Motor.
-Successful generation-1 certification binds brain/model/architecture hashes,
+Successful generation-2 certification binds brain/model/architecture hashes,
 quality, and UUIDv4 certificate_id, then removes the transient `work/`
 directory. Certified instances are immutable.
 

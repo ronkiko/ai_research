@@ -1,5 +1,13 @@
 # Realtime AI research laboratory
 
+## Related docs
+
+- [README.md](README.md) — project overview.
+- [RUNBOOK.md](RUNBOOK.md) — operator procedures and public command usage.
+- [SPINE_SCHOOL.md](SPINE_SCHOOL.md) — default Spine learning method.
+- [SPEC.md](SPEC.md) — machine-facing GameLab service/semantic contract.
+
+
 The MMO research line consists of GameServer, GameClient Host, GameLab and
 GameTable. Game1/Game2 are separate legacy experiments, not dependencies.
 
