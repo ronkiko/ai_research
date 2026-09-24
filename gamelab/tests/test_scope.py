@@ -115,6 +115,12 @@ class ScopeTests(unittest.TestCase):
             self.assertNotIn("from gameserver", text, relative)
 
     def test_operator_surface_uses_one_private_runtime_launcher(self):
+        public = {
+            path.name
+            for path in OP.glob("*.sh")
+            if not path.name.startswith("_")
+        }
+        self.assertEqual(public, set(PUBLIC_OPERATOR_SCRIPTS))
         self.assertTrue((OP / "_env.sh").is_file())
         private = (OP / "_env.sh").read_text(encoding="utf-8")
         self.assertIn('gamelab/.venv', private)
@@ -156,12 +162,9 @@ class ScopeTests(unittest.TestCase):
             "setup.sh",
             "check-env.sh",
         )
-        for relative in (
-            "gamelab/README.md",
-            "gamelab/AGENTS.md",
-            "gamelab/SPINE_SCHOOL.md",
-        ):
-            text = (ROOT / relative).read_text(encoding="utf-8")
+        for path in sorted((ROOT / "gamelab").glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            relative = str(path.relative_to(ROOT))
             for token in banned:
                 self.assertNotIn(token, text, f"{relative}: {token}")
 
