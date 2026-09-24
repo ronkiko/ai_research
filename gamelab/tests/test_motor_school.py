@@ -177,6 +177,8 @@ class MotorSchoolTests(unittest.TestCase):
             copy_clean_motor(root)
             first = {
                 "passed": True,
+                "pass_count": 4,
+                "required_passes": 4,
                 "mean_abs_velocity_error": 6.0,
                 "max_abs_velocity_error": 14.0,
                 "zero_target_mean_abs_speed": 0.0,
@@ -192,6 +194,8 @@ class MotorSchoolTests(unittest.TestCase):
             }
             later = {
                 "passed": True,
+                "pass_count": 4,
+                "required_passes": 4,
                 "mean_abs_velocity_error": 8.0,
                 "max_abs_velocity_error": 20.0,
                 "zero_target_mean_abs_speed": 0.0,
