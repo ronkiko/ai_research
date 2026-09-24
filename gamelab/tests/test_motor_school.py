@@ -178,6 +178,23 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertTrue(
                     (package_path / "brain.pt").is_file()
                 )
+                brain = torch.load(package_path / "brain.pt", map_location="cpu")
+                candidate = torch.load(
+                    package_path / "work" / "candidate.pt", map_location="cpu"
+                )
+                self.assertEqual(brain["artifact"], "motor_brain_v1")
+                self.assertNotIn("optimizer", brain)
+                self.assertNotIn("python_rng_state", brain)
+                self.assertNotIn("torch_rng_state", brain)
+                self.assertIn("optimizer", candidate)
+                self.assertIn("python_rng_state", candidate)
+                self.assertIn("torch_rng_state", candidate)
+                with self.assertRaisesRegex(Exception, "resume seed mismatch"):
+                    run_school(
+                        FIXTURE_MOTOR_ID,
+                        episodes=1,
+                        seed=2,
+                    )
 
     def test_normal_mode_uses_full_budget_and_keeps_best_verified_brain(self):
         with tempfile.TemporaryDirectory() as directory:

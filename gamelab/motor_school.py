@@ -152,6 +152,14 @@ def _proprioception(player: dict) -> torch.Tensor:
     )
 
 
+def _motor_squashed_action(motor: nn.Module):
+    return getattr(motor, "_gamelab_squashed_action", squashed_action)
+
+
+def _motor_squashed_log_prob(motor: nn.Module):
+    return getattr(motor, "_gamelab_squashed_log_prob", squashed_log_prob)
+
+
 def _update(
     motor: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -192,7 +200,7 @@ def _update(
         for start in range(0, count, PPO_BATCH_SIZE):
             indexes = order[start : start + PPO_BATCH_SIZE]
             mean, log_std = motor.parameters_for(goals[indexes], props[indexes])
-            log_probs, _ = squashed_log_prob(
+            log_probs, _ = _motor_squashed_log_prob(motor)(
                 mean, log_std, actions[indexes]
             )
             ratio = torch.exp(log_probs - old_log_probs[indexes])
@@ -348,7 +356,7 @@ def _rollout(
         prop = _proprioception(player)
         with torch.no_grad():
             mean, log_std = motor.parameters_for(goal, prop)
-            action_tensor, log_prob = squashed_action(
+            action_tensor, log_prob = _motor_squashed_action(motor)(
                 mean, log_std, sampled=True
             )
         action = float(action_tensor.item())
@@ -418,7 +426,9 @@ def _verify_program(
             prop = _proprioception(player)
             with torch.no_grad():
                 mean, log_std = motor.parameters_for(goal, prop)
-                action, _ = squashed_action(mean, log_std, sampled=False)
+                action, _ = _motor_squashed_action(motor)(
+                    mean, log_std, sampled=False
+                )
             sequence += 1
             runtime.enqueue_input(
                 entity_id="motor-school-player",
@@ -564,6 +574,7 @@ def _save_candidate(
     *,
     episodes: int,
     seed: int,
+    rng: random.Random,
 ) -> None:
     payload = {
         "schema_version": 1,
@@ -573,6 +584,8 @@ def _save_candidate(
         "seed": int(seed),
         "model": motor.state_dict(),
         "optimizer": optimizer.state_dict(),
+        "python_rng_state": rng.getstate(),
+        "torch_rng_state": torch.get_rng_state(),
     }
     package.candidate_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = package.candidate_path.with_suffix(".pt.tmp")
@@ -584,12 +597,11 @@ def _load_candidate(
     package: MotorPackage,
     motor: nn.Module,
     optimizer: torch.optim.Optimizer,
+    *,
+    rng: random.Random,
+    seed: int,
 ) -> int:
-    source = (
-        package.candidate_path
-        if package.candidate_path.is_file()
-        else package.brain_path
-    )
+    source = package.candidate_path
     if not source.is_file():
         return 0
     payload = torch.load(source, map_location="cpu")
@@ -602,9 +614,26 @@ def _load_candidate(
             f"motor {package.motor_id}: candidate belongs to "
             f"{payload.get('school')!r}; construct a new Motor instance"
         )
+    stored_seed = payload.get("seed")
+    if stored_seed != int(seed):
+        raise MotorPackageError(
+            f"motor {package.motor_id}: resume seed mismatch "
+            f"({seed} != {stored_seed}); use the original seed"
+        )
+    if "optimizer" not in payload:
+        raise MotorPackageError(
+            f"motor {package.motor_id}: candidate has no optimizer state; "
+            f"construct a new Motor instance"
+        )
+    if "python_rng_state" not in payload or "torch_rng_state" not in payload:
+        raise MotorPackageError(
+            f"motor {package.motor_id}: candidate has no reproducible RNG state; "
+            f"construct a new Motor instance"
+        )
     motor.load_state_dict(payload["model"])
-    if "optimizer" in payload:
-        optimizer.load_state_dict(payload["optimizer"])
+    optimizer.load_state_dict(payload["optimizer"])
+    rng.setstate(payload["python_rng_state"])
+    torch.set_rng_state(payload["torch_rng_state"])
     return int(payload.get("episodes", 0))
 
 
@@ -667,7 +696,25 @@ def _promote_if_better(
             return best_verification, best_episode, False
 
     package.archive_verified_brain()
-    shutil.copyfile(package.candidate_path, package.brain_path)
+    candidate = torch.load(package.candidate_path, map_location="cpu")
+    if not isinstance(candidate, dict) or candidate.get("motor_id") != package.motor_id:
+        raise MotorPackageError(
+            f"motor {package.motor_id}: invalid candidate artifact"
+        )
+    brain_payload = {
+        "schema_version": 1,
+        "artifact": "motor_brain_v1",
+        "motor_id": package.motor_id,
+        "school": SCHOOL_VERSION,
+        "episodes": int(candidate.get("episodes", episode)),
+        "seed": int(candidate.get("seed", 0)),
+        "architecture_sha256": package.manifest["architecture_sha256"],
+        "model_sha256": package.manifest["model_sha256"],
+        "model": candidate["model"],
+    }
+    temporary = package.brain_path.with_suffix(".pt.tmp")
+    torch.save(brain_payload, temporary)
+    os.replace(temporary, package.brain_path)
     brain_sha = _sha256(package.brain_path)
     package.manifest["brain_sha256"] = brain_sha
     package.manifest["quality"] = candidate_quality
@@ -832,7 +879,9 @@ def run_school(
         motor.parameters(),
         lr=SCHOOL_LEARNING_RATE,
     )
-    candidate_episodes = _load_candidate(package, motor, optimizer)
+    candidate_episodes = _load_candidate(
+        package, motor, optimizer, rng=rng, seed=seed
+    )
 
     best_verification, best_episode = _existing_best(package)
     runtime, sequence = _new_world()
@@ -862,6 +911,7 @@ def run_school(
                 optimizer,
                 episodes=candidate_episodes,
                 seed=seed,
+                rng=rng,
             )
             print(
                 f"MotorSchool {package.motor_id} episode={candidate_episodes} "

@@ -109,8 +109,11 @@ Motor and Spine are trained in two explicit stages. Motor School trains only
 the local physical reflex against requested velocity; it never receives
 `target_x` and never receives teacher motor actions. Starting Motor School
 without `--motor` constructs a new Motor UUID from the selected architecture.
-All mutable school artifacts live under that instance's `work/` directory;
-BEST promotion writes `brain.pt` in the instance root.
+All mutable school artifacts live under that instance's `work/` directory.
+The resumable candidate stores optimizer and exact Python/Torch RNG state.
+Resume therefore continues the same stochastic training stream and requires the
+original seed. BEST promotion writes a clean deployable `brain.pt` containing
+only Motor weights and immutable provenance, never optimizer/RNG state.
 
 Motor School v6 samples continuous normalized velocity commands from
 `[-0.8,+0.8]`. Most training episodes include explicit 0.5-second motion →
@@ -194,7 +197,7 @@ instances/<motor_uuid>/
 ├── architecture.json   # immutable blueprint snapshot
 ├── model.py            # immutable copied implementation
 ├── manifest.json
-├── brain.pt            # once a BEST exists
+├── brain.pt            # clean deployable BEST weights + provenance
 ├── history.jsonl
 └── work/
     ├── candidate.pt

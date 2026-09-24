@@ -333,7 +333,17 @@ class MotorPackage:
             raise MotorPackageError(
                 f"motor {self.motor_id}: class {class_name!r} is missing"
             )
-        return motor_class()
+        motor = motor_class()
+        policy = str((self.manifest.get("model") or {}).get("policy"))
+        if policy == "gaussian_tanh_v1":
+            for helper_name in ("squashed_action", "squashed_log_prob"):
+                helper = getattr(module, helper_name, None)
+                if not callable(helper):
+                    raise MotorPackageError(
+                        f"motor {self.motor_id}: snapshot is missing {helper_name}"
+                    )
+                setattr(motor, f"_gamelab_{helper_name}", helper)
+        return motor
 
     def load_verified_model(self) -> torch.nn.Module:
         require_trained_motor(self)

@@ -63,6 +63,10 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Construction snapshots `architecture.json` and `model.py` into the new
   instance and hashes both. Motor School must validate those original hashes;
   it must never rewrite the expected source hashes to bless later edits.
+  Training/sampling helpers declared by the Motor policy interface must execute
+  from that instance snapshot, not from the currently edited blueprint. Resume
+  must restore optimizer plus Python/Torch RNG state. `brain.pt` is a clean
+  deployable artifact and must not retain optimizer or RNG state.
 - Motor School evidence is graded PASS -> BEST -> CERTIFIED. PASS means one
   standard frozen VERIFY; BEST is the best development PASS retained during
   training; CERTIFIED means that exact frozen BEST brain passes 10/10 distinct
