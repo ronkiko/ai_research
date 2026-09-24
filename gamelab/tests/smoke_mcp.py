@@ -165,8 +165,16 @@ async def run_flow(
     if existing and original_session.get("player_id") != PLAYER_ID:
         raise AssertionError(f"expected shared {PLAYER_ID} session: {original_session}")
     params = StdioServerParameters(
-        command=sys.executable if HOST_PORT != 17700 else str(ROOT / "gamelab/op/mcp.sh"),
-        args=["-m", "gamelab.tests.mcp_runner"] if HOST_PORT != 17700 else [],
+        command=(
+            sys.executable
+            if HOST_PORT != 17700
+            else str(ROOT / "gamelab/op/gamelab.sh")
+        ),
+        args=(
+            ["-m", "gamelab.tests.mcp_runner"]
+            if HOST_PORT != 17700
+            else ["serve"]
+        ),
         cwd=str(ROOT),
         env={
             **os.environ,

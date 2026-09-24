@@ -127,6 +127,26 @@ class ScopeTests(unittest.TestCase):
         ):
             self.assertFalse((OP / removed).exists(), removed)
 
+    def test_python_code_does_not_call_removed_operator_launchers(self):
+        banned = (
+            "gamelab/op/check.sh",
+            "gamelab/op/research.sh",
+            "gamelab/op/motor-school.sh",
+            "gamelab/op/train.sh",
+            "gamelab/op/verify.sh",
+            "gamelab/op/run.sh",
+            "gamelab/op/mcp.sh",
+            "gamelab/op/train-unpaced.sh",
+        )
+        current = Path(__file__).resolve()
+        for path in sorted((ROOT / "gamelab").rglob("*.py")):
+            if path.resolve() == current:
+                continue
+            text = path.read_text(encoding="utf-8")
+            relative = str(path.relative_to(ROOT))
+            for token in banned:
+                self.assertNotIn(token, text, f"{relative}: {token}")
+
     def test_docs_and_ci_expose_only_the_single_entrypoint(self):
         banned = (
             "GAMELAB_PYTHON",
