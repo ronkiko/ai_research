@@ -28,10 +28,14 @@ def main() -> int:
                                                      "checkpoints", "__pycache__"))
         with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root / "motors"),
                                     "GAMELAB_REWARD_CONFIG": str(root / "reward.json")}):
-            motor = run_school("continuous_1d_v1", episodes=100, seed=1, fresh=True,
-                               stop_on_pass=True)
+            motor = run_school(
+                "continuous_1d_v1",
+                episodes=200,
+                seed=1,
+                fresh=True,
+            )
             if not motor["trained"]:
-                raise AssertionError(f"fresh Motor did not converge: {motor}")
+                raise AssertionError(f"fresh 200-episode Motor did not converge: {motor}")
             path = root / "spine.pt"
             client = UnpacedHostClient("convergence")
 

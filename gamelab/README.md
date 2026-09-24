@@ -245,10 +245,13 @@ GAMELAB_PYTHON=./gamelab/.venv/bin/python \
   ./gamelab/.venv/bin/python -m gamelab.tests.convergence_spine
 ```
 
-That full operator/research gate trains fresh weights and checks the complete
-0/1/variable latency validation, final VERIFY/recovery, held-out goals and paced
-Host/Zone verification. Its result should be reported explicitly; a passing
-normal CI smoke must not be described as proof of full convergence.
+That full operator/research gate mirrors the normal full training order rather
+than the CI quick-stop shortcut: it trains Motor School for the complete
+200-episode budget while retaining its best verified brain, then trains a fresh
+Spine for 200 episodes. It checks the complete 0/1/variable latency validation,
+final VERIFY/recovery, held-out goals and paced Host/Zone verification. Its
+result should be reported explicitly; a passing normal CI smoke must not be
+described as proof of full convergence.
 
 GameLab disables PyTorch's optional NNPACK CPU backend. Unsupported CPUs would
 otherwise print an NNPACK initialization warning before using the normal CPU
