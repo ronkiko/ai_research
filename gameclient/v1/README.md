@@ -92,9 +92,12 @@ No management flag means `--start`. Application arguments after `--start` or
 AI MCP Client:
 
 ```bash
-./gameclient/v1/op/mcp-setup.sh
 ./gameclient/v1/op/mcp.sh
 ```
+
+The launcher prepares its private MCP environment automatically when needed.
+`mcp-setup.sh` remains an internal/diagnostic helper, not a prerequisite for
+normal use.
 
 The `game_v1` MCP owns the default Host identity
 `game-v1-default` on `127.0.0.1:17700`. On MCP startup it ensures that a

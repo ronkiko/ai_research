@@ -7,19 +7,21 @@ PYTHON_BIN="$VENV/bin/python"
 
 cd "$ROOT"
 
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "ERROR isolated MCP environment is missing." >&2
-  echo "Run: ./gameclient/v1/op/mcp-setup.sh" >&2
-  exit 2
-fi
-
-if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+mcp_env_ready() {
+  [[ -x "$PYTHON_BIN" ]] || return 1
+  "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import importlib.metadata
 raise SystemExit(0 if importlib.metadata.version("mcp") == "2.2.0" else 1)
 PY
-then
-  echo "ERROR MCP environment must contain exactly mcp==2.2.0." >&2
-  echo "Run: ./gameclient/v1/op/mcp-setup.sh" >&2
+}
+
+if ! mcp_env_ready; then
+  echo "GAMECLIENT MCP prepare private runtime" >&2
+  "$ROOT/gameclient/v1/op/mcp-setup.sh" >&2
+fi
+
+if ! mcp_env_ready; then
+  echo "ERROR GameClient MCP private runtime is not usable" >&2
   exit 2
 fi
 

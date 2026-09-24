@@ -5,9 +5,13 @@ on:
     paths:
       - "gametable/**"
       - "gamelab/mcp.py"
+      - "gamelab/lab_service.py"
+      - "gamelab/op/gamelab.sh"
+      - "gamelab/op/_env.sh"
+      - "gameclient/v1/op/mcp.sh"
+      - "gameclient/v1/op/mcp-setup.sh"
+      - "gameclient/v1/requirements-mcp.txt"
       - ".opencode/skills/gamelab/SKILL.md"
-      - "op/process.sh"
-      - "op/test-process.sh"
       - "op/process.sh"
       - "op/test-process.sh"
       - ".github/workflows/gametable.yml"
@@ -15,6 +19,12 @@ on:
     paths:
       - "gametable/**"
       - "gamelab/mcp.py"
+      - "gamelab/lab_service.py"
+      - "gamelab/op/gamelab.sh"
+      - "gamelab/op/_env.sh"
+      - "gameclient/v1/op/mcp.sh"
+      - "gameclient/v1/op/mcp-setup.sh"
+      - "gameclient/v1/requirements-mcp.txt"
       - ".opencode/skills/gamelab/SKILL.md"
       - ".github/workflows/gametable.yml"
 

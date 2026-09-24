@@ -252,6 +252,7 @@ class Laboratory:
             {
                 "episodes_requested": episodes,
                 "algorithm": ALGORITHM,
+                "mode": "realtime",
                 "episodes_completed": 0,
                 "target_x": target,
                 "fresh": bool(fresh),

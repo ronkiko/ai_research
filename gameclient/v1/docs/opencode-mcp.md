@@ -2,13 +2,14 @@
 
 GameClient v1 exposes its AI interface as a project-local stdio MCP server.
 
-Prerequisites:
+Prerequisite for a live game:
 
 ```bash
 ./gameserver/v1/op/server.sh
-./gameclient/v1/op/host.sh
-./gameclient/v1/op/mcp-setup.sh
 ```
+
+The `game_v1` MCP launcher prepares its private MCP environment automatically
+and ensures the default GameClient Host is running.
 
 Register it from the repository root:
 

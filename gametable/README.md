@@ -22,9 +22,10 @@ They describe the two preconfigured MCP servers `game_v1` and `gamelab_v1`.
 The two 003 manuals cover advanced laboratory-only features and the reserved
 future plugins surface.
 
-The assistant is not expected to enter `../gamelab` or run laboratory shell
-scripts. Training, reward configuration, verification, and model runs are
-available through `gamelab_v1`.
+Yuki2 works only through the two configured MCP servers. She does not inspect
+neighboring source trees or run laboratory shell scripts. Training, reward
+configuration, verification, and model runs are available through
+`gamelab_v1`; its training path is realtime Host/GameServer training only.
 
 ## Operator launch
 
@@ -93,5 +94,6 @@ lower than one minute.
 ./gametable/op/check.sh
 ```
 
-This validates the workstation configuration and the manual contract. It
+This validates the workstation runtime/configuration contract. Documentation
+is reviewed as documentation and is not an executable test target. The check
 does not attempt to solve a game task.

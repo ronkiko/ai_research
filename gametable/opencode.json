@@ -13,7 +13,8 @@
     "gamelab_v1": {
       "type": "local",
       "command": [
-        "./gamelab/op/mcp.sh"
+        "./gamelab/op/gamelab.sh",
+        "serve"
       ],
       "cwd": "..",
       "enabled": true,

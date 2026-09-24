@@ -13,7 +13,9 @@ The laboratory uses the game-owned `game-v1-default` Host by default and may
 create additional laboratory-owned Host instances for advanced experiments.
 It exposes model metadata, reward configuration, asynchronous training, frozen
 verification, and live model runs. Use `host_id` to select a Host when needed.
-TRAIN/VERIFY use Host's non-destructive physical episode reset; RUN does not.
+All MCP TRAIN/VERIFY/RUN operations use the realtime Host/GameServer path.
+Unpaced training is Operator-only and is not exposed through MCP. TRAIN/VERIFY
+use Host's non-destructive physical episode reset; RUN does not.
 
 Start with:
 

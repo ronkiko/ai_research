@@ -253,6 +253,10 @@ relationship/Executive state и не общаются с Директором. �
 
 ## Обучение
 
+Обучение, доступное лаборанту через `gamelab_v1`, всегда идёт в realtime через
+выбранный GameClient Host и авторитетный GameServer. У MCP нет unpaced-режима и
+нет shell-пути к нему. Скорость мира не ускоряется ради обучения.
+
 `training_start` принимает число эпизодов, optional `target_x`, режим
 `fresh`, seed и лимит времени эпизода.
 

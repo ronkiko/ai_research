@@ -335,6 +335,8 @@ def describe() -> dict[str, Any]:
         ],
         "operations_are_asynchronous": True,
         "one_lab_operation_at_a_time": True,
+        "training_transport": "realtime_host_gameserver_only",
+        "unpaced_training_exposed": False,
         "goal_interface": "target_x",
         "evidence": "experiment_id and policy_id identify persisted experiment evidence",
     }
@@ -747,7 +749,10 @@ def training_start(
     host_id: str = DEFAULT_HOST_ID,
     motor_id: str = DEFAULT_MOTOR_ID,
 ) -> dict[str, Any]:
-    """Start asynchronous Spine training with one verified Motor package."""
+    """Start asynchronous realtime Spine training through Host/GameServer.
+
+    MCP does not expose the Operator-only unpaced training adapter.
+    """
     payload = laboratory.start_training(
         episodes=episodes,
         target_x=target_x,
