@@ -59,7 +59,8 @@ held-out prediction error and real-world frozen verification.
    quarter of imagined starting states include velocity toward or away from the
    goal, so braking, overshoot recovery and reversal receive explicit experience.
    After 100 updates the optimizer step decreases from 0.002 to 0.0005.
-   At update 300, refine the best physically validated model with a fresh
+   At update 200, after the nominal controller has had time to learn the base
+   motion task, refine the best physically validated model with a fresh
    optimizer, a 7-second imagined deadline and terminal speed weight 2 instead
    of 0.5. This trains a stopping-time margin; real acceptance still uses the
    unchanged 8-second deadline and exact physical rest. The phase flag and

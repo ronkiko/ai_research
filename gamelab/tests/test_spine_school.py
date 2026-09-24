@@ -220,7 +220,7 @@ class SpineSchoolTests(unittest.TestCase):
         school = SpineSchool(self.model, seed=1)
         school.dynamics.add(self.samples())
         school.dynamics.fit()
-        school.updates = 300
+        school.updates = 200
         with torch.no_grad():
             self.model.spine.goal_mean.bias.add_(.01)
         school.best = copy.deepcopy(self.model.state_dict())

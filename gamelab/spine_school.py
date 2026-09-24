@@ -271,7 +271,7 @@ class SpineSchool:
         if self.dynamics.weights is None:
             return {"updated": False, "reason": "collecting dynamics evidence"}
         model = self.model
-        if self.updates >= 300 and not self.rest_refinement:
+        if self.updates >= 200 and not self.rest_refinement:
             # Refine the best measured policy with a stricter imagined deadline
             # and terminal rest cost. Real acceptance remains unchanged at 8 s.
             if self.best is not None:
