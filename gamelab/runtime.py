@@ -20,7 +20,7 @@ from .config import (
 from .host import HostClient, HostError, player_from_state
 from .models import (
     SpineMotorPolicy,
-    load_checkpoint,
+    model_for_checkpoint,
 )
 
 

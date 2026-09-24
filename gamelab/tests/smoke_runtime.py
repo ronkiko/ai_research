@@ -184,9 +184,9 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
                     raise AssertionError("backend died during GameLab inference smoke")
 
                 if learned_checkpoint is not None:
-                    from gamelab.models import model_for_checkpoint
+                    from gamelab.runtime import load_runtime_model
                     from gamelab.training import verify_spine_policy, verify_recovery_policy
-                    learned, _ = model_for_checkpoint(learned_checkpoint)
+                    learned = load_runtime_model(learned_checkpoint)
                     verification = verify_spine_policy(learned, lab, player_id=player_id)
                     verification["recovery"] = verify_recovery_policy(learned, lab, player_id=player_id)
                     verification["passed"] = verification["passed"] and verification["recovery"]["passed"]
