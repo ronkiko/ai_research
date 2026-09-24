@@ -99,7 +99,7 @@ Motor does **not** receive `target_x` or `goal_dx`. It receives only:
 - normalized local `vx`;
 - current motor effort.
 
-For `continuous_1d_v1`, the socket semantics are explicit rather than an
+For `continuous_1d/v1`, the socket semantics are explicit rather than an
 arbitrary hidden language: Spine learns the requested velocity, while Motor
 learns how physical effort realizes that velocity.
 
@@ -167,7 +167,7 @@ The scenarios are explicit:
 
 ```bash
 # normal path: construct a new continuous_1d/v1 instance, train to stable 3/3,
-# then certify it as generation 1
+# then certify it as generation 2
 ./gamelab/op/motor-school.sh
 
 # construct from an explicitly named blueprint

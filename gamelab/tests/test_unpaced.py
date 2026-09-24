@@ -6,7 +6,7 @@ import torch
 
 from gamelab.config import SPINE_GOAL_DISTANCE_SCALE, WORLD_MAX_X
 from gamelab.control import control_loop
-from gamelab.host import player_from_state
+from gamelab.host import HostError, player_from_state
 from gamelab.runtime import ensure_player, reset_player_state
 from gamelab.unpaced import UnpacedHostClient
 from gameserver.v1.common.config import PHYSICS_CONTRACT_SHA256
@@ -84,6 +84,27 @@ class UnpacedTests(unittest.TestCase):
             self.assertEqual(float(player["x"]), 640.0)
             self.assertEqual(float(player["vx"]), 0.0)
             self.assertEqual(float(player["motor_x"]), 0.0)
+        finally:
+            client.close()
+
+    def test_control_rejects_a_different_physics_contract(self):
+        client = UnpacedHostClient("test-unpaced-physics-contract")
+        model = RuleModel()
+        model.motor._gamelab_physics_contract_sha256 = "not-the-canonical-contract"
+        try:
+            state = reset_player_state(client, "player1")
+            with self.assertRaisesRegex(
+                HostError,
+                "physics contract does not match",
+            ):
+                control_loop(
+                    model,
+                    client,
+                    state,
+                    target_x=500.0,
+                    tolerance=0.9,
+                    max_seconds=1.0,
+                )
         finally:
             client.close()
 

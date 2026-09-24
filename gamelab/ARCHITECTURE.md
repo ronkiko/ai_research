@@ -103,7 +103,7 @@ the interior toward the world edges while ordinary goals remain symmetric in
 travel direction. Curriculum chooses task initial conditions and episode horizon
 only; it never emits a controller action. Frozen VERIFY uses deterministic policy output and
 requires the body to reach the target at rest without using a world boundary as
-a brake. CNN is temporal Conv1d over 32 observations, not a vision network. For `continuous_1d_v1`, Spine reduces that strategic context to
+a brake. CNN is temporal Conv1d over 32 observations, not a vision network. For `continuous_1d/v1`, Spine reduces that strategic context to
 one learned normalized desired velocity and the socket maps it to
 `[desired_vx,0,0,0]`. Motor never directly receives target_x/goal_dx. Goal changes
 replace the command channel of history without erasing measured body history.
