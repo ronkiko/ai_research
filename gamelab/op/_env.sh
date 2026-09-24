@@ -82,7 +82,7 @@ if ! _gamelab_env_ok; then
   "$GAMELAB_PY" -m pip install --disable-pip-version-check -q \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \
-    "torch>=2.1,<3" "numpy>=1.26,<3" "mcp==2.2.0"
+    "torch>=2.1,<3" "numpy>=1.26,<3" "mcp==2.2.0" 1>&2
 fi
 
 if ! _gamelab_env_ok; then
