@@ -13,7 +13,7 @@ from gameserver.v1.zone.model import ZoneRuntime
 
 class RuleMotor:
     def parameters_for(self, goal, proprioception):
-        # goal[0] is dx/1000, proprioception[0] is vx/180.
+        # goal[0] is normalized desired velocity, proprioception[0] is vx/180.
         effort = torch.clamp(50.0 * goal[0] - 1.8 * proprioception[0], -0.999, 0.999)
         mean = torch.atanh(effort)
         return mean, torch.tensor(-20.0)
@@ -31,7 +31,10 @@ class RuleModel:
         self.spine = RuleSpine()
     def eval(self): pass
     def spine_parameters(self, history):
-        desired = torch.clamp(history[3, -1], -0.999, 0.999)
+        signal = torch.clamp(history[3, -1], -0.999, 0.999)
+        # Test-only convergent rule for the bounded local goal encoding:
+        # fast while far, quadratically gentle as dx approaches zero.
+        desired = 0.8 * signal * torch.abs(signal)
         return torch.atanh(desired), torch.tensor(-20.0), torch.zeros(16)
     def deterministic_motor(self, goal, proprioception):
         mean, _ = self.motor.parameters_for(goal, proprioception)

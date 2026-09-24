@@ -433,7 +433,8 @@ class TrainingTests(unittest.TestCase):
                 return self
 
             def spine_parameters(self, history):
-                desired = torch.clamp(history[3, -1], -0.999, 0.999)
+                signal = torch.clamp(history[3, -1], -0.999, 0.999)
+                desired = 0.8 * signal * torch.abs(signal)
                 return (
                     torch.atanh(desired),
                     torch.tensor(-20.0),
