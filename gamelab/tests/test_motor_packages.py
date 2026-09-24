@@ -51,6 +51,40 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertFalse(package.candidate_path.exists())
                 self.assertFalse(package.work_path.exists())
 
+    def test_instance_construction_is_atomic_on_snapshot_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_architectures(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}), patch(
+                "gamelab.motors.package.shutil.copyfile",
+                side_effect=OSError("copy failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "copy failed"):
+                    create_motor_instance()
+            instances = root / "instances"
+            self.assertFalse(
+                any(
+                    item.is_dir() and not item.name.startswith(".")
+                    for item in instances.iterdir()
+                )
+            )
+            self.assertFalse(
+                any(item.name.startswith(".") for item in instances.iterdir())
+            )
+
+    def test_invalid_instance_is_visible_in_listing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_architectures(root)
+            broken = root / "instances" / "broken-instance"
+            broken.mkdir(parents=True)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                listed = list_motor_packages()
+            self.assertEqual(len(listed), 1)
+            self.assertEqual(listed[0]["motor_id"], "broken-instance")
+            self.assertEqual(listed[0]["status"], "invalid")
+            self.assertIn("manifest is missing", listed[0]["error"])
+
     def test_untrained_instance_is_rejected_by_spine(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"

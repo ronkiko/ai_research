@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import tempfile
 from types import ModuleType
 from typing import Any
 import uuid
@@ -121,76 +122,92 @@ def create_motor_instance(
 ) -> "MotorPackage":
     blueprint_path, blueprint = load_motor_architecture(architecture)
     motor_id = _valid_motor_id(motor_id or str(uuid.uuid4()))
-    destination = instances_root() / motor_id
+    root = instances_root()
+    root.mkdir(parents=True, exist_ok=True)
+    destination = root / motor_id
     if destination.exists():
         raise MotorPackageError(f"motor {motor_id!r} already exists")
-    destination.mkdir(parents=True, exist_ok=False)
 
-    snapshot = destination / "architecture.json"
-    snapshot.write_text(
-        json.dumps(blueprint, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{motor_id}.building-", dir=root)
     )
-    model = blueprint.get("model") or {}
-    model_name = str(model["file"])
-    shutil.copyfile(blueprint_path / model_name, destination / model_name)
+    try:
+        snapshot = staging / "architecture.json"
+        snapshot.write_text(
+            json.dumps(blueprint, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        model = blueprint.get("model") or {}
+        model_name = str(model["file"])
+        shutil.copyfile(blueprint_path / model_name, staging / model_name)
 
-    manifest: dict[str, Any] = {
-        "schema_version": MOTOR_INSTANCE_SCHEMA,
-        "motor_id": motor_id,
-        "architecture": {
-            "architecture_id": blueprint["architecture_id"],
-            "version": blueprint["version"],
-            "revision": blueprint["revision"],
-        },
-        "name": blueprint.get("name"),
-        "description": blueprint.get("description"),
-        "model": dict(model),
-        "socket": dict(blueprint.get("socket") or {}),
-        "compatibility": dict(blueprint.get("compatibility") or {}),
-        "files": {
-            "architecture": "architecture.json",
-            "brain": "brain.pt",
-            "history": "history.jsonl",
-            "work": "work",
-            "candidate": "work/candidate.pt",
-            "checkpoints": "work/checkpoints",
-        },
-        "architecture_sha256": _sha256(snapshot),
-        "model_sha256": _sha256(destination / model_name),
-        "brain_sha256": None,
-        "quality": None,
-        "training": {
-            "status": "untrained",
-            "school": CURRENT_MOTOR_SCHOOL_VERSION,
-            "sessions": 0,
-            "episodes_total": 0,
-            "verified": False,
-            "last_result": None,
-            "best_episode": None,
-            "best_verification": None,
-            "best_brain_sha256": None,
-            "qualification": None,
-            "certified": False,
-            "certification_attempted": False,
-            "certification": None,
-        },
-    }
-    (destination / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    package = MotorPackage(motor_id=motor_id, path=destination, manifest=manifest)
-    package.append_history(
-        {
-            "kind": "motor_created",
-            "architecture": dict(manifest["architecture"]),
-            "architecture_sha256": manifest["architecture_sha256"],
-            "model_sha256": manifest["model_sha256"],
+        manifest: dict[str, Any] = {
+            "schema_version": MOTOR_INSTANCE_SCHEMA,
+            "motor_id": motor_id,
+            "architecture": {
+                "architecture_id": blueprint["architecture_id"],
+                "version": blueprint["version"],
+                "revision": blueprint["revision"],
+            },
+            "name": blueprint.get("name"),
+            "description": blueprint.get("description"),
+            "model": dict(model),
+            "socket": dict(blueprint.get("socket") or {}),
+            "compatibility": dict(blueprint.get("compatibility") or {}),
+            "files": {
+                "architecture": "architecture.json",
+                "brain": "brain.pt",
+                "history": "history.jsonl",
+                "work": "work",
+                "candidate": "work/candidate.pt",
+                "checkpoints": "work/checkpoints",
+            },
+            "architecture_sha256": _sha256(snapshot),
+            "model_sha256": _sha256(staging / model_name),
+            "brain_sha256": None,
+            "quality": None,
+            "training": {
+                "status": "untrained",
+                "school": CURRENT_MOTOR_SCHOOL_VERSION,
+                "sessions": 0,
+                "episodes_total": 0,
+                "verified": False,
+                "last_result": None,
+                "best_episode": None,
+                "best_verification": None,
+                "best_brain_sha256": None,
+                "qualification": None,
+                "certified": False,
+                "certification_attempted": False,
+                "certification": None,
+            },
         }
-    )
-    return package
-
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        package = MotorPackage(
+            motor_id=motor_id,
+            path=staging,
+            manifest=manifest,
+        )
+        package.append_history(
+            {
+                "kind": "motor_created",
+                "architecture": dict(manifest["architecture"]),
+                "architecture_sha256": manifest["architecture_sha256"],
+                "model_sha256": manifest["model_sha256"],
+            }
+        )
+        if destination.exists():
+            raise MotorPackageError(f"motor {motor_id!r} already exists")
+        os.rename(staging, destination)
+        package.path = destination
+        return package
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 @dataclass
 class MotorPackage:
@@ -485,9 +502,28 @@ def list_motor_packages() -> list[dict[str, Any]]:
         return []
     result: list[dict[str, Any]] = []
     for path in sorted(item for item in root.iterdir() if item.is_dir()):
+        if path.name.startswith("."):
+            continue
         try:
             package = _load_instance(path)
-        except MotorPackageError:
+        except MotorPackageError as exc:
+            result.append(
+                {
+                    "motor_id": path.name,
+                    "status": "invalid",
+                    "qualification": None,
+                    "verified": False,
+                    "certified": False,
+                    "architecture": None,
+                    "revision": None,
+                    "generation": None,
+                    "certificate_id": None,
+                    "quality": None,
+                    "brain_ready": False,
+                    "description": None,
+                    "error": str(exc),
+                }
+            )
             continue
         training = package.manifest.get("training") or {}
         valid = False

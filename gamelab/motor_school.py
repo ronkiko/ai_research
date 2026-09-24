@@ -1332,8 +1332,6 @@ def certify_motor(motor_id: str) -> dict:
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "programs": programs,
     }
-    if passed:
-        package.cleanup_training_artifacts()
     training["certification"] = certification
     training["certified"] = passed
     training["qualification"] = "certified" if passed else "certification_failed"
@@ -1342,6 +1340,8 @@ def certify_motor(motor_id: str) -> dict:
     package.manifest["training"] = training
     package.write_manifest()
     package.append_history({"kind": "certification", **certification})
+    if passed:
+        package.cleanup_training_artifacts()
     return {
         "motor_id": package.motor_id,
         "certified": passed,
