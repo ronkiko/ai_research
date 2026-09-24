@@ -27,8 +27,10 @@ from gamelab.reward import (
 )
 from gamelab.training import (
     Transition,
+    CurriculumTask,
+    SpineCurriculum,
     _prepare_reward_config,
-    _sample_training_task,
+    _sample_curriculum_task,
     collect_episode,
     ppo_update,
     verify_spine_policy,
@@ -152,44 +154,110 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(first, 0.1635)
         self.assertAlmostEqual(repeated, -0.0005)
 
-    def test_training_task_sampler_covers_both_directions_and_near_goals(self):
+    def test_curriculum_starts_with_short_symmetric_frontier(self):
         import random
 
         rng = random.Random(11)
+        curriculum = SpineCurriculum()
         tasks = [
-            _sample_training_task(
-                rng,
-                episode_index=index,
-                total_episodes=200,
-            )
-            for index in range(1, 201)
+            _sample_curriculum_task(rng, curriculum)
+            for _ in range(200)
         ]
-        deltas = [target - spawn for spawn, target in tasks]
-        self.assertTrue(any(delta > 80.0 for delta in deltas))
-        self.assertTrue(any(delta < -80.0 for delta in deltas))
-        self.assertTrue(any(abs(delta) <= 20.0 for delta in deltas))
-        for spawn, target in tasks:
-            self.assertGreaterEqual(spawn, 20.0)
-            self.assertLessEqual(spawn, 980.0)
-            self.assertGreaterEqual(target, 20.0)
-            self.assertLessEqual(target, 980.0)
+        deltas = [task.target_x - task.spawn_x for task in tasks]
+        self.assertTrue(any(delta > 0.0 for delta in deltas))
+        self.assertTrue(any(delta < 0.0 for delta in deltas))
+        self.assertTrue(all(task.kind == "frontier" for task in tasks))
+        self.assertTrue(all(5.0 <= task.distance <= 40.0 for task in tasks))
+        self.assertTrue(all(task.max_seconds == 3.0 for task in tasks))
+        for task in tasks:
+            self.assertGreaterEqual(task.spawn_x, 100.0)
+            self.assertLessEqual(task.spawn_x, 900.0)
+            self.assertGreaterEqual(task.target_x, 100.0)
+            self.assertLessEqual(task.target_x, 900.0)
 
-    def test_fixed_target_still_randomizes_training_spawn(self):
+    def test_curriculum_advances_only_after_frontier_mastery(self):
+        import random
+
+        rng = random.Random(7)
+        curriculum = SpineCurriculum()
+        for _ in range(9):
+            task = _sample_curriculum_task(rng, curriculum)
+            self.assertFalse(curriculum.observe(task, success=True))
+            self.assertEqual(curriculum.stage.name, "precision")
+
+        task = _sample_curriculum_task(rng, curriculum)
+        self.assertTrue(curriculum.observe(task, success=True))
+        self.assertEqual(curriculum.stage.name, "short")
+        self.assertEqual(curriculum.frontier_results, [])
+
+        # Review success is useful training data but cannot promote the frontier.
+        review = CurriculumTask(
+            spawn_x=400.0,
+            target_x=420.0,
+            kind="review",
+            stage_index=0,
+            stage_name="precision",
+            distance=20.0,
+            max_seconds=3.0,
+        )
+        for _ in range(20):
+            self.assertFalse(curriculum.observe(review, success=True))
+        self.assertEqual(curriculum.stage.name, "short")
+
+    def test_curriculum_failures_do_not_advance_by_episode_count(self):
+        import random
+
+        rng = random.Random(13)
+        curriculum = SpineCurriculum()
+        for _ in range(40):
+            task = _sample_curriculum_task(rng, curriculum)
+            self.assertFalse(curriculum.observe(task, success=False))
+        self.assertEqual(curriculum.stage.name, "precision")
+
+    def test_later_curriculum_replays_precision_and_prior_stages(self):
+        import random
+
+        rng = random.Random(17)
+        curriculum = SpineCurriculum(stage_index=3)
+        tasks = [
+            _sample_curriculum_task(rng, curriculum)
+            for _ in range(400)
+        ]
+        kinds = {task.kind for task in tasks}
+        self.assertEqual(kinds, {"frontier", "precision", "review"})
+        frontier = [task for task in tasks if task.kind == "frontier"]
+        precision = [task for task in tasks if task.kind == "precision"]
+        self.assertTrue(all(150.0 <= task.distance <= 450.0 for task in frontier))
+        self.assertTrue(all(task.max_seconds == 6.0 for task in frontier))
+        self.assertTrue(all(5.0 <= task.distance <= 40.0 for task in precision))
+        self.assertTrue(all(task.max_seconds == 3.0 for task in precision))
+
+    def test_fixed_target_curriculum_varies_spawn_without_wall_targets(self):
         import random
 
         rng = random.Random(5)
+        curriculum = SpineCurriculum()
         tasks = [
-            _sample_training_task(
+            _sample_curriculum_task(
                 rng,
-                episode_index=index,
-                total_episodes=20,
+                curriculum,
                 target_override=987.0,
             )
-            for index in range(1, 21)
+            for _ in range(40)
         ]
-        self.assertTrue(all(target == 987.0 for _, target in tasks))
-        self.assertGreater(len({round(spawn, 3) for spawn, _ in tasks}), 1)
-        self.assertTrue(all(abs(987.0 - spawn) >= 30.0 for spawn, _ in tasks))
+        self.assertTrue(all(task.target_x == 987.0 for task in tasks))
+        self.assertGreater(len({round(task.spawn_x, 3) for task in tasks}), 1)
+        self.assertTrue(all(20.0 <= task.spawn_x <= 980.0 for task in tasks))
+        self.assertTrue(all(7.0 <= task.distance <= 40.0 for task in tasks))
+
+    def test_curriculum_state_round_trip(self):
+        curriculum = SpineCurriculum(
+            stage_index=2,
+            frontier_results=[True, False, True],
+        )
+        restored = SpineCurriculum.from_state(curriculum.state_dict())
+        self.assertEqual(restored.stage.name, "medium")
+        self.assertEqual(restored.frontier_results, [True, False, True])
 
     def test_spine_ppo_updates_spine_but_preserves_frozen_motor(self):
         torch.manual_seed(23)

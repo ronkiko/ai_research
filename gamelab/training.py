@@ -68,6 +68,102 @@ SPINE_VERIFY_CASES = (
 )
 
 
+@dataclass(frozen=True)
+class CurriculumStage:
+    name: str
+    min_distance: float
+    max_distance: float
+    margin: float
+    max_seconds: float
+
+
+@dataclass(frozen=True)
+class CurriculumTask:
+    spawn_x: float
+    target_x: float
+    kind: str
+    stage_index: int
+    stage_name: str
+    distance: float
+    max_seconds: float
+
+
+# Frontier difficulty grows only after measured competence. Early stages use a
+# shorter rollout horizon to reduce credit noise; later stages expose the full
+# travel range and full 8-second horizon.
+CURRICULUM_STAGES = (
+    CurriculumStage("precision", 5.0, 40.0, 100.0, 3.0),
+    CurriculumStage("short", 20.0, 100.0, 80.0, 4.0),
+    CurriculumStage("medium", 60.0, 220.0, 60.0, 5.0),
+    CurriculumStage("long", 150.0, 450.0, 40.0, 6.0),
+    CurriculumStage("full", 300.0, 900.0, 20.0, TRAIN_EPISODE_SECONDS),
+)
+CURRICULUM_MASTERY_WINDOW = 10
+CURRICULUM_MASTERY_RATE = 0.60
+CURRICULUM_PRECISION_PROBABILITY = 0.20
+CURRICULUM_REVIEW_PROBABILITY = 0.15
+CURRICULUM_FIXED_TARGET_MARGIN = 20.0
+
+
+class SpineCurriculum:
+    """Competence-gated goal curriculum; it never emits policy actions."""
+
+    def __init__(
+        self,
+        *,
+        stage_index: int = 0,
+        frontier_results: list[bool] | None = None,
+    ) -> None:
+        if not 0 <= int(stage_index) < len(CURRICULUM_STAGES):
+            raise ValueError("invalid Spine curriculum stage")
+        if frontier_results is not None and not isinstance(frontier_results, list):
+            raise TypeError("frontier_results must be a list")
+        self.stage_index = int(stage_index)
+        self.frontier_results = [
+            bool(value)
+            for value in (frontier_results or [])[-CURRICULUM_MASTERY_WINDOW:]
+        ]
+
+    @property
+    def stage(self) -> CurriculumStage:
+        return CURRICULUM_STAGES[self.stage_index]
+
+    def state_dict(self) -> dict:
+        return {
+            "stage_index": self.stage_index,
+            "frontier_results": list(self.frontier_results),
+        }
+
+    @classmethod
+    def from_state(cls, value: object) -> "SpineCurriculum":
+        if not isinstance(value, dict):
+            return cls()
+        try:
+            return cls(
+                stage_index=int(value.get("stage_index", 0)),
+                frontier_results=value.get("frontier_results"),
+            )
+        except (TypeError, ValueError):
+            return cls()
+
+    def observe(self, task: CurriculumTask, *, success: bool) -> bool:
+        """Advance only from measured mastery of the current frontier."""
+        if task.kind != "frontier" or task.stage_index != self.stage_index:
+            return False
+        self.frontier_results.append(bool(success))
+        self.frontier_results = self.frontier_results[-CURRICULUM_MASTERY_WINDOW:]
+        if self.stage_index >= len(CURRICULUM_STAGES) - 1:
+            return False
+        if len(self.frontier_results) < CURRICULUM_MASTERY_WINDOW:
+            return False
+        success_rate = sum(self.frontier_results) / len(self.frontier_results)
+        if success_rate < CURRICULUM_MASTERY_RATE:
+            return False
+        self.stage_index += 1
+        self.frontier_results.clear()
+        return True
+
+
 def collect_episode(
     model: SpineMotorPolicy,
     client: HostClient,
@@ -216,56 +312,108 @@ def ppo_update(
     return metrics
 
 
-def _sample_training_task(
+def _distance_intervals_for_fixed_target(
+    *,
+    target_x: float,
+    low: float,
+    high: float,
+    min_distance: float,
+    max_distance: float,
+) -> list[tuple[int, float, float]]:
+    """Feasible signed distance bands for a fixed target and bounded spawn."""
+    intervals: list[tuple[int, float, float]] = []
+    left_low = max(min_distance, max(0.0, target_x - high))
+    left_high = min(max_distance, target_x - low)
+    if left_high >= left_low:
+        intervals.append((-1, left_low, left_high))
+
+    right_low = max(min_distance, max(0.0, low - target_x))
+    right_high = min(max_distance, high - target_x)
+    if right_high >= right_low:
+        intervals.append((1, right_low, right_high))
+    return intervals
+
+
+def _sample_distance_task(
     rng: random.Random,
     *,
-    episode_index: int,
-    total_episodes: int,
-    target_override: float | None = None,
-) -> tuple[float, float]:
-    """Sample goal-conditioned tasks instead of repeating one trajectory."""
-    if episode_index <= 0 or total_episodes <= 0:
-        raise ValueError("episode indexes must be positive")
-    progress = min(
-        1.0,
-        max(0.0, (episode_index - 1) / max(1, total_episodes - 1)),
-    )
-    margin = 100.0 - 80.0 * progress
-    low = margin
-    high = WORLD_MAX_X - margin
-
-    def sample_spawn() -> float:
-        return rng.uniform(low, high)
-
-    spawn_x = sample_spawn()
-    if target_override is not None:
+    stage_index: int,
+    kind: str,
+    target_override: float | None,
+) -> CurriculumTask:
+    stage = CURRICULUM_STAGES[stage_index]
+    if target_override is None:
+        low = stage.margin
+        high = WORLD_MAX_X - stage.margin
+        max_distance = min(stage.max_distance, high - low)
+        min_distance = min(stage.min_distance, max_distance)
+        distance = rng.uniform(min_distance, max_distance)
+        direction = -1 if rng.random() < 0.5 else 1
+        if direction > 0:
+            spawn_x = rng.uniform(low, high - distance)
+            target_x = spawn_x + distance
+        else:
+            spawn_x = rng.uniform(low + distance, high)
+            target_x = spawn_x - distance
+    else:
         target_x = float(target_override)
-        for _ in range(32):
-            if abs(target_x - spawn_x) >= 30.0:
-                break
-            spawn_x = sample_spawn()
-        return spawn_x, target_x
-
-    # One fifth of episodes teach fine positioning / standing near the goal.
-    if rng.random() < 0.20:
-        target_x = min(
-            high,
-            max(low, spawn_x + rng.uniform(-20.0, 20.0)),
+        low = CURRICULUM_FIXED_TARGET_MARGIN
+        high = WORLD_MAX_X - CURRICULUM_FIXED_TARGET_MARGIN
+        intervals = _distance_intervals_for_fixed_target(
+            target_x=target_x,
+            low=low,
+            high=high,
+            min_distance=stage.min_distance,
+            max_distance=stage.max_distance,
         )
-        return spawn_x, target_x
+        if not intervals:
+            raise ValueError(
+                f"no curriculum spawn available for fixed target {target_x}"
+            )
+        direction, distance_low, distance_high = rng.choice(intervals)
+        distance = rng.uniform(distance_low, distance_high)
+        # direction denotes the spawn side relative to the fixed target.
+        spawn_x = target_x + direction * distance
 
-    # The rest are real transfers. Rejection sampling keeps left/right symmetric
-    # without encoding direction into the policy.
-    target_x = spawn_x
-    for _ in range(64):
-        candidate = rng.uniform(low, high)
-        if abs(candidate - spawn_x) >= 80.0:
-            target_x = candidate
-            break
-    if target_x == spawn_x:
-        target_x = low if spawn_x > WORLD_MAX_X / 2.0 else high
-    return spawn_x, target_x
+    return CurriculumTask(
+        spawn_x=float(spawn_x),
+        target_x=float(target_x),
+        kind=kind,
+        stage_index=stage_index,
+        stage_name=stage.name,
+        distance=abs(float(target_x) - float(spawn_x)),
+        max_seconds=stage.max_seconds,
+    )
 
+
+def _sample_curriculum_task(
+    rng: random.Random,
+    curriculum: SpineCurriculum,
+    *,
+    target_override: float | None = None,
+) -> CurriculumTask:
+    """Sample at the learning frontier while replaying mastered skills."""
+    stage_index = curriculum.stage_index
+    source_stage = stage_index
+    kind = "frontier"
+
+    if stage_index > 0:
+        draw = rng.random()
+        if draw < CURRICULUM_PRECISION_PROBABILITY:
+            source_stage = 0
+            kind = "precision"
+        elif draw < (
+            CURRICULUM_PRECISION_PROBABILITY + CURRICULUM_REVIEW_PROBABILITY
+        ):
+            source_stage = rng.randrange(stage_index)
+            kind = "review"
+
+    return _sample_distance_task(
+        rng,
+        stage_index=source_stage,
+        kind=kind,
+        target_override=target_override,
+    )
 
 def _verification_cases(
     target_override: float | None,
@@ -382,13 +530,20 @@ def main(argv: list[str] | None = None) -> int:
             lr=PPO_LEARNING_RATE,
         )
         completed = 0
+        curriculum = SpineCurriculum()
         motor_extra = motor_checkpoint_extra(motor_package)
         if args.fresh:
             save_checkpoint(
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": 0, "seed": args.seed, **motor_extra},
+                extra={
+                    "episodes": 0,
+                    "seed": args.seed,
+                    "curriculum": curriculum.state_dict(),
+                    "curriculum_rng_state": rng.getstate(),
+                    **motor_extra,
+                },
             )
         elif path.exists():
             installed = package_for_checkpoint(path)
@@ -399,12 +554,22 @@ def main(argv: list[str] | None = None) -> int:
                 )
             extra = load_checkpoint(path, model, optimizer=optimizer)
             completed = int(extra.get("episodes", 0))
+            curriculum = SpineCurriculum.from_state(extra.get("curriculum"))
+            rng_state = extra.get("curriculum_rng_state")
+            if isinstance(rng_state, tuple):
+                rng.setstate(rng_state)
         else:
             save_checkpoint(
                 path,
                 model,
                 optimizer=optimizer,
-                extra={"episodes": 0, "seed": args.seed, **motor_extra},
+                extra={
+                    "episodes": 0,
+                    "seed": args.seed,
+                    "curriculum": curriculum.state_dict(),
+                    "curriculum_rng_state": rng.getstate(),
+                    **motor_extra,
+                },
             )
 
         print(
@@ -421,23 +586,27 @@ def main(argv: list[str] | None = None) -> int:
 
         for offset in range(1, args.episodes + 1):
             episode = completed + offset
-            spawn_x, target = _sample_training_task(
+            task = _sample_curriculum_task(
                 rng,
-                episode_index=episode,
-                total_episodes=max(completed + args.episodes, episode),
+                curriculum,
                 target_override=args.target,
             )
             result = collect_episode(
                 model,
                 client,
                 player_id=args.player,
-                target_x=target,
-                spawn_x=spawn_x,
+                target_x=task.target_x,
+                spawn_x=task.spawn_x,
+                max_seconds=task.max_seconds,
                 reward_config=reward_config,
             )
             if result.result not in {"success", "timeout"}:
                 raise RuntimeError(f"invalid episode: {result.result}")
             metrics = ppo_update(model, optimizer, result.transitions)
+            advanced = curriculum.observe(
+                task,
+                success=result.result == "success",
+            )
             save_checkpoint(
                 path,
                 model,
@@ -445,12 +614,18 @@ def main(argv: list[str] | None = None) -> int:
                 extra={
                     "episodes": episode,
                     "seed": args.seed,
+                    "curriculum": curriculum.state_dict(),
+                    "curriculum_rng_state": rng.getstate(),
                     **motor_checkpoint_extra(motor_package),
                 },
             )
+            advance_text = (
+                f" advance={curriculum.stage.name}" if advanced else ""
+            )
             print(
                 f"Episode {episode} mode={args.mode} "
-                f"spawn={result.spawn_x:.1f} target={target:.1f} "
+                f"curriculum={task.stage_name}/{task.kind}{advance_text} "
+                f"spawn={result.spawn_x:.1f} target={task.target_x:.1f} "
                 f"{result.result.upper()} x={result.final_x:.2f} "
                 f"error={result.final_error:+.2f} reward={result.reward:+.4f} "
                 f"vx={result.evidence.get('vx', 0.0):+.2f} "
@@ -480,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
             extra={
                 "episodes": final_episode,
                 "seed": args.seed,
+                "curriculum": curriculum.state_dict(),
+                "curriculum_rng_state": rng.getstate(),
                 "spine_verification": verification,
                 **motor_checkpoint_extra(motor_package),
             },
