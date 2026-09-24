@@ -2,8 +2,8 @@
 
 The school teaches a local reflex only: track a requested normalized velocity
 using physical effort. It never sees target_x and never supplies teacher
-actions. Passing VERIFY certifies a candidate, while the normal school mode
-continues through the requested budget and keeps the best verified brain.
+actions. Standard VERIFY gives PASS evidence; full training retains BEST, and
+only a separate frozen 10/10 held-out qualification marks that BEST CERTIFIED.
 """
 from __future__ import annotations
 

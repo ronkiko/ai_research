@@ -285,7 +285,8 @@ async def run_flow(
             motors = info.get("motors") or []
             if not any(
                 item.get("motor_id") == "continuous_1d_v1"
-                and item.get("status") == "trained"
+                and item.get("status") == "certified"
+                and item.get("qualification") == "certified"
                 for item in motors
             ):
                 raise AssertionError(f"verified Motor fixture is not visible: {info}")
