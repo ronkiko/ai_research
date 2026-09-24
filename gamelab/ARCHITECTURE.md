@@ -143,7 +143,10 @@ current MotorGoal plus local proprioception and emits one scalar
 reflex, but after verification the mounted Motor is frozen and deterministic.
 Spine TRAIN explores one level higher: at 10 Hz Spine samples `desired_vx`,
 holds it for six Motor intervals, and PPO assigns the accumulated physical
-reward to that Spine decision. VERIFY/RUN use deterministic `tanh(mean)`.
+reward to that Spine decision. Signed goal displacement is encoded as
+`tanh(dx/40)`; the temporal CNN history is fused with the latest measured frame
+so current goal direction, velocity and effort remain directly visible after
+pooling. VERIFY/RUN use deterministic `tanh(mean)`.
 
 GameServer interprets `motor_x` as normalized actuator effort. Zone integrates
 `acceleration = max_acceleration * motor_x - drag * vx`, clamps velocity to the
@@ -205,7 +208,9 @@ update, rather than fitting four epochs to a single ~30-transition precision
 episode. Step cost still scales with Motor-interval elapsed time. Dense distance
 progress is normalized by the distance present when the current strategic goal
 was established, so its total scale is comparable across short and long tasks.
-Stopped-near-goal shaping is a bounded episode potential:
+Near-goal settling shaping is a bounded episode-best potential over measured
+distance and speed, providing braking credit before exact rest without action
+labels. Exact stopped-near-goal shaping is a second bounded episode potential:
 only measured states with `vx=0` inside the default ±5 radius qualify,
 proximity rises toward the target, and reward is paid only when that episode
 improves its best stopped proximity. No particular `motor_x` value is rewarded,

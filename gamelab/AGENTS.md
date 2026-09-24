@@ -84,6 +84,11 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   before fitting minibatches.
 - Fresh Spine policy must start directionally neutral; its final desired-velocity
   mean layer has zero weight/bias while exploration supplies symmetric trials.
+- Precision-scale goal displacement must remain numerically visible to Spine;
+  do not normalize a 5..40-unit target error by the full world width. Keep it
+  bounded and derived only from the already available measurable goal
+  displacement. Preserve an explicit latest-state path alongside temporal
+  history so current goal/velocity evidence is not erased by pooling.
 - Spine curriculum difficulty must advance from measured frontier competence,
   not merely from episode count. Keep short precision tasks and replay of prior
   stages in later training so long-distance competence does not replace stopping

@@ -225,6 +225,20 @@ def _advantages(transitions: list[Transition]) -> tuple[torch.Tensor, torch.Tens
     return advantage_tensor, returns
 
 
+def _goal_alignment(transitions: list[Transition]) -> float | None:
+    aligned = 0
+    counted = 0
+    for item in transitions:
+        goal_dx = float(item.history[3, -1])
+        action = float(item.action)
+        if abs(goal_dx) < 1e-6 or abs(action) < 1e-6:
+            continue
+        counted += 1
+        if goal_dx * action > 0.0:
+            aligned += 1
+    return aligned / counted if counted else None
+
+
 def ppo_update(
     model: SpineMotorPolicy,
     optimizer: torch.optim.Optimizer,
@@ -619,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if result.result not in {"success", "timeout"}:
                 raise RuntimeError(f"invalid episode: {result.result}")
+            episode_alignment = _goal_alignment(result.transitions)
             rollout.extend(result.transitions)
             metrics: dict[str, float] | None = None
             if len(rollout) >= PPO_ROLLOUT_STEPS:
@@ -673,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"desired_vx={result.evidence.get('desired_vx', 0.0):+.3f} "
                 f"motor={result.evidence.get('motor_x', 0.0):+.3f} "
                 f"best_stop_error={result.evidence.get('closest_stopped_distance')} "
+                f"settle={result.evidence.get('best_settling_potential', 0.0):.3f} "
+                f"align={episode_alignment if episode_alignment is not None else 0.0:.2f} "
                 f"stable={result.evidence.get('stable_ticks', 0)} "
                 f"steps={result.motor_steps} requests={result.controller_requests} "
                 f"sim={result.evidence.get('simulation_seconds', 0.0):.3f}s "

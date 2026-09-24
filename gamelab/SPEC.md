@@ -116,6 +116,11 @@ unverified, hash-mismatched or physically incompatible Motor packages and must
 bind `motor_id` plus verified brain SHA into the Spine checkpoint. Training
 action labels must not come from a scripted controller.
 
+The Spine sensor history keeps four measured channels. Signed goal displacement
+is encoded as `tanh(dx/40)`, preserving precision-scale direction/proximity
+while remaining bounded over the full world. The temporal CNN representation is
+fused with the latest measured frame before the policy/critic hidden state.
+
 Spine task generation is a competence-gated curriculum. Frontier distance/horizon
 pairs are `5..40/3s`, `20..100/4s`, `60..220/5s`,
 `150..450/6s`, and `300..900/8s`. Advancement requires at least 60%
@@ -142,11 +147,12 @@ counted in world ticks. Wall time is not part of reward, timeout, success or
 policy input.
 
 Near-goal shaping is state-based, not an actuator hint. The default shaping
-radius is ±5. A bonus exists only for a measured stopped state (`vx=0`) and rises
-monotonically with proximity. It does not reward any particular motor command. Each episode pays only the
-increase over its previously best stopped proximity, bounding the total shaping
-bonus and preventing reward farming by waiting. SUCCESS remains the distinct
-terminal objective.
+radius is ±5. A smooth bounded settling potential increases as measured state
+gets both closer to the target and slower; only improvement over the best
+settling state already seen in that episode is paid. A separate exact stopped
+state (`vx=0`) bonus rises monotonically with proximity. Neither term rewards a
+particular motor command, neither can be farmed by waiting, and SUCCESS remains
+the distinct terminal objective.
 
 Reward and success measurement may use authoritative state because they belong
 to the training laboratory, not the deployed controller.

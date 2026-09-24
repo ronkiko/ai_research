@@ -147,6 +147,14 @@ Spine TRAIN must explicitly select a Motor:
 ./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100
 ```
 
+Spine receives four measured channels over a 32-frame history: normalized
+position, velocity, current Motor effort, and signed goal displacement. Goal
+displacement uses a bounded local scale (`tanh(dx/40)`) instead of division by
+the whole 1000-unit world, so 5..40-unit precision targets remain numerically
+visible. The temporal CNN is fused with a direct path from the latest measured
+frame so current goal direction, velocity and effort cannot be washed out by
+history pooling.
+
 Normal Spine training uses a competence-gated curriculum rather than increasing
 difficulty because an episode counter advanced. The five frontier bands are
 `precision 5..40`, `short 20..100`, `medium 60..220`,
@@ -169,8 +177,11 @@ of the presented task. Full progress on a 20-unit precision task and on a
 600-unit transfer therefore has the same scale. The former multiplicative
 position/speed potential remains an opt-in experiment but is disabled by
 default because it could penalize a stopped precision policy for beginning to
-move toward its target. The bounded stopped-near-goal bonus and terminal
-SUCCESS remain state based. Entering a world boundary while the goal is
+move toward its target. A bounded near-goal settling potential additionally rewards only new episode-best
+progress toward a state that is both close to the target and slow. This provides
+braking credit before exact `vx=0` without changing SUCCESS or prescribing any
+actuator command. The exact stopped-near-goal bonus and terminal SUCCESS remain
+state based. Entering a world boundary while the goal is
 elsewhere is penalized as a collision rather than treated as a free brake.
 
 After the requested PPO budget, TRAIN runs frozen deterministic Spine VERIFY.
