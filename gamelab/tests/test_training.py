@@ -59,6 +59,51 @@ class TrainingTests(unittest.TestCase):
         )
         self.assertAlmostEqual(timeout, -1.0035)
 
+    def test_episode_normalized_progress_is_comparable_across_task_lengths(self):
+        config = RewardConfig()
+        short = step_reward(
+            config,
+            before_distance=20.0,
+            after_distance=10.0,
+            next_vx=30.0,
+            success=False,
+            timeout=False,
+            progress_reference_distance=20.0,
+        )
+        long = step_reward(
+            config,
+            before_distance=600.0,
+            after_distance=300.0,
+            next_vx=30.0,
+            success=False,
+            timeout=False,
+            progress_reference_distance=600.0,
+        )
+        self.assertAlmostEqual(short, long)
+        self.assertGreater(short, 0.0)
+
+    def test_default_precision_reward_does_not_punish_starting_to_move(self):
+        config = RewardConfig()
+        before_potential = goal_state_potential(
+            config, distance=20.0, vx=0.0
+        )
+        after_potential = goal_state_potential(
+            config, distance=18.0, vx=30.0
+        )
+        self.assertLess(after_potential, before_potential)
+        reward = step_reward(
+            config,
+            before_distance=20.0,
+            after_distance=18.0,
+            next_vx=30.0,
+            success=False,
+            timeout=False,
+            goal_state_delta=after_potential - before_potential,
+            progress_reference_distance=20.0,
+        )
+        self.assertEqual(config.goal_state_scale, 0.0)
+        self.assertGreater(reward, 0.0)
+
     def test_default_timeout_cannot_be_profitable_from_progress_alone(self):
         config = RewardConfig()
         total = 0.0

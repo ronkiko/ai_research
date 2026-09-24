@@ -184,6 +184,7 @@ def control_loop(
     pending_motor: PendingMotor | None = None
     best_stopped_proximity = 0.0
     closest_stopped_distance: float | None = None
+    reward_reference_distance: float | None = None
     steps = spine_calls = requests = duplicates = overruns = wall_contacts = 0
     total_reward = 0.0
     result: dict[str, Any] = {}
@@ -253,6 +254,11 @@ def control_loop(
                 stable_since = None
 
             error = target_x - x
+            if changed or reward_reference_distance is None:
+                # Normalize progress to the task that was actually presented.
+                # Reaching a 10-unit precision target and a 600-unit transfer
+                # therefore have comparable total dense progress credit.
+                reward_reference_distance = max(abs(error), tolerance)
             physically_stopped = abs(vx) < 1e-9
             if abs(error) <= tolerance and physically_stopped:
                 if stable_since is None:
@@ -338,6 +344,7 @@ def control_loop(
                     stopped_proximity_gain=proximity_gain,
                     goal_state_delta=after_goal_state - before_goal_state,
                     wall_contact=entered_wall,
+                    progress_reference_distance=reward_reference_distance,
                 )
                 total_reward += motor_reward
                 if active_decision is not None:

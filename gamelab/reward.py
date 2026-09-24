@@ -25,7 +25,10 @@ class RewardConfig:
     timeout_penalty: float = 1.0
     stopped_near_goal_bonus: float = 0.2
     near_goal_radius: float = 5.0
-    goal_state_scale: float = 0.5
+    # Experimental goal-state potential is opt-in. The old default coupled
+    # proximity and low speed so strongly that a stopped precision episode was
+    # punished for beginning to move toward its goal.
+    goal_state_scale: float = 0.0
     goal_position_sigma: float = 50.0
     goal_speed_sigma: float = 60.0
     wall_contact_penalty: float = 0.5
@@ -132,12 +135,19 @@ def step_reward(
     stopped_proximity_gain: float = 0.0,
     goal_state_delta: float = 0.0,
     wall_contact: bool = False,
+    progress_reference_distance: float = WORLD_MAX_X,
 ) -> float:
     config = config.validated()
+    progress_reference_distance = float(progress_reference_distance)
+    if (
+        not math.isfinite(progress_reference_distance)
+        or progress_reference_distance <= 0.0
+    ):
+        raise ValueError("progress_reference_distance must be positive and finite")
     reward = (
         config.distance_progress_scale
         * (float(before_distance) - float(after_distance))
-        / WORLD_MAX_X
+        / progress_reference_distance
     )
     reward -= config.step_cost * elapsed_steps
     reward += config.stopped_near_goal_bonus * max(
