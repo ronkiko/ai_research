@@ -31,12 +31,35 @@ configuration, verification, and model runs are available through
 
 ## Operator launch
 
-The Director starts GameServer and then launches the workstation:
+The Director starts GameServer and then launches a fresh Yuki2 trial:
 
 ```bash
 ./gameserver/v1/op/server.sh
-./gametable/op/start.sh
+./gametable/op/start-go.sh
 ```
+
+`start-go.sh` is the normal alpha-test entry point. It clears only Yuki2's
+personal/Executive runtime, starts OpenCode, and passes the operator-owned
+initial prompt through OpenCode's TUI `--prompt` option. That prompt is the
+actual first Director message, so Yuki answers immediately and the 180-minute
+shift begins from that first exchange.
+
+The default first message is intentionally written directly inside
+`gametable/op/start-go.sh`, so the Operator can edit one obvious place before
+an experiment. For a one-off launch, pass replacement text directly:
+
+```bash
+./gametable/op/start-go.sh "Ты молодая девушка-лаборант... твой начальник Директор..."
+```
+
+or use a file:
+
+```bash
+./gametable/op/start-go.sh --prompt-file ./my-first-message.txt
+```
+
+For a plain workstation start without automatically sending a Director message,
+use `./gametable/op/start.sh`.
 
 The `game_v1` MCP ensures its default Host `game-v1-default:17700` is
 running. Starting `./gameclient/v1/op/host.sh` manually is still supported,
