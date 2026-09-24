@@ -9,6 +9,7 @@ from gamelab.control import control_loop
 from gamelab.host import player_from_state
 from gamelab.runtime import ensure_player, reset_player_state
 from gamelab.unpaced import UnpacedHostClient
+from gameserver.v1.common.config import PHYSICS_CONTRACT_SHA256
 from gameserver.v1.zone.model import ZoneRuntime
 
 
@@ -60,6 +61,10 @@ class UnpacedTests(unittest.TestCase):
             before = client.state()
             player = player_from_state(before)
             self.assertEqual(before["snapshot"]["physics_hz"], 120)
+            self.assertEqual(
+                before["snapshot"]["physics_contract_sha256"],
+                PHYSICS_CONTRACT_SHA256,
+            )
             self.assertEqual(float(player["x"]), 100.0)
             response = client.motor(1.0)
             client.advance_tick()

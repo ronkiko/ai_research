@@ -20,6 +20,7 @@ from ..config import (
     MOTOR_HZ,
     MOTOR_STATE_SIZE,
     PHYSICS_HZ,
+    SPINE_HZ,
     PLAYER_DRAG,
     PLAYER_MAX_ACCELERATION,
     PLAYER_MAX_SPEED,
@@ -33,6 +34,8 @@ MOTOR_INSTANCE_SCHEMA = 1
 CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v7"
 CURRENT_MOTOR_CERTIFICATION_GENERATION = 2
 SUPPORTED_MOTOR_CERTIFICATION_GENERATIONS = frozenset({1, 2})
+CURRENT_PHYSICS_CONTRACT_VERSION = 1
+CURRENT_PHYSICS_CONTRACT_SHA256 = "0e6f1b013f39814574a88844ccc7bb10b41fb2e21d797920378a164a984029df"
 
 
 class MotorPackageError(RuntimeError):
@@ -343,6 +346,15 @@ class MotorPackage:
                         f"motor {self.motor_id}: snapshot is missing {helper_name}"
                     )
                 setattr(motor, f"_gamelab_{helper_name}", helper)
+        physics_contract_sha256 = (self.manifest.get("compatibility") or {}).get(
+            "physics_contract_sha256"
+        )
+        if physics_contract_sha256:
+            setattr(
+                motor,
+                "_gamelab_physics_contract_sha256",
+                str(physics_contract_sha256),
+            )
         return motor
 
     def load_verified_model(self) -> torch.nn.Module:
@@ -399,6 +411,25 @@ def _load_instance(path: Path) -> MotorPackage:
         raise MotorPackageError(f"motor {motor_id}: incompatible world contract")
     if socket.get("output") != "motor_x" or socket.get("output_range") != [-1, 1]:
         raise MotorPackageError(f"motor {motor_id}: incompatible actuator socket")
+    revision = int((payload.get("architecture") or {}).get("revision", 0))
+    if revision >= 3:
+        goal_contract = socket.get("goal_contract") or {}
+        if goal_contract.get("desired_vx_range") != [-1, 1]:
+            raise MotorPackageError(
+                f"motor {motor_id}: incompatible desired velocity range"
+            )
+        if goal_contract.get("max_update_hz") != SPINE_HZ:
+            raise MotorPackageError(
+                f"motor {motor_id}: incompatible MotorGoal update cadence"
+            )
+        if compatibility.get("physics_contract_version") != CURRENT_PHYSICS_CONTRACT_VERSION:
+            raise MotorPackageError(
+                f"motor {motor_id}: incompatible physics contract version"
+            )
+        if compatibility.get("physics_contract_sha256") != CURRENT_PHYSICS_CONTRACT_SHA256:
+            raise MotorPackageError(
+                f"motor {motor_id}: incompatible physics contract fingerprint"
+            )
     if (payload.get("model") or {}).get("policy") != "gaussian_tanh_v1":
         raise MotorPackageError(f"motor {motor_id}: unsupported policy interface")
     return MotorPackage(motor_id=motor_id, path=path, manifest=payload)

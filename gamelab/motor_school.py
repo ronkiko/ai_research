@@ -154,6 +154,17 @@ def _reset_world(runtime: ZoneRuntime) -> None:
     runtime.tick()
 
 
+def _require_physics_contract(motor: nn.Module, runtime: ZoneRuntime) -> None:
+    expected = getattr(motor, "_gamelab_physics_contract_sha256", None)
+    if expected is None:
+        return
+    actual = runtime.latest_snapshot().get("physics_contract_sha256")
+    if actual != expected:
+        raise MotorPackageError(
+            "canonical ZoneRuntime physics contract differs from Motor snapshot"
+        )
+
+
 def _goal(desired_norm: float) -> torch.Tensor:
     values = [0.0] * MOTOR_GOAL_SIZE
     values[0] = float(desired_norm)
@@ -358,6 +369,7 @@ def _rollout(
     sequence: int,
 ) -> tuple[list[SchoolTransition], int, dict[str, float]]:
     _reset_world(runtime)
+    _require_physics_contract(motor, runtime)
     transitions: list[SchoolTransition] = []
     motor_stride = PHYSICS_HZ // MOTOR_HZ
     steps = int(round(SCHOOL_SECONDS * MOTOR_HZ))
@@ -427,6 +439,7 @@ def _verify_program(
     """Frozen deterministic Motor exam for one velocity-command program."""
     runtime, sequence = _new_world()
     _reset_world(runtime)
+    _require_physics_contract(motor, runtime)
     motor.eval()
     motor_stride = PHYSICS_HZ // MOTOR_HZ
     errors: list[float] = []

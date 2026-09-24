@@ -42,7 +42,11 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertTrue(package.architecture_path.is_file())
                 self.assertTrue((package.path / "model.py").is_file())
                 self.assertEqual(package.architecture["version"], "v1")
-                self.assertEqual(package.architecture["revision"], 2)
+                self.assertEqual(package.architecture["revision"], 3)
+                self.assertEqual(
+                    package.manifest["compatibility"]["physics_contract_sha256"],
+                    "0e6f1b013f39814574a88844ccc7bb10b41fb2e21d797920378a164a984029df",
+                )
                 self.assertFalse(package.trained)
                 self.assertFalse(package.candidate_path.exists())
                 self.assertFalse(package.work_path.exists())

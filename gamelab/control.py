@@ -167,6 +167,16 @@ def control_loop(
         or type(start_tick) is not int
     ):
         raise HostError("Host requires tick/epoch acknowledgement contract; restart backend")
+    expected_physics = getattr(
+        getattr(model, "motor", None),
+        "_gamelab_physics_contract_sha256",
+        None,
+    )
+    actual_physics = snapshot.get("physics_contract_sha256")
+    if expected_physics is not None and actual_physics != expected_physics:
+        raise HostError(
+            "GameServer physics contract does not match the certified Motor"
+        )
     if hz % MOTOR_HZ != 0 or hz % SPINE_HZ != 0:
         raise HostError("physics_hz must divide exactly into Motor and Spine cadences")
 

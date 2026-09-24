@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 
 HOST = "127.0.0.1"
 GATEWAY_PORT = 17600
@@ -28,3 +30,23 @@ class LineConfig:
     mob_drag: float = 4.0
 
 LINE = LineConfig()
+
+PHYSICS_CONTRACT_VERSION = 1
+PHYSICS_DYNAMICS_MODEL = "continuous_1d_euler_v1"
+PHYSICS_CONTRACT = {
+    "dynamics_model": PHYSICS_DYNAMICS_MODEL,
+    "physics_hz": PHYSICS_HZ,
+    "line_length": LINE.length,
+    "player_max_speed": LINE.player_max_speed,
+    "player_max_acceleration": LINE.player_max_acceleration,
+    "player_drag": LINE.player_drag,
+    "rest_velocity_eps": REST_VELOCITY_EPS,
+    "rest_motor_eps": REST_MOTOR_EPS,
+}
+PHYSICS_CONTRACT_SHA256 = hashlib.sha256(
+    json.dumps(
+        PHYSICS_CONTRACT,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()

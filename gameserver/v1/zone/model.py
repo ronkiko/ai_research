@@ -10,6 +10,8 @@ from typing import Any
 from ..common.config import (
     LINE,
     PHYSICS_HZ,
+    PHYSICS_CONTRACT_SHA256,
+    PHYSICS_CONTRACT_VERSION,
     REST_MOTOR_EPS,
     REST_VELOCITY_EPS,
     ZONE_ID,
@@ -245,6 +247,8 @@ class ZoneRuntime:
             "world_tick": self.world_tick,
             "epoch": self.epoch,
             "physics_hz": self.physics_hz,
+            "physics_contract_version": PHYSICS_CONTRACT_VERSION,
+            "physics_contract_sha256": PHYSICS_CONTRACT_SHA256,
             "line_length": self.line.length,
             "entities": [self.entities[key].snapshot() for key in sorted(self.entities)],
             "commands_applied": list(commands),
