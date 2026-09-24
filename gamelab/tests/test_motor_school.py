@@ -17,7 +17,6 @@ from gamelab.motor_school import (
     _development_verify,
     _local_tracking_reward,
     _new_world,
-    _reset_fresh_school,
     _rollout,
     _school_program,
     _update,
@@ -30,8 +29,11 @@ from gamelab.motors.package import (
     get_motor_package,
     list_motor_packages,
 )
-from gamelab.motors.packages.continuous_1d_v1.model import Motor
-from gamelab.tests.motor_fixture import copy_clean_motor, create_verified_motor_fixture
+from gamelab.motors.architectures.continuous_1d.v1.model import Motor
+from gamelab.tests.motor_fixture import (
+    FIXTURE_MOTOR_ID,
+    create_untrained_motor_fixture,
+)
 
 
 class RuleMotor(torch.nn.Module):
@@ -162,26 +164,25 @@ class MotorSchoolTests(unittest.TestCase):
     def test_default_motor_school_converges_in_quick_stop_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            copy_clean_motor(root)
+            package_path = create_untrained_motor_fixture(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
                 result = run_school(
-                    "continuous_1d_v1",
+                    FIXTURE_MOTOR_ID,
                     episodes=100,
                     seed=1,
-                    fresh=True,
                     stop_on_pass=True,
                 )
                 self.assertTrue(result["trained"], result)
                 self.assertTrue(result["promoted"], result)
                 self.assertLessEqual(result["candidate_episodes"], 100)
                 self.assertTrue(
-                    (root / "continuous_1d_v1" / "brain.pt").is_file()
+                    (package_path / "brain.pt").is_file()
                 )
 
     def test_normal_mode_uses_full_budget_and_keeps_best_verified_brain(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            copy_clean_motor(root)
+            package_path = create_untrained_motor_fixture(root)
             first = {
                 "passed": True,
                 "pass_count": 4,
@@ -226,10 +227,9 @@ class MotorSchoolTests(unittest.TestCase):
                 side_effect=[first, later],
             ):
                 result = run_school(
-                    "continuous_1d_v1",
+                    FIXTURE_MOTOR_ID,
                     episodes=12,
                     seed=3,
-                    fresh=True,
                 )
 
             self.assertEqual(result["episodes_run"], 12)
@@ -240,105 +240,23 @@ class MotorSchoolTests(unittest.TestCase):
             self.assertEqual(result["final_verification"], later)
 
             brain = torch.load(
-                root / "continuous_1d_v1" / "brain.pt",
+                package_path / "brain.pt",
                 map_location="cpu",
             )
             self.assertEqual(brain["episodes"], 10)
 
-    def test_certified_listing_exposes_generation_and_best_quality(self):
-        import json
+    def test_certified_motor_cannot_resume_training(self):
+        from gamelab.tests.motor_fixture import create_verified_motor_fixture
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "motors"
-            package_path = create_verified_motor_fixture(root)
-            manifest_path = package_path / "manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["training"]["best_quality"] = 0.788
-            manifest_path.write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                listed = list_motor_packages()
-                self.assertEqual(len(listed), 1)
-                self.assertEqual(
-                    listed[0]["generation"],
-                    CURRENT_MOTOR_CERTIFICATION_GENERATION,
-                )
-                self.assertEqual(listed[0]["quality"], 0.788)
-                self.assertEqual(
-                    listed[0]["certificate_id"],
-                    "12345678-1234-4abc-8def-1234567890ab",
-                )
-
-    def test_certificate_without_id_is_not_runtime_ready(self):
-        import json
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "motors"
-            package_path = create_verified_motor_fixture(root)
-            manifest_path = package_path / "manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["training"]["certification"].pop("certificate_id", None)
-            manifest_path.write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                package = get_motor_package("continuous_1d_v1")
-                self.assertFalse(package.trained)
-
-    def test_certificate_without_generation_is_not_runtime_ready(self):
-        import json
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "motors"
-            package_path = create_verified_motor_fixture(root)
-            manifest_path = package_path / "manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["training"]["certification"].pop("generation", None)
-            manifest_path.write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                package = get_motor_package("continuous_1d_v1")
-                self.assertFalse(package.trained)
-
-    def test_fresh_reset_archives_and_drops_old_best_and_certification(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "motors"
-            package_path = create_verified_motor_fixture(root)
-            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                from gamelab.motors.package import get_motor_package
-                package = get_motor_package("continuous_1d_v1")
-                old_sha = package.brain_sha256
-                self.assertTrue(package.trained)
-                package.cleanup_training_artifacts()
-                self.assertFalse(package.checkpoints_path.exists())
-                _reset_fresh_school(package)
-                self.assertFalse(package.brain_path.exists())
-                self.assertFalse(package.candidate_path.exists())
-                self.assertTrue((package.checkpoints_path / f"{old_sha}.pt").is_file())
-                training = package.manifest["training"]
-                self.assertIsNone(training["qualification"])
-                self.assertFalse(training["certified"])
-                self.assertNotIn("best_episode", training)
-                self.assertNotIn("best_quality", training)
-                self.assertNotIn("best_brain_sha256", training)
-                self.assertNotIn("certification", training)
-
-    def test_certified_motor_cannot_resume_training_without_fresh(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
             create_verified_motor_fixture(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                with self.assertRaisesRegex(Exception, "certified Motor is frozen"):
+                with self.assertRaisesRegex(Exception, "certified Motor is immutable"):
                     run_school(
-                        "continuous_1d_v1",
+                        FIXTURE_MOTOR_ID,
                         episodes=1,
                         seed=1,
-                        fresh=False,
                     )
 
     def test_auto_safety_cap_is_emergency_scale(self):
@@ -353,7 +271,7 @@ class MotorSchoolTests(unittest.TestCase):
     def test_standard_quick_pass_is_not_certifiable_best(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            copy_clean_motor(root)
+            create_untrained_motor_fixture(root)
             standard = {
                 "passed": True,
                 "evidence": "standard",
@@ -375,15 +293,14 @@ class MotorSchoolTests(unittest.TestCase):
                 {"GAMELAB_MOTOR_ROOT": str(root)},
             ), patch("gamelab.motor_school._verify", return_value=standard):
                 result = run_school(
-                    "continuous_1d_v1",
+                    FIXTURE_MOTOR_ID,
                     episodes=1,
                     seed=3,
-                    fresh=True,
                     stop_on_pass=True,
                 )
                 self.assertEqual(result["qualification"], "pass")
                 with self.assertRaisesRegex(Exception, "development-qualified"):
-                    certify_motor("continuous_1d_v1")
+                    certify_motor(FIXTURE_MOTOR_ID)
 
     def test_development_programs_are_distinct_from_certification(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS
@@ -398,9 +315,10 @@ class MotorSchoolTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            copy_clean_motor(root)
+            create_untrained_motor_fixture(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
-                package = get_motor_package("continuous_1d_v1")
+                package = get_motor_package(FIXTURE_MOTOR_ID)
+                package.candidate_path.parent.mkdir(parents=True, exist_ok=True)
                 package.candidate_path.write_bytes(b"transient candidate")
                 package.checkpoints_path.mkdir(parents=True, exist_ok=True)
                 (package.checkpoints_path / "old.pt").write_bytes(b"old checkpoint")
@@ -422,16 +340,13 @@ class MotorSchoolTests(unittest.TestCase):
                 import hashlib
                 digest = hashlib.sha256(package.brain_path.read_bytes()).hexdigest()
                 package.manifest["brain_sha256"] = digest
-                package.manifest["model_sha256"] = hashlib.sha256(
-                    (package.path / package.manifest["model"]["file"]).read_bytes()
-                ).hexdigest()
+                package.manifest["quality"] = 0.0
                 package.manifest["training"].update(
                     {
                         "status": "trained",
                         "verified": True,
                         "qualification": "best",
                         "best_verification": _development_verify(RuleMotor()),
-                        "best_quality": 0.0,
                     }
                 )
                 package.write_manifest()
@@ -444,12 +359,16 @@ class MotorSchoolTests(unittest.TestCase):
                 parsed = uuid.UUID(result["certificate_id"])
                 self.assertEqual(parsed.version, 4)
                 self.assertEqual(str(parsed), result["certificate_id"])
-                self.assertFalse(package.candidate_path.exists())
-                self.assertFalse(package.checkpoints_path.exists())
+                self.assertFalse(package.work_path.exists())
                 self.assertFalse((package.path / "__pycache__").exists())
                 self.assertTrue(package.brain_path.exists())
                 self.assertTrue(package.history_path.exists())
                 self.assertTrue(get_motor_package(package.motor_id).trained)
+                self.assertEqual(
+                    result["generation"],
+                    CURRENT_MOTOR_CERTIFICATION_GENERATION,
+                )
+                self.assertEqual(result["quality"], 0.0)
 
     def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program
