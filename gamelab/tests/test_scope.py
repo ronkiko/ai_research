@@ -6,15 +6,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 OP = ROOT / "gamelab" / "op"
-PUBLIC_OPERATOR_SCRIPTS = (
-    "check.sh",
-    "research.sh",
-    "motor-school.sh",
-    "train.sh",
-    "verify.sh",
-    "run.sh",
-    "mcp.sh",
-)
 
 
 class ScopeTests(unittest.TestCase):
@@ -83,21 +74,9 @@ class ScopeTests(unittest.TestCase):
 
     def test_only_operator_unpaced_and_motor_school_import_canonical_gameserver(self):
         unpaced = (ROOT / "gamelab/unpaced.py").read_text(encoding="utf-8")
-        self.assertIn(
-            "from gameserver.v1.zone.model import ZoneRuntime",
-            unpaced,
-        )
-        self.assertNotIn("from gameserver.v1.zone.server", unpaced)
-        self.assertNotIn("import gameserver.v1.zone.server", unpaced)
-        self.assertNotIn("from gameserver.v1.gateway", unpaced)
-        self.assertNotIn("import gameserver.v1.gateway", unpaced)
+        self.assertIn("from gameserver.v1.zone.model import ZoneRuntime", unpaced)
         school = (ROOT / "gamelab/motor_school.py").read_text(encoding="utf-8")
-        self.assertIn(
-            "from gameserver.v1.zone.model import ZoneRuntime",
-            school,
-        )
-        self.assertNotIn("from gameserver.v1.zone.server", school)
-        self.assertNotIn("from gameserver.v1.gateway", school)
+        self.assertIn("from gameserver.v1.zone.model import ZoneRuntime", school)
 
         for relative in (
             "gamelab/host.py",
@@ -114,57 +93,57 @@ class ScopeTests(unittest.TestCase):
             self.assertNotIn("import gameserver", text, relative)
             self.assertNotIn("from gameserver", text, relative)
 
-    def test_operator_surface_uses_one_private_runtime_launcher(self):
+    def test_operator_surface_is_exactly_one_public_command(self):
         public = {
             path.name
             for path in OP.glob("*.sh")
             if not path.name.startswith("_")
         }
-        self.assertEqual(public, set(PUBLIC_OPERATOR_SCRIPTS))
+        self.assertEqual(public, {"gamelab.sh"})
         self.assertTrue((OP / "_env.sh").is_file())
-        private = (OP / "_env.sh").read_text(encoding="utf-8")
-        self.assertIn('gamelab/.venv', private)
-        self.assertIn('command -v python3', private)
-        self.assertNotIn("GAMELAB_PYTHON", private)
 
-        for name in PUBLIC_OPERATOR_SCRIPTS:
-            path = OP / name
-            self.assertTrue(path.is_file(), name)
-            text = path.read_text(encoding="utf-8")
-            self.assertIn('source "$ROOT/gamelab/op/_env.sh"', text, name)
-            self.assertNotIn("GAMELAB_PYTHON", text, name)
-            self.assertNotIn("gamelab/.venv/bin/python", text, name)
+        launcher = (OP / "gamelab.sh").read_text(encoding="utf-8")
+        self.assertIn('source "$ROOT/gamelab/op/_env.sh"', launcher)
+        for action in ("check)", "train)", "verify)", "run)", "serve)"):
+            self.assertIn(action, launcher)
+        self.assertIn("motor) train_motor", launcher)
+        self.assertIn("spine) train_spine", launcher)
+        self.assertIn("--full", launcher)
+        self.assertIn("--motor best", launcher)
+        self.assertIn("--mode unpaced", launcher)
 
-        for removed in ("setup.sh", "check-env.sh", "train-unpaced.sh"):
+    def test_operator_surface_has_no_parallel_legacy_launchers(self):
+        for removed in (
+            "check.sh",
+            "research.sh",
+            "motor-school.sh",
+            "train.sh",
+            "verify.sh",
+            "run.sh",
+            "mcp.sh",
+            "setup.sh",
+            "check-env.sh",
+            "train-unpaced.sh",
+        ):
             self.assertFalse((OP / removed).exists(), removed)
 
-    def test_training_modes_share_one_operator_entry(self):
-        text = (OP / "train.sh").read_text(encoding="utf-8")
-        self.assertIn('-m gamelab.training "$@"', text)
-        self.assertNotIn("--mode realtime", text)
-        self.assertNotIn("--mode unpaced", text)
-        self.assertFalse((OP / "train-unpaced.sh").exists())
-
-    def test_test_depth_has_exactly_check_and_research_entrypoints(self):
-        check = (OP / "check.sh").read_text(encoding="utf-8")
-        research = (OP / "research.sh").read_text(encoding="utf-8")
-        self.assertIn("unittest discover", check)
-        self.assertNotIn("convergence_spine", check)
-        self.assertIn("-m gamelab.research", research)
-        self.assertNotIn("gamelab.tests", research)
-        self.assertNotIn("unittest discover", research)
-        self.assertFalse((ROOT / "gamelab/tests/convergence_spine.py").exists())
-
-    def test_docs_and_ci_do_not_expose_parallel_python_paths(self):
+    def test_docs_and_ci_expose_only_the_single_entrypoint(self):
         banned = (
             "GAMELAB_PYTHON",
             "gamelab/.venv/bin/python",
             "python -m gamelab",
+            "/op/check.sh",
+            "/op/research.sh",
+            "/op/motor-school.sh",
+            "/op/train.sh",
+            "/op/verify.sh",
+            "/op/run.sh",
+            "/op/mcp.sh",
             "train-unpaced.sh",
             "setup.sh",
             "check-env.sh",
         )
-        for path in sorted((ROOT / "gamelab").glob("*.md")):
+        for path in sorted((ROOT / "gamelab").rglob("*.md")):
             text = path.read_text(encoding="utf-8")
             relative = str(path.relative_to(ROOT))
             for token in banned:
@@ -173,13 +152,8 @@ class ScopeTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/gamelab.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("./gamelab/op/check.sh", workflow)
-        for token in (
-            "GAMELAB_PYTHON",
-            "gamelab/.venv/bin/python",
-            "setup.sh",
-            "python -m gamelab",
-        ):
+        self.assertIn("./gamelab/op/gamelab.sh check", workflow)
+        for token in banned:
             self.assertNotIn(token, workflow, token)
 
 

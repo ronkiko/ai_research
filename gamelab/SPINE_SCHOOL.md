@@ -131,9 +131,9 @@ designed and verified as a separate future feature.
 ## Checkpoints and use
 
 ```bash
-./gamelab/op/train.sh --mode unpaced --motor <motor_uuid> --fresh --episodes 200
+./gamelab/op/gamelab.sh train spine --motor <motor_uuid> --fresh --episodes 200
 # Continue the candidate and retain the best model:
-./gamelab/op/train.sh --mode unpaced --motor <motor_uuid> --episodes 100
+./gamelab/op/gamelab.sh train spine --motor <motor_uuid> --episodes 100
 ```
 
 `--fresh` resets Spine and the school, not the mounted verified Motor. Existing
@@ -162,7 +162,7 @@ must show actual velocity reversal followed by exact rest at the target. The
 test apparatus changes a goal once; it never supplies a braking/reverse action.
 
 For a server that is already running, the full gate supports
-`./gamelab/op/check.sh --existing-server`. It attaches to the existing default
+`./gamelab/op/gamelab.sh check --existing-server`. It attaches to the existing default
 Host and reuses its active `player1` session without logging it out. Tests reset
 and control that avatar; a human observer can stay connected but must not send
 competing actions. MCP lifecycle smoke additionally creates an owned Host for
@@ -171,7 +171,7 @@ competing actions. MCP lifecycle smoke additionally creates an owned Host for
 ## Research acceptance across seeds
 
 The normal CI gate remains intentionally short. Method-level convergence is
-checked only through `./gamelab/op/research.sh --seeds 1,2,3`. Each seed constructs and generation-2-certifies a fresh Motor, trains a
+checked only through `./gamelab/op/gamelab.sh check --full --seeds 1,2,3`. Each seed constructs and generation-2-certifies a fresh Motor, trains a
 fresh Spine, runs 36-case latency validation, 40 seed-specific held-out goals,
 and paced Host/Zone verification. A single seed may be requested for diagnosis
 or exact reproduction, but is not treated as robustness evidence.

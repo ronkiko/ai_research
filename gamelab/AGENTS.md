@@ -35,23 +35,22 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Keep the architecture and timing/evidence contract in `ARCHITECTURE.md`.
 - Machine-friendly interfaces only. Do not test or automate GUI here.
 - The MCP laboratory service is the supported agent-facing boundary for training, reward configuration, VERIFY, and live model runs; operator scripts are maintenance/CI entry points, not the GameTable assistant API.
-- Before declaring an ordinary patch ready, run the real `./gamelab/op/check.sh`
-  vertical, not only unit tests. This is intentionally a short machine smoke,
-  not proof of full Spine convergence. For changes whose acceptance depends on
-  learning quality, use only `./gamelab/op/research.sh`; do not expose or
-  document a direct Python/module invocation for that experiment.
-- Operator execution has one public shell boundary: `./gamelab/op/*.sh`.
-  Public commands are exactly check, research, motor-school, train, verify, run,
-  and mcp. The private `op/_env.sh` is the sole interpreter/dependency
-  resolver and is never an Operator command.
-- Never add interpreter-selection environment variables, direct `python -m`
-  instructions, a public setup/environment command, or a second launcher for
-  an execution mode. Modes belong to the owning command (for example
-  `train.sh --mode unpaced`). Test depth belongs to exactly one of
-  `check.sh` (short regression) or `research.sh` (full learned acceptance).
-- CI must invoke the same public `./gamelab/op/check.sh` path as the Operator;
-  it must not pre-create a different GameLab environment or inject a different
-  Python executable.
+- Before declaring an ordinary patch ready, run
+  `./gamelab/op/gamelab.sh check`. This is intentionally a short machine
+  smoke, not proof of full Spine convergence. For changes whose acceptance
+  depends on learning quality, use only
+  `./gamelab/op/gamelab.sh check --full`.
+- Operator execution has exactly one public shell command:
+  `./gamelab/op/gamelab.sh`. Its stable action tree is `check`,
+  `train motor|spine`, `verify`, `run`, and `serve`. The private
+  `op/_env.sh` is the sole interpreter/dependency resolver and is never an
+  Operator command.
+- Never add another public `op/*.sh`, interpreter-selection environment
+  variables, direct `python -m` instructions, or a public setup/environment
+  command. Variants belong under the existing action tree: execution modes
+  under `train`, test depth under `check`, service options under `serve`.
+- CI must invoke the same public `./gamelab/op/gamelab.sh check` path as the
+  Operator; it must not create a parallel environment or execution route.
 
 - Brain Executive is strategic memory and research accounting only. It must never
   emit `motor_x`, alter Motor/Spine outputs, start/cancel experiments by itself,

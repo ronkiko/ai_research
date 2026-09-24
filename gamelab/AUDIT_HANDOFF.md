@@ -12,7 +12,7 @@ This patch is a bounded alignment pass, not a new convergence result.
 
 ## Validation of this patch
 
-`./gamelab/op/check.sh --existing-server` now passes compilation, all 130 unit
+`./gamelab/op/gamelab.sh check --existing-server` now passes compilation, all 130 unit
 tests, shared-Host runtime smoke and the 45-tool MCP smoke. The initial failure
 was a test-topology bug: smoke created a second Host and tried to log player1
 in again. Existing-server mode now attaches to the default Host and retains its

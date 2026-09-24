@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  echo "ERROR _env.sh is internal; use ./gamelab/op/<command>.sh" >&2
+  echo "ERROR _env.sh is internal; use ./gamelab/op/gamelab.sh" >&2
   exit 2
 fi
 
