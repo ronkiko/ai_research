@@ -1199,6 +1199,15 @@ def certify_motor(motor_id: str) -> dict:
     package = get_motor_package(motor_id)
     package.validate_source_snapshot()
     training = dict(package.manifest.get("training") or {})
+    if (
+        training.get("certification_attempted")
+        or training.get("certification") is not None
+    ):
+        raise MotorPackageError(
+            f"motor {motor_id}: certification has already been attempted; "
+            f"construct a new Motor instance for another generation-"
+            f"{CURRENT_MOTOR_CERTIFICATION_GENERATION} attempt"
+        )
     best = training.get("best_verification")
     if (
         not package.brain_path.is_file()
@@ -1226,16 +1235,6 @@ def certify_motor(motor_id: str) -> dict:
         raise MotorPackageError(
             f"motor {motor_id}: BEST brain hash mismatch; cannot certify"
         )
-    if (
-        training.get("certification_attempted")
-        or training.get("certification") is not None
-    ):
-        raise MotorPackageError(
-            f"motor {motor_id}: certification has already been attempted; "
-            f"construct a new Motor instance for another generation-"
-            f"{CURRENT_MOTOR_CERTIFICATION_GENERATION} attempt"
-        )
-
     quality = package.quality
     if quality is None:
         raise MotorPackageError(f"motor {motor_id}: BEST has no quality score")
