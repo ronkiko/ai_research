@@ -50,6 +50,11 @@ Input shape:
 Channels are normalized self position, self velocity, current actuator state,
 and strategic target displacement.
 
+A separate scalar conditions learned Spine features: the latest acknowledged
+extra input delay, `(applied_tick - decision_tick - 1) / motor_stride`, bounded
+to `[0,4]`. No future latency is observable. The initial value is zero and a
+no-send interval retains the last measurement. Motor's socket stays unchanged.
+
 For the mounted `continuous_1d_v1` socket, Spine learns one normalized
 `desired_vx`. The adapter presents it to the Motor as
 `MotorGoal=[desired_vx,0,0,0]`; the remaining channels are reserved by this
@@ -110,61 +115,44 @@ training. Normal mode consumes the full requested episode budget;
 
 ## Learning
 
-Spine and critic are optimized with PPO over a selected verified Motor package.
-The Motor is frozen during Spine TRAIN. TRAIN must reject missing, untrained,
-unverified, hash-mismatched or physically incompatible Motor packages and must
-bind `motor_id` plus verified brain SHA into the Spine checkpoint. Training
-action labels must not come from a scripted controller.
+Default shell and MCP TRAIN use measured dynamics policy search as specified in
+[SPINE_SCHOOL.md](SPINE_SCHOOL.md). They share one trainer and control_loop; only
+the source of authoritative ticks differs. An affine training-only predictor is
+fitted to acknowledged nominal Motor intervals, with held-out accuracy checks.
+Gradients through predicted trajectories and the frozen learned Motor train the
+existing Spine CNN. Predictor coefficients come from measured consequences, not
+copied physical equations. No imagined state counts as physical success.
 
-The Spine sensor history keeps four measured channels. Signed goal displacement
-is encoded as `tanh(dx/40)`, preserving precision-scale direction/proximity
-while remaining bounded over the full world. The temporal CNN representation is
-fused with the latest measured frame before the policy/critic hidden state.
+Each requested episode collects a canonical-world rollout and performs one
+pair of batched imagined policy updates. Precision and long-distance goals are sampled
+together; short early imagined horizons later expand to eight seconds. Frozen
+development validation selects the best weights while the candidate consumes the
+full budget. Separate frozen final VERIFY determines the shell success exit code.
+MCP jobs expose development validation and leave explicit VERIFY available.
 
-Spine task generation is a competence-gated curriculum. Frontier distance/horizon
-pairs are `5..40/3s`, `20..100/4s`, `60..220/5s`,
-`150..450/6s`, and `300..900/8s`. Advancement requires at least 60%
-SUCCESS over the last 10 deterministic current-frontier probes; elapsed episode
-count alone never advances difficulty. Sampled TRAIN episodes remain exploratory
-PPO data and cannot directly promote the frontier. A deterministic probe on the
-same frontier task measures the mean policy without exploration noise and is not
-added to the training rollout. Starting with the second stage, training interleaves
-20% precision replay and 15% randomly selected prior-stage review. Replay
-contributes PPO experience but never counts toward frontier promotion. Default
-task sampling is symmetric in travel direction and progressively expands the
-safe spawn/target region from `[100,900]` to `[20,980]`. Curriculum and
-task-RNG state persist in the checkpoint. This scheduler chooses only task
-initial conditions and rollout horizon; it never supplies actions or desired
-velocity.
+The school objective penalizes smooth position error, speed near the target and
+terminal position/speed error. Moving initial states train reversal and recovery;
+the final suite requires both small-offset correction and return after overshoot.
+It specifies no teacher action. The persisted reward
+configuration continues to instrument measured episodes; the versioned school
+objective is documented separately and does not silently inherit those overrides.
 
-Realtime and unpaced TRAIN share the same rollout, sensor, reward, PPO and
-checkpoint code. Their only execution difference is how the next authoritative
-Zone tick arrives. Realtime waits for the external 120 Hz world; unpaced calls
-the canonical ZoneRuntime tick directly. Motor cadence is every 2 world ticks
-(60 Hz) and Spine cadence every 12 world ticks (10 Hz). One latched Spine action
-therefore contributes one discount/GAE step, not six Motor steps. Normal PPO
-updates accumulate at least 256 Spine transitions across episodes, use
-64-sample minibatches for four epochs, start fresh exploration at
-`log_std=-1.2`, and apply no default entropy bonus. Finite episode timeout is
-counted in world ticks. Wall time is not part of reward, timeout, success or
-policy input.
+TRAIN requires an explicitly selected verified Motor and rejects missing,
+unverified, hash-mismatched or incompatible packages. Motor weights are frozen;
+Spine checkpoint metadata binds the Motor id and verified brain hash. Checkpoints
+store candidate and best weights, optimizer, predictor observations and fit,
+update count and random-generator states. Resume continues the candidate;
+VERIFY/RUN load the exported best weights. Fresh resets Spine/school, not Motor.
 
-Near-goal shaping is state-based, not an actuator hint. The default shaping
-radius is ±5. A smooth bounded settling potential increases as measured state
-gets both closer to the target and slower; only improvement over the best
-settling state already seen in that episode is paid. A separate exact stopped
-state (`vx=0`) bonus rises monotonically with proximity. Neither term rewards a
-particular motor command, neither can be farmed by waiting, and SUCCESS remains
-the distinct terminal objective.
+Spine sees four measured channels over 32 frames, including tanh(goal_dx/40),
+with a direct latest-frame path alongside temporal CNN features. Motor has no
+strategic position input. Runtime stays deterministic CNN -> Motor inference,
+with no predictor, planner, procedural steering, or hidden correction.
 
-Reward and success measurement may use authoritative state because they belong
-to the training laboratory, not the deployed controller.
-
-Default dense reward measures reduction in absolute target distance normalized
-by that episode's initial target distance, keeping the total progress scale
-comparable across curriculum stages. The legacy position/speed potential is
-configurable but disabled by default. Terminal success adds positive reward.
-Timeout adds negative terminal reward.
+Legacy PPO is available explicitly with --algorithm ppo in operator scripts.
+Its competence-gated curriculum, Gaussian exploration, 10 Hz transitions,
+256-transition rollout buffer, GAE and measured reward shaping remain experimental
+comparison code, not the default learning method or a success fallback.
 
 ## Success
 

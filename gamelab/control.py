@@ -67,6 +67,7 @@ class Decision:
     sequence: int = 0
     command_id: int | None = None
     applied_tick: int | None = None
+    input_delay: float = 0.
 
 
 @dataclass
@@ -149,6 +150,7 @@ def control_loop(
     goals: GoalMailbox | None = None,
     on_status: Callable | None = None,
     on_transition: Callable | None = None,
+    on_motor_transition: Callable | None = None,
 ) -> dict[str, Any]:
     model.eval()
     guard = EventGuard(client, state)
@@ -184,6 +186,7 @@ def control_loop(
     history: SensorHistory | None = None
     cached_goal: torch.Tensor | None = None
     desired_vx = 0.0
+    input_delay = 0.0
     active_decision: Decision | None = None
     pending_motor: PendingMotor | None = None
     best_stopped_proximity = 0.0
@@ -297,6 +300,13 @@ def control_loop(
                     != pending_motor.command_id
                 ):
                     raise EvidenceError("applied command does not match policy")
+                if pending_motor.command_id is not None:
+                    applied_tick = player.get("last_input_tick")
+                    if type(applied_tick) is not int or not pending_motor.tick < applied_tick <= tick:
+                        raise EvidenceError("invalid command application tick")
+                    # Extra observed transport delay, in nominal Motor periods.
+                    # The next command's delay is unknown; never expose it.
+                    input_delay = min(4., (applied_tick - pending_motor.tick - 1) / motor_stride)
 
                 if physically_stopped:
                     distance_now = abs(error)
@@ -349,6 +359,25 @@ def control_loop(
                 ) and abs(error) > tolerance
                 if entered_wall:
                     wall_contacts += 1
+                # Only acknowledged, full nominal intervals are system-ID data.
+                # Late realtime commands and boundary collisions are not samples
+                # of the free local dynamics. No synthetic ticks are inserted.
+                if (
+                    on_motor_transition is not None
+                    and tick - pending_motor.tick == motor_stride
+                    and WORLD_MIN_X < x < WORLD_MAX_X
+                    and WORLD_MIN_X < pending_motor.before_x < WORLD_MAX_X
+                    and (
+                        pending_motor.command_id is None
+                        or player.get("last_input_tick") == pending_motor.tick + 1
+                    )
+                ):
+                    on_motor_transition((
+                        pending_motor.before_vx,
+                        current_motor,
+                        x - pending_motor.before_x,
+                        vx,
+                    ))
                 motor_reward = step_reward(
                     reward_config,
                     before_distance=pending_motor.before_distance,
@@ -380,6 +409,7 @@ def control_loop(
                 vx=vx,
                 motor_x=current_motor,
                 desired_vx=desired_vx,
+                input_delay=input_delay,
                 error=error,
                 world_tick=tick,
                 start_world_tick=start_tick,
@@ -442,7 +472,7 @@ def control_loop(
                 latched_history = history.tensor().clone()
                 with torch.no_grad():
                     spine_mean, spine_log_std, hidden = model.spine_parameters(
-                        latched_history
+                        latched_history, input_delay=input_delay,
                     )
                     spine_action, spine_log_prob = squashed_action(
                         spine_mean,
@@ -460,6 +490,7 @@ def control_loop(
                     old_value=float(value.item()),
                     tick=tick,
                     sequence=sequence,
+                    input_delay=input_delay,
                 )
                 next_spine_tick = tick + spine_stride
                 spine_calls += 1

@@ -49,5 +49,5 @@ SPINE_INITIAL_LOG_STD = -1.2
 PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
 
-CHECKPOINT_VERSION = 5
-MODEL_CONFIGURATION = "spine-cnn4x32-lateststate-desiredvx-policy-v5"
+CHECKPOINT_VERSION = 6
+MODEL_CONFIGURATION = "spine-cnn4x32-lateststate-delay-conditioned-policy-v6"

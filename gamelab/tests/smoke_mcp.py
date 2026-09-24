@@ -8,6 +8,7 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -22,6 +23,8 @@ from gamelab.tests.motor_fixture import create_verified_motor_fixture
 ROOT = Path(__file__).resolve().parents[2]
 SERVER_PORT = 17600
 HOST_PORT = 17700
+PLAYER_ID = "player1"
+SECOND_PLAYER_ID = "player2"
 EXPECTED_TOOLS = {
     "health",
     "login",
@@ -157,15 +160,16 @@ async def run_flow(
     operator: HostClient,
 ) -> int:
     params = StdioServerParameters(
-        command=str(ROOT / "gamelab/op/mcp.sh"),
-        args=[],
+        command=sys.executable if HOST_PORT != 17700 else str(ROOT / "gamelab/op/mcp.sh"),
+        args=["-m", "gamelab.tests.mcp_runner"] if HOST_PORT != 17700 else [],
         cwd=str(ROOT),
         env={
             **os.environ,
             "GAMELAB_CHECKPOINT": str(checkpoint),
             "GAMELAB_REWARD_CONFIG": str(reward_config),
             "GAMELAB_MOTOR_ROOT": str(motor_root),
-            "GAMELAB_PLAYER": "player1",
+            "GAMELAB_PLAYER": PLAYER_ID,
+            "GAMELAB_TEST_HOST_PORT": str(HOST_PORT),
             "GAMELAB_HOST_REGISTRY": str(reward_config.parent / "hosts.json"),
         },
     )
@@ -191,7 +195,7 @@ async def run_flow(
             ]
             if len(default_hosts) != 1:
                 raise AssertionError(f"default Host missing from laboratory listing: {hosts}")
-            if default_hosts[0].get("port") != 17700 or default_hosts[0].get("owner") != "game_v1":
+            if default_hosts[0].get("port") != HOST_PORT or default_hosts[0].get("owner") != "game_v1":
                 raise AssertionError(f"bad default Host contract: {default_hosts[0]}")
 
             denied = await tool(
@@ -214,16 +218,16 @@ async def run_flow(
             lab_host = created.get("host") or {}
             if created.get("created") is not True:
                 raise AssertionError(f"laboratory Host was not created: {created}")
-            if lab_host.get("host_id") != "lab-second" or lab_host.get("port") == 17700:
+            if lab_host.get("host_id") != "lab-second" or lab_host.get("port") == HOST_PORT:
                 raise AssertionError(f"laboratory Host did not use a separate port: {created}")
 
             second_login = await tool(
                 session,
                 "login",
-                {"player_id": "player2", "host_id": "lab-second"},
+                {"player_id": SECOND_PLAYER_ID, "host_id": "lab-second"},
             )
             payloads.append(second_login)
-            if second_login.get("session", {}).get("player_id") != "player2":
+            if second_login.get("session", {}).get("player_id") != SECOND_PLAYER_ID:
                 raise AssertionError(f"second Host did not login player2: {second_login}")
 
             second_health = await tool(
@@ -244,19 +248,19 @@ async def run_flow(
             if health.get("host_session_active") or health.get("attached_to_player"):
                 raise AssertionError(f"fresh Host unexpectedly has an active session: {health}")
 
-            lab_login = await tool(session, "login", {"player_id": "player1"})
+            lab_login = await tool(session, "login", {"player_id": PLAYER_ID})
             payloads.append(lab_login)
             if lab_login.get("reused") is not False:
                 raise AssertionError(f"GameLab did not create fresh session: {lab_login}")
-            if lab_login.get("session", {}).get("player_id") != "player1":
+            if lab_login.get("session", {}).get("player_id") != PLAYER_ID:
                 raise AssertionError(f"GameLab login returned wrong player: {lab_login}")
 
-            lab_reuse = await tool(session, "login", {"player_id": "player1"})
+            lab_reuse = await tool(session, "login", {"player_id": PLAYER_ID})
             payloads.append(lab_reuse)
             if lab_reuse.get("reused") is not True:
                 raise AssertionError(f"GameLab did not reuse its Host session: {lab_reuse}")
 
-            operator_login = operator.login("player1")
+            operator_login = operator.login(PLAYER_ID)
             if operator_login.get("reused") is not True:
                 raise AssertionError(
                     f"ordinary Host client did not reuse GameLab-created session: {operator_login}"
@@ -701,6 +705,15 @@ async def run_flow(
 
 
 def main() -> int:
+    global HOST_PORT, PLAYER_ID, SECOND_PLAYER_ID
+    import gamelab.hosts as catalog_module
+    existing = os.environ.get("GAMELAB_TEST_EXISTING_SERVER") == "1"
+    saved_port = catalog_module.HOST_PORT
+    if existing:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            HOST_PORT = probe.getsockname()[1]
+        catalog_module.HOST_PORT = HOST_PORT
     with tempfile.TemporaryDirectory(prefix="gamelab-mcp-smoke-") as temp:
         temp_path = Path(temp)
         checkpoint = temp_path / "spine_motor.pt"
@@ -713,7 +726,7 @@ def main() -> int:
         with server_log_path.open("w+", encoding="utf-8") as server_log, host_log_path.open(
             "w+", encoding="utf-8"
         ) as host_log:
-            server = subprocess.Popen(
+            server = None if existing else subprocess.Popen(
                 [str(ROOT / "gameserver/v1/op/server.sh")],
                 cwd=ROOT,
                 stdout=server_log,
@@ -724,9 +737,10 @@ def main() -> int:
             host: subprocess.Popen | None = None
             operator: HostClient | None = None
             try:
-                wait_port(SERVER_PORT, server)
+                if server is not None:
+                    wait_port(SERVER_PORT, server)
                 host = subprocess.Popen(
-                    [str(ROOT / "gameclient/v1/op/host.sh")],
+                    [sys.executable, "-m", "gameclient.v1.host.server", "--port", str(HOST_PORT)],
                     cwd=ROOT,
                     stdout=host_log,
                     stderr=subprocess.STDOUT,
@@ -738,7 +752,7 @@ def main() -> int:
                 tool_count = asyncio.run(
                     run_flow(checkpoint, reward_config, motor_root, operator)
                 )
-                if server.poll() is not None or host.poll() is not None:
+                if (server is not None and server.poll() is not None) or host.poll() is not None:
                     raise AssertionError("backend died during GameLab MCP smoke")
                 print(
                     f"PASS gamelab MCP smoke tools={tool_count} executive=yes "
@@ -762,6 +776,7 @@ def main() -> int:
                     operator.close()
                 stop_group(host)
                 stop_group(server)
+                catalog_module.HOST_PORT = saved_port
 
 
 if __name__ == "__main__":

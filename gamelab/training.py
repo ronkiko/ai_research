@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import random
 import threading
@@ -43,6 +43,7 @@ from .runtime import checkpoint_path, ensure_player, reset_player_state
 
 
 from .control import Decision as Transition, control_loop
+from .control import GoalMailbox
 
 
 @dataclass
@@ -57,6 +58,7 @@ class EpisodeResult:
     controller_requests: int
     transitions: list[Transition]
     evidence: dict
+    motor_transitions: list[tuple[float, float, float, float]] = field(default_factory=list)
 
 
 SPINE_VERIFY_CASES = (
@@ -179,15 +181,18 @@ def collect_episode(
 ) -> EpisodeResult:
     state = reset_player_state(client, player_id, spawn_x=spawn_x)
     transitions: list[Transition] = []
+    motor_transitions: list[tuple[float, float, float, float]] = []
     result = control_loop(
         model, client, state, target_x=target_x, tolerance=SUCCESS_TOLERANCE,
         max_seconds=max_seconds, sampled=sampled, reward_config=reward_config,
         cancel=cancel, on_transition=transitions.append,
+        on_motor_transition=motor_transitions.append,
     )
     outcome = "success" if result["status"] == "reached" else result["status"]
     # Never optimize incomplete, stale, externally controlled or unconfirmed data.
     if outcome not in {"success", "timeout"}:
         transitions.clear()
+        motor_transitions.clear()
     elif transitions:
         transitions[-1].done = True
     final_x = float(result.get("x", player_from_state(state)["x"]))
@@ -197,6 +202,7 @@ def collect_episode(
         final_error=float(target_x)-final_x, reward=result["reward"],
         motor_steps=result["motor_steps"], controller_requests=result["controller_requests"],
         transitions=transitions, evidence=result,
+        motor_transitions=motor_transitions,
     )
 
 
@@ -292,6 +298,7 @@ def ppo_update(
 
     histories = torch.stack([item.history for item in transitions])
     proprioception = torch.stack([item.proprioception for item in transitions])
+    input_delays = torch.tensor([item.input_delay for item in transitions], dtype=torch.float32)
     actions = torch.tensor([item.action for item in transitions], dtype=torch.float32)
     old_log_probs = torch.tensor(
         [item.old_log_prob for item in transitions],
@@ -315,6 +322,7 @@ def ppo_update(
             mean, log_std, values = model.evaluate_spine(
                 histories[indexes],
                 proprioception[indexes],
+                input_delay=input_delays[indexes],
             )
             log_probs, base_entropy = squashed_log_prob(
                 mean,
@@ -361,7 +369,7 @@ def ppo_update(
             metrics[key] /= updates
     model.eval()
     with torch.no_grad():
-        _, _, predicted = model.evaluate_spine(histories, proprioception)
+        _, _, predicted = model.evaluate_spine(histories, proprioception, input_delay=input_delays)
         variance = returns.var(unbiased=False)
         metrics["explained_variance"] = (
             float(1 - (returns - predicted).var(unbiased=False) / variance)
@@ -546,13 +554,56 @@ def _prepare_reward_config(store: RewardStore, *, fresh: bool) -> RewardConfig:
     return store.load()
 
 
+def verify_recovery_policy(model, client, *, player_id: str) -> dict:
+    """Frozen correction tests; the apparatus changes goals, never actions."""
+    cases = []
+    for offset in (-4., -1.5, 1.5, 4.):
+        result = collect_episode(model, client, player_id=player_id,
+                                 spawn_x=500 + offset, target_x=500,
+                                 max_seconds=4., sampled=False)
+        cases.append({"kind": "small_overshoot", "initial_error": -offset,
+                      "passed": result.result == "success" and result.evidence["wall_contacts"] == 0,
+                      "error": result.final_error, "vx": result.evidence["vx"]})
+    for direction in (-1., 1.):
+        initial_target = 500 + direction * 300
+        state = reset_player_state(client, player_id, spawn_x=500)
+        goals = GoalMailbox(initial_target)
+        changed = False
+        reversed_motion = False
+        target = initial_target
+        peak_overshoot = 0.
+
+        def observe(status):
+            nonlocal changed, reversed_motion, target, peak_overshoot
+            if not changed and direction * status["vx"] >= 30:
+                # A new strategic target is now three units behind the moving
+                # body. Inertia forces an overshoot; only the network can return.
+                target = status["x"] - direction * 3
+                goals.update(target)
+                changed = True
+            elif changed:
+                peak_overshoot = max(peak_overshoot, direction * (status["x"] - target))
+                reversed_motion |= direction * status["vx"] < -.05
+
+        result = control_loop(model, client, state, target_x=initial_target,
+                              tolerance=SUCCESS_TOLERANCE, max_seconds=8.,
+                              sampled=False, goals=goals, on_status=observe)
+        cases.append({"kind": "moving_overshoot", "direction": direction,
+                      "passed": changed and reversed_motion and result["status"] == "reached"
+                                and result["wall_contacts"] == 0,
+                      "reversed": reversed_motion, "peak_overshoot": peak_overshoot,
+                      "error": target - result["x"], "vx": result["vx"]})
+    return {"passed": all(case["passed"] for case in cases), "cases": cases}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train GameLab Spine + Motor")
-    parser.add_argument("--episodes", type=int, default=50)
+    parser.add_argument("--episodes", type=int, default=200)
     parser.add_argument("--player", default="player1")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--target", type=float)
+    parser.add_argument("--algorithm", choices=("model-based", "ppo"), default="model-based")
     parser.add_argument(
         "--motor",
         required=True,
@@ -565,6 +616,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--episodes must be positive")
     if args.target is not None and not 0.0 <= args.target <= WORLD_MAX_X:
         raise SystemExit("--target must be within [0,1000]")
+
+    if args.algorithm == "model-based":
+        from .spine_school import train_cli
+        return train_cli(args)
 
     random.seed(args.seed)
     rng = random.Random(args.seed)

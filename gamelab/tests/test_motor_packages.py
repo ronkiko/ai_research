@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -19,14 +18,14 @@ from gamelab.motors.package import (
     get_motor_package,
     require_trained_motor,
 )
-from gamelab.tests.motor_fixture import SOURCE, create_verified_motor_fixture
+from gamelab.tests.motor_fixture import copy_clean_motor, create_verified_motor_fixture
 
 
 class MotorPackageTests(unittest.TestCase):
     def test_clean_package_is_untrained_and_rejected_by_spine(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shutil.copytree(SOURCE, root / "continuous_1d_v1")
+            copy_clean_motor(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
                 package = get_motor_package("continuous_1d_v1")
                 self.assertFalse(package.trained)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -19,7 +18,7 @@ from gamelab.motor_school import (
     run_school,
 )
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
-from gamelab.tests.motor_fixture import SOURCE
+from gamelab.tests.motor_fixture import copy_clean_motor
 
 
 class RuleMotor(torch.nn.Module):
@@ -128,7 +127,7 @@ class MotorSchoolTests(unittest.TestCase):
     def test_default_motor_school_converges_in_quick_stop_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            shutil.copytree(SOURCE, root / "continuous_1d_v1")
+            copy_clean_motor(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
                 result = run_school(
                     "continuous_1d_v1",
@@ -147,7 +146,7 @@ class MotorSchoolTests(unittest.TestCase):
     def test_normal_mode_uses_full_budget_and_keeps_best_verified_brain(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "motors"
-            shutil.copytree(SOURCE, root / "continuous_1d_v1")
+            copy_clean_motor(root)
             first = {
                 "passed": True,
                 "mean_abs_velocity_error": 6.0,

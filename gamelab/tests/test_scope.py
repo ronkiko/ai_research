@@ -27,6 +27,7 @@ class ScopeTests(unittest.TestCase):
 
         for relative in (
             "gamelab/models.py",
+            "gamelab/spine_school.py",
             "gamelab/runtime.py",
             "gamelab/training.py",
             "gamelab/mcp.py",

@@ -25,6 +25,18 @@ from gamelab.motors.continuous import ContinuousMotor, squashed_action
 
 
 class ModelTests(unittest.TestCase):
+    def test_measured_delay_conditions_learned_spine_features(self):
+        model = SpineMotorPolicy.fresh(3)
+        history = torch.ones(4, HISTORY_FRAMES)
+        with torch.no_grad():
+            model.spine.goal_mean.weight.fill_(.1)
+            model.spine.delay_adapter.weight.copy_(torch.eye(16))
+        immediate, _ = model.spine.policy_mean(history, input_delay=0.)
+        delayed, _ = model.spine.policy_mean(history, input_delay=.5)
+        self.assertNotEqual(float(immediate), float(delayed))
+        delayed.backward()
+        self.assertGreater(float(model.spine.delay_adapter.weight.grad.abs().sum()), 0.)
+
     def test_precision_goal_displacement_has_visible_signed_scale(self):
         right = sensor_frame(
             x=500.0, vx=0.0, motor_x=0.0, target_x=505.0

@@ -31,7 +31,7 @@ class RuleModel:
         self.motor = RuleMotor()
         self.spine = RuleSpine()
     def eval(self): pass
-    def spine_parameters(self, history):
+    def spine_parameters(self, history, input_delay=0.):
         raw = history[3, -1]
         signal = torch.clamp(raw, -0.999999, 0.999999)
         # Test-only convergent rule. Saturated far goals use a bounded cruise;

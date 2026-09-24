@@ -112,8 +112,12 @@ class SpineCNN(nn.Module):
         # supplied by the Spine policy distribution, not by Motor noise.
         nn.init.zeros_(self.goal_mean.weight)
         nn.init.zeros_(self.goal_mean.bias)
+        # Measured transport delay conditions learned feedback features. Zero
+        # initialization keeps a fresh policy neutral for every latency.
+        self.delay_adapter = nn.Linear(16, 16, bias=False)
+        nn.init.zeros_(self.delay_adapter.weight)
 
-    def policy_mean(self, history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def policy_mean(self, history: torch.Tensor, input_delay=0.) -> tuple[torch.Tensor, torch.Tensor]:
         single = history.ndim == 2
         if single:
             history = history.unsqueeze(0)
@@ -127,6 +131,10 @@ class SpineCNN(nn.Module):
         history_hidden = self.history_hidden(self.conv(history))
         latest = history[..., -1]
         hidden = self.hidden(torch.cat((history_hidden, latest), dim=-1))
+        delay = torch.as_tensor(input_delay, dtype=hidden.dtype, device=hidden.device).reshape(-1, 1)
+        if delay.shape[0] not in (1, hidden.shape[0]):
+            raise ValueError("input delay must be scalar or match the history batch")
+        hidden = hidden + delay.clamp(0., 4.) * self.delay_adapter(hidden)
         mean = self.goal_mean(hidden).squeeze(-1)
         if single:
             return mean[0], hidden[0]
@@ -142,8 +150,8 @@ class SpineCNN(nn.Module):
         )
         return torch.cat((value, reserved), dim=-1)
 
-    def forward(self, history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        mean, hidden = self.policy_mean(history)
+    def forward(self, history: torch.Tensor, input_delay=0.) -> tuple[torch.Tensor, torch.Tensor]:
+        mean, hidden = self.policy_mean(history, input_delay)
         desired_vx = torch.tanh(mean)
         return self.motor_goal(desired_vx), hidden
 
@@ -197,8 +205,9 @@ class SpineMotorPolicy(nn.Module):
     def spine_parameters(
         self,
         histories: torch.Tensor,
+        input_delay=0.,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mean, hidden = self.spine.policy_mean(histories)
+        mean, hidden = self.spine.policy_mean(histories, input_delay)
         log_std = self.spine_log_std.clamp(-5.0, 0.0).expand_as(mean)
         return mean, log_std, hidden
 
@@ -206,8 +215,9 @@ class SpineMotorPolicy(nn.Module):
         self,
         histories: torch.Tensor,
         proprioception: torch.Tensor,
+        input_delay=0.,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mean, log_std, hidden = self.spine_parameters(histories)
+        mean, log_std, hidden = self.spine_parameters(histories, input_delay)
         value = self.critic(hidden, proprioception)
         return mean, log_std, value
 

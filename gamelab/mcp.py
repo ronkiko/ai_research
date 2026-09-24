@@ -720,10 +720,12 @@ def reward_set(
     stopped_near_goal_bonus: StoppedNearGoalBonus = None,
     near_goal_radius: NearGoalRadius = None,
 ) -> dict[str, float]:
-    """Change bounded reward weights used by subsequent training; omit unchanged fields.
+    """Change measured episode reward instrumentation; omit unchanged fields.
 
     stopped_near_goal_bonus is the maximum cumulative episode shaping bonus for
     improved stopped proximity inside near_goal_radius, not a per-step STOP reward.
+    The model-based school's versioned differentiable state cost is separate;
+    these weights affect episode reports and the optional legacy PPO experiment.
     """
     return laboratory.reward_set(
         distance_progress_scale=distance_progress_scale,
@@ -737,7 +739,7 @@ def reward_set(
 
 @mcp.tool(annotations=WRITE)
 def training_start(
-    episodes: int = 50,
+    episodes: int = 200,
     target_x: float | None = None,
     fresh: bool = False,
     seed: int = 1,

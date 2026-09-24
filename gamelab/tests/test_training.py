@@ -478,7 +478,7 @@ class TrainingTests(unittest.TestCase):
             def eval(self):
                 return self
 
-            def spine_parameters(self, history):
+            def spine_parameters(self, history, input_delay=0.):
                 raw = history[3, -1]
                 signal = torch.clamp(raw, -0.999999, 0.999999)
                 decoded = (
@@ -507,7 +507,7 @@ class TrainingTests(unittest.TestCase):
                 return torch.tensor(0.0)
 
         class AlwaysRightModel(GoalConditionedRuleModel):
-            def spine_parameters(self, history):
+            def spine_parameters(self, history, input_delay=0.):
                 desired = torch.tensor(0.9)
                 return (
                     torch.atanh(desired),

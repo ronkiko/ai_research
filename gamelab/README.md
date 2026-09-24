@@ -85,6 +85,11 @@ Spine sees a 32-frame temporal history with four measured/command channels:
 - current normalized motor effort `motor_x`;
 - strategic goal displacement `target_x - x`.
 
+It also receives the latest acknowledged command-application delay, normalized
+by one Motor interval. A learned delay-conditioned layer can adapt feedback to
+this measurement. It is not guessed from wall-clock RTT and does not expose the
+next command's as-yet unknown delay.
+
 Motor does **not** receive `target_x` or `goal_dx`. It receives only:
 
 - `MotorGoal=[desired_vx,0,0,0]` emitted by Spine;
@@ -144,110 +149,36 @@ state as one unit.
 Spine TRAIN must explicitly select a Motor:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 100
+./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200
 ```
 
-Spine receives four measured channels over a 32-frame history: normalized
-position, velocity, current Motor effort, and signed goal displacement. Goal
-displacement uses a bounded local scale (`tanh(dx/40)`) instead of division by
-the whole 1000-unit world, so 5..40-unit precision targets remain numerically
-visible. The temporal CNN is fused with a direct path from the latest measured
-frame so current goal direction, velocity and effort cannot be washed out by
-history pooling.
+The default Spine trainer uses measured dynamics policy search: it learns a
+local motion predictor from its own acknowledged physical consequences, then
+optimizes the existing CNN through predicted trajectories and the frozen Motor.
+Precision and long-distance goals are trained together. Every ten updates,
+frozen development tasks select the best checkpoint; final certification uses
+a separate suite in the canonical world. No imagined trajectory counts as success.
 
-Normal Spine training uses a competence-gated curriculum rather than increasing
-difficulty because an episode counter advanced. The five frontier bands are
-`precision 5..40`, `short 20..100`, `medium 60..220`,
-`long 150..450`, and `full 300..900` world units. Their rollout horizons
-grow with difficulty as `3/4/5/6/8` simulated seconds. A stage advances only
-after at least 60% SUCCESS over the most recent 10 deterministic frontier
-probes. Sampled TRAIN rollouts still explore and provide PPO experience, but
-their exploration noise is never counted as curriculum competence. Each
-frontier TRAIN episode is followed by a frozen-mean probe on the same
-spawn/target/horizon; logs report its `probe_error` and `probe_vx` separately.
+See [SPINE_SCHOOL.md](SPINE_SCHOOL.md) for the objective, literature, evidence
+boundaries, checkpoint/resume semantics and the legacy PPO comparison mode.
+The same implementation serves shell TRAIN and MCP TRAIN. Realtime waits for
+Host ticks; unpaced advances canonical ZoneRuntime ticks without wall-clock sleeps.
 
-From the second stage onward, 20% of episodes replay precision tasks and 15%
-review a randomly selected earlier stage; replay episodes train the policy but
-cannot promote the current frontier. This keeps exact stopping alive while
-longer transfers are learned. Non-fixed tasks sample left/right symmetrically.
-The safe edge margin expands with the frontier from `[100,900]` to
-`[20,980]`. Curriculum stage, recent frontier results and task RNG state are
-checkpointed, so resume continues the same course instead of silently restarting
-the task sequence. `--target 987` remains a focused experiment: the target is
-fixed while curriculum-compatible spawn positions vary.
+Spine observes a four-channel 32-frame history (position, velocity, effort and
+`tanh(goal_dx/40)`) with a direct latest-frame feature path. Motor receives only
+requested velocity plus its local velocity/effort. Inference remains the learned
+CNN at 10 Hz and frozen learned Motor at 60 Hz; the predictor is training-only.
 
-Default Spine reward normalizes dense distance progress by the initial distance
-of the presented task. Full progress on a 20-unit precision task and on a
-600-unit transfer therefore has the same scale. The former multiplicative
-position/speed potential remains an opt-in experiment but is disabled by
-default because it could penalize a stopped precision policy for beginning to
-move toward its target. A bounded near-goal settling potential additionally rewards only new episode-best
-progress toward a state that is both close to the target and slow. This provides
-braking credit before exact `vx=0` without changing SUCCESS or prescribing any
-actuator command. The exact stopped-near-goal bonus and terminal SUCCESS remain
-state based. Entering a world boundary while the goal is
-elsewhere is penalized as a collision rather than treated as a free brake.
+Success still requires error <=0.9, exact zero velocity, a 0.1-second hold of fresh
+world ticks, and no wall contact. Terminal actuator cleanup cannot change the
+outcome. Each episode resets to its sampled spawn without replacing the session;
+RUN starts from the current body state and does not reset it.
 
-After the requested PPO budget, TRAIN runs frozen deterministic Spine VERIFY.
-The default suite contains left/right, short/long and near-boundary tasks; a
-fixed `--target` verifies that target from several starting positions. PASS
-requires physical success at the normal `±0.9` tolerance, zero velocity and no
-wall contact. A direction-only improvement is not considered learned.
-
-TRAIN refuses an untrained/unverified package, a missing brain, a brain hash
-mismatch, an incompatible physical/socket manifest, or a checkpoint created
-with a different Motor brain. The verified Motor is frozen during Spine PPO;
-`--fresh` resets Spine, critic and optimizer, not the mounted Motor.
-
-No demonstration or scripted action labels are used in either stage.
-
-TRAIN has two pacing modes over one control/training implementation:
-
-- realtime: authoritative Zone ticks arrive through GameClient Host while the
-  GameServer scheduler waits for wall time;
-- unpaced: the same canonical `gameserver.v1.zone.model.ZoneRuntime` is ticked
-  directly as fast as CPU/model inference allows.
-
-Both modes use 120 Hz physical ticks, Motor every 2 ticks, Spine every 12 ticks,
-the same sensor history, reward, PPO update, reset semantics, success hold and
-checkpoint. PPO accumulates at least 256 Spine transitions across episode
-boundaries before a normal update, then uses 64-sample minibatches for four
-epochs. Discount/GAE duration is measured in Spine-decision intervals: the six
-Motor intervals executed beneath one latched `desired_vx` are one policy
-discount step, not six. Fresh Spine exploration starts at `log_std=-1.2`
-(std about 0.30) and the default entropy bonus is zero, allowing the learned
-variance to narrow when precision evidence supports it. Episode timeout is
-measured in simulated world ticks. Wall time is only a liveness
-watchdog/diagnostic and cannot change the learned trajectory.
-
-Default reward shaping does not reward a particular motor command. It rewards a
-measured state only when the player is physically stopped (`vx=0`) within ±5
-of the target. The bounded proximity bonus increases smoothly toward the
-target and is paid only for improvement over the best stopped proximity already
-seen in that episode, so waiting or repeatedly stopping at the same point cannot
-farm reward. Exact SUCCESS remains a separate larger terminal bonus.
-
-Each TRAIN episode begins with a non-destructive Host episode reset to
-`x=100, vx=0, motor_x=0`. VERIFY performs the same reset before every run.
-The reset preserves the active Host/GameServer session and Host command
-sequence; GameLab never uses logout/login for episode boundaries. A live RUN
-does not reset and begins from the player's actual current state.
-
-Targets may be sampled across the one-dimensional world. Reward is based on
-measured progress toward the target, with terminal success only when the
-learned policy gets within tolerance and has actually stopped.
-
-Default success condition:
-
-```text
-abs(target_x - x) <= 0.9
-vx == 0
-held for 0.1 seconds of fresh server-tick evidence
-```
-
-The terminal actuator relaxation (`motor_x=0`) after success/timeout/cancel is
-cleanup only. It is applied after outcome classification and cannot turn a
-failed episode into a success.
+Normal training consumes the full episode budget and exports the best measured
+candidate. Each episode includes a physical rollout and two batched imagined updates.
+To continue, omit `--fresh`; repeating `--fresh` starts over. The Motor is never
+reset by Spine training. Legacy on-policy PPO remains opt-in with
+`--algorithm ppo`, including its competence-gated curriculum and reward shaping.
 
 ## Python environment
 
@@ -303,10 +234,12 @@ GameServer or GameClient Host because it executes the canonical ZoneRuntime
 in-process:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 50 --target 987
+./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200 --target 987
 ```
 
-The modular Spine checkpoint uses format v4. Discrete three-logit v1 weights
+The modular Spine checkpoint uses format v6 (measured-delay conditioning).
+Earlier Spine checkpoints require `--fresh`; Motor packages are unchanged.
+Discrete three-logit v1 weights
 are intentionally not loaded into it; replacing the active model archives the
 previous checkpoint bytes under `runtime/checkpoints/`.
 
@@ -314,11 +247,11 @@ With `--fresh`, both shell TRAIN and realtime MCP TRAIN immediately reset the
 Spine/critic checkpoint, optimizer metadata, episode counter, PRNG seed and
 persisted reward configuration to canonical defaults. The selected verified
 Motor brain is mounted frozen and is never reset by Spine TRAIN. Every training episode then resets
-physical player state to x=100, vx=0, move=0. Host session/command sequence and
+physical player state to the sampled spawn, vx=0, motor_x=0. Host session/command sequence and
 append-only evidence journals are intentionally preserved because they are world
 identity/audit state, not learned state. Shell TRAIN prints the effective Reward
-JSON before episode 1. This prevents a prior Director/experiment reward override
-from silently contaminating a fresh learning test.
+JSON before episode 1. Measured reward instrumentation and the model-based
+school's versioned state cost are reported separately.
 
 It writes the normal GameLab checkpoint. Test that checkpoint against the real
 paced world with ordinary frozen VERIFY:
@@ -428,6 +361,9 @@ The gate verifies:
 - Python compilation;
 - model shapes and the Spine -> Motor gradient path;
 - real PPO parameter updates;
+- measured predictor validation and Spine gradients with frozen Motor weights;
+- fresh Motor + Spine convergence, randomized held-out goals, and the same
+  learned weights reaching targets through the real paced Host/Zone;
 - realtime use of the official GameClient Host API, with the sole direct
   GameServer import restricted to the operator-only unpaced adapter and its
   canonical `ZoneRuntime`;

@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -51,7 +52,17 @@ def stop_group(process: subprocess.Popen | None) -> None:
         process.wait(timeout=2)
 
 
-def main() -> int:
+def main(*, learned_checkpoint: Path | None = None) -> int:
+    import gamelab.hosts as catalog_module
+    existing = os.environ.get("GAMELAB_TEST_EXISTING_SERVER") == "1"
+    saved_port = catalog_module.HOST_PORT
+    host_port = HOST_PORT
+    player_id = "player1"
+    if existing:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            host_port = probe.getsockname()[1]
+        catalog_module.HOST_PORT = host_port
     with tempfile.TemporaryDirectory(prefix="gamelab-smoke-") as temp:
         temp_path = Path(temp)
         server_log_path = temp_path / "server.log"
@@ -59,7 +70,7 @@ def main() -> int:
         with server_log_path.open("w+", encoding="utf-8") as server_log, host_log_path.open(
             "w+", encoding="utf-8"
         ) as host_log:
-            server = subprocess.Popen(
+            server = None if existing else subprocess.Popen(
                 [str(ROOT / "gameserver/v1/op/server.sh")],
                 cwd=ROOT,
                 stdout=server_log,
@@ -71,19 +82,20 @@ def main() -> int:
             operator: HostClient | None = None
             lab: HostClient | None = None
             try:
-                wait_port(SERVER_PORT, server)
+                if server is not None:
+                    wait_port(SERVER_PORT, server)
                 host = subprocess.Popen(
-                    [str(ROOT / "gameclient/v1/op/host.sh")],
+                    [sys.executable, "-m", "gameclient.v1.host.server", "--port", str(host_port)],
                     cwd=ROOT,
                     stdout=host_log,
                     stderr=subprocess.STDOUT,
                     text=True,
                     start_new_session=True,
                 )
-                wait_port(HOST_PORT, host)
+                wait_port(host_port, host)
 
                 operator = HostClient("operator-smoke")
-                login = operator.login("player1")
+                login = operator.login(player_id)
                 if login.get("reused"):
                     raise AssertionError("fresh Host unexpectedly reused player session")
 
@@ -92,7 +104,7 @@ def main() -> int:
                     raise AssertionError(f"fresh session sequence must be 0: {operator_session}")
 
                 lab = HostClient("gamelab-smoke")
-                state = ensure_player(lab, "player1")
+                state = ensure_player(lab, player_id)
                 player = player_from_state(state)
                 if float(player["x"]) != 100.0:
                     raise AssertionError(f"P must start at 100, got {player['x']}")
@@ -168,8 +180,19 @@ def main() -> int:
                 ):
                     raise AssertionError(f"GameLab unexpectedly owned Host session lifecycle: {events}")
 
-                if server.poll() is not None or host.poll() is not None:
+                if (server is not None and server.poll() is not None) or host.poll() is not None:
                     raise AssertionError("backend died during GameLab inference smoke")
+
+                if learned_checkpoint is not None:
+                    from gamelab.models import model_for_checkpoint
+                    from gamelab.training import verify_spine_policy, verify_recovery_policy
+                    learned, _ = model_for_checkpoint(learned_checkpoint)
+                    verification = verify_spine_policy(learned, lab, player_id=player_id)
+                    verification["recovery"] = verify_recovery_policy(learned, lab, player_id=player_id)
+                    verification["passed"] = verification["passed"] and verification["recovery"]["passed"]
+                    if not verification["passed"]:
+                        raise AssertionError(f"learned paced verification failed: {verification}")
+                    print(f"PASS learned Spine real Host/Zone verification {verification}")
 
                 print(
                     "PASS gamelab shared-Host joystick smoke "
@@ -196,6 +219,7 @@ def main() -> int:
                     operator.close()
                 stop_group(host)
                 stop_group(server)
+                catalog_module.HOST_PORT = saved_port
 
 
 if __name__ == "__main__":

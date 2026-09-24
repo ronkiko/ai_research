@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections import deque
-import random
 import threading
 from typing import Any
 
@@ -10,7 +9,6 @@ import torch
 
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
-    PPO_LEARNING_RATE,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
     WORLD_MAX_X,
@@ -21,17 +19,15 @@ from .models import (
     build_spine_policy,
     load_checkpoint,
     model_for_checkpoint,
-    motor_checkpoint_extra,
-    package_for_checkpoint,
     policy_id,
-    save_checkpoint,
 )
 from .motors.package import DEFAULT_MOTOR_ID, MotorPackageError, list_motor_packages
 from .control import GoalMailbox
 from .journal import Journal
 from .reward import RewardConfig, RewardStore
 from .runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
-from .training import _prepare_reward_config, collect_episode, ppo_update
+from .training import _prepare_reward_config
+from .spine_school import ALGORITHM, train_school
 
 
 class LaboratoryBusyError(RuntimeError):
@@ -91,6 +87,8 @@ class Laboratory:
             "motor_id": package.motor_id,
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
+            "algorithm": extra.get("algorithm", "legacy_ppo"),
+            "spine_verification": extra.get("spine_verification"),
             "policy_id": policy_id(model),
             "motors": list_motor_packages(),
         }
@@ -253,6 +251,7 @@ class Laboratory:
             "training",
             {
                 "episodes_requested": episodes,
+                "algorithm": ALGORITHM,
                 "episodes_completed": 0,
                 "target_x": target,
                 "fresh": bool(fresh),
@@ -289,137 +288,58 @@ class Laboratory:
         player_id: str,
         motor_id: str,
     ) -> None:
-        random.seed(seed)
-        torch.manual_seed(seed)
-        path = checkpoint_path()
-        model, motor_package = build_spine_policy(motor_id, seed=seed)
-        optimizer = torch.optim.Adam(
-            model.trainable_parameters(),
-            lr=PPO_LEARNING_RATE,
-        )
-        motor_extra = motor_checkpoint_extra(motor_package)
-        prior = 0
-        if fresh:
-            save_checkpoint(
-                path,
-                model,
-                optimizer=optimizer,
-                extra={"episodes": 0, "seed": seed, **motor_extra},
-            )
-        elif path.exists():
-            installed = package_for_checkpoint(path)
-            if installed.motor_id != motor_package.motor_id:
-                raise RuntimeError(
-                    f"checkpoint uses motor {installed.motor_id!r}, "
-                    f"requested {motor_package.motor_id!r}"
-                )
-            extra = load_checkpoint(path, model, optimizer=optimizer)
-            prior = int(extra.get("episodes", 0))
-        else:
-            save_checkpoint(
-                path,
-                model,
-                optimizer=optimizer,
-                extra={"episodes": 0, "seed": seed, **motor_extra},
-            )
-
         client = HostClient("gamelab-mcp-train", host_id=host_id)
+        prior_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
         recent: deque[dict[str, Any]] = deque(maxlen=20)
-        try:
-            ensure_player(client, player_id)
+        completed = 0
 
-            completed = 0
-            for offset in range(1, episodes + 1):
-                if self._cancel.is_set():
-                    break
-                episode_number = prior + offset
-                target = (
-                    float(target_x)
-                    if target_x is not None
-                    else float(random.randint(5, 995))
-                )
-                result = collect_episode(
-                    model,
-                    client,
-                    player_id=player_id,
-                    target_x=target,
-                    max_seconds=max_seconds,
-                    reward_config=reward,
-                    cancel=self._cancel,
-                )
-                before_policy = policy_id(model)
-                if self._journal is not None:
-                    self._journal.append("rollout", {
-                        "episode": episode_number, "policy_id": before_policy,
-                        "target_x": target, "evidence": result.evidence,
-                        "transitions": [{
-                            "tick": t.tick, "next_tick": t.next_tick,
-                            "elapsed_steps": t.elapsed_steps, "action": t.action,
-                            "history": t.history.tolist(),
-                            "proprioception": t.proprioception.tolist(),
-                            "old_log_prob": t.old_log_prob, "old_value": t.old_value,
-                            "sequence": t.sequence, "command_id": t.command_id,
-                            "applied_tick": t.applied_tick, "reward": t.reward,
-                        } for t in result.transitions],
-                    })
-                if result.result == "cancelled":
-                    break
-                if result.result not in {"success", "timeout"}:
-                    raise RuntimeError(f"invalid rollout: {result.result}")
-
-                metrics = ppo_update(model, optimizer, result.transitions)
-                completed += 1
-                save_checkpoint(
-                    path,
-                    model,
-                    optimizer=optimizer,
-                    extra={
-                        "episodes": prior + completed,
-                        "seed": seed,
-                        **motor_checkpoint_extra(motor_package),
-                    },
-                )
-                summary = {
-                    "episode": episode_number,
-                    "target_x": target,
-                    "result": result.result,
-                    "final_x": result.final_x,
-                    "final_error": result.final_error,
-                    "reward": result.reward,
-                    "motor_steps": result.motor_steps,
-                    "controller_requests": result.controller_requests,
-                    "loss": metrics["loss"],
-                    "policy_loss": metrics["policy_loss"],
-                    "value_loss": metrics["value_loss"],
-                    "entropy": metrics["entropy"],
-                    "policy_id": policy_id(model),
-                    "timing": result.evidence,
-                    "diagnostics": metrics,
-                }
-                if self._journal is not None:
-                    self._journal.append("update", summary)
-                recent.append(summary)
-                with self._lock:
-                    record = dict(self._records["training"])
-                    record.update(
-                        status="running",
-                        episodes_completed=completed,
-                        last_episode=summary,
-                        recent_episodes=list(recent),
-                    )
-                    self._records["training"] = record
-
+        def report(summary):
+            nonlocal completed
+            completed += 1
+            if self._journal is not None:
+                self._journal.append("update", summary)
+            recent.append(summary)
             with self._lock:
                 record = dict(self._records["training"])
-                record.update(
-                    status="cancelled" if self._cancel.is_set() else "completed",
-                    episodes_completed=completed,
-                    recent_episodes=list(recent),
-                    checkpoint_ready=path.is_file(),
-                )
+                record.update(status="running", episodes_completed=completed,
+                              algorithm=ALGORITHM, last_episode=summary,
+                              recent_episodes=list(recent))
+                self._records["training"] = record
+
+        def record_rollout(result, identity, episode):
+            if self._journal is not None:
+                self._journal.append("rollout", {
+                    "episode": episode, "policy_id": identity,
+                    "target_x": result.target_x, "evidence": result.evidence,
+                    "motor_transitions": result.motor_transitions,
+                    "transitions": [{
+                        "tick": t.tick, "next_tick": t.next_tick,
+                        "elapsed_steps": t.elapsed_steps, "action": t.action,
+                        "history": t.history.tolist(),
+                        "proprioception": t.proprioception.tolist(),
+                        "sequence": t.sequence, "command_id": t.command_id,
+                        "applied_tick": t.applied_tick, "reward": t.reward,
+                        "input_delay": t.input_delay,
+                    } for t in result.transitions],
+                })
+
+        try:
+            result = train_school(
+                client, motor_id=motor_id, episodes=episodes, seed=seed,
+                fresh=fresh, player_id=player_id, target_x=target_x,
+                max_seconds=max_seconds, cancel=self._cancel,
+                on_episode=report, on_rollout=record_rollout, final_verify=False,
+            )
+            with self._lock:
+                record = dict(self._records["training"])
+                record.update(result)
+                record.update(status="cancelled" if result["cancelled"] else "completed",
+                              recent_episodes=list(recent))
                 self._records["training"] = record
         finally:
             client.close()
+            torch.set_num_threads(prior_threads)
 
     def start_verify(
         self,

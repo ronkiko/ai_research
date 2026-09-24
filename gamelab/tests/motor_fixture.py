@@ -17,9 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "motors" / "packages" / "continuous_1d_v1"
 
 
-def create_verified_motor_fixture(root: Path) -> Path:
+def copy_clean_motor(root: Path) -> Path:
+    """Copy source only, independent of an operator's installed learned state."""
     package = root / "continuous_1d_v1"
-    shutil.copytree(SOURCE, package)
+    shutil.copytree(SOURCE, package, ignore=shutil.ignore_patterns(
+        "*.pt", "manifest.json", "history.jsonl", "checkpoints", "__pycache__",
+    ))
+    return package
+
+
+def create_verified_motor_fixture(root: Path) -> Path:
+    package = copy_clean_motor(root)
     manifest = json.loads(
         (package / "manifest.default.json").read_text(encoding="utf-8")
     )

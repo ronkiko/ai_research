@@ -73,6 +73,15 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   physical rest state, not a loose low-speed proxy. A verified rest sample must
   have `vx=0` and actuator effort within the server rest threshold.
 
+- Default Spine TRAIN uses `spine_school.py` measured dynamics policy search;
+  read `SPINE_SCHOOL.md` before changing it. Shell and MCP share the trainer.
+  Fit predictor coefficients only from acknowledged physical consequences;
+  require held-out prediction accuracy and keep the predictor out of inference.
+  Imagined trajectories never certify success. Preserve the best physically
+  validated candidate and test convergence with genuinely learned weights.
+- The PPO/GAE/frontier-specific rules below apply to the explicit legacy
+  `--algorithm ppo` experiment. Default model-based training samples all goal
+  scales together and backpropagates state costs, never teacher actions.
 - Spine TRAIN exploration belongs to the 10 Hz `desired_vx` policy. A verified
   Motor mounted under Spine must be deterministic at 60 Hz; never reintroduce
   Motor-action sampling into Spine TRAIN.

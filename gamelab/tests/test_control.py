@@ -33,7 +33,7 @@ class StopModel:
         self.motor = FixedMotor(0.0)
         self.spine = FakeSpine()
     def eval(self): pass
-    def spine_parameters(self, history):
+    def spine_parameters(self, history, input_delay=0.):
         return torch.tensor(0.0), torch.tensor(-20.0), torch.zeros(16)
     def deterministic_motor(self, goal, proprioception):
         mean, _ = self.motor.parameters_for(goal, proprioception)
@@ -119,6 +119,10 @@ class ControlTests(unittest.TestCase):
             def __init__(self):
                 super().__init__()
                 self.motor = FixedMotor(8.0)
+                self.delays = []
+            def spine_parameters(self, history, input_delay=0.):
+                self.delays.append(input_delay)
+                return super().spine_parameters(history, input_delay)
 
         class DelayedClient(Client):
             def __init__(self):
@@ -145,11 +149,12 @@ class ControlTests(unittest.TestCase):
                 return state
 
         clock, client, transitions = Clock(), DelayedClient(), []
+        model = RightModel()
         with patch("gamelab.control.time.monotonic", clock.monotonic), patch(
             "gamelab.control.time.sleep", clock.sleep
         ):
             result = control_loop(
-                RightModel(), client, client.state(), target_x=900,
+                model, client, client.state(), target_x=900,
                 tolerance=0.9, max_seconds=0.25, on_transition=transitions.append
             )
         self.assertTrue(transitions)
@@ -157,6 +162,9 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(first.next_tick - first.tick, 12)
         self.assertEqual(first.elapsed_steps, 1)
         self.assertGreater(result["motor_steps"], result["spine_calls"])
+        self.assertEqual(model.delays[0], 0.)
+        self.assertIn(.5, model.delays[1:])
+        self.assertIn(.5, [t.input_delay for t in transitions])
 
 
 if __name__ == "__main__":

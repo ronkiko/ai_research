@@ -68,16 +68,24 @@ scientific verification; it must not secretly supply the behavior being studied.
 | Motor: continuous 1D network | MotorGoal + local proprioception → scalar effort [-1,+1] | 60 Hz |
 | Host | Session, command sequence, transport, attributed events | Request-driven |
 | Zone | Sole mutable physical authority | 120 Hz |
-| GameLab training infrastructure | Rollout, measured reward, PPO, checkpoints, evidence | Between rollouts |
+| GameLab training infrastructure | Measured system identification, policy search, checkpoints, evidence | Between rollouts |
 
 LLM latency never pauses the body or the world. Motor and Spine are learned in
 separate stages: Motor School first teaches a local physical reflex, then Spine
-PPO mounts that verified Motor frozen. Motor School samples a continuous
+School mounts that verified Motor frozen. Motor School samples a continuous
 requested-velocity distribution including explicit rest commands; frozen
 verification uses unseen commands and checks both average and worst-case
 tracking/rest error. No scripted steering, teacher action or procedural fallback
 completes either task. v1 has one x-axis actuator and one Motor, not a simulated anatomical leg.
-Critic and optimizer are training infrastructure, not an additional actuator.
+Predictor, critic and optimizer are training infrastructure, not additional actuators.
+
+The current default school contract is [SPINE_SCHOOL.md](SPINE_SCHOOL.md):
+identify local dynamics from measured consequences, optimize the CNN through
+predicted trajectories, preserve the best physically validated policy and certify
+it in separate frozen real-world tasks. The predictor has learned coefficients,
+is training-only, and never supplies success evidence or acts during inference.
+Shell and MCP share this implementation. PPO-specific curriculum/GAE descriptions
+below apply only to the explicit legacy `--algorithm ppo` experiment.
 
 The Brain has two roles: scientist during TRAIN/VERIFY, strategist during RUN.
 Those are responsibilities of the same OpenCode, not new server processes.
@@ -86,7 +94,8 @@ Those are responsibilities of the same OpenCode, not new server processes.
 
 The deployed controller consumes only measured self x/vx/current actuator state
 and the strategic target. Spine TRAIN is goal-conditioned across varied
-spawn/target pairs rather than one memorized route. Its competence-gated
+spawn/target pairs rather than one memorized route. The default school samples
+precision and long-distance goals together. Legacy PPO's competence-gated
 curriculum starts with short precision transfers, advances through increasing
 distance/horizon bands only after measured frontier SUCCESS, and interleaves
 precision/prior-stage replay after advancement. The task region expands from
@@ -148,6 +157,13 @@ reward to that Spine decision. Signed goal displacement is encoded as
 so current goal direction, velocity and effort remain directly visible after
 pooling. VERIFY/RUN use deterministic `tanh(mean)`.
 
+Checkpoint v6 adds measured delay conditioning to the learned Spine features.
+After command acknowledgement the executor records extra application ticks over
+the nominal next-tick application, divided by a Motor interval. The latest
+measurement is supplied at each Spine decision and saved with that decision for
+PPO replay and journals. It is neither a future-delay oracle nor a procedural
+change to the network's output. Motor parameters and inputs are unchanged.
+
 GameServer interprets `motor_x` as normalized actuator effort. Zone integrates
 `acceleration = max_acceleration * motor_x - drag * vx`, clamps velocity to the
 physical maximum, then integrates position at 120 Hz. Zero effort relaxes the
@@ -173,7 +189,9 @@ Realtime pacing receives those ticks through GameClient Host while the external
 ZoneService sleeps to maintain 120 Hz. Operator-only unpaced TRAIN uses the same
 `gameserver.v1.zone.model.ZoneRuntime` but calls `tick()` directly, so the
 same simulated eight seconds may complete much faster than eight wall seconds.
-There is no alternate physics, reward function, success rule, model or PPO path.
+There is no alternate authoritative physics, success rule or deployed model.
+The default learned predictor provides approximate training gradients only;
+canonical-world rollouts and VERIFY always use this shared executor.
 
 Repeated reads of one tick produce no new decisions/transitions or hold credit.
 An epoch change, backwards tick, session change or missing event history
