@@ -305,7 +305,7 @@ class SpineSchool:
         history = frame().unsqueeze(-1).repeat(1, 1, HISTORY_FRAMES)
         # Short imagined horizons stabilize early gradients; real evaluation
         # always uses the full physical task horizon, not imagined success.
-        horizon = 180 if self.updates < 49 else (420 if self.rest_refinement else 480)
+        horizon = 180 if self.updates < 49 else (390 if self.rest_refinement else 480)
         # Astra's fixed 0/1 latency cases remain intact as explicit lanes.
         # Variable server latency is the third environment condition. Spine gets
         # only the preceding acknowledged delay, never the next sampled value.

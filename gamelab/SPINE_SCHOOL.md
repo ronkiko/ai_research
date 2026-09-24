@@ -61,7 +61,7 @@ held-out prediction error and real-world frozen verification.
    After 100 updates the optimizer step decreases from 0.002 to 0.0005.
    At update 200, after the nominal controller has had time to learn the base
    motion task, refine the best physically validated model with a fresh
-   optimizer, a 7-second imagined deadline and terminal speed weight 2 instead
+   optimizer, a 6.5-second imagined deadline and terminal speed weight 2 instead
    of 0.5. This trains a stopping-time margin; real acceptance still uses the
    unchanged 8-second deadline and exact physical rest. The phase flag and
    optimizer are checkpointed so resuming does not restart refinement.
