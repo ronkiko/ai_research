@@ -68,17 +68,17 @@ if [[ -z "$BOOTSTRAP_PY" ]]; then
 fi
 
 if [[ -e "$GAMELAB_VENV" ]] && ! _gamelab_python_ok; then
-  echo "GAMELAB ENV rebuild incompatible private runtime"
+  echo "GAMELAB ENV rebuild incompatible private runtime" >&2
   rm -rf "$GAMELAB_VENV"
 fi
 
 if [[ ! -x "$GAMELAB_PY" ]]; then
-  echo "GAMELAB ENV create private runtime"
+  echo "GAMELAB ENV create private runtime" >&2
   "$BOOTSTRAP_PY" -m venv "$GAMELAB_VENV"
 fi
 
 if ! _gamelab_env_ok; then
-  echo "GAMELAB ENV synchronize dependencies"
+  echo "GAMELAB ENV synchronize dependencies" >&2
   "$GAMELAB_PY" -m pip install --disable-pip-version-check -q \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \

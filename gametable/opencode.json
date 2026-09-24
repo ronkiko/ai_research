@@ -8,7 +8,7 @@
       ],
       "cwd": "..",
       "enabled": true,
-      "timeout": 10000
+      "timeout": 60000
     },
     "gamelab_v1": {
       "type": "local",
@@ -18,7 +18,7 @@
       ],
       "cwd": "..",
       "enabled": true,
-      "timeout": 20000
+      "timeout": 300000
     }
   }
 }
