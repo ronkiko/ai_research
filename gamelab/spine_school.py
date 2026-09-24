@@ -177,6 +177,13 @@ class MeasuredDynamics:
             raise RuntimeError("identified dynamics produced nonfinite physics-tick model")
         return tick
 
+    def half_interval_delay_effect(self) -> torch.Tensor:
+        """Compatibility view of the existing one-extra-tick delay effect."""
+        tick = self.physics_tick_weights()
+        a, b = tick[0, 1], tick[1, 1]
+        c, d = tick[0, 0], tick[1, 0]
+        return torch.stack((c * b + d, a * b))
+
     def predict_delayed_interval(
         self,
         velocity: torch.Tensor,
