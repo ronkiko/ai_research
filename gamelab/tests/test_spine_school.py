@@ -50,6 +50,17 @@ class SpineSchoolTests(unittest.TestCase):
             return collect_episode(self.model, self.client, player_id="player1",
                                    spawn_x=500, target_x=520, max_seconds=2).motor_transitions
 
+    def test_identification_keeps_low_speed_motion_but_excludes_exact_rest_snap(self):
+        dynamics = MeasuredDynamics()
+        dynamics.add([
+            (0.2, 0.01, 0.001, 0.08),
+            (0.08, 0.0, 0.0001, 0.04),
+            (0.04, 0.0, 0.0, 0.0),
+        ])
+        self.assertEqual(len(dynamics.samples), 2)
+        self.assertEqual(dynamics.samples[0][3], 0.08)
+        self.assertEqual(dynamics.samples[1][3], 0.04)
+
     def test_identification_predicts_heldout_canonical_consequences(self):
         dynamics = MeasuredDynamics()
         samples = self.samples()

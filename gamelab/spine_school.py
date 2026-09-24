@@ -135,7 +135,10 @@ class MeasuredDynamics:
         self.metrics: dict = {}
 
     def add(self, samples) -> None:
-        self.samples.extend(row for row in samples if abs(row[3]) > 0.1)
+        # The server's exact-rest snap is the discontinuity. Keep genuine
+        # low-speed free-motion samples; dropping an arbitrary |vx|<=0.1 band
+        # removed precisely the braking evidence needed for fine positioning.
+        self.samples.extend(row for row in samples if float(row[3]) != 0.0)
 
     def fit(self) -> bool:
         if len(self.samples) < 48:
