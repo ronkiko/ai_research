@@ -35,8 +35,12 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Keep the architecture and timing/evidence contract in `ARCHITECTURE.md`.
 - Machine-friendly interfaces only. Do not test or automate GUI here.
 - The MCP laboratory service is the supported agent-facing boundary for training, reward configuration, VERIFY, and live model runs; operator scripts are maintenance/CI entry points, not the GameTable assistant API.
-- Before declaring a patch ready, run the real `./gamelab/op/check.sh`
-  vertical, not only unit tests.
+- Before declaring an ordinary patch ready, run the real `./gamelab/op/check.sh`
+  vertical, not only unit tests. This is intentionally a short machine smoke,
+  not proof of full Spine convergence. For changes whose acceptance depends on
+  learning quality, the Operator runs `python -m gamelab.tests.convergence_spine`
+  separately and supplies that full research result; do not make every commit
+  pay for a 200-episode Spine experiment.
 - Brain Executive is strategic memory and research accounting only. It must never
   emit `motor_x`, alter Motor/Spine outputs, start/cancel experiments by itself,
   or choose a strategy for the LLM.

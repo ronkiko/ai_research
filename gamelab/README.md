@@ -231,6 +231,25 @@ The isolated mode may download CPU PyTorch and is used by CI to prove
 reproducibility. It is not required for normal local work when the global
 environment already satisfies the version contract.
 
+The normal machine gate is intentionally a smoke/regression gate, not a full
+Spine research experiment. `./gamelab/op/check.sh` runs compile/unit coverage,
+the quick default Motor convergence regression, a short fresh/resume Spine
+training smoke, real Host/GameServer runtime smoke and MCP smoke. It does **not**
+run the 200-episode Spine convergence suite on every commit.
+
+Run the full learned Spine acceptance separately when intentionally evaluating a
+training change:
+
+```bash
+GAMELAB_PYTHON=./gamelab/.venv/bin/python \
+  ./gamelab/.venv/bin/python -m gamelab.tests.convergence_spine
+```
+
+That full operator/research gate trains fresh weights and checks the complete
+0/1/variable latency validation, final VERIFY/recovery, held-out goals and paced
+Host/Zone verification. Its result should be reported explicitly; a passing
+normal CI smoke must not be described as proof of full convergence.
+
 GameLab disables PyTorch's optional NNPACK CPU backend. Unsupported CPUs would
 otherwise print an NNPACK initialization warning before using the normal CPU
 fallback; disabling it does not hide other PyTorch warnings or errors.
