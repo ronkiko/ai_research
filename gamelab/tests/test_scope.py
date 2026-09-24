@@ -58,7 +58,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_active_motor_has_no_strategic_target_and_legacy_is_not_active(self):
         motor_source = (
-            ROOT / "gamelab/motors/packages/continuous_1d_v1/model.py"
+            ROOT / "gamelab/motors/architectures/continuous_1d/v1/model.py"
         ).read_text(encoding="utf-8")
         self.assertIn("class Motor", motor_source)
         self.assertNotIn("target_x", motor_source)
