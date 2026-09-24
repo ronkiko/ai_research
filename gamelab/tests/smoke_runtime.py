@@ -14,7 +14,7 @@ import torch
 
 from gamelab.host import HostClient, player_from_state
 from gamelab.models import SensorHistory, SpineMotorPolicy, motor_state, sensor_frame
-from gamelab.runtime import ensure_player
+from gamelab.runtime import ensure_player, reset_player_state
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,11 +58,6 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
     saved_port = catalog_module.HOST_PORT
     host_port = HOST_PORT
     player_id = "player1"
-    if existing:
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            host_port = probe.getsockname()[1]
-        catalog_module.HOST_PORT = host_port
     with tempfile.TemporaryDirectory(prefix="gamelab-smoke-") as temp:
         temp_path = Path(temp)
         server_log_path = temp_path / "server.log"
@@ -84,7 +79,7 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
             try:
                 if server is not None:
                     wait_port(SERVER_PORT, server)
-                host = subprocess.Popen(
+                host = None if existing else subprocess.Popen(
                     [sys.executable, "-m", "gameclient.v1.host.server", "--port", str(host_port)],
                     cwd=ROOT,
                     stdout=host_log,
@@ -92,19 +87,28 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
                     text=True,
                     start_new_session=True,
                 )
-                wait_port(host_port, host)
+                if host is not None:
+                    wait_port(host_port, host)
 
                 operator = HostClient("operator-smoke")
-                login = operator.login(player_id)
-                if login.get("reused"):
-                    raise AssertionError("fresh Host unexpectedly reused player session")
+                health = operator.health()
+                if health.get("status") != "ready" or not health.get("gameplay_ready"):
+                    raise AssertionError(f"Host is not ready: {health}")
+                if existing:
+                    ensure_player(operator, player_id)
+                else:
+                    login = operator.login(player_id)
+                    if login.get("reused"):
+                        raise AssertionError("fresh Host unexpectedly reused player session")
 
                 operator_session = operator.session()
-                if operator_session.get("sequence") != 0:
+                if not existing and operator_session.get("sequence") != 0:
                     raise AssertionError(f"fresh session sequence must be 0: {operator_session}")
+                expected_sequence = int(operator_session["sequence"]) + 1
+                event_cursor = operator.events(0, limit=1)["latest_event_id"]
 
                 lab = HostClient("gamelab-smoke")
-                state = ensure_player(lab, player_id)
+                state = reset_player_state(lab, player_id) if existing else ensure_player(lab, player_id)
                 player = player_from_state(state)
                 if float(player["x"]) != 100.0:
                     raise AssertionError(f"P must start at 100, got {player['x']}")
@@ -128,18 +132,18 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
                     motor_x = float(torch.tanh(mean).item())
 
                 queued = lab.motor(motor_x)
-                if queued.get("sequence") != 1:
-                    raise AssertionError(f"first lab command must share Host sequence 1: {queued}")
+                if queued.get("sequence") != expected_sequence:
+                    raise AssertionError(f"lab command must advance shared sequence: {queued}")
 
                 time.sleep(0.1)
                 observed = operator.state()
                 observed_player = player_from_state(observed)
-                if observed["session"].get("sequence") != 1:
-                    raise AssertionError(f"operator must observe shared sequence 1: {observed}")
+                if observed["session"].get("sequence") != expected_sequence:
+                    raise AssertionError(f"operator must observe shared sequence: {observed}")
 
                 reset = lab.reset()
-                if reset.get("sequence") != 1:
-                    raise AssertionError(f"reset must preserve Host sequence 1: {reset}")
+                if reset.get("sequence") != expected_sequence:
+                    raise AssertionError(f"reset must preserve Host sequence: {reset}")
                 deadline = time.monotonic() + 2.0
                 reset_state = None
                 while time.monotonic() < deadline:
@@ -157,10 +161,10 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
 
                 if reset_state["session"].get("session_id") != operator_session.get("session_id"):
                     raise AssertionError("reset replaced shared Host session")
-                if reset_state["session"].get("sequence") != 1:
+                if reset_state["session"].get("sequence") != expected_sequence:
                     raise AssertionError("reset changed shared Host sequence")
 
-                events = operator.events(0, limit=20).get("events", [])
+                events = operator.events(event_cursor, limit=20).get("events", [])
                 if not any(
                     event.get("kind") == "input"
                     and event.get("client_id") == "gamelab-smoke"
@@ -180,7 +184,7 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
                 ):
                     raise AssertionError(f"GameLab unexpectedly owned Host session lifecycle: {events}")
 
-                if (server is not None and server.poll() is not None) or host.poll() is not None:
+                if (server is not None and server.poll() is not None) or (host is not None and host.poll() is not None):
                     raise AssertionError("backend died during GameLab inference smoke")
 
                 if learned_checkpoint is not None:
@@ -212,10 +216,11 @@ def main(*, learned_checkpoint: Path | None = None) -> int:
                 if lab is not None:
                     lab.close()
                 if operator is not None:
-                    try:
-                        operator.logout()
-                    except Exception:
-                        pass
+                    if not existing:
+                        try:
+                            operator.logout()
+                        except Exception:
+                            pass
                     operator.close()
                 stop_group(host)
                 stop_group(server)

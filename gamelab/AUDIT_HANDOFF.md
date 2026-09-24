@@ -12,13 +12,15 @@ This patch is a bounded alignment pass, not a new convergence result.
 
 ## Validation of this patch
 
-`./gamelab/op/check.sh --existing-server` passed compilation and all 130 unit
-tests, including selector resume and both VERIFY entry points. Runtime smoke
-then failed before inference: `player1` was already logged in on the running
-server. MCP smoke was not reached. No existing player session was logged out.
-The full vertical is therefore not green yet. For its next run, arrange free
-test players (the smokes use player1/player2) or an isolated backend; do not
-evict the Operator's active session to make CI pass.
+`./gamelab/op/check.sh --existing-server` now passes compilation, all 130 unit
+tests, shared-Host runtime smoke and the 45-tool MCP smoke. The initial failure
+was a test-topology bug: smoke created a second Host and tried to log player1
+in again. Existing-server mode now attaches to the default Host and retains its
+active player1 session, checks relative sequences and reads events from a fresh
+cursor. Cleanup closes test connections without logging out the shared player.
+Human observation through the same Host is supported; competing control inputs
+still contaminate experiments. MCP lifecycle coverage uses an additional owned
+Host for player2. These are infrastructure results, not proof of trained skill.
 
 ## Fixed
 

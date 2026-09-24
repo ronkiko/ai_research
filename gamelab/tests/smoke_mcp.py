@@ -159,6 +159,11 @@ async def run_flow(
     motor_root: Path,
     operator: HostClient,
 ) -> int:
+    existing = os.environ.get("GAMELAB_TEST_EXISTING_SERVER") == "1"
+    event_cursor = operator.events(0, limit=1)["latest_event_id"]
+    original_session = operator.session() if existing else None
+    if existing and original_session.get("player_id") != PLAYER_ID:
+        raise AssertionError(f"expected shared {PLAYER_ID} session: {original_session}")
     params = StdioServerParameters(
         command=sys.executable if HOST_PORT != 17700 else str(ROOT / "gamelab/op/mcp.sh"),
         args=["-m", "gamelab.tests.mcp_runner"] if HOST_PORT != 17700 else [],
@@ -245,13 +250,13 @@ async def run_flow(
                 raise AssertionError(
                     f"fresh laboratory should have backend but no Spine checkpoint yet: {health}"
                 )
-            if health.get("host_session_active") or health.get("attached_to_player"):
-                raise AssertionError(f"fresh Host unexpectedly has an active session: {health}")
+            if bool(health.get("host_session_active")) != existing or bool(health.get("attached_to_player")) != existing:
+                raise AssertionError(f"unexpected Host attachment: {health}")
 
             lab_login = await tool(session, "login", {"player_id": PLAYER_ID})
             payloads.append(lab_login)
-            if lab_login.get("reused") is not False:
-                raise AssertionError(f"GameLab did not create fresh session: {lab_login}")
+            if lab_login.get("reused") is not existing:
+                raise AssertionError(f"unexpected login reuse: {lab_login}")
             if lab_login.get("session", {}).get("player_id") != PLAYER_ID:
                 raise AssertionError(f"GameLab login returned wrong player: {lab_login}")
 
@@ -631,7 +636,7 @@ async def run_flow(
             if employment.get("consent", {}).get("kiss", {}).get("director") != "unknown":
                 raise AssertionError(f"hiring incorrectly created consent: {employment}")
 
-            events = operator.events(0, limit=256).get("events", [])
+            events = operator.events(event_cursor, limit=256).get("events", [])
             gamelab_logouts = [
                 event
                 for event in events
@@ -649,10 +654,12 @@ async def run_flow(
                 if event.get("kind") == "login"
                 and event.get("client_id") == "gamelab-login"
             ]
-            if len(gamelab_logins) != 1:
+            if len(gamelab_logins) != (0 if existing else 1):
                 raise AssertionError(
-                    f"expected exactly one GameLab-created Host login event: {gamelab_logins}"
+                    f"unexpected GameLab-created Host login events: {gamelab_logins}"
                 )
+            if existing and operator.session().get("session_id") != original_session.get("session_id"):
+                raise AssertionError("smoke replaced the pre-existing shared session")
 
             reset_clients = {
                 event.get("client_id")
@@ -710,11 +717,6 @@ def main() -> int:
     import gamelab.hosts as catalog_module
     existing = os.environ.get("GAMELAB_TEST_EXISTING_SERVER") == "1"
     saved_port = catalog_module.HOST_PORT
-    if existing:
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            HOST_PORT = probe.getsockname()[1]
-        catalog_module.HOST_PORT = HOST_PORT
     with tempfile.TemporaryDirectory(prefix="gamelab-mcp-smoke-") as temp:
         temp_path = Path(temp)
         checkpoint = temp_path / "spine_motor.pt"
@@ -740,7 +742,7 @@ def main() -> int:
             try:
                 if server is not None:
                     wait_port(SERVER_PORT, server)
-                host = subprocess.Popen(
+                host = None if existing else subprocess.Popen(
                     [sys.executable, "-m", "gameclient.v1.host.server", "--port", str(HOST_PORT)],
                     cwd=ROOT,
                     stdout=host_log,
@@ -748,12 +750,16 @@ def main() -> int:
                     text=True,
                     start_new_session=True,
                 )
-                wait_port(HOST_PORT, host)
+                if host is not None:
+                    wait_port(HOST_PORT, host)
                 operator = HostClient("operator-mcp-smoke")
+                health = operator.health()
+                if health.get("status") != "ready" or not health.get("gameplay_ready"):
+                    raise AssertionError(f"Host is not ready: {health}")
                 tool_count = asyncio.run(
                     run_flow(checkpoint, reward_config, motor_root, operator)
                 )
-                if (server is not None and server.poll() is not None) or host.poll() is not None:
+                if (server is not None and server.poll() is not None) or (host is not None and host.poll() is not None):
                     raise AssertionError("backend died during GameLab MCP smoke")
                 print(
                     f"PASS gamelab MCP smoke tools={tool_count} executive=yes "
@@ -770,10 +776,11 @@ def main() -> int:
                 raise
             finally:
                 if operator is not None:
-                    try:
-                        operator.logout()
-                    except Exception:
-                        pass
+                    if not existing:
+                        try:
+                            operator.logout()
+                        except Exception:
+                            pass
                     operator.close()
                 stop_group(host)
                 stop_group(server)

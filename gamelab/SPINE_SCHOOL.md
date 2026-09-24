@@ -162,5 +162,8 @@ must show actual velocity reversal followed by exact rest at the target. The
 test apparatus changes a goal once; it never supplies a braking/reverse action.
 
 For a server that is already running, the full gate supports
-`./gamelab/op/check.sh --existing-server`. It uses temporary isolated Host
-processes with registered test players; no second GameServer is started.
+`./gamelab/op/check.sh --existing-server`. It attaches to the existing default
+Host and reuses its active `player1` session without logging it out. Tests reset
+and control that avatar; a human observer can stay connected but must not send
+competing actions. MCP lifecycle smoke additionally creates an owned Host for
+`player2` and removes it afterward. No second GameServer is started.
