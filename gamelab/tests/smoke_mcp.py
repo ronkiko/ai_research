@@ -17,7 +17,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from gamelab.host import HostClient
-from gamelab.tests.motor_fixture import create_verified_motor_fixture
+from gamelab.tests.motor_fixture import FIXTURE_MOTOR_ID, create_verified_motor_fixture
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -284,7 +284,7 @@ async def run_flow(
                 raise AssertionError(f"fresh laboratory unexpectedly has a Spine checkpoint: {info}")
             motors = info.get("motors") or []
             if not any(
-                item.get("motor_id") == "continuous_1d_v1"
+                item.get("motor_id") == FIXTURE_MOTOR_ID
                 and item.get("status") == "certified"
                 and item.get("qualification") == "certified"
                 for item in motors

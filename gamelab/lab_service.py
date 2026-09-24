@@ -70,9 +70,9 @@ class Laboratory:
             return {
                 "checkpoint_ready": False,
                 "checkpoint": path.name,
-                "trainable": any(item.get("status") == "trained" for item in motors),
+                "trainable": any(item.get("status") == "certified" for item in motors),
                 "goal_interface": "target_x",
-                "motor_interface": "portable_motor_package",
+                "motor_interface": "built_motor_instance",
                 "episodes_trained": 0,
                 "motors": motors,
             }
@@ -83,7 +83,7 @@ class Laboratory:
             "checkpoint": path.name,
             "trainable": True,
             "goal_interface": "target_x",
-            "motor_interface": "portable_motor_package",
+            "motor_interface": "built_motor_instance",
             "motor_id": package.motor_id,
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "episodes_trained": int(extra.get("episodes", 0)),
