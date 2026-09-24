@@ -150,8 +150,10 @@ class ScopeTests(unittest.TestCase):
         research = (OP / "research.sh").read_text(encoding="utf-8")
         self.assertIn("unittest discover", check)
         self.assertNotIn("convergence_spine", check)
-        self.assertIn("convergence_spine", research)
+        self.assertIn("-m gamelab.research", research)
+        self.assertNotIn("gamelab.tests", research)
         self.assertNotIn("unittest discover", research)
+        self.assertFalse((ROOT / "gamelab/tests/convergence_spine.py").exists())
 
     def test_docs_and_ci_do_not_expose_parallel_python_paths(self):
         banned = (

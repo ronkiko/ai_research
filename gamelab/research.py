@@ -6,18 +6,19 @@ import json
 import os
 from pathlib import Path
 import random
+import shutil
 import tempfile
 from unittest.mock import patch
 
 import torch
 
+from gamelab.acceptance import run_paced_acceptance
 from gamelab.motor_school import certify_motor, run_school
 from gamelab.models import model_for_checkpoint
 from gamelab.spine_school import train_school
 from gamelab.training import collect_episode
 from gamelab.unpaced import UnpacedHostClient
-from gamelab.motors.package import create_motor_instance
-from gamelab.tests.motor_fixture import copy_architectures
+from gamelab.motors.package import DEFAULT_MOTOR_ROOT, create_motor_instance
 
 
 def _parse_seeds(value: str) -> tuple[int, ...]:
@@ -34,7 +35,11 @@ def run_seed(seed: int) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"gamelab-convergence-{seed}-") as temp:
         root = Path(temp)
         motor_root = root / "motors"
-        copy_architectures(motor_root)
+        shutil.copytree(
+            DEFAULT_MOTOR_ROOT / "architectures",
+            motor_root / "architectures",
+        )
+        (motor_root / "instances").mkdir(parents=True, exist_ok=True)
         with patch.dict(
             os.environ,
             {
@@ -139,9 +144,7 @@ def run_seed(seed: int) -> dict:
 
             # Prove the same saved learned weights through paced Host/Zone
             # transport without conversion or extra learning.
-            from gamelab.tests.smoke_runtime import main as paced_smoke
-
-            paced_smoke(learned_checkpoint=path)
+            run_paced_acceptance(learned_checkpoint=path)
             summary = {
                 "seed": seed,
                 "motor_id": motor_id,
