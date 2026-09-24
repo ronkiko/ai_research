@@ -13,6 +13,7 @@ from gamelab.motor_school import (
     AUTO_SAFETY_MAX_EPISODES,
     CERTIFICATION_REQUIRED_PASSES,
     DEVELOPMENT_PROGRAMS,
+    DEVELOPMENT_RAPID_PROGRAMS,
     _auto_ready_for_certification,
     _development_verify,
     _local_tracking_reward,
@@ -21,6 +22,7 @@ from gamelab.motor_school import (
     _school_program,
     _update,
     _verify,
+    _verify_rapid_program,
     certify_motor,
     run_school,
 )
@@ -367,12 +369,31 @@ class MotorSchoolTests(unittest.TestCase):
                     certify_motor(FIXTURE_MOTOR_ID)
 
     def test_development_programs_are_distinct_from_certification(self):
-        from gamelab.motor_school import CERTIFICATION_PROGRAMS
+        from gamelab.motor_school import (
+            CERTIFICATION_PROGRAMS,
+            CERTIFICATION_RAPID_PROGRAMS,
+        )
         self.assertTrue(DEVELOPMENT_PROGRAMS)
         self.assertTrue(set(DEVELOPMENT_PROGRAMS).isdisjoint(CERTIFICATION_PROGRAMS))
+        self.assertTrue(
+            set(DEVELOPMENT_RAPID_PROGRAMS).isdisjoint(CERTIFICATION_RAPID_PROGRAMS)
+        )
         result = _development_verify(RuleMotor())
         self.assertTrue(result["passed"], result)
         self.assertEqual(result["pass_count"], len(DEVELOPMENT_PROGRAMS))
+        self.assertEqual(
+            result["rapid_pass_count"], len(DEVELOPMENT_RAPID_PROGRAMS)
+        )
+
+    def test_rapid_verify_covers_full_range_at_spine_cadence(self):
+        result = _verify_rapid_program(
+            RuleMotor(),
+            (1.0, -0.9, 0.75, -1.0, 0.4),
+        )
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["command_hz"], 10)
+        self.assertEqual(result["progress_fraction"], 1.0)
+        self.assertEqual(result["rest_fraction"], 1.0)
 
     def test_certification_issues_uuid4_certificate_id(self):
         import uuid

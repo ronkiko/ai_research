@@ -50,30 +50,48 @@ SCHOOL_LEARNING_RATE = 1e-3
 VERIFY_EVERY_EPISODES = 10
 SCHOOL_SECONDS = 4.0
 SEGMENT_SECONDS = 0.5
-TARGET_MIN = -0.8
-TARGET_MAX = 0.8
+TARGET_MIN = -1.0
+TARGET_MAX = 1.0
 STAND_COMMAND_PROBABILITY = 0.25
 REST_DRILL_PROBABILITY = 0.65
 AUTO_STABLE_DEVELOPMENT_CHECKS = 3
 AUTO_SAFETY_MAX_EPISODES = 10_000
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 DEVELOPMENT_PROGRAMS = (
-    (0.68, 0.0, -0.31, 0.0, 0.22, 0.0),
-    (-0.66, 0.0, 0.35, 0.0, -0.18, 0.0),
-    (0.18, -0.72, 0.0, 0.41, 0.0, -0.27, 0.0),
-    (-0.24, 0.74, 0.0, -0.38, 0.0, 0.12, 0.0),
+    (1.0, 0.0, -0.31, 0.0, 0.22, 0.0),
+    (-1.0, 0.0, 0.35, 0.0, -0.18, 0.0),
+    (0.18, -0.88, 0.0, 0.63, 0.0, -0.27, 0.0),
+    (-0.24, 0.91, 0.0, -0.72, 0.0, 0.12, 0.0),
+)
+DEVELOPMENT_RAPID_PROGRAMS = (
+    (1.0, -0.92, 0.76, -1.0, 0.48),
+    (-1.0, 0.89, -0.64, 0.95, -0.42),
+    (0.83, -0.57, 1.0, -0.88, 0.36),
+    (-0.79, 0.61, -1.0, 0.86, -0.33),
 )
 CERTIFICATION_PROGRAMS = (
-    (0.34, 0.0, -0.55, 0.18, 0.0, 0.69, 0.0),
-    (-0.29, 0.51, 0.0, -0.76, 0.27, 0.0),
-    (0.11, 0.79, -0.22, 0.0, -0.47, 0.0),
-    (-0.18, -0.71, 0.36, 0.0, 0.58, 0.0),
-    (0.44, -0.12, 0.0, -0.67, 0.31, 0.0),
-    (-0.38, 0.16, 0.62, 0.0, -0.24, 0.0),
-    (0.77, 0.05, -0.49, 0.0, 0.26, 0.0),
-    (-0.75, -0.08, 0.53, 0.0, -0.33, 0.0),
-    (0.25, 0.64, 0.0, -0.17, -0.59, 0.0),
-    (-0.46, 0.28, 0.0, 0.72, -0.14, 0.0),
+    (1.0, 0.0, -0.55, 0.18, 0.0, 0.69, 0.0),
+    (-1.0, 0.51, 0.0, -0.76, 0.27, 0.0),
+    (0.11, 0.94, -0.22, 0.0, -0.47, 0.0),
+    (-0.18, -0.93, 0.36, 0.0, 0.58, 0.0),
+    (0.44, -0.12, 0.0, -0.91, 0.31, 0.0),
+    (-0.38, 0.16, 0.89, 0.0, -0.24, 0.0),
+    (0.96, 0.05, -0.49, 0.0, 0.26, 0.0),
+    (-0.97, -0.08, 0.53, 0.0, -0.33, 0.0),
+    (0.25, 0.92, 0.0, -0.17, -0.84, 0.0),
+    (-0.46, 0.28, 0.0, 0.95, -0.14, 0.0),
+)
+CERTIFICATION_RAPID_PROGRAMS = (
+    (0.97, -0.81, 0.63, -0.94, 0.52),
+    (-0.95, 0.84, -0.58, 0.91, -0.47),
+    (1.0, -0.73, 0.88, -0.66, 0.41),
+    (-1.0, 0.71, -0.86, 0.64, -0.39),
+    (0.93, -0.97, 0.55, -0.78, 0.36),
+    (-0.91, 0.98, -0.53, 0.75, -0.34),
+    (0.87, -0.69, 1.0, -0.82, 0.45),
+    (-0.85, 0.67, -1.0, 0.79, -0.43),
+    (0.99, -0.62, 0.72, -0.9, 0.38),
+    (-0.98, 0.6, -0.7, 0.88, -0.37),
 )
 CERTIFICATION_REQUIRED_PASSES = len(CERTIFICATION_PROGRAMS)
 VERIFY_SEGMENT_SECONDS = 0.6
@@ -275,7 +293,11 @@ def _sample_motion_command(
 ) -> float:
     candidate = previous
     for _ in range(32):
-        candidate = rng.uniform(TARGET_MIN, TARGET_MAX)
+        candidate = (
+            rng.choice((TARGET_MIN, TARGET_MAX))
+            if rng.random() < 0.15
+            else rng.uniform(TARGET_MIN, TARGET_MAX)
+        )
         if abs(candidate) < 0.08:
             continue
         if abs(candidate - previous) < 0.1:
@@ -486,6 +508,84 @@ def _verify_program(
     }
 
 
+
+def _verify_rapid_program(
+    motor: nn.Module,
+    levels: tuple[float, ...],
+) -> dict[str, float | bool]:
+    """10 Hz MotorGoal stress: each command must reduce local velocity error."""
+    runtime, sequence = _new_world()
+    _reset_world(runtime)
+    motor.eval()
+    motor_stride = PHYSICS_HZ // MOTOR_HZ
+    command_steps = MOTOR_HZ // SPINE_HZ
+    progress: list[bool] = []
+
+    for desired in levels:
+        before_vx = float(_player(runtime)["vx"])
+        desired_vx = float(desired) * PLAYER_MAX_SPEED
+        before_error = abs(desired_vx - before_vx)
+        for _ in range(command_steps):
+            player = _player(runtime)
+            goal = _goal(float(desired))
+            prop = _proprioception(player)
+            with torch.no_grad():
+                mean, log_std = motor.parameters_for(goal, prop)
+                action, _ = _motor_squashed_action(motor)(
+                    mean, log_std, sampled=False
+                )
+            sequence += 1
+            runtime.enqueue_input(
+                entity_id="motor-school-player",
+                sequence=sequence,
+                motor_x=float(action.item()),
+                source="player",
+            )
+            for _ in range(motor_stride):
+                runtime.tick()
+        after_vx = float(_player(runtime)["vx"])
+        progress.append(abs(desired_vx - after_vx) < before_error - 1e-6)
+
+    rest_steps = int(round(VERIFY_REST_SEGMENT_SECONDS * MOTOR_HZ))
+    settle_steps = max(1, (3 * rest_steps) // 4)
+    rest: list[bool] = []
+    for step in range(rest_steps):
+        player = _player(runtime)
+        goal = _goal(0.0)
+        prop = _proprioception(player)
+        with torch.no_grad():
+            mean, log_std = motor.parameters_for(goal, prop)
+            action, _ = _motor_squashed_action(motor)(
+                mean, log_std, sampled=False
+            )
+        sequence += 1
+        runtime.enqueue_input(
+            entity_id="motor-school-player",
+            sequence=sequence,
+            motor_x=float(action.item()),
+            source="player",
+        )
+        for _ in range(motor_stride):
+            runtime.tick()
+        if step >= settle_steps:
+            after = _player(runtime)
+            rest.append(
+                float(after["vx"]) == 0.0
+                and abs(float(after["motor_x"])) <= VERIFY_ZERO_EFFORT_LIMIT
+            )
+
+    progress_fraction = sum(progress) / max(1, len(progress))
+    rest_fraction = sum(rest) / max(1, len(rest))
+    return {
+        "passed": progress_fraction == 1.0 and rest_fraction == 1.0,
+        "command_hz": SPINE_HZ,
+        "progress_fraction": progress_fraction,
+        "progress_required": 1.0,
+        "rest_fraction": rest_fraction,
+        "rest_required": 1.0,
+    }
+
+
 def _verify(motor: nn.Module) -> dict[str, float | bool]:
     result = _verify_program(motor, VERIFY_LEVELS)
     result["evidence"] = "standard"
@@ -546,6 +646,18 @@ def _verify_suite(
 
 def _development_verify(motor: nn.Module) -> dict:
     result = _verify_suite(motor, DEVELOPMENT_PROGRAMS)
+    rapid_cases = [
+        _verify_rapid_program(motor, levels)
+        for levels in DEVELOPMENT_RAPID_PROGRAMS
+    ]
+    rapid_pass_count = sum(1 for case in rapid_cases if case["passed"])
+    result["rapid_cases"] = rapid_cases
+    result["rapid_pass_count"] = rapid_pass_count
+    result["rapid_required_passes"] = len(rapid_cases)
+    result["passed"] = (
+        bool(result["passed"])
+        and rapid_pass_count == len(rapid_cases)
+    )
     result["evidence"] = "development"
     return result
 
@@ -958,6 +1070,8 @@ def run_school(
                     pass_text = (
                         f" passes={final_verification['pass_count']}/"
                         f"{final_verification['required_passes']}"
+                        f" rapid={final_verification.get('rapid_pass_count', 0)}/"
+                        f"{final_verification.get('rapid_required_passes', 0)}"
                         f" streak={development_streak}"
                     )
                 best_text = (
@@ -1136,22 +1250,30 @@ def certify_motor(motor_id: str) -> dict:
     )
 
     programs = []
-    for index, levels in enumerate(CERTIFICATION_PROGRAMS, start=1):
+    for index, (levels, rapid_levels) in enumerate(
+        zip(CERTIFICATION_PROGRAMS, CERTIFICATION_RAPID_PROGRAMS),
+        start=1,
+    ):
         verification = _verify_program(motor, levels)
+        rapid = _verify_rapid_program(motor, rapid_levels)
+        program_passed = bool(verification["passed"]) and bool(rapid["passed"])
         programs.append(
             {
                 "program": index,
                 "levels": list(levels),
+                "rapid_levels": list(rapid_levels),
                 "verification": verification,
-                "passed": bool(verification["passed"]),
+                "rapid_verification": rapid,
+                "passed": program_passed,
             }
         )
         print(
             f"MotorSchool CERTIFY {index}/{CERTIFICATION_REQUIRED_PASSES} "
-            f"{'PASS' if verification['passed'] else 'FAIL'} "
+            f"{'PASS' if program_passed else 'FAIL'} "
             f"mae={verification['mean_abs_velocity_error']:.2f} "
             f"max_error={verification['max_abs_velocity_error']:.2f} "
-            f"rest={verification['zero_target_rest_fraction']:.0%}",
+            f"rest={verification['zero_target_rest_fraction']:.0%} "
+            f"rapid={rapid['progress_fraction']:.0%}",
             flush=True,
         )
 

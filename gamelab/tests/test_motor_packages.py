@@ -42,7 +42,7 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertTrue(package.architecture_path.is_file())
                 self.assertTrue((package.path / "model.py").is_file())
                 self.assertEqual(package.architecture["version"], "v1")
-                self.assertEqual(package.architecture["revision"], 1)
+                self.assertEqual(package.architecture["revision"], 2)
                 self.assertFalse(package.trained)
                 self.assertFalse(package.candidate_path.exists())
                 self.assertFalse(package.work_path.exists())

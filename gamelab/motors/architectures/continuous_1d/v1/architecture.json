@@ -2,7 +2,7 @@
   "schema_version": 1,
   "architecture_id": "continuous_1d",
   "version": "v1",
-  "revision": 1,
+  "revision": 2,
   "name": "Continuous 1D physical effort motor",
   "description": "Learned scalar physical-effort actuator blueprint for the GameServer v1 x-axis body.",
   "model": {
@@ -32,7 +32,8 @@
         1,
         2,
         3
-      ]
+      ],
+      "max_update_hz": 10
     }
   },
   "compatibility": {
@@ -41,6 +42,8 @@
     "motor_hz": 60,
     "player_max_speed": 180,
     "player_max_acceleration": 720,
-    "player_drag": 4
+    "player_drag": 4,
+    "rest_velocity_eps": 0.05,
+    "rest_motor_eps": 0.02
   }
 }
