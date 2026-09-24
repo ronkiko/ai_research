@@ -217,9 +217,12 @@ orders them by highest certificate generation, then lowest quality. Spine
 checkpoints never retain the floating selector: they bind the concrete selected
 Motor UUID and brain SHA.
 
-Spine TRAIN must explicitly select a CERTIFIED Motor:
+Spine TRAIN always mounts a CERTIFIED Motor. The operator wrapper defaults to
+the certified selector `best`, while an exact UUID may be supplied when the
+experiment must pin a specific Motor:
 
 ```bash
+./gamelab/op/gamelab.sh train spine --fresh --episodes 200
 ./gamelab/op/gamelab.sh train spine --motor <motor_uuid> --fresh --episodes 200
 ```
 
@@ -434,25 +437,16 @@ checkpoint before collecting experience. VERIFY uses frozen weights. A live
 `run_start` uses the current checkpoint against the same authoritative game
 without giving the MCP caller low-level LEFT/STOP/RIGHT controls.
 
-## Operator and CI entry points
+## CI entry point
 
-The supported operator/CI surface is exactly:
+CI uses the same single public command as the Operator:
 
 ```bash
 ./gamelab/op/gamelab.sh check
-./gamelab/op/gamelab.sh check --full
-./gamelab/op/gamelab.sh train motor
-./gamelab/op/gamelab.sh train spine
-./gamelab/op/gamelab.sh verify
-./gamelab/op/gamelab.sh run
-./gamelab/op/gamelab.sh serve
 ```
 
-Execution variants are command options (for example `train.sh --mode unpaced`);
-they must not grow into parallel launcher scripts.
-
-They are not the GameTable laboratory assistant interface; that assistant uses
-`gamelab_v1` MCP tools.
+No CI-only launcher, Python path, setup command, or alternate GameLab execution
+route is allowed.
 
 ## Checks
 
