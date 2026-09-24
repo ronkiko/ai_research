@@ -14,8 +14,8 @@ create additional laboratory-owned Host instances for advanced experiments.
 It exposes model metadata, reward configuration, asynchronous training, frozen
 verification, and live model runs. Use `host_id` to select a Host when needed.
 All MCP TRAIN/VERIFY/RUN operations use the realtime Host/GameServer path.
-Unpaced training is Operator-only and is not exposed through MCP. TRAIN/VERIFY
-use Host's non-destructive physical episode reset; RUN does not.
+This is the complete training interface exposed to the agent. TRAIN/VERIFY use
+Host's non-destructive physical episode reset; RUN does not.
 
 Start with:
 

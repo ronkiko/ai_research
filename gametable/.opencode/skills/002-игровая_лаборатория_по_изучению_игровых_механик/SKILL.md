@@ -248,14 +248,17 @@ relationship/Executive state и не общаются с Директором. �
   в заданной окрестности цели;
 - `near_goal_radius` — радиус этой окрестности.
 
-Эти параметры формируют обучающий сигнал, но не задают управляющие действия.
-Изменения применяются к последующим training episodes.
+Эти параметры являются измеряемой reward-instrumentation для episode reports.
+Текущий default Spine School использует собственный versioned differentiable
+training objective, поэтому изменение этих полей само по себе не меняет его
+оптимизационную функцию. Не трать экспериментальный бюджет на reward tuning без
+machine evidence, что выбранный trainer действительно использует этот параметр.
 
 ## Обучение
 
 Обучение, доступное лаборанту через `gamelab_v1`, всегда идёт в realtime через
-выбранный GameClient Host и авторитетный GameServer. У MCP нет unpaced-режима и
-нет shell-пути к нему. Скорость мира не ускоряется ради обучения.
+выбранный GameClient Host и авторитетный GameServer. Это полный training
+interface данного рабочего места; скорость мира не ускоряется ради обучения.
 
 `training_start` принимает число эпизодов, optional `target_x`, режим
 `fresh`, seed и лимит времени эпизода.

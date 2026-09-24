@@ -25,7 +25,7 @@ future plugins surface.
 Yuki2 works only through the two configured MCP servers. She does not inspect
 neighboring source trees or run laboratory shell scripts. Training, reward
 configuration, verification, and model runs are available through
-`gamelab_v1`; its training path is realtime Host/GameServer training only.
+`gamelab_v1`; its training path is the realtime Host/GameServer path.
 
 ## Operator launch
 
