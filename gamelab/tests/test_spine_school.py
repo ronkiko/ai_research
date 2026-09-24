@@ -20,7 +20,10 @@ from gamelab.spine_school import (
 )
 from gamelab.training import collect_episode
 from gamelab.unpaced import UnpacedHostClient
-from gamelab.tests.motor_fixture import create_verified_motor_fixture
+from gamelab.tests.motor_fixture import (
+    FIXTURE_MOTOR_ID,
+    create_verified_motor_fixture,
+)
 
 
 class SpineSchoolTests(unittest.TestCase):
@@ -33,7 +36,7 @@ class SpineSchoolTests(unittest.TestCase):
             "GAMELAB_REWARD_CONFIG": str(self.root / "reward.json"),
         })
         self.env.start()
-        self.model, _ = build_spine_policy("continuous_1d_v1", seed=1)
+        self.model, _ = build_spine_policy(FIXTURE_MOTOR_ID, seed=1)
         self.client = UnpacedHostClient("school-unit")
 
     def tearDown(self):
@@ -193,7 +196,7 @@ class SpineSchoolTests(unittest.TestCase):
         self.assertTrue(all(torch.equal(v, before[k]) for k, v in self.model.state_dict().items()
                             if k.startswith("motor.")))
         state = copy.deepcopy(school.state_dict())
-        second_model, _ = build_spine_policy("continuous_1d_v1", seed=98)
+        second_model, _ = build_spine_policy(FIXTURE_MOTOR_ID, seed=98)
         second = SpineSchool(second_model, seed=98)
         second.restore(state)
         school.update()
@@ -207,7 +210,7 @@ class SpineSchoolTests(unittest.TestCase):
         paths = [self.root / "whole.pt", self.root / "split.pt"]
         for path, budgets in zip(paths, ((2,), (1, 1))):
             for i, budget in enumerate(budgets):
-                train_school(self.client, motor_id="continuous_1d_v1", episodes=budget,
+                train_school(self.client, motor_id=FIXTURE_MOTOR_ID, episodes=budget,
                              seed=3, fresh=i == 0, player_id="player1", max_seconds=1.,
                              path=path, final_verify=False)
         states = [torch.load(path, weights_only=False) for path in paths]
@@ -227,7 +230,7 @@ class SpineSchoolTests(unittest.TestCase):
         metrics = school.update()
         self.assertTrue(metrics["rest_refinement"])
         self.assertEqual(metrics["imagined_seconds"], 6.)
-        restored_model, _ = build_spine_policy("continuous_1d_v1", seed=8)
+        restored_model, _ = build_spine_policy(FIXTURE_MOTOR_ID, seed=8)
         restored = SpineSchool(restored_model, seed=8)
         restored.restore(copy.deepcopy(school.state_dict()))
         optimizer = restored.optimizer
@@ -246,10 +249,10 @@ class SpineSchoolTests(unittest.TestCase):
 
         path = self.root / "export.pt"
         with patch.object(SpineSchool, "update", update):
-            train_school(self.client, motor_id="continuous_1d_v1", episodes=1,
+            train_school(self.client, motor_id=FIXTURE_MOTOR_ID, episodes=1,
                          seed=1, fresh=True, player_id="player1", max_seconds=.25,
                          path=path, final_verify=False)
-        restored, _ = build_spine_policy("continuous_1d_v1", seed=4)
+        restored, _ = build_spine_policy(FIXTURE_MOTOR_ID, seed=4)
         extra = load_checkpoint(path, restored)
         state = extra["spine_school"]
         self.assertTrue(torch.equal(restored.spine.goal_mean.bias, state["best"]["spine.goal_mean.bias"]))
