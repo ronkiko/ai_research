@@ -87,31 +87,27 @@ external actuator remains normalized physical effort `motor_x in [-1,+1]`.
 
 Motor 1 does not receive target position or target displacement directly.
 
-## Motor package lifecycle
+## Motor blueprint and instance lifecycle
 
-A Motor package is a directory under `gamelab/motors/packages/<motor_id>/`.
-The default manifest is immutable source configuration; Motor School creates
-runtime `manifest.json`, `brain.pt`, `candidate.pt`, `history.jsonl`, and
-`checkpoints/` in the same package directory. Those files form the portable
-learned organ.
+Tracked blueprints live under
+`gamelab/motors/architectures/<name>/<version>/`; runtime-built Motors live
+under `gamelab/motors/instances/<motor_uuid>/`.
 
-Motor School `velocity_tracking_pg_v4` trains the Motor without Spine. Its
-goal socket receives continuous normalized velocity commands from
-`[-0.8,+0.8]`, with explicit rest commands mixed into one quarter of training segments; local
-proprioception contains only measured velocity/current effort, and the Motor
-alone chooses `motor_x`. Credit assignment stays local to one 60 Hz Motor
-interval. Ordinary commands use smooth velocity-tracking reward; zero commands get local
-credit for measured braking progress, increasingly precise near-rest state,
-actuator release near rest, and exact physical rest. Rest and motion rewards
-are advantage-normalized separately before the local policy-gradient update, so
-the finer rest shaping cannot dominate ordinary velocity tracking. This resolves
-sub-unit drift without prescribing a braking action. No critic or long return may mix credit across
-later randomized velocity goals. Frozen verification uses unseen command levels
-and requires zero-command settled samples to hold the GameServer rest contract:
-`vx=0` and `|motor_x|<=0.02`. Every PASS is compared with the best certified
-brain; a better PASS replaces `brain.pt` while the live candidate continues
-training. Normal mode consumes the full requested episode budget;
-`--stop-on-pass` is reserved for quick/CI runs.
+The active blueprint is `continuous_1d/v1` with an explicit integer revision.
+Changing revision updates that blueprint for future construction only. Existing
+instances keep copied `architecture.json` and `model.py` snapshots and their
+SHA-256 values.
+
+Motor School without `--motor` constructs a new instance. An uncertified
+instance can be resumed by UUID. There is no in-place fresh reset of a Motor.
+Successful generation-1 certification binds brain/model/architecture hashes,
+quality, and UUIDv4 certificate_id, then removes the transient `work/`
+directory. Certified instances are immutable.
+
+The built manifest exposes top-level `quality` (lower is better). Registry
+selection may compare quality only within the same certificate generation;
+generation is considered before quality. Spine TRAIN mounts only a valid
+certified instance and freezes it.
 
 ## Learning
 

@@ -54,9 +54,15 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Active Motor output is one normalized effort scalar in `[-1,+1]`; it must not set `vx` or `x` directly. The archived discrete motor under `gamelab/motors/legacy_discrete.py` is not an active fallback.
 - Default success tolerance is `±0.9`; the `±5` near-goal radius is reward shaping only and must never redefine success.
 
-- Motors are portable packages under `gamelab/motors/packages/<motor_id>/`.
-  Keep code, manifest, verified brain, candidate, school history and archived
-  brains package-local so the Motor can be copied/removed as one unit.
+- Separate Motor blueprints from built Motors. Blueprints live under
+  `gamelab/motors/architectures/<name>/<version>/`; built instances live under
+  `gamelab/motors/instances/<motor_uuid>/`. The active architecture is
+  `continuous_1d/v1`; ordinary blueprint changes increment its numeric
+  `revision`. A version change such as v1 -> v2 requires explicit Operator
+  direction.
+- Construction snapshots `architecture.json` and `model.py` into the new
+  instance and hashes both. Motor School must validate those original hashes;
+  it must never rewrite the expected source hashes to bless later edits.
 - Motor School evidence is graded PASS -> BEST -> CERTIFIED. PASS means one
   standard frozen VERIFY; BEST is the best development PASS retained during
   training; CERTIFIED means that exact frozen BEST brain passes 10/10 distinct
@@ -65,19 +71,20 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   a unique UUIDv4 `certificate_id`; do not infer missing generations or
   certificate ids for compatibility. Quick CI may stop at PASS, but serious
   Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
-- Keep `training.best_quality` as the Motor's aggregate measured comparison
-  score (lower is better). Do not turn Motor School reward/verification
+- Keep top-level `quality` in the built Motor manifest as the aggregate
+  measured comparison score (lower is better). Do not turn Motor School reward/verification
   coefficients into Motor-manifest tuning knobs; document those school
   constants instead. Compare quality directly only within the same certificate
   generation.
-- A certified Motor is immutable. Do not resume training it in place: any new
-  learning requires explicit `--fresh`. A new promoted BEST invalidates any
-  certification tied to the previous brain SHA. Successful certification must
-  remove transient `candidate.pt` and intermediate `checkpoints/`; keep only
-  runtime brain/source plus manifests/history evidence. `--fresh` must work
-  from that cleaned certified state: archive the current verified brain, clear
-  active brain/candidate, BEST quality/SHA and certification evidence, then
-  start the new school without inherited qualification.
+- A certified Motor instance is immutable. Motor School has no `--fresh`
+  reset for Motors: a new learning run constructs a new UUID instance. An
+  interrupted uncertified instance may be resumed explicitly with
+  `--motor <uuid>`. Successful certification deletes the instance's entire
+  transient `work/` directory; runtime/evidence files remain.
+- Certificate generation describes achieved school level, not architecture
+  version. Generation 1 is the current contract. Every successful certificate
+  has a UUIDv4 `certificate_id` and binds brain/model/architecture hashes plus
+  the Motor quality score.
 - Spine TRAIN must mount an explicitly selected CERTIFIED Motor, freeze its
   parameters, and bind Motor id + brain SHA into the Spine checkpoint. Never
   silently substitute or auto-create an uncertified Motor.

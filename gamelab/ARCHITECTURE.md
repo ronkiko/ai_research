@@ -114,35 +114,35 @@ become controller perception. Tick/epoch/sequence metadata belongs to evidence
 and scheduling, not policy features. Nominal history span is about 0.53 seconds;
 effective intervals may be longer and are recorded, not synthetically filled.
 
-## Portable Motor packages and Motor School
+## Motor blueprints, built instances and Motor School
 
-A Motor is an installable unit, not a hard-coded submodule of Spine. Each motor
-lives in `gamelab/motors/packages/<motor_id>/` and owns its implementation,
-compatibility manifest, verified brain, candidate, append-only school history
-and archived verified brains. Runtime files remain inside that directory so the
-whole learned organ can be copied or removed as one package.
+A Motor blueprint is source design, not a trained Motor. Blueprints live under
+`gamelab/motors/architectures/<name>/<version>/`. The current continuous
+blueprint is `continuous_1d/v1`; compatible design edits increment
+`architecture.json.revision`, while a new architecture version requires an
+explicit Operator decision.
 
-The manifest is the socket contract. It records MotorGoal width and semantics,
-proprioception fields, actuator output/range, physics cadence and the physical
-body constants for which the motor was verified. Spine TRAIN requires
-`training.status=trained`, a successful frozen Motor School verification,
-an existing `brain.pt`, and a matching brain SHA. Checkpoints additionally bind
-the selected `motor_id` and brain SHA so a different wheel cannot be silently
-substituted later.
+Motor School constructs a built Motor under
+`gamelab/motors/instances/<motor_uuid>/`. Construction copies the blueprint
+descriptor and model implementation into the instance and records their hashes.
+Subsequent blueprint edits therefore cannot mutate an existing Motor.
 
-Motor School is an operator-only unpaced laboratory over the canonical
-`ZoneRuntime`. It gives the Motor only a normalized requested velocity plus
-local proprioception. The v4 school assigns credit over exactly one Motor
-interval from measured velocity tracking; it deliberately has no critic/GAE
-horizon spanning future velocity goals. Zero-command credit includes explicit
-near-rest resolution so the learned reflex can distinguish slow drift from the
-server's physical rest state. No teacher emits the correct `motor_x`. Frozen
-acceleration/braking/reversal verification runs periodically and zero commands
-must settle to `vx=0` while actuator effort remains within the server rest
-threshold. Every PASS is eligible to become the package's verified `brain.pt`,
-but normal training continues for the requested budget and only a better
-verified score replaces the current best brain. A failed or worse candidate
-never overwrites an already verified brain.
+Before certification, all transient optimizer/candidate/checkpoint state is
+contained under `work/`. BEST is a frozen `brain.pt` in the instance root.
+After successful certification, `work/` is deleted. The instance is then
+immutable; any brain, model, or architecture snapshot change invalidates the
+certificate.
+
+The manifest is the built Motor contract and records the immutable socket/body
+compatibility, current BEST quality, and certification evidence. Generation 1
+requires 10/10 held-out programs. The certificate has its own UUIDv4
+`certificate_id` and binds the brain SHA, architecture SHA, model SHA and
+quality. Spine checkpoints bind the concrete Motor UUID and brain SHA.
+
+Motor School is an operator-only unpaced laboratory over canonical
+`ZoneRuntime`. It gives the Motor only normalized requested velocity plus
+local proprioception, never strategic target position and never teacher
+`motor_x`. Credit remains local to measured physical consequences.
 
 ## Continuous physical Motor
 

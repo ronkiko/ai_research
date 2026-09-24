@@ -131,9 +131,9 @@ designed and verified as a separate future feature.
 ## Checkpoints and use
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200
+./gamelab/op/train-unpaced.sh --motor <motor_uuid> --fresh --episodes 200
 # Continue the candidate and retain the best model:
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --episodes 100
+./gamelab/op/train-unpaced.sh --motor <motor_uuid> --episodes 100
 ```
 
 `--fresh` resets Spine and the school, not the mounted verified Motor. Existing

@@ -42,10 +42,13 @@ OpenCode / LLM strategist
 The LLM is deliberately outside the motor loop. It sets goals and observes
 results. It does not time button presses.
 
-The first humanoid abstraction mounts exactly one portable Motor package. A
-Motor package is a copyable/removable directory under
-`gamelab/motors/packages/<motor_id>/` containing its model implementation,
-manifest, verified brain, Motor School history and archived brains. Its scalar
+The first humanoid abstraction mounts exactly one built Motor instance.
+Blueprints live under `gamelab/motors/architectures/<name>/<version>/`.
+The active blueprint is `continuous_1d/v1`; ordinary blueprint edits increment
+its numeric `revision`, while changing `v1` itself requires an explicit
+Operator architecture decision. Motor School constructs each physicalized
+instance under `gamelab/motors/instances/<motor_uuid>/` by snapshotting the
+blueprint's contract and `model.py`. Its scalar
 output is normalized physical effort, not a symbolic LEFT/STOP/RIGHT decision.
 The archived discrete v1 MLP remains only as a historical implementation and
 is not an active fallback. A future configurator may mount another compatible
@@ -104,9 +107,10 @@ learns how physical effort realizes that velocity.
 
 Motor and Spine are trained in two explicit stages. Motor School trains only
 the local physical reflex against requested velocity; it never receives
-`target_x` and never receives teacher motor actions. It writes all mutable
-artifacts inside the selected Motor package and promotes a candidate to
-`brain.pt` only after frozen velocity-tracking verification.
+`target_x` and never receives teacher motor actions. Starting Motor School
+without `--motor` constructs a new Motor UUID from the selected architecture.
+All mutable school artifacts live under that instance's `work/` directory;
+BEST promotion writes `brain.pt` in the instance root.
 
 Motor School v6 samples continuous normalized velocity commands from
 `[-0.8,+0.8]`. Most training episodes include explicit 0.5-second motion →
@@ -130,8 +134,8 @@ release cost `0.5`, and exact-rest bonus `0.5`. Verification uses
 maximum velocity-error limit `30.0`, and the GameServer exact-rest velocity
 and actuator-effort thresholds.
 
-The Motor manifest already stores the one aggregate comparison number we need:
-`training.best_quality`. Lower is better. For the current development suite:
+The built Motor manifest stores the one aggregate comparison number we need as
+top-level `quality`. Lower is better. For the current development suite:
 
 `quality = MAE/MAE_limit + max_error/max_error_limit + zero_mean_speed/zero_speed_limit + zero_max_speed/zero_max_speed_limit + zero_max_effort/zero_effort_limit + (1 - rest_fraction)`.
 
@@ -158,66 +162,58 @@ Motor School has three evidence grades:
 The scenarios are explicit:
 
 ```bash
-# quick CI/smoke: first standard PASS
-./gamelab/op/motor-school.sh quick --motor continuous_1d_v1 --fresh --episodes 100
-
-# full training: consume exactly this budget and retain development BEST
-./gamelab/op/motor-school.sh train --motor continuous_1d_v1 --fresh --episodes 200
-
-# frozen BEST -> 10/10 held-out certification
-./gamelab/op/motor-school.sh certify --motor continuous_1d_v1
-```
-
-With no scenario argument Motor School runs **auto**. It starts a genuinely
-fresh school and trains for at least the requested/default 200 episodes.
-Training rollouts deliberately include repeated 0.5 s motion → 1.0 s rest
-drills from varied positive/negative speeds, so the Motor learns both braking
-into exact rest and holding it with released effort instead of relying on
-accidental random stand commands. After the minimum budget, AUTO continues in ten-episode blocks until the
-current candidate has passed the development suite three checks in a row.
-There is no ordinary episode budget after that point: the Motor keeps learning
-until it reaches the stability criterion. A 10,000-episode safety cap exists
-only as an emergency runaway guard. Reaching that safety cap does not bypass
-the stability gate: AUTO stops with the retained BEST but does not run
-certification. Only a stable run sends BEST to the still-unseen certification
-suite:
-
-```bash
+# normal path: construct a new continuous_1d/v1 instance, train to stable 3/3,
+# then certify it as generation 1
 ./gamelab/op/motor-school.sh
+
+# construct from an explicitly named blueprint
+./gamelab/op/motor-school.sh --architecture continuous_1d/v1
+
+# resume an interrupted, still-uncertified Motor instance
+./gamelab/op/motor-school.sh --motor <motor_uuid>
+
+# fixed-budget development without automatic certification
+./gamelab/op/motor-school.sh train --motor <motor_uuid> --episodes 200
+
+# certify an existing development BEST
+./gamelab/op/motor-school.sh certify --motor <motor_uuid>
 ```
 
-A successfully certified Motor is immutable as an installed runtime artifact.
-Its brain SHA, model implementation SHA, certificate generation and
-`certificate_id` define that certified instance. Motor School refuses to
-resume learning on it without explicit `--fresh`.
+There is no Motor-School `--fresh` lifecycle. A normal run constructs a new
+instance. Resuming is allowed only for an uncertified instance with the exact
+snapshotted architecture/model hashes it was born with. A certified Motor is
+immutable: Motor School will not alter it.
 
-After successful certification, transient school state is removed:
-`candidate.pt`, archived intermediate `checkpoints/`, temporary files and
-Python bytecode caches are deleted. The package keeps its verified `brain.pt`,
-model/source contract, manifests and `history.jsonl` certificate evidence.
-
-A true `--fresh` start first archives the currently verified brain, then
-removes the active brain/candidate and clears BEST quality, brain SHA and
-certification metadata before learning from a new candidate. Old
-`best@...` evidence therefore cannot leak into the new school.
-
-During training the package may also contain `candidate.pt` and
-`checkpoints/`. A certified package's persistent runtime/evidence state is:
+During training the instance may contain:
 
 ```text
-manifest.json
-brain.pt
-history.jsonl
+instances/<motor_uuid>/
+├── architecture.json   # immutable blueprint snapshot
+├── model.py            # immutable copied implementation
+├── manifest.json
+├── brain.pt            # once a BEST exists
+├── history.jsonl
+└── work/
+    ├── candidate.pt
+    └── checkpoints/
 ```
 
-alongside the package's tracked source/contract files such as `model.py` and
-`manifest.default.json`. Copying or removing the Motor directory therefore
-copies or removes the certified Motor and its evidence as one unit.
+After successful certification `work/` is deleted in one operation. The
+persistent Motor contains only its immutable architecture/model snapshot,
+verified `brain.pt`, `manifest.json`, and `history.jsonl` evidence. The
+certificate binds Motor UUID, brain SHA, architecture SHA, model SHA,
+`generation: 1`, measured `quality`, and a unique UUIDv4
+`certificate_id`.
+
+The registry selector `best` considers only valid certified instances and
+orders them by highest certificate generation, then lowest quality. Spine
+checkpoints never retain the floating selector: they bind the concrete selected
+Motor UUID and brain SHA.
 
 Spine TRAIN must explicitly select a CERTIFIED Motor:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200
+./gamelab/op/train-unpaced.sh --motor <motor_uuid> --fresh --episodes 200
 ```
 
 The default Spine trainer uses measured dynamics policy search: it learns a
@@ -338,11 +334,11 @@ GameServer or GameClient Host because it executes the canonical ZoneRuntime
 in-process:
 
 ```bash
-./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200 --target 987
+./gamelab/op/train-unpaced.sh --motor <motor_uuid> --fresh --episodes 200 --target 987
 ```
 
 The modular Spine checkpoint uses format v6 (measured-delay conditioning).
-Earlier Spine checkpoints require `--fresh`; Motor packages are unchanged.
+Earlier Spine checkpoints may require Spine `--fresh`; certified Motor instances remain unchanged.
 Discrete three-logit v1 weights
 are intentionally not loaded into it; replacing the active model archives the
 previous checkpoint bytes under `runtime/checkpoints/`.
