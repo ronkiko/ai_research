@@ -89,11 +89,15 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   bounded and derived only from the already available measurable goal
   displacement. Preserve an explicit latest-state path alongside temporal
   history so current goal/velocity evidence is not erased by pooling.
-- Spine curriculum difficulty must advance from measured frontier competence,
-  not merely from episode count. Keep short precision tasks and replay of prior
-  stages in later training so long-distance competence does not replace stopping
-  competence. Curriculum code may choose episode spawn/target and bounded rollout
-  horizon; it must never emit an action, desired velocity, or steering hint.
+- Spine curriculum difficulty must advance from deterministic measured frontier
+  competence, not merely from episode count and not from stochastic TRAIN
+  success/failure. Keep exploration in sampled PPO rollouts, but use frozen-mean
+  frontier probes for mastery accounting. Probe transitions are measurement only
+  and must never enter PPO training data. Keep short precision tasks and replay
+  of prior stages in later training so long-distance competence does not replace
+  stopping competence. Curriculum code may choose episode spawn/target and
+  bounded rollout horizon; it must never emit an action, desired velocity, or
+  steering hint.
 - Spine TRAIN must use varied goal-conditioned spawn/target tasks in both
   directions, including fine-positioning cases. A fixed target may be used for
   a focused experiment, but do not regress to one fixed spawn/target trajectory.

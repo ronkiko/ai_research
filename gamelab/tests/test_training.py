@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch import nn
@@ -37,7 +38,9 @@ from gamelab.reward import (
 from gamelab.training import (
     Transition,
     CurriculumTask,
+    EpisodeResult,
     SpineCurriculum,
+    _measure_curriculum_frontier,
     _prepare_reward_config,
     _sample_curriculum_task,
     collect_episode,
@@ -271,6 +274,47 @@ class TrainingTests(unittest.TestCase):
             self.assertLessEqual(task.spawn_x, 900.0)
             self.assertGreaterEqual(task.target_x, 100.0)
             self.assertLessEqual(task.target_x, 900.0)
+
+    def test_curriculum_frontier_mastery_uses_deterministic_probe(self):
+        curriculum = SpineCurriculum()
+        task = CurriculumTask(
+            spawn_x=400.0,
+            target_x=420.0,
+            kind="frontier",
+            stage_index=0,
+            stage_name="precision",
+            distance=20.0,
+            max_seconds=3.0,
+        )
+        probe = EpisodeResult(
+            spawn_x=task.spawn_x,
+            target_x=task.target_x,
+            result="success",
+            final_x=task.target_x,
+            final_error=0.0,
+            reward=1.0,
+            motor_steps=0,
+            controller_requests=0,
+            transitions=[],
+            evidence={"vx": 0.0},
+        )
+        with patch(
+            "gamelab.training.collect_episode",
+            return_value=probe,
+        ) as collect:
+            advanced, measured = _measure_curriculum_frontier(
+                object(),
+                object(),
+                curriculum,
+                task,
+                player_id="player1",
+                reward_config=RewardConfig(),
+            )
+
+        self.assertFalse(advanced)
+        self.assertIs(measured, probe)
+        self.assertEqual(curriculum.frontier_results, [True])
+        self.assertFalse(collect.call_args.kwargs["sampled"])
 
     def test_curriculum_advances_only_after_frontier_mastery(self):
         import random

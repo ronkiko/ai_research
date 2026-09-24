@@ -160,7 +160,11 @@ difficulty because an episode counter advanced. The five frontier bands are
 `precision 5..40`, `short 20..100`, `medium 60..220`,
 `long 150..450`, and `full 300..900` world units. Their rollout horizons
 grow with difficulty as `3/4/5/6/8` simulated seconds. A stage advances only
-after at least 60% SUCCESS over the most recent 10 frontier attempts.
+after at least 60% SUCCESS over the most recent 10 deterministic frontier
+probes. Sampled TRAIN rollouts still explore and provide PPO experience, but
+their exploration noise is never counted as curriculum competence. Each
+frontier TRAIN episode is followed by a frozen-mean probe on the same
+spawn/target/horizon; logs report its `probe_error` and `probe_vx` separately.
 
 From the second stage onward, 20% of episodes replay precision tasks and 15%
 review a randomly selected earlier stage; replay episodes train the policy but

@@ -200,6 +200,37 @@ def collect_episode(
     )
 
 
+def _measure_curriculum_frontier(
+    model: SpineMotorPolicy,
+    client: HostClient,
+    curriculum: SpineCurriculum,
+    task: CurriculumTask,
+    *,
+    player_id: str,
+    reward_config: RewardConfig,
+) -> tuple[bool, EpisodeResult | None]:
+    """Measure frontier competence without Spine exploration noise."""
+    if task.kind != "frontier" or task.stage_index != curriculum.stage_index:
+        return False, None
+    probe = collect_episode(
+        model,
+        client,
+        player_id=player_id,
+        target_x=task.target_x,
+        spawn_x=task.spawn_x,
+        max_seconds=task.max_seconds,
+        reward_config=reward_config,
+        sampled=False,
+    )
+    if probe.result not in {"success", "timeout"}:
+        raise RuntimeError(f"invalid curriculum probe: {probe.result}")
+    advanced = curriculum.observe(
+        task,
+        success=probe.result == "success",
+    )
+    return advanced, probe
+
+
 def _advantages(transitions: list[Transition]) -> tuple[torch.Tensor, torch.Tensor]:
     rewards = [item.reward for item in transitions]
     values = [item.old_value for item in transitions]
@@ -640,9 +671,13 @@ def main(argv: list[str] | None = None) -> int:
                 metrics = ppo_update(model, optimizer, rollout)
                 rollout.clear()
                 last_metrics = metrics
-            advanced = curriculum.observe(
+            advanced, probe = _measure_curriculum_frontier(
+                model,
+                client,
+                curriculum,
                 task,
-                success=result.result == "success",
+                player_id=args.player,
+                reward_config=reward_config,
             )
             if metrics is not None:
                 save_checkpoint(
@@ -660,6 +695,14 @@ def main(argv: list[str] | None = None) -> int:
             advance_text = (
                 f" advance={curriculum.stage.name}" if advanced else ""
             )
+            if probe is None:
+                probe_text = "probe=-"
+            else:
+                probe_text = (
+                    f"probe={probe.result.upper()} "
+                    f"probe_error={probe.final_error:+.2f} "
+                    f"probe_vx={probe.evidence.get('vx', 0.0):+.2f}"
+                )
             if metrics is None:
                 ppo_text = (
                     f"ppo=pending rollout={len(rollout)}/{PPO_ROLLOUT_STEPS} "
@@ -695,7 +738,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"sim={result.evidence.get('simulation_seconds', 0.0):.3f}s "
                 f"wall={result.evidence.get('wall_seconds', 0.0):.3f}s "
                 f"speedup={result.evidence.get('speedup', 0.0):.1f}x "
-                f"{ppo_text}",
+                f"{probe_text} {ppo_text}",
                 flush=True,
             )
 

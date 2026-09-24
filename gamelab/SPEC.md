@@ -124,8 +124,11 @@ fused with the latest measured frame before the policy/critic hidden state.
 Spine task generation is a competence-gated curriculum. Frontier distance/horizon
 pairs are `5..40/3s`, `20..100/4s`, `60..220/5s`,
 `150..450/6s`, and `300..900/8s`. Advancement requires at least 60%
-SUCCESS over the last 10 current-frontier attempts; elapsed episode count alone
-never advances difficulty. Starting with the second stage, training interleaves
+SUCCESS over the last 10 deterministic current-frontier probes; elapsed episode
+count alone never advances difficulty. Sampled TRAIN episodes remain exploratory
+PPO data and cannot directly promote the frontier. A deterministic probe on the
+same frontier task measures the mean policy without exploration noise and is not
+added to the training rollout. Starting with the second stage, training interleaves
 20% precision replay and 15% randomly selected prior-stage review. Replay
 contributes PPO experience but never counts toward frontier promotion. Default
 task sampling is symmetric in travel direction and progressively expands the
