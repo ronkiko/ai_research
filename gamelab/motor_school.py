@@ -309,7 +309,7 @@ def _sample_motion_command(
     for _ in range(32):
         candidate = (
             rng.choice((-target_limit, target_limit))
-            if rng.random() < 0.15
+            if target_limit >= TARGET_MAX - 1e-12 and rng.random() < 0.15
             else rng.uniform(-target_limit, target_limit)
         )
         if abs(candidate) < 0.08:

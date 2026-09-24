@@ -436,9 +436,20 @@ class MotorSchoolTests(unittest.TestCase):
                 )
                 package.write_manifest()
                 passing = _verify(RuleMotor())
+                rapid_passing = {
+                    "passed": True,
+                    "command_hz": 10,
+                    "progress_fraction": 1.0,
+                    "progress_required": 1.0,
+                    "rest_fraction": 1.0,
+                    "rest_required": 1.0,
+                }
                 with patch(
                     "gamelab.motor_school._verify_program",
                     return_value=passing,
+                ), patch(
+                    "gamelab.motor_school._verify_rapid_program",
+                    return_value=rapid_passing,
                 ):
                     result = certify_motor(package.motor_id)
                 parsed = uuid.UUID(result["certificate_id"])
