@@ -24,6 +24,7 @@ from .config import (
     MOTOR_STATE_SIZE,
     PLAYER_MAX_SPEED,
     SPINE_CHANNELS,
+    SPINE_INITIAL_LOG_STD,
     WORLD_MAX_X,
 )
 from .motors.continuous import ContinuousMotor
@@ -146,7 +147,9 @@ class SpineMotorPolicy(nn.Module):
     def __init__(self, motor: nn.Module | None = None) -> None:
         super().__init__()
         self.spine = SpineCNN()
-        self.spine_log_std = nn.Parameter(torch.tensor(-0.7, dtype=torch.float32))
+        self.spine_log_std = nn.Parameter(
+            torch.tensor(SPINE_INITIAL_LOG_STD, dtype=torch.float32)
+        )
         self.motor = motor if motor is not None else ContinuousMotor()
         self.critic = CriticMLP()
 

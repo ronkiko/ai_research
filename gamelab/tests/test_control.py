@@ -114,7 +114,7 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertEqual(result["simulation_seconds"], 0.0)
 
-    def test_spine_transition_spans_six_motor_intervals(self):
+    def test_spine_transition_spans_six_motor_intervals_but_one_discount_step(self):
         class RightModel(StopModel):
             def __init__(self):
                 super().__init__()
@@ -155,7 +155,7 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(transitions)
         first = transitions[0]
         self.assertEqual(first.next_tick - first.tick, 12)
-        self.assertEqual(first.elapsed_steps, 6)
+        self.assertEqual(first.elapsed_steps, 1)
         self.assertGreater(result["motor_steps"], result["spine_calls"])
 
 

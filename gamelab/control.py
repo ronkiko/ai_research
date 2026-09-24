@@ -121,10 +121,13 @@ def _finish_decision(
     if decision is None:
         return
     decision.next_tick = tick
-    # Preserve the old discount's physical time base: elapsed Motor intervals.
+    # GAE/PPO operates on Spine actions. A normal decision lasts one 10 Hz
+    # Spine interval even though six Motor intervals execute underneath it.
+    # Discounting lambda six times per Spine action made terminal credit vanish
+    # over only a few decisions.
     decision.elapsed_steps = max(
         1.0,
-        (tick - decision.tick) * MOTOR_HZ / hz,
+        (tick - decision.tick) * SPINE_HZ / hz,
     )
     decision.done = done
     if on_transition is not None:

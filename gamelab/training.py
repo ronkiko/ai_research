@@ -20,6 +20,7 @@ from .config import (
     PPO_GAMMA,
     PPO_LEARNING_RATE,
     PPO_MAX_GRAD_NORM,
+    PPO_ROLLOUT_STEPS,
     PPO_VALUE_COEF,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
@@ -230,7 +231,19 @@ def ppo_update(
     transitions: list[Transition],
 ) -> dict[str, float]:
     if not transitions:
-        return {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0}
+        return {
+            "loss": 0.0,
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "approx_kl": 0.0,
+            "clip_fraction": 0.0,
+            "grad_norm": 0.0,
+            "value_mae": 0.0,
+            "explained_variance": 0.0,
+            "log_std": float(model.spine_log_std.detach()),
+            "samples": 0.0,
+        }
 
     histories = torch.stack([item.history for item in transitions])
     proprioception = torch.stack([item.proprioception for item in transitions])
@@ -309,6 +322,8 @@ def ppo_update(
             float(1 - (returns - predicted).var(unbiased=False) / variance)
             if float(variance) > 1e-8 else 0.0
         )
+        metrics["log_std"] = float(model.spine_log_std.detach())
+        metrics["samples"] = float(count)
     return metrics
 
 
@@ -584,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
 
+        rollout: list[Transition] = []
+        last_metrics: dict[str, float] | None = None
         for offset in range(1, args.episodes + 1):
             episode = completed + offset
             task = _sample_curriculum_task(
@@ -602,26 +619,50 @@ def main(argv: list[str] | None = None) -> int:
             )
             if result.result not in {"success", "timeout"}:
                 raise RuntimeError(f"invalid episode: {result.result}")
-            metrics = ppo_update(model, optimizer, result.transitions)
+            rollout.extend(result.transitions)
+            metrics: dict[str, float] | None = None
+            if len(rollout) >= PPO_ROLLOUT_STEPS:
+                metrics = ppo_update(model, optimizer, rollout)
+                rollout.clear()
+                last_metrics = metrics
             advanced = curriculum.observe(
                 task,
                 success=result.result == "success",
             )
-            save_checkpoint(
-                path,
-                model,
-                optimizer=optimizer,
-                extra={
-                    "episodes": episode,
-                    "seed": args.seed,
-                    "curriculum": curriculum.state_dict(),
-                    "curriculum_rng_state": rng.getstate(),
-                    **motor_checkpoint_extra(motor_package),
-                },
-            )
+            if metrics is not None:
+                save_checkpoint(
+                    path,
+                    model,
+                    optimizer=optimizer,
+                    extra={
+                        "episodes": episode,
+                        "seed": args.seed,
+                        "curriculum": curriculum.state_dict(),
+                        "curriculum_rng_state": rng.getstate(),
+                        **motor_checkpoint_extra(motor_package),
+                    },
+                )
             advance_text = (
                 f" advance={curriculum.stage.name}" if advanced else ""
             )
+            if metrics is None:
+                ppo_text = (
+                    f"ppo=pending rollout={len(rollout)}/{PPO_ROLLOUT_STEPS} "
+                    f"log_std={float(model.spine_log_std.detach()):+.3f}"
+                )
+            else:
+                ppo_text = (
+                    f"ppo=update n={int(metrics['samples'])} "
+                    f"loss={metrics['loss']:+.5f} "
+                    f"policy={metrics['policy_loss']:+.5f} "
+                    f"value={metrics['value_loss']:.5f} "
+                    f"ev={metrics['explained_variance']:+.3f} "
+                    f"kl={metrics['approx_kl']:.5f} "
+                    f"clip={metrics['clip_fraction']:.3f} "
+                    f"entropy={metrics['entropy']:.3f} "
+                    f"log_std={metrics['log_std']:+.3f} "
+                    f"grad={metrics['grad_norm']:.3f}"
+                )
             print(
                 f"Episode {episode} mode={args.mode} "
                 f"curriculum={task.stage_name}/{task.kind}{advance_text} "
@@ -637,9 +678,27 @@ def main(argv: list[str] | None = None) -> int:
                 f"sim={result.evidence.get('simulation_seconds', 0.0):.3f}s "
                 f"wall={result.evidence.get('wall_seconds', 0.0):.3f}s "
                 f"speedup={result.evidence.get('speedup', 0.0):.1f}x "
-                f"loss={metrics['loss']:+.5f}",
+                f"{ppo_text}",
                 flush=True,
             )
+
+        if rollout:
+            last_metrics = ppo_update(model, optimizer, rollout)
+            print(
+                "PPO FINAL "
+                f"n={int(last_metrics['samples'])} "
+                f"loss={last_metrics['loss']:+.5f} "
+                f"policy={last_metrics['policy_loss']:+.5f} "
+                f"value={last_metrics['value_loss']:.5f} "
+                f"ev={last_metrics['explained_variance']:+.3f} "
+                f"kl={last_metrics['approx_kl']:.5f} "
+                f"clip={last_metrics['clip_fraction']:.3f} "
+                f"entropy={last_metrics['entropy']:.3f} "
+                f"log_std={last_metrics['log_std']:+.3f} "
+                f"grad={last_metrics['grad_norm']:.3f}",
+                flush=True,
+            )
+            rollout.clear()
         verification = verify_spine_policy(
             model,
             client,

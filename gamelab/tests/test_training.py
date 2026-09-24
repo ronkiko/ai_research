@@ -8,7 +8,13 @@ import unittest
 import torch
 from torch import nn
 
-from gamelab.config import HISTORY_FRAMES, MOTOR_STATE_SIZE, SPINE_CHANNELS
+from gamelab.config import (
+    HISTORY_FRAMES,
+    MOTOR_STATE_SIZE,
+    PPO_ROLLOUT_STEPS,
+    SPINE_CHANNELS,
+    SPINE_INITIAL_LOG_STD,
+)
 from gamelab.models import (
     SensorHistory,
     SpineMotorPolicy,
@@ -304,6 +310,12 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(restored.stage.name, "medium")
         self.assertEqual(restored.frontier_results, [True, False, True])
 
+    def test_spine_ppo_uses_batched_rollout_and_lower_initial_exploration(self):
+        model = SpineMotorPolicy.fresh(9)
+        self.assertEqual(PPO_ROLLOUT_STEPS, 256)
+        self.assertAlmostEqual(float(model.spine_log_std.detach()), SPINE_INITIAL_LOG_STD)
+        self.assertLess(float(model.spine_log_std.detach().exp()), 0.35)
+
     def test_spine_ppo_updates_spine_but_preserves_frozen_motor(self):
         torch.manual_seed(23)
         model = SpineMotorPolicy.fresh(23)
@@ -337,6 +349,11 @@ class TrainingTests(unittest.TestCase):
         metrics = ppo_update(model, optimizer, transitions)
 
         self.assertTrue(all(math.isfinite(value) for value in metrics.values()))
+        self.assertEqual(metrics["samples"], 24.0)
+        self.assertIn("approx_kl", metrics)
+        self.assertIn("clip_fraction", metrics)
+        self.assertIn("explained_variance", metrics)
+        self.assertIn("log_std", metrics)
         self.assertTrue(any(not torch.equal(a, b) for a, b in zip(spine_before, model.spine.parameters())))
         self.assertTrue(all(torch.equal(a, b) for a, b in zip(motor_before, model.motor.parameters())))
 

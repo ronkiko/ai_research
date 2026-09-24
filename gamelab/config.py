@@ -36,8 +36,13 @@ PPO_GAE_LAMBDA = 0.95
 PPO_CLIP_EPS = 0.2
 PPO_EPOCHS = 4
 PPO_BATCH_SIZE = 64
-PPO_ENTROPY_COEF = 0.01
+PPO_ROLLOUT_STEPS = 256
+# Exploration comes from the learned policy variance itself. Do not add an
+# entropy bonus that keeps a precision controller noisy after it has evidence
+# for a narrower distribution.
+PPO_ENTROPY_COEF = 0.0
 PPO_VALUE_COEF = 0.5
+SPINE_INITIAL_LOG_STD = -1.2
 PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
 
