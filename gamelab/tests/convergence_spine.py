@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import random
-import shutil
 import tempfile
 from unittest.mock import patch
 
@@ -16,29 +15,30 @@ from gamelab.models import model_for_checkpoint
 from gamelab.spine_school import train_school
 from gamelab.training import collect_episode
 from gamelab.unpaced import UnpacedHostClient
-from gamelab.tests.motor_fixture import SOURCE
+from gamelab.motors.package import create_motor_instance
+from gamelab.tests.motor_fixture import copy_architectures
 
 
 def main() -> int:
     torch.set_num_threads(1)
     with tempfile.TemporaryDirectory(prefix="gamelab-convergence-") as temp:
         root = Path(temp)
-        shutil.copytree(SOURCE, root / "motors" / "continuous_1d_v1",
-                        ignore=shutil.ignore_patterns("*.pt", "manifest.json", "history.jsonl",
-                                                     "checkpoints", "__pycache__"))
-        with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root / "motors"),
+        motor_root = root / "motors"
+        copy_architectures(motor_root)
+        with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(motor_root),
                                     "GAMELAB_REWARD_CONFIG": str(root / "reward.json")}):
+            package = create_motor_instance()
+            motor_id = package.motor_id
             motor = run_school(
-                "continuous_1d_v1",
-                episodes=400,
+                motor_id,
+                episodes=10_000,
                 minimum_episodes=200,
                 stable_development_checks=3,
                 seed=1,
-                fresh=True,
             )
             if not motor["trained"]:
                 raise AssertionError(f"fresh adaptive Motor did not converge: {motor}")
-            certification = certify_motor("continuous_1d_v1")
+            certification = certify_motor(motor_id)
             if not certification["certified"]:
                 raise AssertionError(
                     f"fresh adaptive Motor did not certify 10/10: {certification}"
@@ -53,7 +53,7 @@ def main() -> int:
                           f"validation={sum(c['passed'] for c in best['cases'])}/{len(best['cases'])}", flush=True)
 
             try:
-                result = train_school(client, motor_id="continuous_1d_v1", episodes=200,
+                result = train_school(client, motor_id=motor_id, episodes=200,
                                       seed=1, fresh=True, player_id="player1", path=path,
                                       on_episode=report)
                 if not result["verification"]["passed"]:
