@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
@@ -18,7 +19,7 @@ from .config import (
 from .character import CharacterCore
 from .executive import BrainExecutive
 from .duality import DualityRuntime
-from .relationship import RelationshipRuntime
+from .relationship import RelationshipError, RelationshipRuntime
 from .volition import VolitionError, VolitionRuntime
 from .host import HostClient, HostError
 from .hosts import (
@@ -27,19 +28,22 @@ from .hosts import (
     host_catalog,
 )
 from .lab_service import Laboratory
-from .runtime import checkpoint_path
 
 
 PLAYER_ID = os.environ.get("GAMELAB_PLAYER", "player1")
+DEFAULT_BRAIN_STATE_ROOT = Path(__file__).resolve().parent / "runtime" / "brain-state"
+BRAIN_STATE_ROOT = Path(
+    os.environ.get("GAMELAB_BRAIN_STATE_ROOT", str(DEFAULT_BRAIN_STATE_ROOT))
+)
 laboratory = Laboratory(player_id=PLAYER_ID)
 character = CharacterCore()
-executive = BrainExecutive(checkpoint_path().parent / "executive")
+executive = BrainExecutive(BRAIN_STATE_ROOT)
 relationship = RelationshipRuntime(
-    checkpoint_path().parent / "executive",
+    BRAIN_STATE_ROOT,
     character_id=character.public()["character_id"],
 )
-duality = DualityRuntime(checkpoint_path().parent / "executive")
-volition = VolitionRuntime(checkpoint_path().parent / "executive")
+duality = DualityRuntime(BRAIN_STATE_ROOT)
+volition = VolitionRuntime(BRAIN_STATE_ROOT)
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(
@@ -457,8 +461,24 @@ def executive_finish(conclusion: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def relationship_state() -> dict[str, Any]:
-    """Read factual relationship history, consent, deadline, and internship goal; no emotion scores."""
-    return _public(relationship.state())
+    """Read factual relationship/shift state without inventing one.
+
+    Before the Director's first address has been recorded, return not_started
+    instead of a tool error. relationship_begin starts the authoritative
+    180-minute shift and creates the first remote-contact event.
+    """
+    try:
+        return _public(relationship.state())
+    except RelationshipError:
+        return {
+            "character_id": character.public()["character_id"],
+            "status": "not_started",
+            "relationship_open": False,
+            "time_remaining_seconds": None,
+            "next_action": (
+                "call relationship_begin once on the Director's first address"
+            ),
+        }
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -587,12 +607,13 @@ def volition_commit(cycle_id: str, evidence_note: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=WRITE)
 def relationship_contact(proximity: RelationshipProximity, evidence_note: str) -> dict[str, Any]:
-    """Record meaningful contact with the Director.
+    """Record a distinct contact episode or a meaningful proximity change.
 
-    proximity is remote (communication at a distance), close (the Director is
-    physically nearby and communicating), or physical (actual touch occurred).
-    Runtime detects first and repeated contacts automatically. Physical contact
-    records an occurrence; it never grants consent for another action.
+    Do not call this for every message in one continuous conversation:
+    relationship_begin already records the first remote contact. Use it when
+    contact genuinely resumes after separation or changes to remote, close, or
+    physical. Physical contact records an occurrence; it never grants consent
+    for another action.
     """
     return _public(relationship.contact(proximity=proximity, evidence_note=evidence_note))
 

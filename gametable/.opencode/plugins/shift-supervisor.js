@@ -152,7 +152,11 @@ function gateFor(gates, sessionID) {
 
 export const GameTableShiftSupervisor = async ({ client, directory }) => {
   const relationshipPath = process.env.GAMETABLE_RELATIONSHIP_STATE ||
-    resolve(directory, "../gamelab/runtime/executive/relationship-current.json")
+    resolve(
+      process.env.GAMELAB_BRAIN_STATE_ROOT ||
+        resolve(directory, "runtime/yuki-02"),
+      "relationship-current.json",
+    )
   let activeSessionID
   let activeRelationshipID
   let idle = false

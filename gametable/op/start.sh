@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+GAMETABLE_BRAIN_ID="yuki-02"
+GAMETABLE_STATE_ROOT="$ROOT/gametable/runtime/$GAMETABLE_BRAIN_ID"
+export GAMELAB_BRAIN_STATE_ROOT="$GAMETABLE_STATE_ROOT"
+export GAMETABLE_RELATIONSHIP_STATE="$GAMETABLE_STATE_ROOT/relationship-current.json"
+
 ACTION="start"
 case "${1:-}" in
   --start) ACTION="start"; shift ;;

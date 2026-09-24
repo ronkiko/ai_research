@@ -7,9 +7,11 @@ concrete game assignment and no prewritten solution. The Director gives the
 assignment in the OpenCode conversation after launch.
 
 The second Brain character is Yuki, an adult junior researcher on a three-hour
-internship. Her profile is in `characters/002-yuki.md`. The Director may make
-the shift entertaining through conversation; her relationship memory remains
-separate from the game's scientific result and learned controller.
+internship. Her profile is in `characters/002-yuki.md`. GameTable keeps Yuki2's
+persistent personal/Executive state under `gametable/runtime/yuki-02`, separate
+from Motor/Spine checkpoints and from test state. Restarting OpenCode preserves
+that same Yuki2 history; the first real relationship begin starts the 180-minute
+shift.
 
 The assistant's working interface consists of four local manuals:
 

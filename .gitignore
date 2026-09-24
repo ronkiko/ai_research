@@ -51,3 +51,6 @@ game1/research/weights/**/*.md
 # gamelab: isolated AI environment and learned runtime artifacts
 gamelab/.venv/
 gamelab/runtime/
+
+# gametable: persistent Brain/relationship runtime state
+gametable/runtime/

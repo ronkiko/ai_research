@@ -181,6 +181,7 @@ async def run_flow(
             "GAMELAB_CHECKPOINT": str(checkpoint),
             "GAMELAB_REWARD_CONFIG": str(reward_config),
             "GAMELAB_MOTOR_ROOT": str(motor_root),
+            "GAMELAB_BRAIN_STATE_ROOT": str(reward_config.parent / "brain-state"),
             "GAMELAB_PLAYER": PLAYER_ID,
             "GAMELAB_TEST_HOST_PORT": str(HOST_PORT),
             "GAMELAB_HOST_REGISTRY": str(reward_config.parent / "hosts.json"),
@@ -330,6 +331,13 @@ async def run_flow(
             session_before = operator.session()
             sequence_before = int(session_before.get("sequence", 0))
 
+            relationship_initial = await tool(session, "relationship_state")
+            payloads.append(relationship_initial)
+            if relationship_initial.get("status") != "not_started":
+                raise AssertionError(
+                    f"fresh MCP brain state was contaminated: {relationship_initial}"
+                )
+
             relationship_started = await tool(
                 session,
                 "relationship_begin",
@@ -341,6 +349,11 @@ async def run_flow(
             payloads.append(relationship_started)
             if relationship_started.get("executive_session_id") is not None:
                 raise AssertionError(f"relationship incorrectly depends on Executive: {relationship_started}")
+            remaining = relationship_started.get("time_remaining_seconds")
+            if not isinstance(remaining, (int, float)) or not 10795 <= remaining <= 10800:
+                raise AssertionError(
+                    f"relationship_begin did not start a fresh 180-minute shift: {relationship_started}"
+                )
 
             executive_started = await tool(
                 session,
