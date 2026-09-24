@@ -120,6 +120,33 @@ class SpineSchoolTests(unittest.TestCase):
             )
             self.assertLess(abs(float(vx * 180) - after["vx"]), .15)
 
+    def test_variable_delay_prediction_truncates_at_world_deadline(self):
+        from gamelab.host import player_from_state
+        from gamelab.runtime import reset_player_state
+
+        dynamics = MeasuredDynamics()
+        dynamics.add(self.samples())
+        dynamics.fit()
+        reset_player_state(self.client, "player1", spawn_x=500)
+        before = player_from_state(self.client.state())
+        command = 0.4
+        dx, vx, interval = dynamics.predict_delayed_interval(
+            torch.tensor(before["vx"] / 180),
+            torch.tensor(before["motor_x"]),
+            torch.tensor(command),
+            torch.tensor(6),
+            max_ticks=torch.tensor(3),
+        )
+        self.assertEqual(int(interval), 3)
+        for _ in range(3):
+            self.client.advance_tick()
+        after = player_from_state(self.client.state())
+        self.assertLess(
+            abs(float(dx * 180) - (after["x"] - before["x"])),
+            .002,
+        )
+        self.assertLess(abs(float(vx * 180) - after["vx"]), .15)
+
     def test_inaccurate_predictor_is_rejected(self):
         dynamics = MeasuredDynamics()
         rows = self.samples()

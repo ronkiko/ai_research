@@ -73,7 +73,11 @@ held-out prediction error and real-world frozen verification.
    policy decision to authoritative application. The identified affine
    two-tick predictor is decomposed into stationary one-tick substeps so the
    wider delayed consequences remain derived from measured dynamics rather than
-   copied GameServer equations. The policy receives only the preceding
+   copied GameServer equations. Imagined refinement is clocked by authoritative
+   physics ticks rather than by command count: extra transport delay consumes
+   the same finite world-time deadline that it consumes during physical
+   validation, and Spine decisions remain tied to their 10 Hz world-time
+   cadence. The policy receives only the preceding
    acknowledged application delay as feedback; the next delay is never exposed.
    This is adaptation to measured latency, not prediction of future latency.
 5. Every ten updates, evaluate eight fixed development tasks in the canonical

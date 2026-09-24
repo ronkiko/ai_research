@@ -19,7 +19,14 @@ from typing import Callable
 
 import torch
 
-from .config import HISTORY_FRAMES, MOTOR_HZ, PLAYER_MAX_SPEED, SPINE_HZ, SPINE_GOAL_DISTANCE_SCALE
+from .config import (
+    HISTORY_FRAMES,
+    MOTOR_HZ,
+    PHYSICS_HZ,
+    PLAYER_MAX_SPEED,
+    SPINE_HZ,
+    SPINE_GOAL_DISTANCE_SCALE,
+)
 from .models import build_spine_policy, load_checkpoint, motor_checkpoint_extra, policy_id, save_checkpoint
 from .runtime import checkpoint_path, ensure_player
 from .reward import RewardConfig, RewardStore
@@ -190,8 +197,16 @@ class MeasuredDynamics:
         previous_effort: torch.Tensor,
         new_effort: torch.Tensor,
         extra_ticks: torch.Tensor,
+        *,
+        max_ticks: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Roll measured local dynamics through 0/1/variable transport delay."""
+        """Roll measured local dynamics through 0/1/variable transport delay.
+
+        max_ticks truncates the interval at a physical-time deadline. This is
+        essential for variable latency: a delayed command may consume several
+        authoritative ticks, but imagined training must still end at the same
+        world-time horizon as physical validation.
+        """
         velocity, previous_effort, new_effort = torch.broadcast_tensors(
             velocity, previous_effort, new_effort
         )
@@ -208,8 +223,14 @@ class MeasuredDynamics:
         interval_ticks = torch.where(
             extra_ticks > 0,
             extra_ticks + 1,
-            torch.full_like(extra_ticks, 2),
+            torch.full_like(extra_ticks, PHYSICS_HZ // MOTOR_HZ),
         )
+        if max_ticks is not None:
+            max_ticks = torch.as_tensor(
+                max_ticks, dtype=torch.long, device=velocity.device
+            )
+            max_ticks = torch.broadcast_to(max_ticks, velocity.shape).clamp_min(0)
+            interval_ticks = torch.minimum(interval_ticks, max_ticks)
         tick_weights = self.physics_tick_weights().to(
             dtype=velocity.dtype, device=velocity.device
         )
@@ -297,41 +318,98 @@ class SpineSchool:
             if self.rest_refinement
             else None
         )
+        # The horizon is a physical-world deadline, not a command-count
+        # deadline. Under variable transport one Motor interval can span more
+        # than the nominal two physics ticks.
+        deadline_ticks = horizon * (PHYSICS_HZ // MOTOR_HZ)
+        elapsed_ticks = torch.zeros(BATCH_SIZE, dtype=torch.long)
+        next_spine_tick = torch.zeros(BATCH_SIZE, dtype=torch.long)
+        spine_stride_ticks = PHYSICS_HZ // SPINE_HZ
+        goal = None
         loss = torch.tensor(0.)
         for step in range(horizon):
-            if step % (MOTOR_HZ // SPINE_HZ) == 0:
+            active = elapsed_ticks < deadline_ticks
+            if not bool(active.any()):
+                break
+
+            need_spine = active & (elapsed_ticks >= next_spine_tick)
+            if bool(need_spine.any()):
                 if cancel is not None and cancel.is_set():
                     return {"updated": False, "reason": "cancelled"}
-                mean, _ = model.spine.policy_mean(history, input_delay=input_delay)
-                goal = model.spine.motor_goal(torch.tanh(mean))
+                mean, _ = model.spine.policy_mean(
+                    history, input_delay=input_delay
+                )
+                new_goal = model.spine.motor_goal(torch.tanh(mean))
+                goal = (
+                    new_goal
+                    if goal is None
+                    else torch.where(need_spine.unsqueeze(-1), new_goal, goal)
+                )
+                next_spine_tick = torch.where(
+                    need_spine,
+                    elapsed_ticks + spine_stride_ticks,
+                    next_spine_tick,
+                )
+            if goal is None:
+                raise RuntimeError("imagined Spine goal was not initialized")
+
             previous_effort = effort
-            effort = model.deterministic_motor(goal, torch.stack((velocity, effort), -1))
+            candidate_effort = model.deterministic_motor(
+                goal, torch.stack((velocity, effort), -1)
+            )
+            effort = torch.where(active, candidate_effort, previous_effort)
+            remaining_ticks = (deadline_ticks - elapsed_ticks).clamp_min(0)
+
             if self.rest_refinement:
                 extra_ticks = delay_schedule[step]
-                predicted_dx, predicted_vx, _ = self.dynamics.predict_delayed_interval(
-                    velocity,
-                    previous_effort,
-                    effort,
-                    extra_ticks,
+                predicted_dx, predicted_vx, interval_ticks = (
+                    self.dynamics.predict_delayed_interval(
+                        velocity,
+                        previous_effort,
+                        effort,
+                        extra_ticks,
+                        max_ticks=remaining_ticks,
+                    )
                 )
-                x = x + predicted_dx * PLAYER_MAX_SPEED
-                velocity = predicted_vx
-                # control_loop reports extra application delay in nominal Motor
-                # periods; motor_stride is two physics ticks in this experiment.
-                input_delay = extra_ticks.float() / 2
+                input_delay = torch.where(
+                    active,
+                    extra_ticks.float() / (PHYSICS_HZ // MOTOR_HZ),
+                    input_delay,
+                )
             else:
                 predicted = torch.stack(
                     (velocity, effort, torch.ones_like(velocity)), -1
                 ) @ self.dynamics.weights
-                x = x + predicted[:, 0] * PLAYER_MAX_SPEED
-                velocity = predicted[:, 1]
-            history = torch.cat((history[:, :, 1:], frame().unsqueeze(-1)), -1)
+                interval_ticks = torch.minimum(
+                    torch.full_like(elapsed_ticks, PHYSICS_HZ // MOTOR_HZ),
+                    remaining_ticks,
+                )
+                predicted_dx = predicted[:, 0]
+                predicted_vx = predicted[:, 1]
+
+            x = x + torch.where(active, predicted_dx, 0.0) * PLAYER_MAX_SPEED
+            velocity = torch.where(active, predicted_vx, velocity)
+            elapsed_ticks = elapsed_ticks + torch.where(
+                active, interval_ticks, torch.zeros_like(interval_ticks)
+            )
+            history = torch.cat(
+                (history[:, :, 1:], frame().unsqueeze(-1)), -1
+            )
             error = target - x
-            # Continuous state cost: distance everywhere, measured speed near
-            # the goal. Unlike episode-best bonuses it penalizes leaving a good
-            # state. Nothing in this objective specifies the correct action.
-            loss = loss + (torch.sqrt(error.square() + .01) - .1).mean() / horizon
-            loss = loss + (.5 * (velocity * PLAYER_MAX_SPEED).square() / (1 + error.square())).mean() / horizon
+
+            # Integrate state cost over authoritative world time. For nominal
+            # 0/1 timing interval_ticks==2, so this is exactly the old 1/horizon
+            # weighting. Variable latency no longer secretly lengthens the
+            # imagined deadline.
+            time_weight = interval_ticks.float() / deadline_ticks
+            position_cost = torch.sqrt(error.square() + .01) - .1
+            speed_cost = (
+                .5
+                * (velocity * PLAYER_MAX_SPEED).square()
+                / (1 + error.square())
+            )
+            loss = loss + (position_cost * time_weight).mean()
+            loss = loss + (speed_cost * time_weight).mean()
         loss = loss + 2 * (torch.sqrt((target - x).square() + .01) - .1).mean()
         # Position alone can rate a still-moving arrival as an excellent final
         # state. Give terminal rest its own gradient, with useful resolution
