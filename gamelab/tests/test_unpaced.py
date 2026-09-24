@@ -4,6 +4,7 @@ import unittest
 
 import torch
 
+from gamelab.config import SPINE_GOAL_DISTANCE_SCALE, WORLD_MAX_X
 from gamelab.control import control_loop
 from gamelab.host import player_from_state
 from gamelab.runtime import ensure_player, reset_player_state
@@ -31,10 +32,19 @@ class RuleModel:
         self.spine = RuleSpine()
     def eval(self): pass
     def spine_parameters(self, history):
-        signal = torch.clamp(history[3, -1], -0.999, 0.999)
-        # Test-only convergent rule for the bounded local goal encoding:
-        # fast while far, quadratically gentle as dx approaches zero.
-        desired = 0.8 * signal * torch.abs(signal)
+        raw = history[3, -1]
+        signal = torch.clamp(raw, -0.999999, 0.999999)
+        # Test-only convergent rule. Saturated far goals use a bounded cruise;
+        # once the local encoding carries recoverable magnitude, decode dx and
+        # return to the old proportional desired-velocity behavior.
+        decoded = (
+            torch.atanh(signal)
+            * SPINE_GOAL_DISTANCE_SCALE
+            / WORLD_MAX_X
+        )
+        cruise = 0.8 * torch.sign(signal)
+        desired = torch.where(torch.abs(raw) >= 0.995, cruise, decoded)
+        desired = torch.clamp(desired, -0.8, 0.8)
         return torch.atanh(desired), torch.tensor(-20.0), torch.zeros(16)
     def deterministic_motor(self, goal, proprioception):
         mean, _ = self.motor.parameters_for(goal, proprioception)

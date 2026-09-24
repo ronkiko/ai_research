@@ -13,7 +13,9 @@ from gamelab.config import (
     MOTOR_STATE_SIZE,
     PPO_ROLLOUT_STEPS,
     SPINE_CHANNELS,
+    SPINE_GOAL_DISTANCE_SCALE,
     SPINE_INITIAL_LOG_STD,
+    WORLD_MAX_X,
 )
 from gamelab.models import (
     SensorHistory,
@@ -433,8 +435,20 @@ class TrainingTests(unittest.TestCase):
                 return self
 
             def spine_parameters(self, history):
-                signal = torch.clamp(history[3, -1], -0.999, 0.999)
-                desired = 0.8 * signal * torch.abs(signal)
+                raw = history[3, -1]
+                signal = torch.clamp(raw, -0.999999, 0.999999)
+                decoded = (
+                    torch.atanh(signal)
+                    * SPINE_GOAL_DISTANCE_SCALE
+                    / WORLD_MAX_X
+                )
+                cruise = 0.8 * torch.sign(signal)
+                desired = torch.where(
+                    torch.abs(raw) >= 0.995,
+                    cruise,
+                    decoded,
+                )
+                desired = torch.clamp(desired, -0.8, 0.8)
                 return (
                     torch.atanh(desired),
                     torch.tensor(-20.0),
