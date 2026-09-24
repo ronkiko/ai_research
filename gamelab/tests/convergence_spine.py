@@ -47,6 +47,16 @@ def main() -> int:
                                       on_episode=report)
                 if not result["verification"]["passed"]:
                     raise AssertionError(f"fresh Spine did not converge: {result}")
+                delayed = result.get("best_validation") or {}
+                delayed_cases = delayed.get("cases") or []
+                if (
+                    not delayed.get("passed")
+                    or len(delayed_cases) != 36
+                    or not all(case.get("passed") for case in delayed_cases)
+                ):
+                    raise AssertionError(
+                        f"delay-stressed validation did not reach 36/36: {delayed}"
+                    )
                 model, _ = model_for_checkpoint(path)
                 rng = random.Random(983)
                 errors = []
@@ -60,8 +70,8 @@ def main() -> int:
                         raise AssertionError(f"held-out goal failed: {episode.evidence}")
                     errors.append(abs(episode.final_error))
                 print("PASS fresh Motor + Spine convergence " + json.dumps({
-                    "verify": result["verification"], "heldout_passed": len(errors),
-                    "heldout_max_error": max(errors),
+                    "verify": result["verification"], "delay_validation_passed": len(delayed_cases),
+                    "heldout_passed": len(errors), "heldout_max_error": max(errors),
                 }), flush=True)
             finally:
                 client.close()
