@@ -57,12 +57,17 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Motors are portable packages under `gamelab/motors/packages/<motor_id>/`.
   Keep code, manifest, verified brain, candidate, school history and archived
   brains package-local so the Motor can be copied/removed as one unit.
-- Do not mark a Motor trained from weight updates alone. Only frozen Motor School
-  verification may promote `candidate.pt` to `brain.pt` and set manifest
-  status to trained.
-- Spine TRAIN must mount an explicitly selected verified Motor, freeze its
+- Motor School evidence is graded PASS -> BEST -> CERTIFIED. PASS means one
+  standard frozen VERIFY; BEST is the best PASS retained across the full
+  training budget; CERTIFIED means that exact frozen BEST brain passes 10/10
+  distinct held-out certification programs. Quick CI may stop at PASS, but
+  serious Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
+- A new promoted BEST invalidates any certification tied to the previous brain
+  SHA. `--fresh` must archive the old verified brain and clear active BEST and
+  certification evidence so a new school never inherits old qualification.
+- Spine TRAIN must mount an explicitly selected CERTIFIED Motor, freeze its
   parameters, and bind Motor id + brain SHA into the Spine checkpoint. Never
-  silently substitute or auto-create an untrained Motor.
+  silently substitute or auto-create an uncertified Motor.
 - Motor School may import canonical `ZoneRuntime` directly, like unpaced TRAIN,
   but it must train from measured physical consequences and must not inject
   teacher `motor_x` actions.

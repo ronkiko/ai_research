@@ -11,6 +11,7 @@ import shutil
 
 import torch
 
+from gamelab.motors.package import CURRENT_MOTOR_SCHOOL_VERSION
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +49,7 @@ def create_verified_motor_fixture(root: Path) -> Path:
         {
             "schema_version": 1,
             "motor_id": "continuous_1d_v1",
-            "school": "test_fixture_only",
+            "school": CURRENT_MOTOR_SCHOOL_VERSION,
             "episodes": 0,
             "seed": 0,
             "model": model.state_dict(),
@@ -62,8 +63,16 @@ def create_verified_motor_fixture(root: Path) -> Path:
     ).hexdigest()
     manifest["training"].update(
         {
+            "school": CURRENT_MOTOR_SCHOOL_VERSION,
             "status": "trained",
             "verified": True,
+            "qualification": "certified",
+            "certified": True,
+            "certification": {
+                "passed": True,
+                "brain_sha256": digest,
+                "test_fixture": True,
+            },
             "last_result": {
                 "test_fixture": True,
                 "verification": {"passed": True},

@@ -10,15 +10,18 @@ import torch
 
 from gamelab.motor_school import (
     SchoolTransition,
+    CERTIFICATION_REQUIRED_PASSES,
     _local_tracking_reward,
     _new_world,
+    _reset_fresh_school,
     _rollout,
     _update,
     _verify,
+    certify_motor,
     run_school,
 )
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
-from gamelab.tests.motor_fixture import copy_clean_motor
+from gamelab.tests.motor_fixture import copy_clean_motor, create_verified_motor_fixture
 
 
 class RuleMotor(torch.nn.Module):
@@ -203,6 +206,33 @@ class MotorSchoolTests(unittest.TestCase):
                 map_location="cpu",
             )
             self.assertEqual(brain["episodes"], 10)
+
+    def test_fresh_reset_archives_and_drops_old_best_and_certification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            package_path = create_verified_motor_fixture(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                from gamelab.motors.package import get_motor_package
+                package = get_motor_package("continuous_1d_v1")
+                old_sha = package.brain_sha256
+                self.assertTrue(package.trained)
+                _reset_fresh_school(package)
+                self.assertFalse(package.brain_path.exists())
+                self.assertFalse(package.candidate_path.exists())
+                self.assertTrue((package.checkpoints_path / f"{old_sha}.pt").is_file())
+                training = package.manifest["training"]
+                self.assertIsNone(training["qualification"])
+                self.assertFalse(training["certified"])
+                self.assertNotIn("best_episode", training)
+                self.assertNotIn("certification", training)
+
+    def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
+        from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program
+        motor = RuleMotor()
+        results = [_verify_program(motor, levels) for levels in CERTIFICATION_PROGRAMS]
+        self.assertEqual(len(results), CERTIFICATION_REQUIRED_PASSES)
+        self.assertEqual(len(set(CERTIFICATION_PROGRAMS)), CERTIFICATION_REQUIRED_PASSES)
+        self.assertTrue(all(result["passed"] for result in results), results)
 
     def test_frozen_school_verification_accepts_physical_velocity_reflex(self):
         result = _verify(RuleMotor())

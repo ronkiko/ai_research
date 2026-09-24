@@ -108,7 +108,7 @@ the local physical reflex against requested velocity; it never receives
 artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
-Motor School v4 samples continuous normalized velocity commands from
+Motor School v5 samples continuous normalized velocity commands from
 `[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
 Motor action receives local measured velocity-tracking credit over the next
 1/60 second, so the reflex still does not depend on a long strategic horizon.
@@ -116,21 +116,43 @@ Zero-velocity commands receive local credit for reducing measured speed from
 any entry velocity, increasingly precise near-rest credit, release pressure on
 residual actuator effort, and an exact-rest bonus. Rest and non-rest rewards are
 advantage-normalized as separate command classes before the local policy update,
-so precision-rest shaping cannot overwhelm ordinary velocity tracking. This lets
-the Motor distinguish "slow" from the GameServer's actual physical rest state
-without a teacher action. Frozen verification uses unseen velocity levels and, for zero commands,
-requires the settled samples to hold `vx=0` with `|motor_x|<=0.02`; an old
-Motor that merely drifts slowly no longer certifies. A PASS may update
-`brain.pt`, but normal training continues through the full requested
-`--episodes` budget. The best passing brain is retained even if later training
-regresses. `--stop-on-pass` remains an explicit quick/CI mode.
+so precision-rest shaping cannot overwhelm ordinary velocity tracking.
 
-A clean checkout intentionally contains no verified Motor brain. Train the
-default wheel first:
+Motor School has three evidence grades:
+
+- **PASS** — one standard frozen VERIFY succeeds. `quick` stops here and exists
+  for CI/smoke evidence that learning works at all.
+- **BEST** — `train` consumes the complete episode budget and retains the best
+  standard-PASS brain even if the continuing candidate later regresses.
+- **CERTIFIED** — the frozen BEST must pass **10/10 distinct held-out command
+  programs** containing different velocities, reversals and physical-rest
+  transitions. Only CERTIFIED Motor brains may be mounted by serious Spine
+  TRAIN/RUN.
+
+The scenarios are explicit:
 
 ```bash
-./gamelab/op/motor-school.sh --motor continuous_1d_v1 --fresh --episodes 200
+# quick CI/smoke: first standard PASS
+./gamelab/op/motor-school.sh quick --motor continuous_1d_v1 --fresh --episodes 100
+
+# full training: consume budget and retain BEST
+./gamelab/op/motor-school.sh train --motor continuous_1d_v1 --fresh --episodes 200
+
+# frozen BEST -> 10/10 held-out certification
+./gamelab/op/motor-school.sh certify --motor continuous_1d_v1
 ```
+
+With no scenario argument Motor School runs **auto**: it starts a genuinely
+fresh school, trains the full default 200-episode budget, retains BEST, then
+runs certification:
+
+```bash
+./gamelab/op/motor-school.sh
+```
+
+A true fresh start archives any previous verified brain under `checkpoints/`
+and removes its BEST/certification from the active manifest before learning.
+Old `best@...` evidence therefore cannot leak into a new fresh school.
 
 The package runtime files are:
 
@@ -146,7 +168,7 @@ They are ignored by Git but live inside the Motor directory, so copying or
 removing that directory copies or removes the installed wheel and its learned
 state as one unit.
 
-Spine TRAIN must explicitly select a Motor:
+Spine TRAIN must explicitly select a CERTIFIED Motor:
 
 ```bash
 ./gamelab/op/train-unpaced.sh --motor continuous_1d_v1 --fresh --episodes 200

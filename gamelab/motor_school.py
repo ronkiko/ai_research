@@ -51,6 +51,19 @@ TARGET_MIN = -0.8
 TARGET_MAX = 0.8
 STAND_COMMAND_PROBABILITY = 0.25
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
+CERTIFICATION_PROGRAMS = (
+    (0.34, 0.0, -0.55, 0.18, 0.0, 0.69, 0.0),
+    (-0.29, 0.51, 0.0, -0.76, 0.27, 0.0),
+    (0.11, 0.79, -0.22, 0.0, -0.47, 0.0),
+    (-0.18, -0.71, 0.36, 0.0, 0.58, 0.0),
+    (0.44, -0.12, 0.0, -0.67, 0.31, 0.0),
+    (-0.38, 0.16, 0.62, 0.0, -0.24, 0.0),
+    (0.77, 0.05, -0.49, 0.0, 0.26, 0.0),
+    (-0.75, -0.08, 0.53, 0.0, -0.33, 0.0),
+    (0.25, 0.64, 0.0, -0.17, -0.59, 0.0),
+    (-0.46, 0.28, 0.0, 0.72, -0.14, 0.0),
+)
+CERTIFICATION_REQUIRED_PASSES = len(CERTIFICATION_PROGRAMS)
 VERIFY_SEGMENT_SECONDS = 0.6
 VERIFY_REST_SEGMENT_SECONDS = 1.0
 VERIFY_MAE_LIMIT = 12.0
@@ -303,7 +316,11 @@ def _rollout(
     }
 
 
-def _verify(motor: nn.Module) -> dict[str, float | bool]:
+def _verify_program(
+    motor: nn.Module,
+    levels: tuple[float, ...],
+) -> dict[str, float | bool]:
+    """Frozen deterministic Motor exam for one velocity-command program."""
     runtime, sequence = _new_world()
     _reset_world(runtime)
     motor.eval()
@@ -313,16 +330,13 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
     zero_efforts: list[float] = []
     zero_rest: list[bool] = []
 
-    for desired in VERIFY_LEVELS:
+    for desired in levels:
         segment_seconds = (
             VERIFY_REST_SEGMENT_SECONDS
             if desired == 0.0
             else VERIFY_SEGMENT_SECONDS
         )
         segment_steps = max(1, int(round(segment_seconds * MOTOR_HZ)))
-        # Measure only the final quarter of each command. Zero commands get a
-        # longer segment so certification asks whether the reflex can actually
-        # settle and hold the server's physical rest state after motion.
         settle_steps = max(1, (3 * segment_steps) // 4)
         for step in range(segment_steps):
             player = _player(runtime)
@@ -386,6 +400,10 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
         "zero_effort_limit": VERIFY_ZERO_EFFORT_LIMIT,
         "rest_fraction_required": 1.0,
     }
+
+
+def _verify(motor: nn.Module) -> dict[str, float | bool]:
+    return _verify_program(motor, VERIFY_LEVELS)
 
 
 def _verification_quality(verification: dict) -> float:
@@ -455,6 +473,40 @@ def _load_candidate(
     return int(payload.get("episodes", 0))
 
 
+def _reset_fresh_school(package: MotorPackage) -> None:
+    """Start a new school without inheriting an old BEST or certification."""
+    archived = package.archive_verified_brain()
+    package.brain_path.unlink(missing_ok=True)
+    package.candidate_path.unlink(missing_ok=True)
+    package.manifest.pop("brain_sha256", None)
+
+    training = dict(package.manifest.get("training") or {})
+    training["school"] = SCHOOL_VERSION
+    training["status"] = "untrained"
+    training["verified"] = False
+    training["qualification"] = None
+    training["certified"] = False
+    for key in (
+        "best_verification",
+        "best_episode",
+        "best_quality",
+        "best_brain_sha256",
+        "certification",
+        "last_result",
+    ):
+        training.pop(key, None)
+    package.manifest["training"] = training
+    package.write_manifest()
+    package.append_history(
+        {
+            "at": _now(),
+            "kind": "fresh_reset",
+            "school": SCHOOL_VERSION,
+            "archived_brain_sha256": archived,
+        }
+    )
+
+
 def _existing_best(
     package: MotorPackage,
 ) -> tuple[dict | None, int | None]:
@@ -515,6 +567,9 @@ def _promote_if_better(
     training = dict(package.manifest.get("training") or {})
     training["status"] = "trained"
     training["verified"] = True
+    training["qualification"] = "pass"
+    training["certified"] = False
+    training.pop("certification", None)
     training["best_episode"] = int(episode)
     training["best_verification"] = dict(verification)
     training["best_quality"] = candidate_quality
@@ -579,6 +634,17 @@ def _finish_manifest(
     if best_verification is not None and best_verification.get("passed"):
         training["status"] = "trained"
         training["verified"] = True
+        certification = training.get("certification") or {}
+        certification_valid = (
+            certification.get("passed") is True
+            and certification.get("brain_sha256") == package.brain_sha256
+        )
+        if certification_valid:
+            training["qualification"] = "certified"
+            training["certified"] = True
+        else:
+            training["qualification"] = "pass" if stop_on_pass else "best"
+            training["certified"] = False
         training["best_verification"] = dict(best_verification)
         training["best_episode"] = best_episode
         training["best_quality"] = _verification_quality(best_verification)
@@ -635,25 +701,13 @@ def run_school(
     package = get_motor_package(motor_id)
     training_manifest = dict(package.manifest.get("training") or {})
     prior_school = training_manifest.get("school")
-    if prior_school != SCHOOL_VERSION:
-        if not fresh:
-            raise MotorPackageError(
-                f"motor {motor_id}: school changed from {prior_school!r} "
-                f"to {SCHOOL_VERSION!r}; rerun with --fresh"
-            )
-        training_manifest["school"] = SCHOOL_VERSION
-        training_manifest["status"] = "untrained"
-        training_manifest["verified"] = False
-        for key in (
-            "best_verification",
-            "best_episode",
-            "best_quality",
-            "best_brain_sha256",
-            "last_result",
-        ):
-            training_manifest.pop(key, None)
-        package.manifest["training"] = training_manifest
-        package.write_manifest()
+    if prior_school != SCHOOL_VERSION and not fresh:
+        raise MotorPackageError(
+            f"motor {motor_id}: school changed from {prior_school!r} "
+            f"to {SCHOOL_VERSION!r}; rerun with --fresh"
+        )
+    if fresh:
+        _reset_fresh_school(package)
 
     torch.manual_seed(seed)
     rng = random.Random(seed)
@@ -663,9 +717,7 @@ def run_school(
         lr=SCHOOL_LEARNING_RATE,
     )
     candidate_episodes = 0
-    if fresh:
-        package.candidate_path.unlink(missing_ok=True)
-    else:
+    if not fresh:
         candidate_episodes = _load_candidate(package, motor, optimizer)
 
     if verify_only:
@@ -807,11 +859,14 @@ def run_school(
         seed=seed,
         stop_on_pass=stop_on_pass,
     )
+    current_training = package.manifest.get("training") or {}
     return {
         "motor_id": package.motor_id,
         "episodes_run": episodes_run,
         "candidate_episodes": candidate_episodes,
         "trained": trained,
+        "qualification": current_training.get("qualification"),
+        "certified": bool(current_training.get("certified")),
         "promoted": improved_this_run,
         "best_episode": best_episode,
         "best_verification": best_verification,
@@ -820,41 +875,184 @@ def run_school(
     }
 
 
+def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
+    """Certify the frozen BEST brain on ten distinct held-out programs."""
+    package = get_motor_package(motor_id)
+    training = dict(package.manifest.get("training") or {})
+    best = training.get("best_verification")
+    if not package.brain_path.is_file() or not isinstance(best, dict) or not best.get("passed"):
+        raise MotorPackageError(
+            f"motor {motor_id!r} has no frozen BEST to certify; run full training first"
+        )
+    payload = torch.load(package.brain_path, map_location="cpu")
+    if not isinstance(payload, dict) or payload.get("motor_id") != package.motor_id:
+        raise MotorPackageError(f"motor {motor_id}: invalid brain artifact")
+    if payload.get("school") != SCHOOL_VERSION:
+        raise MotorPackageError(
+            f"motor {motor_id}: BEST belongs to {payload.get('school')!r}; "
+            f"rerun Motor School auto or train --fresh"
+        )
+
+    actual_sha = _sha256(package.brain_path)
+    expected_sha = package.brain_sha256
+    if not expected_sha or actual_sha != expected_sha:
+        raise MotorPackageError(
+            f"motor {motor_id}: BEST brain hash mismatch; cannot certify"
+        )
+
+    motor = package.new_model()
+    motor.load_state_dict(payload["model"])
+    motor.eval()
+    programs = []
+    for index, levels in enumerate(CERTIFICATION_PROGRAMS, start=1):
+        verification = _verify_program(motor, levels)
+        programs.append(
+            {
+                "program": index,
+                "levels": list(levels),
+                "verification": verification,
+                "passed": bool(verification["passed"]),
+            }
+        )
+        print(
+            f"MotorSchool CERTIFY {index}/{CERTIFICATION_REQUIRED_PASSES} "
+            f"{'PASS' if verification['passed'] else 'FAIL'} "
+            f"mae={verification['mean_abs_velocity_error']:.2f} "
+            f"max_error={verification['max_abs_velocity_error']:.2f} "
+            f"rest={verification['zero_target_rest_fraction']:.0%}",
+            flush=True,
+        )
+
+    pass_count = sum(1 for item in programs if item["passed"])
+    passed = pass_count == CERTIFICATION_REQUIRED_PASSES
+    certification = {
+        "at": _now(),
+        "school": SCHOOL_VERSION,
+        "brain_sha256": actual_sha,
+        "passed": passed,
+        "pass_count": pass_count,
+        "required_passes": CERTIFICATION_REQUIRED_PASSES,
+        "programs": programs,
+    }
+    training["certification"] = certification
+    training["certified"] = passed
+    training["qualification"] = "certified" if passed else "best"
+    training["status"] = "trained"
+    training["verified"] = True
+    package.manifest["training"] = training
+    package.write_manifest()
+    package.append_history({"kind": "certification", **certification})
+    return {
+        "motor_id": package.motor_id,
+        "certified": passed,
+        "qualification": training["qualification"],
+        "pass_count": pass_count,
+        "required_passes": CERTIFICATION_REQUIRED_PASSES,
+        "brain_sha256": actual_sha,
+        "programs": programs,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Train/verify one portable GameLab Motor"
+        description="Train and certify one portable GameLab Motor"
+    )
+    parser.add_argument(
+        "scenario",
+        nargs="?",
+        choices=("auto", "quick", "train", "certify"),
+        default="auto",
+        help=(
+            "auto (default): fresh full training then certification; "
+            "quick: stop on first standard PASS; "
+            "train: consume full episode budget and keep BEST; "
+            "certify: frozen BEST must pass 10/10 held-out programs"
+        ),
     )
     parser.add_argument("--motor", default=DEFAULT_MOTOR_ID)
     parser.add_argument("--episodes", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--fresh", action="store_true")
-    parser.add_argument("--verify-only", action="store_true")
-    parser.add_argument(
-        "--stop-on-pass",
-        action="store_true",
-        help="stop at the first passing VERIFY (quick/CI mode)",
-    )
+    # Compatibility aliases for older operator/CI invocations.
+    parser.add_argument("--verify-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--stop-on-pass", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.episodes <= 0:
         raise SystemExit("--episodes must be positive")
+
+    scenario = args.scenario
+    if args.verify_only:
+        package = get_motor_package(args.motor)
+        source = package.brain_path if package.brain_path.is_file() else package.candidate_path
+        if not source.is_file():
+            raise SystemExit(f"motor {args.motor}: no brain/candidate to verify")
+        payload = torch.load(source, map_location="cpu")
+        motor = package.new_model()
+        motor.load_state_dict(payload["model"])
+        result = _verify(motor)
+        print("MotorSchool VERIFY result " + json.dumps(result, sort_keys=True), flush=True)
+        return 0 if result.get("passed") else 2
+    if args.stop_on_pass:
+        scenario = "quick"
+
     try:
-        result = run_school(
+        if scenario == "certify":
+            if args.fresh:
+                raise MotorPackageError("--fresh cannot be combined with certify")
+            result = certify_motor(args.motor)
+            print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+            return 0 if result["certified"] else 2
+
+        if scenario == "quick":
+            result = run_school(
+                args.motor,
+                episodes=args.episodes,
+                seed=args.seed,
+                fresh=args.fresh,
+                stop_on_pass=True,
+            )
+            result["scenario"] = "quick"
+            print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+            return 0 if result["trained"] else 2
+
+        if scenario == "train":
+            result = run_school(
+                args.motor,
+                episodes=args.episodes,
+                seed=args.seed,
+                fresh=args.fresh,
+            )
+            result["scenario"] = "train"
+            print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+            return 0 if result["qualification"] in {"best", "certified"} else 2
+
+        # auto is intentionally a new school from the beginning.
+        training = run_school(
             args.motor,
             episodes=args.episodes,
             seed=args.seed,
-            fresh=args.fresh,
-            verify_only=args.verify_only,
-            stop_on_pass=args.stop_on_pass,
+            fresh=True,
         )
+        if not training["trained"]:
+            result = {
+                "scenario": "auto",
+                "training": training,
+                "certification": None,
+                "certified": False,
+            }
+            print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+            return 2
+        certification = certify_motor(args.motor)
+        result = {
+            "scenario": "auto",
+            "training": training,
+            "certification": certification,
+            "certified": certification["certified"],
+        }
+        print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
+        return 0 if certification["certified"] else 2
     except MotorPackageError as exc:
         raise SystemExit(str(exc)) from exc
-    print(
-        "MotorSchool result " + json.dumps(result, sort_keys=True),
-        flush=True,
-    )
-    if args.verify_only:
-        return 0 if result.get("passed") else 2
-    return 0 if result.get("trained") else 2
 
 
 if __name__ == "__main__":

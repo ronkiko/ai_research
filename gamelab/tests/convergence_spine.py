@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.motor_school import run_school
+from gamelab.motor_school import certify_motor, run_school
 from gamelab.models import model_for_checkpoint
 from gamelab.spine_school import train_school
 from gamelab.training import collect_episode
@@ -36,6 +36,11 @@ def main() -> int:
             )
             if not motor["trained"]:
                 raise AssertionError(f"fresh 200-episode Motor did not converge: {motor}")
+            certification = certify_motor("continuous_1d_v1")
+            if not certification["certified"]:
+                raise AssertionError(
+                    f"fresh 200-episode Motor did not certify 10/10: {certification}"
+                )
             path = root / "spine.pt"
             client = UnpacedHostClient("convergence")
 

@@ -26,7 +26,7 @@ from ..config import (
 DEFAULT_MOTOR_ID = "continuous_1d_v1"
 DEFAULT_MOTOR_ROOT = Path(__file__).resolve().parent / "packages"
 MOTOR_PACKAGE_SCHEMA = 1
-CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v4"
+CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v5"
 
 
 class MotorPackageError(RuntimeError):
@@ -81,10 +81,16 @@ class MotorPackage:
 
     @property
     def trained(self) -> bool:
+        """Runtime-ready means frozen BEST has passed full certification."""
         training = self.manifest.get("training") or {}
+        certification = training.get("certification") or {}
         return (
             training.get("status") == "trained"
             and training.get("verified") is True
+            and training.get("qualification") == "certified"
+            and training.get("certified") is True
+            and certification.get("passed") is True
+            and certification.get("brain_sha256") == self.brain_sha256
             and training.get("school") == CURRENT_MOTOR_SCHOOL_VERSION
             and self.brain_path.is_file()
             and bool(self.brain_sha256)
@@ -223,20 +229,23 @@ def list_motor_packages() -> list[dict[str, Any]]:
             continue
         training = package.manifest.get("training") or {}
         valid = False
-        if training.get("status") == "trained":
+        if training.get("qualification") == "certified":
             try:
                 require_trained_motor(package)
                 valid = True
             except MotorPackageError:
                 valid = False
+        qualification = training.get("qualification")
         result.append({
             "motor_id": package.motor_id,
             "status": (
-                "trained" if valid
-                else "invalid" if training.get("status") == "trained"
+                "certified" if valid
+                else str(qualification) if qualification
                 else training.get("status", "unknown")
             ),
+            "qualification": qualification,
             "verified": valid,
+            "certified": valid,
             "brain_ready": package.brain_path.is_file(),
             "description": package.manifest.get("description"),
         })
@@ -249,11 +258,12 @@ def require_trained_motor(package: MotorPackage | str) -> MotorPackage:
     if not package.trained:
         training = package.manifest.get("training") or {}
         raise MotorPackageError(
-            f"motor {package.motor_id!r} is not verified-trained for "
+            f"motor {package.motor_id!r} is not certified for "
             f"{CURRENT_MOTOR_SCHOOL_VERSION!r} "
-            f"(status={training.get('status', 'unknown')!r}, "
+            f"(qualification={training.get('qualification')!r}, "
             f"school={training.get('school')!r}); "
-            f"run ./gamelab/op/motor-school.sh --motor {package.motor_id} --fresh"
+            f"run ./gamelab/op/motor-school.sh certify --motor {package.motor_id} "
+            f"after full training, or run ./gamelab/op/motor-school.sh for auto mode"
         )
     actual = _sha256(package.brain_path)
     expected = package.brain_sha256
