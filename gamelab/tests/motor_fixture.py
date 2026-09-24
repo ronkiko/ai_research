@@ -11,7 +11,10 @@ import shutil
 
 import torch
 
-from gamelab.motors.package import CURRENT_MOTOR_SCHOOL_VERSION
+from gamelab.motors.package import (
+    CURRENT_MOTOR_CERTIFICATION_GENERATION,
+    CURRENT_MOTOR_SCHOOL_VERSION,
+)
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +73,7 @@ def create_verified_motor_fixture(root: Path) -> Path:
             "certified": True,
             "certification": {
                 "passed": True,
+                "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
                 "brain_sha256": digest,
                 "test_fixture": True,
             },

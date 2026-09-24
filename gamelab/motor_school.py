@@ -35,6 +35,7 @@ from .config import (
 )
 from .motors.continuous import squashed_action, squashed_log_prob
 from .motors.package import (
+    CURRENT_MOTOR_CERTIFICATION_GENERATION,
     CURRENT_MOTOR_SCHOOL_VERSION,
     DEFAULT_MOTOR_ID,
     MotorPackage,
@@ -1119,6 +1120,7 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
     certification = {
         "at": _now(),
         "school": SCHOOL_VERSION,
+        "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
         "brain_sha256": actual_sha,
         "passed": passed,
         "pass_count": pass_count,
@@ -1137,6 +1139,7 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
         "motor_id": package.motor_id,
         "certified": passed,
         "qualification": training["qualification"],
+        "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
         "pass_count": pass_count,
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "brain_sha256": actual_sha,

@@ -25,6 +25,11 @@ from gamelab.motor_school import (
     certify_motor,
     run_school,
 )
+from gamelab.motors.package import (
+    CURRENT_MOTOR_CERTIFICATION_GENERATION,
+    get_motor_package,
+    list_motor_packages,
+)
 from gamelab.motors.packages.continuous_1d_v1.model import Motor
 from gamelab.tests.motor_fixture import copy_clean_motor, create_verified_motor_fixture
 
@@ -239,6 +244,45 @@ class MotorSchoolTests(unittest.TestCase):
                 map_location="cpu",
             )
             self.assertEqual(brain["episodes"], 10)
+
+    def test_certified_listing_exposes_generation_and_best_quality(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            package_path = create_verified_motor_fixture(root)
+            manifest_path = package_path / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["training"]["best_quality"] = 0.788
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                listed = list_motor_packages()
+                self.assertEqual(len(listed), 1)
+                self.assertEqual(
+                    listed[0]["generation"],
+                    CURRENT_MOTOR_CERTIFICATION_GENERATION,
+                )
+                self.assertEqual(listed[0]["quality"], 0.788)
+
+    def test_certificate_without_generation_is_not_runtime_ready(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            package_path = create_verified_motor_fixture(root)
+            manifest_path = package_path / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["training"]["certification"].pop("generation", None)
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package("continuous_1d_v1")
+                self.assertFalse(package.trained)
 
     def test_fresh_reset_archives_and_drops_old_best_and_certification(self):
         with tempfile.TemporaryDirectory() as directory:

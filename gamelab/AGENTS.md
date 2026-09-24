@@ -58,10 +58,17 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   Keep code, manifest, verified brain, candidate, school history and archived
   brains package-local so the Motor can be copied/removed as one unit.
 - Motor School evidence is graded PASS -> BEST -> CERTIFIED. PASS means one
-  standard frozen VERIFY; BEST is the best PASS retained across the full
-  training budget; CERTIFIED means that exact frozen BEST brain passes 10/10
-  distinct held-out certification programs. Quick CI may stop at PASS, but
-  serious Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
+  standard frozen VERIFY; BEST is the best development PASS retained during
+  training; CERTIFIED means that exact frozen BEST brain passes 10/10 distinct
+  held-out certification programs. The current certification contract is
+  generation 1 and must be stored explicitly in the certificate; do not infer
+  missing generations for compatibility. Quick CI may stop at PASS, but serious
+  Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
+- Keep `training.best_quality` as the Motor's aggregate measured comparison
+  score (lower is better). Do not turn Motor School reward/verification
+  coefficients into Motor-manifest tuning knobs; document those school
+  constants instead. Compare quality directly only within the same certificate
+  generation.
 - A new promoted BEST invalidates any certification tied to the previous brain
   SHA. `--fresh` must archive the old verified brain and clear active BEST and
   certification evidence so a new school never inherits old qualification.

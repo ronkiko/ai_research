@@ -120,6 +120,24 @@ residual actuator effort, and an exact-rest bonus. Rest and non-rest rewards are
 advantage-normalized as separate command classes before the local policy update,
 so precision-rest shaping cannot overwhelm ordinary velocity tracking.
 
+The current school parameters are code-fixed, not Motor-manifest tuning
+knobs. Training uses learning rate `0.001`, 4.0-second episodes, 0.5-second
+command segments, command range `[-0.8,+0.8]`, 25% stand-command probability
+in ordinary tracking and 65% motion→rest drill probability. Exact-rest reward
+shaping uses speed scale `2.0`, rest weight `1.0`, progress scale `4.0`,
+release cost `0.5`, and exact-rest bonus `0.5`. Verification uses
+0.6-second motion segments, 1.0-second rest segments, MAE limit `12.0`,
+maximum velocity-error limit `30.0`, and the GameServer exact-rest velocity
+and actuator-effort thresholds.
+
+The Motor manifest already stores the one aggregate comparison number we need:
+`training.best_quality`. Lower is better. For the current development suite:
+
+`quality = MAE/MAE_limit + max_error/max_error_limit + zero_mean_speed/zero_speed_limit + zero_max_speed/zero_max_speed_limit + zero_max_effort/zero_effort_limit + (1 - rest_fraction)`.
+
+This number is measured evidence, not an intelligence knob. It is meaningful
+for comparing Motor brains certified under the same generation.
+
 Motor School has three evidence grades:
 
 - **PASS** — one standard frozen VERIFY succeeds. `quick` stops here and exists
@@ -131,7 +149,9 @@ Motor School has three evidence grades:
   PASS is retained even if the continuing candidate later regresses.
 - **CERTIFIED** — the frozen BEST must pass **10/10 distinct held-out command
   programs** containing different velocities, reversals and physical-rest
-  transitions. Only CERTIFIED Motor brains may be mounted by serious Spine
+  transitions. The current Motor School issues certificate `generation: 1`.
+  A future stricter/additional course may issue generation 2 with a different
+  test contract. Only CERTIFIED Motor brains may be mounted by serious Spine
   TRAIN/RUN.
 
 The scenarios are explicit:
