@@ -152,12 +152,14 @@ fresh school and trains for at least the requested/default 200 episodes.
 Training rollouts deliberately include repeated 0.5 s motion → 1.0 s rest
 drills from varied positive/negative speeds, so the Motor learns both braking
 into exact rest and holding it with released effort instead of relying on
-accidental random stand commands. After the minimum budget, AUTO continues in ten-episode blocks until
-the current candidate has passed the development suite three checks in a row,
-with a hard cap of 2× the requested budget. Reaching the hard cap does not
-bypass the stability gate: without three consecutive development PASS results
-AUTO stops with the retained BEST but does not run certification. Only a stable
-run sends BEST to the still-unseen certification suite:
+accidental random stand commands. After the minimum budget, AUTO continues in ten-episode blocks until the
+current candidate has passed the development suite three checks in a row.
+There is no ordinary episode budget after that point: the Motor keeps learning
+until it reaches the stability criterion. A 10,000-episode safety cap exists
+only as an emergency runaway guard. Reaching that safety cap does not bypass
+the stability gate: AUTO stops with the retained BEST but does not run
+certification. Only a stable run sends BEST to the still-unseen certification
+suite:
 
 ```bash
 ./gamelab/op/motor-school.sh

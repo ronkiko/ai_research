@@ -10,6 +10,7 @@ import torch
 
 from gamelab.motor_school import (
     SchoolTransition,
+    AUTO_SAFETY_MAX_EPISODES,
     CERTIFICATION_REQUIRED_PASSES,
     DEVELOPMENT_PROGRAMS,
     _auto_ready_for_certification,
@@ -257,6 +258,9 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertFalse(training["certified"])
                 self.assertNotIn("best_episode", training)
                 self.assertNotIn("certification", training)
+
+    def test_auto_safety_cap_is_emergency_scale(self):
+        self.assertEqual(AUTO_SAFETY_MAX_EPISODES, 10_000)
 
     def test_auto_requires_three_consecutive_development_passes(self):
         self.assertFalse(_auto_ready_for_certification({"development_streak": 0}))

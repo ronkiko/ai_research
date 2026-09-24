@@ -52,7 +52,7 @@ TARGET_MAX = 0.8
 STAND_COMMAND_PROBABILITY = 0.25
 REST_DRILL_PROBABILITY = 0.65
 AUTO_STABLE_DEVELOPMENT_CHECKS = 3
-AUTO_MAX_EPISODE_MULTIPLIER = 2
+AUTO_SAFETY_MAX_EPISODES = 10_000
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 DEVELOPMENT_PROGRAMS = (
     (0.68, 0.0, -0.31, 0.0, 0.22, 0.0),
@@ -1225,12 +1225,18 @@ def main(argv: list[str] | None = None) -> int:
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 0 if result["qualification"] in {"best", "certified"} else 2
 
-        # AUTO keeps certification held out. It trains for at least the
-        # requested budget, then may continue until development is stable,
-        # bounded by a hard cap of 2x the requested episodes.
+        # AUTO keeps certification held out. The requested/default episode
+        # count is only the minimum curriculum. After that, keep learning until
+        # development is stable. 10k is an emergency runaway guard, not a
+        # normal training budget.
+        if args.episodes > AUTO_SAFETY_MAX_EPISODES:
+            raise MotorPackageError(
+                f"--episodes minimum cannot exceed AUTO safety cap "
+                f"{AUTO_SAFETY_MAX_EPISODES}"
+            )
         training = run_school(
             args.motor,
-            episodes=args.episodes * AUTO_MAX_EPISODE_MULTIPLIER,
+            episodes=AUTO_SAFETY_MAX_EPISODES,
             minimum_episodes=args.episodes,
             stable_development_checks=AUTO_STABLE_DEVELOPMENT_CHECKS,
             seed=args.seed,
@@ -1245,7 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
                 "auto_status": (
                     "no_development_best"
                     if not training["trained"]
-                    else "development_unstable_at_hard_cap"
+                    else "development_unstable_at_safety_cap"
                 ),
             }
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
