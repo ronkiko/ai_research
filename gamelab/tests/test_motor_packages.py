@@ -57,7 +57,7 @@ class MotorPackageTests(unittest.TestCase):
                 manifest["training"]["school"],
                 CURRENT_MOTOR_SCHOOL_VERSION,
             )
-            manifest["training"]["school"] = "velocity_tracking_pg_v2"
+            manifest["training"]["school"] = "velocity_tracking_pg_v3"
             manifest_path.write_text(
                 json.dumps(manifest, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -67,7 +67,7 @@ class MotorPackageTests(unittest.TestCase):
                 self.assertFalse(package.trained)
                 with self.assertRaisesRegex(
                     MotorPackageError,
-                    "velocity_tracking_pg_v3",
+                    "velocity_tracking_pg_v4",
                 ):
                     require_trained_motor(package)
 

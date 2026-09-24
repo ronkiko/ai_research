@@ -26,7 +26,7 @@ from ..config import (
 DEFAULT_MOTOR_ID = "continuous_1d_v1"
 DEFAULT_MOTOR_ROOT = Path(__file__).resolve().parent / "packages"
 MOTOR_PACKAGE_SCHEMA = 1
-CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v3"
+CURRENT_MOTOR_SCHOOL_VERSION = "velocity_tracking_pg_v4"
 
 
 class MotorPackageError(RuntimeError):

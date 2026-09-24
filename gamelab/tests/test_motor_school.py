@@ -95,22 +95,30 @@ class MotorSchoolTests(unittest.TestCase):
                 "mean_abs_velocity_error": 6.0,
                 "max_abs_velocity_error": 14.0,
                 "zero_target_mean_abs_speed": 1.5,
-                "zero_target_max_abs_speed": 3.0,
+                "zero_target_max_abs_speed": 0.0,
+                "zero_target_max_abs_effort": 0.01,
+                "zero_target_rest_fraction": 1.0,
                 "mae_limit": 12.0,
                 "max_error_limit": 30.0,
-                "zero_speed_limit": 4.0,
-                "zero_max_speed_limit": 8.0,
+                "zero_speed_limit": 0.05,
+                "zero_max_speed_limit": 0.05,
+                "zero_effort_limit": 0.02,
+                "rest_fraction_required": 1.0,
             }
             later = {
                 "passed": True,
                 "mean_abs_velocity_error": 8.0,
                 "max_abs_velocity_error": 20.0,
                 "zero_target_mean_abs_speed": 2.0,
-                "zero_target_max_abs_speed": 5.0,
+                "zero_target_max_abs_speed": 0.0,
+                "zero_target_max_abs_effort": 0.015,
+                "zero_target_rest_fraction": 1.0,
                 "mae_limit": 12.0,
                 "max_error_limit": 30.0,
-                "zero_speed_limit": 4.0,
-                "zero_max_speed_limit": 8.0,
+                "zero_speed_limit": 0.05,
+                "zero_max_speed_limit": 0.05,
+                "zero_effort_limit": 0.02,
+                "rest_fraction_required": 1.0,
             }
             with patch.dict(
                 os.environ,
@@ -158,6 +166,11 @@ class MotorSchoolTests(unittest.TestCase):
             result["zero_target_max_abs_speed"],
             result["zero_max_speed_limit"],
         )
+        self.assertLessEqual(
+            result["zero_target_max_abs_effort"],
+            result["zero_effort_limit"],
+        )
+        self.assertEqual(result["zero_target_rest_fraction"], 1.0)
 
 
 if __name__ == "__main__":

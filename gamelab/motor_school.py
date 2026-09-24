@@ -20,6 +20,7 @@ import shutil
 import torch
 from torch import nn
 
+from gameserver.v1.common.config import REST_MOTOR_EPS, REST_VELOCITY_EPS
 from gameserver.v1.zone.model import ZoneRuntime
 
 from .config import (
@@ -51,10 +52,15 @@ TARGET_MAX = 0.8
 STAND_COMMAND_PROBABILITY = 0.25
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
 VERIFY_SEGMENT_SECONDS = 0.6
+VERIFY_REST_SEGMENT_SECONDS = 1.0
 VERIFY_MAE_LIMIT = 12.0
-VERIFY_ZERO_SPEED_LIMIT = 4.0
+VERIFY_ZERO_SPEED_LIMIT = REST_VELOCITY_EPS
 VERIFY_MAX_ERROR_LIMIT = 30.0
-VERIFY_ZERO_MAX_SPEED_LIMIT = 8.0
+VERIFY_ZERO_MAX_SPEED_LIMIT = REST_VELOCITY_EPS
+VERIFY_ZERO_EFFORT_LIMIT = REST_MOTOR_EPS
+REST_REWARD_SPEED_SCALE = 1.0
+REST_REWARD_WEIGHT = 0.5
+REST_EFFORT_COST = 0.05
 
 
 @dataclass
@@ -228,7 +234,21 @@ def _rollout(
             desired_vx - float(after["vx"])
         ) / PLAYER_MAX_SPEED
         tracking_reward = math.exp(-4.0 * error_norm * error_norm)
-        reward = tracking_reward - 0.0005 * action * action
+        if desired == 0.0:
+            # Normal velocity tracking is intentionally broad (scaled by the
+            # body's 180-unit max speed). Add a local near-rest term so the
+            # Motor can distinguish vx=4, vx=0.4 and the server's true vx=0
+            # state instead of treating all three as equally excellent.
+            rest_reward = math.exp(
+                -abs(float(after["vx"])) / REST_REWARD_SPEED_SCALE
+            )
+            reward = (
+                tracking_reward
+                + REST_REWARD_WEIGHT * rest_reward
+                - REST_EFFORT_COST * action * action
+            )
+        else:
+            reward = tracking_reward - 0.0005 * action * action
         tracking_abs += abs(desired_vx - float(after["vx"]))
         transitions.append(
             SchoolTransition(
@@ -250,14 +270,22 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
     _reset_world(runtime)
     motor.eval()
     motor_stride = PHYSICS_HZ // MOTOR_HZ
-    segment_steps = max(1, int(round(VERIFY_SEGMENT_SECONDS * MOTOR_HZ)))
-    # VERIFY metrics describe the settled response, not the intentional
-    # transient immediately after each new velocity command.
-    settle_steps = max(1, (3 * segment_steps) // 4)
     errors: list[float] = []
     zero_speeds: list[float] = []
+    zero_efforts: list[float] = []
+    zero_rest: list[bool] = []
 
     for desired in VERIFY_LEVELS:
+        segment_seconds = (
+            VERIFY_REST_SEGMENT_SECONDS
+            if desired == 0.0
+            else VERIFY_SEGMENT_SECONDS
+        )
+        segment_steps = max(1, int(round(segment_seconds * MOTOR_HZ)))
+        # Measure only the final quarter of each command. Zero commands get a
+        # longer segment so certification asks whether the reflex can actually
+        # settle and hold the server's physical rest state after motion.
+        settle_steps = max(1, (3 * segment_steps) // 4)
         for step in range(segment_steps):
             player = _player(runtime)
             goal = _goal(float(desired))
@@ -275,21 +303,35 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
             for _ in range(motor_stride):
                 runtime.tick()
             if step >= settle_steps:
-                vx = float(_player(runtime)["vx"])
+                after = _player(runtime)
+                vx = float(after["vx"])
                 desired_vx = float(desired) * PLAYER_MAX_SPEED
                 errors.append(abs(desired_vx - vx))
                 if desired == 0.0:
-                    zero_speeds.append(abs(vx))
+                    speed = abs(vx)
+                    effort = abs(float(after["motor_x"]))
+                    zero_speeds.append(speed)
+                    zero_efforts.append(effort)
+                    zero_rest.append(
+                        vx == 0.0 and effort <= VERIFY_ZERO_EFFORT_LIMIT
+                    )
 
     mae = sum(errors) / max(1, len(errors))
     max_error = max(errors, default=0.0)
     zero_mae = sum(zero_speeds) / max(1, len(zero_speeds))
     zero_max = max(zero_speeds, default=0.0)
+    zero_effort_max = max(zero_efforts, default=0.0)
+    zero_rest_fraction = (
+        sum(1 for value in zero_rest if value) / len(zero_rest)
+        if zero_rest else 0.0
+    )
     passed = (
         mae <= VERIFY_MAE_LIMIT
         and max_error <= VERIFY_MAX_ERROR_LIMIT
         and zero_mae <= VERIFY_ZERO_SPEED_LIMIT
         and zero_max <= VERIFY_ZERO_MAX_SPEED_LIMIT
+        and zero_effort_max <= VERIFY_ZERO_EFFORT_LIMIT
+        and zero_rest_fraction == 1.0
     )
     return {
         "passed": passed,
@@ -297,10 +339,14 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
         "max_abs_velocity_error": max_error,
         "zero_target_mean_abs_speed": zero_mae,
         "zero_target_max_abs_speed": zero_max,
+        "zero_target_max_abs_effort": zero_effort_max,
+        "zero_target_rest_fraction": zero_rest_fraction,
         "mae_limit": VERIFY_MAE_LIMIT,
         "max_error_limit": VERIFY_MAX_ERROR_LIMIT,
         "zero_speed_limit": VERIFY_ZERO_SPEED_LIMIT,
         "zero_max_speed_limit": VERIFY_ZERO_MAX_SPEED_LIMIT,
+        "zero_effort_limit": VERIFY_ZERO_EFFORT_LIMIT,
+        "rest_fraction_required": 1.0,
     }
 
 
@@ -315,6 +361,9 @@ def _verification_quality(verification: dict) -> float:
         / float(verification["zero_speed_limit"])
         + float(verification["zero_target_max_abs_speed"])
         / float(verification["zero_max_speed_limit"])
+        + float(verification["zero_target_max_abs_effort"])
+        / float(verification["zero_effort_limit"])
+        + (1.0 - float(verification["zero_target_rest_fraction"]))
     )
 
 
@@ -654,7 +703,9 @@ def run_school(
                     f"mae={final_verification['mean_abs_velocity_error']:.2f} "
                     f"max_error={final_verification['max_abs_velocity_error']:.2f} "
                     f"zero_speed={final_verification['zero_target_mean_abs_speed']:.2f} "
-                    f"zero_max={final_verification['zero_target_max_abs_speed']:.2f} "
+                    f"zero_max={final_verification['zero_target_max_abs_speed']:.3f} "
+                    f"zero_effort={final_verification['zero_target_max_abs_effort']:.4f} "
+                    f"rest={final_verification['zero_target_rest_fraction']:.0%} "
                     f"{'PASS' if final_verification['passed'] else 'FAIL'}"
                     f"{' NEW_BEST' if improved else ''}{best_text}",
                     flush=True,
