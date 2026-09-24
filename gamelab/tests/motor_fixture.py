@@ -1,11 +1,9 @@
-"""Helpers for infrastructure tests that need a syntactically verified Motor.
-
-This does not prove motor skill. Research success is tested only by Motor School.
-"""
+"""Helpers for tests that need constructed Motor instances."""
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 
@@ -14,31 +12,69 @@ import torch
 from gamelab.motors.package import (
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
     CURRENT_MOTOR_SCHOOL_VERSION,
+    DEFAULT_MOTOR_ARCHITECTURE,
+    create_motor_instance,
 )
-from gamelab.motors.packages.continuous_1d_v1.model import Motor
+from gamelab.motors.architectures.continuous_1d.v1.model import Motor
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "motors" / "packages" / "continuous_1d_v1"
+ARCHITECTURES_SOURCE = ROOT / "motors" / "architectures"
+FIXTURE_MOTOR_ID = "11111111-1111-4111-8111-111111111111"
+FIXTURE_CERTIFICATE_ID = "22222222-2222-4222-8222-222222222222"
 
 
-def copy_clean_motor(root: Path) -> Path:
-    """Copy source only, independent of an operator's installed learned state."""
-    package = root / "continuous_1d_v1"
-    shutil.copytree(SOURCE, package, ignore=shutil.ignore_patterns(
-        "*.pt", "manifest.json", "history.jsonl", "checkpoints", "__pycache__",
-    ))
-    return package
+def copy_architectures(root: Path) -> Path:
+    destination = root / "architectures"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(ARCHITECTURES_SOURCE, destination)
+    (root / "instances").mkdir(parents=True, exist_ok=True)
+    return destination
 
 
-def create_verified_motor_fixture(root: Path) -> Path:
-    package = copy_clean_motor(root)
-    manifest = json.loads(
-        (package / "manifest.default.json").read_text(encoding="utf-8")
+def _with_motor_root(root: Path, callback):
+    previous = os.environ.get("GAMELAB_MOTOR_ROOT")
+    os.environ["GAMELAB_MOTOR_ROOT"] = str(root)
+    try:
+        return callback()
+    finally:
+        if previous is None:
+            os.environ.pop("GAMELAB_MOTOR_ROOT", None)
+        else:
+            os.environ["GAMELAB_MOTOR_ROOT"] = previous
+
+
+def create_untrained_motor_fixture(
+    root: Path,
+    *,
+    motor_id: str = FIXTURE_MOTOR_ID,
+) -> Path:
+    if not (root / "architectures").is_dir():
+        copy_architectures(root)
+
+    package = _with_motor_root(
+        root,
+        lambda: create_motor_instance(
+            DEFAULT_MOTOR_ARCHITECTURE,
+            motor_id=motor_id,
+        ),
     )
+    return package.path
+
+
+def create_verified_motor_fixture(
+    root: Path,
+    *,
+    motor_id: str = FIXTURE_MOTOR_ID,
+    quality: float = 0.5,
+) -> Path:
+    package_path = create_untrained_motor_fixture(root, motor_id=motor_id)
+    manifest_path = package_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
     model = Motor()
-    # Infrastructure fixture must be deterministic but physically responsive.
-    # It is not a trained brain: two ReLU channels implement a simple signed
-    # desired_vx -> effort mapping so MCP/Host smoke can observe real input.
+    # Infrastructure fixture only: deterministic responsive weights, not proof
+    # of research skill. Real convergence remains a separate Motor School gate.
     with torch.no_grad():
         for parameter in model.parameters():
             parameter.zero_()
@@ -47,11 +83,12 @@ def create_verified_motor_fixture(root: Path) -> Path:
         model.mean[2].weight[0, 0] = 2.0
         model.mean[2].weight[0, 1] = -2.0
         model.log_std.fill_(-5.0)
-    brain = package / "brain.pt"
+
+    brain = package_path / "brain.pt"
     torch.save(
         {
             "schema_version": 1,
-            "motor_id": "continuous_1d_v1",
+            "motor_id": motor_id,
             "school": CURRENT_MOTOR_SCHOOL_VERSION,
             "episodes": 0,
             "seed": 0,
@@ -61,9 +98,7 @@ def create_verified_motor_fixture(root: Path) -> Path:
     )
     digest = hashlib.sha256(brain.read_bytes()).hexdigest()
     manifest["brain_sha256"] = digest
-    manifest["model_sha256"] = hashlib.sha256(
-        (package / "model.py").read_bytes()
-    ).hexdigest()
+    manifest["quality"] = float(quality)
     manifest["training"].update(
         {
             "school": CURRENT_MOTOR_SCHOOL_VERSION,
@@ -71,11 +106,17 @@ def create_verified_motor_fixture(root: Path) -> Path:
             "verified": True,
             "qualification": "certified",
             "certified": True,
+            "best_episode": 0,
+            "best_verification": {"passed": True, "evidence": "development"},
+            "best_brain_sha256": digest,
             "certification": {
                 "passed": True,
                 "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
-                "certificate_id": "12345678-1234-4abc-8def-1234567890ab",
+                "certificate_id": FIXTURE_CERTIFICATE_ID,
                 "brain_sha256": digest,
+                "architecture_sha256": manifest["architecture_sha256"],
+                "model_sha256": manifest["model_sha256"],
+                "quality": float(quality),
                 "test_fixture": True,
             },
             "last_result": {
@@ -84,11 +125,30 @@ def create_verified_motor_fixture(root: Path) -> Path:
             },
         }
     )
-    (package / "manifest.json").write_text(
+    manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return package
+    with (package_path / "history.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "kind": "certification",
+                    **manifest["training"]["certification"],
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+    shutil.rmtree(package_path / "work", ignore_errors=True)
+    return package_path
 
 
-__all__ = ["create_verified_motor_fixture"]
+__all__ = [
+    "ARCHITECTURES_SOURCE",
+    "FIXTURE_CERTIFICATE_ID",
+    "FIXTURE_MOTOR_ID",
+    "copy_architectures",
+    "create_untrained_motor_fixture",
+    "create_verified_motor_fixture",
+]
