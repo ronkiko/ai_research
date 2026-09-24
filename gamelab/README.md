@@ -180,6 +180,20 @@ To continue, omit `--fresh`; repeating `--fresh` starts over. The Motor is never
 reset by Spine training. Legacy on-policy PPO remains opt-in with
 `--algorithm ppo`, including its competence-gated curriculum and reward shaping.
 
+Refinement treats latency as an **environment condition**, not as a separate
+policy personality or capability. One Spine is trained and physically validated
+against three authoritative command-application modes:
+
+- `0`: Astra's nominal path, no extra physics tick before sending;
+- `1`: Astra's existing fixed one-extra-tick late path;
+- `variable`: server latency walks between 1 and 6 extra 120 Hz physics ticks,
+  changing by at most one tick per command.
+
+Six extra ticks add 50 ms of transport waiting and yield about 58.3 ms from a
+policy decision to authoritative application. The policy may condition only on
+the **previous measured** application delay; the next delay remains unknown.
+This is latency adaptation from feedback, not latency prediction.
+
 ## Python environment
 
 By default GameLab uses the current `python3` environment. It does not create

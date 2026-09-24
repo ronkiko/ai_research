@@ -79,6 +79,13 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   require held-out prediction accuracy and keep the predictor out of inference.
   Imagined trajectories never certify success. Preserve the best physically
   validated candidate and test convergence with genuinely learned weights.
+  Treat transport latency as an environment condition, not a policy persona:
+  refinement keeps fixed delay modes `0` and `1` and may add a physically
+  stressed `variable` mode. Spine may use only already measured application
+  delay; future latency is never observable. Keep future latency prediction
+  separate from body/dynamics prediction. Body prediction is the higher-value
+  future control direction for anticipatory braking, jumping and landing, but
+  remains a separately approved feature rather than implicit runtime planning.
 - The PPO/GAE/frontier-specific rules below apply to the explicit legacy
   `--algorithm ppo` experiment. Default model-based training samples all goal
   scales together and backpropagates state costs, never teacher actions.

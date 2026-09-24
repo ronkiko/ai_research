@@ -10,7 +10,14 @@ from unittest.mock import patch
 import torch
 
 from gamelab.models import build_spine_policy, load_checkpoint, policy_id
-from gamelab.spine_school import MeasuredDynamics, SpineSchool, train_school
+from gamelab.spine_school import (
+    DELAY_MODES,
+    MAX_VARIABLE_DELAY_TICKS,
+    MeasuredDynamics,
+    SpineSchool,
+    delay_mode_schedule,
+    train_school,
+)
 from gamelab.training import collect_episode
 from gamelab.unpaced import UnpacedHostClient
 from gamelab.tests.motor_fixture import create_verified_motor_fixture
@@ -57,6 +64,61 @@ class SpineSchoolTests(unittest.TestCase):
         errors = (x @ dynamics.weights * 180 - data[:, 2:]).abs()
         self.assertLess(float(errors[:, 0].max()), .01)
         self.assertLess(float(errors[:, 1].max()), .1)
+
+    def test_delay_modes_keep_fixed_zero_one_and_add_variable_walk(self):
+        schedule = delay_mode_schedule(
+            200,
+            48,
+            generator=torch.Generator().manual_seed(17),
+        )
+        lane = torch.arange(48) % 3
+        self.assertEqual(DELAY_MODES, ("0", "1", "variable"))
+        self.assertTrue(torch.equal(
+            schedule[:, lane == 0],
+            torch.zeros_like(schedule[:, lane == 0]),
+        ))
+        self.assertTrue(torch.equal(
+            schedule[:, lane == 1],
+            torch.ones_like(schedule[:, lane == 1]),
+        ))
+        variable = schedule[:, lane == 2]
+        self.assertGreaterEqual(int(variable.min()), 1)
+        self.assertLessEqual(int(variable.max()), MAX_VARIABLE_DELAY_TICKS)
+        self.assertLessEqual(int((variable[1:] - variable[:-1]).abs().max()), 1)
+        self.assertIn(MAX_VARIABLE_DELAY_TICKS, variable)
+
+    def test_identified_variable_delay_matches_canonical_ticks(self):
+        from gamelab.host import player_from_state
+        from gamelab.runtime import reset_player_state
+
+        dynamics = MeasuredDynamics()
+        dynamics.add(self.samples())
+        dynamics.fit()
+        reset_player_state(self.client, "player1", spawn_x=500)
+        generator = torch.Generator().manual_seed(92)
+        for index in range(42):
+            before = player_from_state(self.client.state())
+            command = float(torch.rand((), generator=generator) - .5)
+            extra = index % (MAX_VARIABLE_DELAY_TICKS + 1)
+            dx, vx, interval = dynamics.predict_delayed_interval(
+                torch.tensor(before["vx"] / 180),
+                torch.tensor(before["motor_x"]),
+                torch.tensor(command),
+                torch.tensor(extra),
+            )
+            for _ in range(extra):
+                self.client.advance_tick()
+            self.client.motor(command)
+            self.client.advance_tick()
+            if extra == 0:
+                self.client.advance_tick()
+            after = player_from_state(self.client.state())
+            self.assertEqual(int(interval), max(2, extra + 1))
+            self.assertLess(
+                abs(float(dx * 180) - (after["x"] - before["x"])),
+                .002,
+            )
+            self.assertLess(abs(float(vx * 180) - after["vx"]), .15)
 
     def test_inaccurate_predictor_is_rejected(self):
         dynamics = MeasuredDynamics()

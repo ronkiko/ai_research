@@ -64,19 +64,23 @@ held-out prediction error and real-world frozen verification.
    of 0.5. This trains a stopping-time margin; real acceptance still uses the
    unchanged 8-second deadline and exact physical rest. The phase flag and
    optimizer are checkpointed so resuming does not restart refinement.
-   Refinement samples both fixed and changing extra application delays of
-   0 or 1 physics tick (8.3 ms). The identified affine two-tick predictor is
-   decomposed into stationary substeps to model late input accurately; a test
-   checks the predicted delayed consequences against canonical world ticks.
-   At the next observation the new effort is visible, although the first
-   substep may have used the old effort. The network gets only the preceding
-   acknowledged delay as a separate learned conditioning input, never the next
-   randomly sampled delay. This is a locally tested timing range, not a claim
-   of robustness to arbitrary internet latency or packet loss.
+   Refinement models latency as three environment conditions, all for the same
+   Spine: `0` keeps Astra's nominal application timing, `1` keeps Astra's
+   fixed one-extra-physics-tick late timing, and `variable` adds a bounded
+   server-latency random walk from 1 through 6 extra physics ticks. Each
+   variable step differs from the preceding command by at most one tick. At
+   120 Hz the widest case adds 50 ms of waiting and yields about 58.3 ms from
+   policy decision to authoritative application. The identified affine
+   two-tick predictor is decomposed into stationary one-tick substeps so the
+   wider delayed consequences remain derived from measured dynamics rather than
+   copied GameServer equations. The policy receives only the preceding
+   acknowledged application delay as feedback; the next delay is never exposed.
+   This is adaptation to measured latency, not prediction of future latency.
 5. Every ten updates, evaluate eight fixed development tasks in the canonical
    world, with exploration disabled. Refinement expands this to twelve tasks
-   each under normal delivery, a one-tick delivery delay and switching jitter
-   (36 trials). The delay apparatus advances the canonical world before sending
+   under each of the same three latency conditions `0`, `1` and
+   `variable` (36 trials total). The delay apparatus advances the canonical
+   world before sending
    an unchanged model action; it does not simulate different physics or steer.
    Preserve the best checkpoint by physical successes, then stopping-time margin,
    remaining position/speed error and wall contacts. Refinement starts a fresh
@@ -97,6 +101,28 @@ Reward overrides do not silently change this school objective.
 The learned predictor is training-only and is not another authoritative simulator:
 imagined states never establish success, curriculum competence, wall-contact
 evidence or certification. It is not imported by deployed inference.
+
+
+## Future prediction work
+
+Keep two different prediction problems separate.
+
+**Latency prediction** would try to estimate future server/application delay from
+past delay measurements. Exact future latency is generally not knowable from the
+current state; useful prediction would mostly concern a moving average or trend,
+and possibly recurring high-latency bursts when they have stable temporal
+structure. This may be useful later, but it is deliberately not implemented now.
+The current Spine only adapts to already measured delay.
+
+**Body-state prediction** is a different and more important future control
+problem: estimate where the avatar's body will be after a short horizon from its
+current position, velocity, actuator state and learned dynamics. That can let a
+controller brake *before* it reaches a target instead of reacting after an
+overshoot; the same idea becomes increasingly important for jumps, landings,
+balance and multi-joint motion. The present `MeasuredDynamics` predictor is
+training-only system-identification infrastructure and is not yet a deployed
+forward body predictor. It is a useful foundation, but body prediction should be
+designed and verified as a separate future feature.
 
 ## Checkpoints and use
 

@@ -33,32 +33,84 @@ VALIDATION_CASES = ((150., 163.), (850., 837.), (350., 385.), (650., 615.),
                     (130., 710.), (870., 290.), (30., 970.), (970., 30.))
 REFINEMENT_CASES = (*VALIDATION_CASES, (900., 650.), (100., 350.),
                     (100., 890.), (900., 110.))
+# Latency is an environment condition, not a separate policy capability.
+# Refinement keeps Astra's fixed 0/1 extra-tick cases and adds one variable
+# server-latency case. At 120 Hz, six extra ticks add 50 ms of waiting and
+# produce about 58.3 ms policy-decision->authoritative-application latency.
+MAX_VARIABLE_DELAY_TICKS = 6
+DELAY_MODES = ("0", "1", "variable")
+
+
+def delay_mode_schedule(
+    horizon: int,
+    batch_size: int,
+    *,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """Balanced 0 / 1 / variable delay conditions for imagined refinement.
+
+    Variable latency is a bounded random walk. Its next value differs by at
+    most one physics tick from the previous command; future delay is never
+    exposed to the policy.
+    """
+    if horizon <= 0 or batch_size <= 0:
+        raise ValueError("delay schedule dimensions must be positive")
+    schedule = torch.zeros((horizon, batch_size), dtype=torch.long)
+    lane = torch.arange(batch_size) % 3
+    schedule[:, lane == 1] = 1
+    variable = lane == 2
+    current = torch.randint(
+        1,
+        MAX_VARIABLE_DELAY_TICKS + 1,
+        (batch_size,),
+        generator=generator,
+    )
+    for step in range(horizon):
+        if step:
+            current = (
+                current
+                + torch.randint(-1, 2, (batch_size,), generator=generator)
+            ).clamp(1, MAX_VARIABLE_DELAY_TICKS)
+        schedule[step, variable] = current[variable]
+    return schedule
 
 
 class DelayedCommands:
-    """Transport stress only: let one authoritative tick pass before sending.
+    """Transport-only latency stress; actions and authoritative physics are unchanged."""
 
-    The action is unchanged. No second physics implementation or corrective
-    action is involved, and the normal executor still checks acknowledgements.
-    """
-
-    def __init__(self, client, *, jitter=False):
+    def __init__(self, client, *, mode: str):
+        if mode not in DELAY_MODES:
+            raise ValueError(f"delay mode must be one of {DELAY_MODES}")
         self.client = client
         self.physics_hz = client.state()["snapshot"]["physics_hz"]
-        self.jitter = jitter
+        self.mode = mode
         self.rng = random.Random(709)
+        self.variable_ticks = self.rng.randint(1, MAX_VARIABLE_DELAY_TICKS)
 
     def __getattr__(self, name):
         return getattr(self.client, name)
 
+    def _extra_ticks(self) -> int:
+        if self.mode == "0":
+            return 0
+        if self.mode == "1":
+            return 1
+        self.variable_ticks = max(
+            1,
+            min(
+                MAX_VARIABLE_DELAY_TICKS,
+                self.variable_ticks + self.rng.choice((-1, 0, 1)),
+            ),
+        )
+        return self.variable_ticks
+
     def motor(self, effort):
-        if self.jitter and not self.rng.getrandbits(1):
-            return self.client.motor(effort)
         advance = getattr(self.client, "advance_tick", None)
-        if callable(advance):
-            advance()
-        else:
-            time.sleep(1 / self.physics_hz)
+        for _ in range(self._extra_ticks()):
+            if callable(advance):
+                advance()
+            else:
+                time.sleep(1 / self.physics_hz)
         return self.client.motor(effort)
 
 
@@ -100,22 +152,72 @@ class MeasuredDynamics:
     def state_dict(self) -> dict:
         return {"samples": list(self.samples), "weights": self.weights, "metrics": self.metrics}
 
-    def half_interval_delay_effect(self) -> torch.Tensor:
-        """Split the identified affine interval into two stationary substeps.
+    def physics_tick_weights(self) -> torch.Tensor:
+        """Recover one stationary physics-tick affine step from measured 2-tick data.
 
-        If v'=a*v+b*u and dx=c*v+d*u for one substep, the measured
-        two-substep coefficients are a², b(1+a), c(1+a), cb+2d.
-        Holding the old effort for the first substep therefore changes
-        [dx,v'] by [cb+d,ab]*(old-new). Every coefficient is identified,
-        not copied from the environment. Canonical delayed samples test this.
+        The coefficients are derived from acknowledged Motor intervals rather
+        than copied from GameServer equations. Rows are [vx_norm, effort, 1];
+        columns are [dx_norm, next_vx_norm].
         """
         if self.weights is None or self.weights[0, 1] <= 0:
             raise RuntimeError("identified dynamics do not admit a positive substep")
         a = self.weights[0, 1].sqrt()
-        b = self.weights[1, 1] / (1 + a)
-        c = self.weights[0, 0] / (1 + a)
+        scale = 1 + a
+        b = self.weights[1, 1] / scale
+        e = self.weights[2, 1] / scale
+        c = self.weights[0, 0] / scale
         d = (self.weights[1, 0] - c * b) / 2
-        return torch.stack((c * b + d, a * b))
+        f = (self.weights[2, 0] - c * e) / 2
+        tick = torch.stack((
+            torch.stack((c, a)),
+            torch.stack((d, b)),
+            torch.stack((f, e)),
+        ))
+        if not torch.isfinite(tick).all():
+            raise RuntimeError("identified dynamics produced nonfinite physics-tick model")
+        return tick
+
+    def predict_delayed_interval(
+        self,
+        velocity: torch.Tensor,
+        previous_effort: torch.Tensor,
+        new_effort: torch.Tensor,
+        extra_ticks: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Roll measured local dynamics through 0/1/variable transport delay."""
+        velocity, previous_effort, new_effort = torch.broadcast_tensors(
+            velocity, previous_effort, new_effort
+        )
+        extra_ticks = torch.as_tensor(
+            extra_ticks, dtype=torch.long, device=velocity.device
+        )
+        extra_ticks = torch.broadcast_to(extra_ticks, velocity.shape)
+        if bool((extra_ticks < 0).any()):
+            raise ValueError("extra delay ticks must be nonnegative")
+
+        # Nominal Motor observation spans two physics ticks. A delayed command
+        # holds the prior effort for d ticks, then the new effort is applied for
+        # one authoritative tick before the next observation.
+        interval_ticks = torch.where(
+            extra_ticks > 0,
+            extra_ticks + 1,
+            torch.full_like(extra_ticks, 2),
+        )
+        tick_weights = self.physics_tick_weights().to(
+            dtype=velocity.dtype, device=velocity.device
+        )
+        dx = torch.zeros_like(velocity)
+        vx = velocity
+        for substep in range(int(interval_ticks.max().item())):
+            active = substep < interval_ticks
+            use_new = (extra_ticks == 0) | (substep >= extra_ticks)
+            effort = torch.where(use_new, new_effort, previous_effort)
+            predicted = torch.stack(
+                (vx, effort, torch.ones_like(vx)), dim=-1
+            ) @ tick_weights
+            dx = dx + torch.where(active, predicted[..., 0], 0.0)
+            vx = torch.where(active, predicted[..., 1], vx)
+        return dx, vx, interval_ticks
 
     def restore(self, state: dict) -> None:
         self.samples.extend(state.get("samples", []))
@@ -168,8 +270,6 @@ class SpineSchool:
             ), velocity)
         effort = torch.zeros(BATCH_SIZE)
         input_delay = torch.zeros(BATCH_SIZE)
-        delay_effect = self.dynamics.half_interval_delay_effect()
-
         def frame():
             return torch.stack((x / 500 - 1, velocity, effort,
                                 torch.tanh((target - x) / SPINE_GOAL_DISTANCE_SCALE)), -1)
@@ -178,11 +278,18 @@ class SpineSchool:
         # Short imagined horizons stabilize early gradients; real evaluation
         # always uses the full physical task horizon, not imagined success.
         horizon = 180 if self.updates < 49 else (420 if self.rest_refinement else 480)
-        # Each goal scale sees both stable links and changing latency. Only the
-        # preceding acknowledged delay is exposed to Spine, never a future one.
-        delay_schedule = (torch.rand(horizon, BATCH_SIZE, generator=self.generator)
-                          < (torch.arange(BATCH_SIZE) % 4) / 3
-                          if self.rest_refinement else None)
+        # Astra's fixed 0/1 latency cases remain intact as explicit lanes.
+        # Variable server latency is the third environment condition. Spine gets
+        # only the preceding acknowledged delay, never the next sampled value.
+        delay_schedule = (
+            delay_mode_schedule(
+                horizon,
+                BATCH_SIZE,
+                generator=self.generator,
+            )
+            if self.rest_refinement
+            else None
+        )
         loss = torch.tensor(0.)
         for step in range(horizon):
             if step % (MOTOR_HZ // SPINE_HZ) == 0:
@@ -192,15 +299,25 @@ class SpineSchool:
                 goal = model.spine.motor_goal(torch.tanh(mean))
             previous_effort = effort
             effort = model.deterministic_motor(goal, torch.stack((velocity, effort), -1))
-            predicted = torch.stack((velocity, effort, torch.ones_like(velocity)), -1) @ self.dynamics.weights
             if self.rest_refinement:
-                # At the next observation the new command is applied, but the
-                # first half of this interval may have used the previous one.
-                delayed = delay_schedule[step]
-                predicted = predicted + ((previous_effort - effort) * delayed).unsqueeze(-1) * delay_effect
-                input_delay = delayed.float() / 2
-            x = x + predicted[:, 0] * PLAYER_MAX_SPEED
-            velocity = predicted[:, 1]
+                extra_ticks = delay_schedule[step]
+                predicted_dx, predicted_vx, _ = self.dynamics.predict_delayed_interval(
+                    velocity,
+                    previous_effort,
+                    effort,
+                    extra_ticks,
+                )
+                x = x + predicted_dx * PLAYER_MAX_SPEED
+                velocity = predicted_vx
+                # control_loop reports extra application delay in nominal Motor
+                # periods; motor_stride is two physics ticks in this experiment.
+                input_delay = extra_ticks.float() / 2
+            else:
+                predicted = torch.stack(
+                    (velocity, effort, torch.ones_like(velocity)), -1
+                ) @ self.dynamics.weights
+                x = x + predicted[:, 0] * PLAYER_MAX_SPEED
+                velocity = predicted[:, 1]
             history = torch.cat((history[:, :, 1:], frame().unsqueeze(-1)), -1)
             error = target - x
             # Continuous state cost: distance everywhere, measured speed near
@@ -230,14 +347,21 @@ class SpineSchool:
 
     def validate(self, client, *, player_id: str, cancel=None) -> dict | None:
         cases = []
-        suite = ([(spawn, target, delay) for delay in ("nominal", "late", "jitter")
-                  for spawn, target in REFINEMENT_CASES] if self.rest_refinement else
-                 [(spawn, target, "nominal") for spawn, target in VALIDATION_CASES])
-        for spawn, target, delay in suite:
+        suite = (
+            [(spawn, target, delay_mode)
+             for delay_mode in DELAY_MODES
+             for spawn, target in REFINEMENT_CASES]
+            if self.rest_refinement
+            else [(spawn, target, "0") for spawn, target in VALIDATION_CASES]
+        )
+        for spawn, target, delay_mode in suite:
             if cancel is not None and cancel.is_set():
                 return None
-            transport = (client if delay == "nominal" else
-                         DelayedCommands(client, jitter=delay == "jitter"))
+            transport = (
+                client
+                if delay_mode == "0"
+                else DelayedCommands(client, mode=delay_mode)
+            )
             result = collect_episode(self.model, transport, player_id=player_id, spawn_x=spawn,
                                      target_x=target, max_seconds=8., sampled=False, cancel=cancel)
             if result.result == "cancelled":
@@ -245,7 +369,8 @@ class SpineSchool:
             if result.result not in {"success", "timeout"}:
                 raise RuntimeError(f"invalid validation rollout: {result.result}")
             cases.append({"spawn_x": spawn, "target_x": target,
-                          "delayed": delay, "seconds": result.evidence["simulation_seconds"],
+                          "delay_mode": delay_mode,
+                          "seconds": result.evidence["simulation_seconds"],
                           "passed": result.result == "success" and result.evidence["wall_contacts"] == 0,
                           "error": result.final_error, "vx": result.evidence["vx"],
                           "wall_contacts": result.evidence["wall_contacts"]})
