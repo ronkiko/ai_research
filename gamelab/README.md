@@ -109,7 +109,9 @@ artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
 Motor School v6 samples continuous normalized velocity commands from
-`[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
+`[-0.8,+0.8]`. Most training episodes include explicit 0.5-second motion →
+1.0-second physical-rest drills, while the remaining tracking episodes retain
+varied velocity changes and additional stop transitions. Each
 Motor action receives local measured velocity-tracking credit over the next
 1/60 second, so the reflex still does not depend on a long strategic horizon.
 Zero-velocity commands receive local credit for reducing measured speed from
@@ -146,9 +148,10 @@ The scenarios are explicit:
 
 With no scenario argument Motor School runs **auto**. It starts a genuinely
 fresh school and trains for at least the requested/default 200 episodes.
-Training rollouts deliberately include repeated motion→rest drills from varied
-positive/negative speeds instead of relying on accidental random stand
-commands. After the minimum budget, AUTO continues in ten-episode blocks until
+Training rollouts deliberately include repeated 0.5 s motion → 1.0 s rest
+drills from varied positive/negative speeds, so the Motor learns both braking
+into exact rest and holding it with released effort instead of relying on
+accidental random stand commands. After the minimum budget, AUTO continues in ten-episode blocks until
 the current candidate has passed the development suite three checks in a row,
 with a hard cap of 2× the requested budget. Only then is the retained BEST sent
 to the still-unseen certification suite:

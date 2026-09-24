@@ -105,16 +105,23 @@ class MotorSchoolTests(unittest.TestCase):
         import random
 
         rest_rich = 0
+        held_rest = 0
         for seed in range(20):
             program = _school_program(random.Random(seed), 8)
             self.assertEqual(len(program), 8)
             for index, desired in enumerate(program):
-                if desired == 0.0:
+                if desired == 0.0 and (index == 0 or program[index - 1] != 0.0):
                     self.assertGreater(index, 0)
                     self.assertNotEqual(program[index - 1], 0.0)
             if sum(1 for desired in program if desired == 0.0) >= 3:
                 rest_rich += 1
+            if any(
+                program[index] == 0.0 and program[index - 1] == 0.0
+                for index in range(1, len(program))
+            ):
+                held_rest += 1
         self.assertGreaterEqual(rest_rich, 10)
+        self.assertGreaterEqual(held_rest, 10)
 
     def test_school_rollout_and_local_policy_update_execute_on_canonical_world(self):
         torch.manual_seed(7)

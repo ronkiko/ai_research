@@ -284,13 +284,21 @@ def _school_program(rng: random.Random, segment_count: int) -> tuple[float, ...]
     previous = 0.0
     for segment in range(segment_count):
         if rest_drill:
-            if segment % 2:
+            # Match the physical certification contract: 0.5 s motion followed
+            # by a full 1.0 s zero command. The first zero trains braking; the
+            # second trains holding the server's exact rest state with released
+            # effort. Every new motion leg reverses direction when practical.
+            if segment % 3 in (1, 2):
                 desired = 0.0
             else:
+                previous_motion = next(
+                    (value for value in reversed(commands) if value != 0.0),
+                    0.0,
+                )
                 desired = _sample_motion_command(
                     rng,
-                    previous,
-                    prefer_opposite=segment >= 2,
+                    previous_motion,
+                    prefer_opposite=previous_motion != 0.0,
                 )
         else:
             # Tracking episodes still include rest, but never waste a stand
