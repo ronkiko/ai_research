@@ -149,8 +149,9 @@ Motor School has three evidence grades:
   PASS is retained even if the continuing candidate later regresses.
 - **CERTIFIED** — the frozen BEST must pass **10/10 distinct held-out command
   programs** containing different velocities, reversals and physical-rest
-  transitions. The current Motor School issues certificate `generation: 1`.
-  A future stricter/additional course may issue generation 2 with a different
+  transitions. The current Motor School issues certificate `generation: 1`
+  plus a unique UUIDv4 `certificate_id`. A future stricter/additional course
+  may issue generation 2 with a different
   test contract. Only CERTIFIED Motor brains may be mounted by serious Spine
   TRAIN/RUN.
 

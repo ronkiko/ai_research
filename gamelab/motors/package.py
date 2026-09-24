@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 from types import ModuleType
+import uuid
 from typing import Any
 
 import torch
@@ -85,6 +86,14 @@ class MotorPackage:
         """Runtime-ready means frozen BEST has passed full certification."""
         training = self.manifest.get("training") or {}
         certification = training.get("certification") or {}
+        certificate_id = certification.get("certificate_id")
+        valid_certificate_id = False
+        if isinstance(certificate_id, str):
+            try:
+                parsed = uuid.UUID(certificate_id)
+                valid_certificate_id = parsed.version == 4 and str(parsed) == certificate_id
+            except ValueError:
+                valid_certificate_id = False
         return (
             training.get("status") == "trained"
             and training.get("verified") is True
@@ -93,6 +102,7 @@ class MotorPackage:
             and certification.get("passed") is True
             and certification.get("brain_sha256") == self.brain_sha256
             and certification.get("generation") == CURRENT_MOTOR_CERTIFICATION_GENERATION
+            and valid_certificate_id
             and training.get("school") == CURRENT_MOTOR_SCHOOL_VERSION
             and self.brain_path.is_file()
             and bool(self.brain_sha256)
@@ -250,6 +260,10 @@ def list_motor_packages() -> list[dict[str, Any]]:
             "certified": valid,
             "generation": (
                 (training.get("certification") or {}).get("generation")
+                if valid else None
+            ),
+            "certificate_id": (
+                (training.get("certification") or {}).get("certificate_id")
                 if valid else None
             ),
             "quality": (

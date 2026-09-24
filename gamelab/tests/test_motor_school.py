@@ -266,6 +266,27 @@ class MotorSchoolTests(unittest.TestCase):
                     CURRENT_MOTOR_CERTIFICATION_GENERATION,
                 )
                 self.assertEqual(listed[0]["quality"], 0.788)
+                self.assertEqual(
+                    listed[0]["certificate_id"],
+                    "12345678-1234-4abc-8def-1234567890ab",
+                )
+
+    def test_certificate_without_id_is_not_runtime_ready(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            package_path = create_verified_motor_fixture(root)
+            manifest_path = package_path / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["training"]["certification"].pop("certificate_id", None)
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package("continuous_1d_v1")
+                self.assertFalse(package.trained)
 
     def test_certificate_without_generation_is_not_runtime_ready(self):
         import json
@@ -354,6 +375,48 @@ class MotorSchoolTests(unittest.TestCase):
         result = _development_verify(RuleMotor())
         self.assertTrue(result["passed"], result)
         self.assertEqual(result["pass_count"], len(DEVELOPMENT_PROGRAMS))
+
+    def test_certification_issues_uuid4_certificate_id(self):
+        import uuid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_clean_motor(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package("continuous_1d_v1")
+                motor = RuleMotor()
+                import torch
+                torch.save(
+                    {
+                        "schema_version": 1,
+                        "motor_id": package.motor_id,
+                        "school": package.manifest["training"]["school"],
+                        "episodes": 1,
+                        "seed": 1,
+                        "model": motor.state_dict(),
+                    },
+                    package.brain_path,
+                )
+                import hashlib
+                digest = hashlib.sha256(package.brain_path.read_bytes()).hexdigest()
+                package.manifest["brain_sha256"] = digest
+                package.manifest["model_sha256"] = hashlib.sha256(
+                    (package.path / package.manifest["model"]["file"]).read_bytes()
+                ).hexdigest()
+                package.manifest["training"].update(
+                    {
+                        "status": "trained",
+                        "verified": True,
+                        "qualification": "best",
+                        "best_verification": _development_verify(motor),
+                        "best_quality": 0.0,
+                    }
+                )
+                package.write_manifest()
+                result = certify_motor(package.motor_id)
+                parsed = uuid.UUID(result["certificate_id"])
+                self.assertEqual(parsed.version, 4)
+                self.assertEqual(str(parsed), result["certificate_id"])
 
     def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program

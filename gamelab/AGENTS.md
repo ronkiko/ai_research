@@ -61,8 +61,9 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   standard frozen VERIFY; BEST is the best development PASS retained during
   training; CERTIFIED means that exact frozen BEST brain passes 10/10 distinct
   held-out certification programs. The current certification contract is
-  generation 1 and must be stored explicitly in the certificate; do not infer
-  missing generations for compatibility. Quick CI may stop at PASS, but serious
+  generation 1 and must be stored explicitly in the certificate together with
+  a unique UUIDv4 `certificate_id`; do not infer missing generations or
+  certificate ids for compatibility. Quick CI may stop at PASS, but serious
   Spine TRAIN/RUN must mount only CERTIFIED Motor brains.
 - Keep `training.best_quality` as the Motor's aggregate measured comparison
   score (lower is better). Do not turn Motor School reward/verification

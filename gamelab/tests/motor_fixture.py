@@ -74,6 +74,7 @@ def create_verified_motor_fixture(root: Path) -> Path:
             "certification": {
                 "passed": True,
                 "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
+                "certificate_id": "12345678-1234-4abc-8def-1234567890ab",
                 "brain_sha256": digest,
                 "test_fixture": True,
             },

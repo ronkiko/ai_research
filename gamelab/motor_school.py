@@ -16,6 +16,7 @@ import math
 import os
 import random
 import shutil
+import uuid
 
 import torch
 from torch import nn
@@ -1118,6 +1119,7 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
     pass_count = sum(1 for item in programs if item["passed"])
     passed = pass_count == CERTIFICATION_REQUIRED_PASSES
     certification = {
+        "certificate_id": str(uuid.uuid4()),
         "at": _now(),
         "school": SCHOOL_VERSION,
         "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
@@ -1140,6 +1142,7 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
         "certified": passed,
         "qualification": training["qualification"],
         "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
+        "certificate_id": certification["certificate_id"],
         "pass_count": pass_count,
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "brain_sha256": actual_sha,
