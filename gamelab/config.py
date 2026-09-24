@@ -23,6 +23,9 @@ SPINE_HZ = 10
 SPINE_PERIOD_MOTOR_STEPS = MOTOR_HZ // SPINE_HZ
 HISTORY_FRAMES = 32
 SPINE_CHANNELS = 4
+# Goal displacement is a local control signal. Scaling it by the whole
+# 1000-unit world hid 5..40 unit precision goals in values near zero.
+SPINE_GOAL_DISTANCE_SCALE = 40.0
 MOTOR_GOAL_SIZE = 4
 MOTOR_STATE_SIZE = 2
 
@@ -46,5 +49,5 @@ SPINE_INITIAL_LOG_STD = -1.2
 PPO_MAX_GRAD_NORM = 0.5
 PPO_LEARNING_RATE = 3e-4
 
-CHECKPOINT_VERSION = 4
-MODEL_CONFIGURATION = "spine-cnn4x32-desiredvx-policy-v4"
+CHECKPOINT_VERSION = 5
+MODEL_CONFIGURATION = "spine-cnn4x32-lateststate-desiredvx-policy-v5"

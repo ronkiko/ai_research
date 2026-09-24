@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.config import HISTORY_FRAMES, MOTOR_GOAL_SIZE, MOTOR_STATE_SIZE, SPINE_CHANNELS
+from gamelab.config import (
+    HISTORY_FRAMES,
+    MOTOR_GOAL_SIZE,
+    MOTOR_STATE_SIZE,
+    SPINE_CHANNELS,
+)
 from gamelab.models import (
     SensorHistory,
     SpineMotorPolicy,
@@ -20,6 +25,35 @@ from gamelab.motors.continuous import ContinuousMotor, squashed_action
 
 
 class ModelTests(unittest.TestCase):
+    def test_precision_goal_displacement_has_visible_signed_scale(self):
+        right = sensor_frame(
+            x=500.0, vx=0.0, motor_x=0.0, target_x=505.0
+        )
+        left = sensor_frame(
+            x=500.0, vx=0.0, motor_x=0.0, target_x=495.0
+        )
+        far = sensor_frame(
+            x=500.0, vx=0.0, motor_x=0.0, target_x=900.0
+        )
+        self.assertGreater(float(right[3]), 0.1)
+        self.assertAlmostEqual(float(left[3]), -float(right[3]), places=6)
+        self.assertGreater(float(far[3]), 0.99)
+
+        history = SensorHistory(right)
+        history.set_target(495.0)
+        self.assertLess(float(history.tensor()[3, -1]), -0.1)
+
+    def test_current_frame_has_direct_spine_feature_path(self):
+        model = SpineMotorPolicy.fresh(3)
+        base = torch.zeros(SPINE_CHANNELS, HISTORY_FRAMES)
+        right = base.clone()
+        left = base.clone()
+        right[3, -1] = 0.5
+        left[3, -1] = -0.5
+        _, right_hidden = model.spine.policy_mean(right)
+        _, left_hidden = model.spine.policy_mean(left)
+        self.assertFalse(torch.equal(right_hidden, left_hidden))
+
     def test_spine_and_continuous_motor_shapes(self):
         frame = sensor_frame(x=100.0, vx=0.0, motor_x=0.0, target_x=987.0)
         history = SensorHistory(frame).tensor()

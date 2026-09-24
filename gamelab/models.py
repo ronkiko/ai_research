@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 import hashlib
+import math
 import os
 import shutil
 import tempfile
@@ -24,6 +25,7 @@ from .config import (
     MOTOR_STATE_SIZE,
     PLAYER_MAX_SPEED,
     SPINE_CHANNELS,
+    SPINE_GOAL_DISTANCE_SCALE,
     SPINE_INITIAL_LOG_STD,
     WORLD_MAX_X,
 )
@@ -35,10 +37,19 @@ def _bounded(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, float(value)))
 
 
+def _goal_dx_signal(target_x: float, x: float) -> float:
+    # Preserve sign and near-goal resolution while remaining bounded for the
+    # full 1000-unit world. This is derived only from the measurable goal
+    # displacement already available to Spine; it adds no hidden world state.
+    return math.tanh(
+        (float(target_x) - float(x)) / SPINE_GOAL_DISTANCE_SCALE
+    )
+
+
 def sensor_frame(*, x: float, vx: float, motor_x: float, target_x: float) -> torch.Tensor:
     x_norm = (2.0 * float(x) / WORLD_MAX_X) - 1.0
     vx_norm = _bounded(float(vx) / PLAYER_MAX_SPEED)
-    goal_dx = _bounded((float(target_x) - float(x)) / WORLD_MAX_X)
+    goal_dx = _goal_dx_signal(target_x, x)
     return torch.tensor(
         [x_norm, vx_norm, _bounded(motor_x), goal_dx],
         dtype=torch.float32,
@@ -71,7 +82,7 @@ class SensorHistory:
     def set_target(self, target_x: float) -> None:
         for frame in self._frames:
             x = (float(frame[0]) + 1.0) * WORLD_MAX_X / 2.0
-            frame[3] = _bounded((target_x - x) / WORLD_MAX_X)
+            frame[3] = _goal_dx_signal(target_x, x)
 
 
 class SpineCNN(nn.Module):
@@ -84,9 +95,16 @@ class SpineCNN(nn.Module):
             nn.ReLU(),
             nn.AdaptiveAvgPool1d(4),
         )
-        self.hidden = nn.Sequential(
+        self.history_hidden = nn.Sequential(
             nn.Flatten(),
             nn.Linear(16 * 4, 16),
+            nn.ReLU(),
+        )
+        # Temporal CNN supplies motion context; the current measured frame gets
+        # an explicit path so goal sign/proximity and current velocity cannot be
+        # washed out by pooling 32 historical samples.
+        self.hidden = nn.Sequential(
+            nn.Linear(16 + SPINE_CHANNELS, 16),
             nn.ReLU(),
         )
         self.goal_mean = nn.Linear(16, 1)
@@ -106,7 +124,9 @@ class SpineCNN(nn.Module):
             raise ValueError(
                 f"Spine history must have shape [B,{SPINE_CHANNELS},{HISTORY_FRAMES}]"
             )
-        hidden = self.hidden(self.conv(history))
+        history_hidden = self.history_hidden(self.conv(history))
+        latest = history[..., -1]
+        hidden = self.hidden(torch.cat((history_hidden, latest), dim=-1))
         mean = self.goal_mean(hidden).squeeze(-1)
         if single:
             return mean[0], hidden[0]
