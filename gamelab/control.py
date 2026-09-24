@@ -25,6 +25,7 @@ from .motors.continuous import squashed_action
 from .reward import (
     RewardConfig,
     goal_state_potential,
+    near_goal_settling_potential,
     stopped_near_goal_proximity,
     step_reward,
 )
@@ -186,6 +187,7 @@ def control_loop(
     active_decision: Decision | None = None
     pending_motor: PendingMotor | None = None
     best_stopped_proximity = 0.0
+    best_settling_potential = 0.0
     closest_stopped_distance: float | None = None
     reward_reference_distance: float | None = None
     steps = spine_calls = requests = duplicates = overruns = wall_contacts = 0
@@ -314,6 +316,17 @@ def control_loop(
                 best_stopped_proximity = max(
                     best_stopped_proximity, proximity
                 )
+                settling = near_goal_settling_potential(
+                    reward_config,
+                    distance=abs(error),
+                    vx=vx,
+                )
+                settling_gain = max(
+                    0.0, settling - best_settling_potential
+                )
+                best_settling_potential = max(
+                    best_settling_potential, settling
+                )
                 before_goal_state = goal_state_potential(
                     reward_config,
                     distance=pending_motor.before_distance,
@@ -345,6 +358,7 @@ def control_loop(
                     timeout=timed_out and not reached,
                     elapsed_steps=(tick - pending_motor.tick) * MOTOR_HZ / hz,
                     stopped_proximity_gain=proximity_gain,
+                    settling_gain=settling_gain,
                     goal_state_delta=after_goal_state - before_goal_state,
                     wall_contact=entered_wall,
                     progress_reference_distance=reward_reference_distance,
@@ -378,6 +392,7 @@ def control_loop(
                 stable_ticks=stable_ticks,
                 closest_stopped_distance=closest_stopped_distance,
                 best_stopped_proximity=best_stopped_proximity,
+                best_settling_potential=best_settling_potential,
                 motor_steps=steps,
                 spine_calls=spine_calls,
                 controller_requests=requests,
@@ -517,6 +532,7 @@ def control_loop(
         wall_contacts=wall_contacts,
         closest_stopped_distance=closest_stopped_distance,
         best_stopped_proximity=best_stopped_proximity,
+        best_settling_potential=best_settling_potential,
         desired_vx=desired_vx,
         execution_mode=mode,
         simulated_ticks=max(0, final_tick - start_tick),

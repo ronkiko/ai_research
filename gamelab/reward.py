@@ -25,6 +25,8 @@ class RewardConfig:
     timeout_penalty: float = 1.0
     stopped_near_goal_bonus: float = 0.2
     near_goal_radius: float = 5.0
+    near_goal_settling_bonus: float = 0.5
+    near_goal_speed_scale: float = 30.0
     # Experimental goal-state potential is opt-in. The old default coupled
     # proximity and low speed so strongly that a stopped precision episode was
     # punished for beginning to move toward its goal.
@@ -47,6 +49,8 @@ class RewardConfig:
             "timeout_penalty": (0.0, 20.0),
             "stopped_near_goal_bonus": (-20.0, 20.0),
             "near_goal_radius": (0.1, 250.0),
+            "near_goal_settling_bonus": (0.0, 20.0),
+            "near_goal_speed_scale": (0.1, 500.0),
             "goal_state_scale": (0.0, 20.0),
             "goal_position_sigma": (0.1, 500.0),
             "goal_speed_sigma": (0.1, 500.0),
@@ -106,6 +110,22 @@ def stopped_near_goal_proximity(
     return 0.1 + 0.9 * max(0.0, min(1.0, closeness))
 
 
+def near_goal_settling_potential(
+    config: RewardConfig,
+    *,
+    distance: float,
+    vx: float,
+) -> float:
+    """Bounded measured progress toward a near-goal slow/rest state."""
+    config = config.validated()
+    distance = abs(float(distance))
+    if distance >= config.near_goal_radius:
+        return 0.0
+    closeness = 1.0 - (distance / config.near_goal_radius)
+    speed = math.exp(-abs(float(vx)) / config.near_goal_speed_scale)
+    return float(max(0.0, min(1.0, closeness * speed)))
+
+
 def goal_state_potential(
     config: RewardConfig,
     *,
@@ -133,6 +153,7 @@ def step_reward(
     timeout: bool,
     elapsed_steps: float = 1.0,
     stopped_proximity_gain: float = 0.0,
+    settling_gain: float = 0.0,
     goal_state_delta: float = 0.0,
     wall_contact: bool = False,
     progress_reference_distance: float = WORLD_MAX_X,
@@ -153,6 +174,9 @@ def step_reward(
     reward += config.stopped_near_goal_bonus * max(
         0.0, min(1.0, float(stopped_proximity_gain))
     )
+    reward += config.near_goal_settling_bonus * max(
+        0.0, min(1.0, float(settling_gain))
+    )
     reward += config.goal_state_scale * float(goal_state_delta)
     if wall_contact:
         reward -= config.wall_contact_penalty
@@ -167,6 +191,7 @@ __all__ = [
     "RewardConfig",
     "RewardStore",
     "goal_state_potential",
+    "near_goal_settling_potential",
     "reward_path",
     "stopped_near_goal_proximity",
     "step_reward",

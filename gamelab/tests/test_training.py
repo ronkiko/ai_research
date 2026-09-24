@@ -28,6 +28,7 @@ from gamelab.reward import (
     RewardConfig,
     RewardStore,
     goal_state_potential,
+    near_goal_settling_potential,
     stopped_near_goal_proximity,
     step_reward,
 )
@@ -126,6 +127,49 @@ class TrainingTests(unittest.TestCase):
             )
             before = after
         self.assertLess(total, 0.0)
+
+    def test_near_goal_settling_signal_rewards_slowing_without_initial_penalty(self):
+        config = RewardConfig()
+        self.assertEqual(
+            near_goal_settling_potential(config, distance=5.0, vx=0.0),
+            0.0,
+        )
+        fast = near_goal_settling_potential(
+            config, distance=1.0, vx=80.0
+        )
+        slow = near_goal_settling_potential(
+            config, distance=1.0, vx=5.0
+        )
+        exact = near_goal_settling_potential(
+            config, distance=0.0, vx=0.0
+        )
+        self.assertGreater(slow, fast)
+        self.assertGreater(exact, slow)
+        self.assertAlmostEqual(exact, 1.0)
+
+        base = step_reward(
+            config,
+            before_distance=2.0,
+            after_distance=1.0,
+            next_vx=20.0,
+            success=False,
+            timeout=False,
+            progress_reference_distance=20.0,
+        )
+        settling = step_reward(
+            config,
+            before_distance=2.0,
+            after_distance=1.0,
+            next_vx=5.0,
+            success=False,
+            timeout=False,
+            settling_gain=0.4,
+            progress_reference_distance=20.0,
+        )
+        self.assertAlmostEqual(
+            settling - base,
+            config.near_goal_settling_bonus * 0.4,
+        )
 
     def test_goal_state_potential_prefers_stopped_and_centered_state(self):
         config = RewardConfig()
