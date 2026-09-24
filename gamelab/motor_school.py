@@ -474,7 +474,9 @@ def _verify_program(
 
 
 def _verify(motor: nn.Module) -> dict[str, float | bool]:
-    return _verify_program(motor, VERIFY_LEVELS)
+    result = _verify_program(motor, VERIFY_LEVELS)
+    result["evidence"] = "standard"
+    return result
 
 
 def _verify_suite(
@@ -530,7 +532,9 @@ def _verify_suite(
 
 
 def _development_verify(motor: nn.Module) -> dict:
-    return _verify_suite(motor, DEVELOPMENT_PROGRAMS)
+    result = _verify_suite(motor, DEVELOPMENT_PROGRAMS)
+    result["evidence"] = "development"
+    return result
 
 
 def _verification_quality(verification: dict) -> float:
@@ -676,12 +680,21 @@ def _promote_if_better(
         )
 
     candidate_quality = _verification_quality(verification)
-    if (
-        best_verification is not None
-        and best_verification.get("passed")
-        and candidate_quality >= _verification_quality(best_verification) - 1e-12
-    ):
-        return best_verification, best_episode, False
+    evidence_rank = {"standard": 1, "development": 2}
+    candidate_rank = evidence_rank.get(str(verification.get("evidence")), 0)
+    best_rank = (
+        evidence_rank.get(str(best_verification.get("evidence")), 0)
+        if best_verification is not None
+        else 0
+    )
+    if best_verification is not None and best_verification.get("passed"):
+        if candidate_rank < best_rank:
+            return best_verification, best_episode, False
+        if (
+            candidate_rank == best_rank
+            and candidate_quality >= _verification_quality(best_verification) - 1e-12
+        ):
+            return best_verification, best_episode, False
 
     package.archive_verified_brain()
     shutil.copyfile(package.candidate_path, package.brain_path)
@@ -1051,9 +1064,16 @@ def certify_motor(motor_id: str = DEFAULT_MOTOR_ID) -> dict:
     package = get_motor_package(motor_id)
     training = dict(package.manifest.get("training") or {})
     best = training.get("best_verification")
-    if not package.brain_path.is_file() or not isinstance(best, dict) or not best.get("passed"):
+    if (
+        not package.brain_path.is_file()
+        or not isinstance(best, dict)
+        or not best.get("passed")
+        or best.get("evidence") != "development"
+        or training.get("qualification") not in {"best", "certified"}
+    ):
         raise MotorPackageError(
-            f"motor {motor_id!r} has no frozen BEST to certify; run full training first"
+            f"motor {motor_id!r} has no development-qualified frozen BEST to certify; "
+            f"run full training first"
         )
     payload = torch.load(package.brain_path, map_location="cpu")
     if not isinstance(payload, dict) or payload.get("motor_id") != package.motor_id:

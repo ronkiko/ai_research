@@ -179,6 +179,7 @@ class MotorSchoolTests(unittest.TestCase):
                 "passed": True,
                 "pass_count": 4,
                 "required_passes": 4,
+                "evidence": "development",
                 "mean_abs_velocity_error": 6.0,
                 "max_abs_velocity_error": 14.0,
                 "zero_target_mean_abs_speed": 0.0,
@@ -196,6 +197,7 @@ class MotorSchoolTests(unittest.TestCase):
                 "passed": True,
                 "pass_count": 4,
                 "required_passes": 4,
+                "evidence": "development",
                 "mean_abs_velocity_error": 8.0,
                 "max_abs_velocity_error": 20.0,
                 "zero_target_mean_abs_speed": 0.0,
@@ -254,6 +256,41 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertFalse(training["certified"])
                 self.assertNotIn("best_episode", training)
                 self.assertNotIn("certification", training)
+
+    def test_standard_quick_pass_is_not_certifiable_best(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_clean_motor(root)
+            standard = {
+                "passed": True,
+                "evidence": "standard",
+                "mean_abs_velocity_error": 2.0,
+                "max_abs_velocity_error": 10.0,
+                "zero_target_mean_abs_speed": 0.0,
+                "zero_target_max_abs_speed": 0.0,
+                "zero_target_max_abs_effort": 0.001,
+                "zero_target_rest_fraction": 1.0,
+                "mae_limit": 12.0,
+                "max_error_limit": 30.0,
+                "zero_speed_limit": 0.05,
+                "zero_max_speed_limit": 0.05,
+                "zero_effort_limit": 0.02,
+                "rest_fraction_required": 1.0,
+            }
+            with patch.dict(
+                os.environ,
+                {"GAMELAB_MOTOR_ROOT": str(root)},
+            ), patch("gamelab.motor_school._verify", return_value=standard):
+                result = run_school(
+                    "continuous_1d_v1",
+                    episodes=1,
+                    seed=3,
+                    fresh=True,
+                    stop_on_pass=True,
+                )
+                self.assertEqual(result["qualification"], "pass")
+                with self.assertRaisesRegex(Exception, "development-qualified"):
+                    certify_motor("continuous_1d_v1")
 
     def test_development_programs_are_distinct_from_certification(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS

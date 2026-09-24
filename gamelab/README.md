@@ -123,7 +123,8 @@ so precision-rest shaping cannot overwhelm ordinary velocity tracking.
 Motor School has three evidence grades:
 
 - **PASS** — one standard frozen VERIFY succeeds. `quick` stops here and exists
-  for CI/smoke evidence that learning works at all.
+  for CI/smoke evidence that learning works at all. PASS cannot be certified
+  directly and is never accepted by Spine as a runtime Motor.
 - **BEST** — full training selects against a separate multi-program
   development suite, not the single quick VERIFY. The suite stresses tracking,
   reversals and motion→rest from different entry speeds. The best development
