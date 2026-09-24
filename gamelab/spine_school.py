@@ -44,7 +44,7 @@ REFINEMENT_CASES = (*VALIDATION_CASES, (900., 650.), (100., 350.),
 # Refinement keeps Astra's fixed 0/1 extra-tick cases and adds one variable
 # server-latency case. At 120 Hz, six extra ticks add 50 ms of waiting and
 # produce about 58.3 ms policy-decision->authoritative-application latency.
-MAX_VARIABLE_DELAY_TICKS = 6
+MAX_VARIABLE_DELAY_TICKS = 5
 DELAY_MODES = ("0", "1", "variable")
 
 
@@ -305,7 +305,7 @@ class SpineSchool:
         history = frame().unsqueeze(-1).repeat(1, 1, HISTORY_FRAMES)
         # Short imagined horizons stabilize early gradients; real evaluation
         # always uses the full physical task horizon, not imagined success.
-        horizon = 180 if self.updates < 49 else (390 if self.rest_refinement else 480)
+        horizon = 180 if self.updates < 49 else (360 if self.rest_refinement else 480)
         # Astra's fixed 0/1 latency cases remain intact as explicit lanes.
         # Variable server latency is the third environment condition. Spine gets
         # only the preceding acknowledged delay, never the next sampled value.

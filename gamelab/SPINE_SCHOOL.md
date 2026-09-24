@@ -61,17 +61,16 @@ held-out prediction error and real-world frozen verification.
    After 100 updates the optimizer step decreases from 0.002 to 0.0005.
    At update 200, after the nominal controller has had time to learn the base
    motion task, refine the best physically validated model with a fresh
-   optimizer, a 6.5-second imagined deadline and terminal speed weight 2 instead
+   optimizer, a 6-second imagined deadline and terminal speed weight 2 instead
    of 0.5. This trains a stopping-time margin; real acceptance still uses the
    unchanged 8-second deadline and exact physical rest. The phase flag and
    optimizer are checkpointed so resuming does not restart refinement.
    Refinement models latency as three environment conditions, all for the same
    Spine: `0` keeps Astra's nominal application timing, `1` keeps Astra's
    fixed one-extra-physics-tick late timing, and `variable` adds a bounded
-   server-latency random walk from 1 through 6 extra physics ticks. Each
-   variable step differs from the preceding command by at most one tick. At
-   120 Hz the widest case adds 50 ms of waiting and yields about 58.3 ms from
-   policy decision to authoritative application. The identified affine
+   server-latency random walk from 1 through 5 extra physics ticks. Each
+   variable step differs from the preceding command by at most one tick. At 120 Hz five extra ticks plus normal next-tick application cover about
+   50 ms from policy decision to authoritative application. The identified affine
    two-tick predictor is decomposed into stationary one-tick substeps so the
    wider delayed consequences remain derived from measured dynamics rather than
    copied GameServer equations. Imagined refinement is clocked by authoritative

@@ -186,10 +186,10 @@ against three authoritative command-application modes:
 
 - `0`: Astra's nominal path, no extra physics tick before sending;
 - `1`: Astra's existing fixed one-extra-tick late path;
-- `variable`: server latency walks between 1 and 6 extra 120 Hz physics ticks,
+- `variable`: server latency walks between 1 and 5 extra 120 Hz physics ticks,
   changing by at most one tick per command.
 
-Six extra ticks add 50 ms of transport waiting and yield about 58.3 ms from a
+Five extra ticks plus normal next-tick application cover about 50 ms from a
 policy decision to authoritative application. The policy may condition only on
 the **previous measured** application delay; the next delay remains unknown.
 This is latency adaptation from feedback, not latency prediction.

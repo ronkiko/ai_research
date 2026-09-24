@@ -226,7 +226,7 @@ class SpineSchoolTests(unittest.TestCase):
         school.best = copy.deepcopy(self.model.state_dict())
         metrics = school.update()
         self.assertTrue(metrics["rest_refinement"])
-        self.assertEqual(metrics["imagined_seconds"], 6.5)
+        self.assertEqual(metrics["imagined_seconds"], 6.)
         restored_model, _ = build_spine_policy("continuous_1d_v1", seed=8)
         restored = SpineSchool(restored_model, seed=8)
         restored.restore(copy.deepcopy(school.state_dict()))
