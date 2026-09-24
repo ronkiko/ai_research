@@ -384,7 +384,7 @@ class MotorSchoolTests(unittest.TestCase):
             copy_clean_motor(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
                 package = get_motor_package("continuous_1d_v1")
-                motor = RuleMotor()
+                motor = Motor()
                 import torch
                 torch.save(
                     {
@@ -408,12 +408,17 @@ class MotorSchoolTests(unittest.TestCase):
                         "status": "trained",
                         "verified": True,
                         "qualification": "best",
-                        "best_verification": _development_verify(motor),
+                        "best_verification": _development_verify(RuleMotor()),
                         "best_quality": 0.0,
                     }
                 )
                 package.write_manifest()
-                result = certify_motor(package.motor_id)
+                passing = _verify(RuleMotor())
+                with patch(
+                    "gamelab.motor_school._verify_program",
+                    return_value=passing,
+                ):
+                    result = certify_motor(package.motor_id)
                 parsed = uuid.UUID(result["certificate_id"])
                 self.assertEqual(parsed.version, 4)
                 self.assertEqual(str(parsed), result["certificate_id"])
