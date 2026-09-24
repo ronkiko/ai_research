@@ -57,7 +57,7 @@ class GameTableTests(unittest.TestCase):
 
     def test_start_go_creates_fresh_trial_with_immediate_director_prompt(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
-        self.assertIn('DEFAULT_PROMPT=$(cat <<\'EOF\')', launcher)
+        self.assertIn('DEFAULT_PROMPT=$(cat <<\'EOF\'', launcher)
         self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
         self.assertIn("--prompt-file", launcher)
 
