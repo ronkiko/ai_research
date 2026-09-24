@@ -69,13 +69,19 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 - Keep an actual convergence regression for the default Motor School, not only
   shape/update tests. A school that compiles but cannot promote a fresh Motor is
   not acceptable.
+- Motor School VERIFY for a zero velocity goal must certify the GameServer's
+  physical rest state, not a loose low-speed proxy. A verified rest sample must
+  have `vx=0` and actuator effort within the server rest threshold.
 
 - Spine TRAIN exploration belongs to the 10 Hz `desired_vx` policy. A verified
   Motor mounted under Spine must be deterministic at 60 Hz; never reintroduce
   Motor-action sampling into Spine TRAIN.
 - One Spine PPO transition represents one latched `desired_vx` decision and
   aggregates the physical reward from its Motor intervals. Do not regress to
-  treating each 60 Hz `motor_x` as a Spine PPO action.
+  treating each 60 Hz `motor_x` as a Spine PPO action. GAE/discount duration is
+  measured in Spine-decision intervals, not Motor intervals, and normal PPO
+  updates must aggregate multiple short episodes into a meaningful rollout
+  before fitting minibatches.
 - Fresh Spine policy must start directionally neutral; its final desired-velocity
   mean layer has zero weight/bias while exploration supplies symmetric trials.
 - Spine curriculum difficulty must advance from measured frontier competence,

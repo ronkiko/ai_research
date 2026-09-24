@@ -123,13 +123,17 @@ substituted later.
 
 Motor School is an operator-only unpaced laboratory over the canonical
 `ZoneRuntime`. It gives the Motor only a normalized requested velocity plus
-local proprioception. The v2 school assigns credit over exactly one Motor
-interval from the measured reduction in velocity error; it deliberately has no
-critic/GAE horizon spanning future velocity goals. No teacher emits the correct `motor_x`. Frozen acceleration/braking/reversal
-verification runs periodically. Every PASS is eligible to become the package's
-verified `brain.pt`, but normal training continues for the requested budget and
-only a better verified score replaces the current best brain. A failed or worse
-candidate never overwrites an already verified brain.
+local proprioception. The v4 school assigns credit over exactly one Motor
+interval from measured velocity tracking; it deliberately has no critic/GAE
+horizon spanning future velocity goals. Zero-command credit includes explicit
+near-rest resolution so the learned reflex can distinguish slow drift from the
+server's physical rest state. No teacher emits the correct `motor_x`. Frozen
+acceleration/braking/reversal verification runs periodically and zero commands
+must settle to `vx=0` while actuator effort remains within the server rest
+threshold. Every PASS is eligible to become the package's verified `brain.pt`,
+but normal training continues for the requested budget and only a better
+verified score replaces the current best brain. A failed or worse candidate
+never overwrites an already verified brain.
 
 ## Continuous physical Motor
 
@@ -193,10 +197,15 @@ RUN never resets. The MMO world and other entities continue running.
 A selected action, submitted command and applied action are distinct. After
 submission, the executor observes application before collecting the next
 decision. Transition records identify before/after tick, sequence, command and
-application tick. Effective discount is gamma^elapsed_steps; elapsed_steps is
-server tick delta divided by the nominal motor period. GAE uses the same time
-scale. Step cost scales with elapsed time; distance progress and terminal rewards
-retain their meanings. Stopped-near-goal shaping is a bounded episode potential:
+application tick. Effective Spine discount is `gamma^elapsed_steps`; `elapsed_steps` is server
+tick delta divided by the nominal **Spine** period. Six Motor intervals under one
+latched `desired_vx` are therefore one policy discount/GAE step. Normal PPO
+waits for at least 256 Spine transitions across episode boundaries before an
+update, rather than fitting four epochs to a single ~30-transition precision
+episode. Step cost still scales with Motor-interval elapsed time. Dense distance
+progress is normalized by the distance present when the current strategic goal
+was established, so its total scale is comparable across short and long tasks.
+Stopped-near-goal shaping is a bounded episode potential:
 only measured states with `vx=0` inside the default ±5 radius qualify,
 proximity rises toward the target, and reward is paid only when that episode
 improves its best stopped proximity. No particular `motor_x` value is rewarded,

@@ -103,15 +103,18 @@ the local physical reflex against requested velocity; it never receives
 artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
-Motor School v3 samples continuous normalized velocity commands from
+Motor School v4 samples continuous normalized velocity commands from
 `[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
 Motor action receives local measured velocity-tracking credit over the next
 1/60 second, so the reflex still does not depend on a long strategic horizon.
-Frozen verification uses unseen velocity levels and checks mean error, worst-case
-error, mean rest speed and worst rest speed. A PASS may update `brain.pt`, but
-normal training continues through the full requested `--episodes` budget. The
-best passing brain is retained even if later training regresses.
-`--stop-on-pass` remains an explicit quick/CI mode.
+Zero-velocity commands add a near-rest shaping term and a stronger effort cost
+so the Motor can distinguish "slow" from the GameServer's actual physical rest
+state. Frozen verification uses unseen velocity levels and, for zero commands,
+requires the settled samples to hold `vx=0` with `|motor_x|<=0.02`; an old
+Motor that merely drifts slowly no longer certifies. A PASS may update
+`brain.pt`, but normal training continues through the full requested
+`--episodes` budget. The best passing brain is retained even if later training
+regresses. `--stop-on-pass` remains an explicit quick/CI mode.
 
 A clean checkout intentionally contains no verified Motor brain. Train the
 default wheel first:
@@ -157,8 +160,13 @@ checkpointed, so resume continues the same course instead of silently restarting
 the task sequence. `--target 987` remains a focused experiment: the target is
 fixed while curriculum-compatible spawn positions vary.
 
-Spine reward combines distance progress with a smooth potential over the desired
-physical state `(x=target, vx=0)`. Entering a world boundary while the goal is
+Default Spine reward normalizes dense distance progress by the initial distance
+of the presented task. Full progress on a 20-unit precision task and on a
+600-unit transfer therefore has the same scale. The former multiplicative
+position/speed potential remains an opt-in experiment but is disabled by
+default because it could penalize a stopped precision policy for beginning to
+move toward its target. The bounded stopped-near-goal bonus and terminal
+SUCCESS remain state based. Entering a world boundary while the goal is
 elsewhere is penalized as a collision rather than treated as a free brake.
 
 After the requested PPO budget, TRAIN runs frozen deterministic Spine VERIFY.
@@ -183,8 +191,15 @@ TRAIN has two pacing modes over one control/training implementation:
 
 Both modes use 120 Hz physical ticks, Motor every 2 ticks, Spine every 12 ticks,
 the same sensor history, reward, PPO update, reset semantics, success hold and
-checkpoint. Episode timeout is measured in simulated world ticks. Wall time is
-only a liveness watchdog/diagnostic and cannot change the learned trajectory.
+checkpoint. PPO accumulates at least 256 Spine transitions across episode
+boundaries before a normal update, then uses 64-sample minibatches for four
+epochs. Discount/GAE duration is measured in Spine-decision intervals: the six
+Motor intervals executed beneath one latched `desired_vx` are one policy
+discount step, not six. Fresh Spine exploration starts at `log_std=-1.2`
+(std about 0.30) and the default entropy bonus is zero, allowing the learned
+variance to narrow when precision evidence supports it. Episode timeout is
+measured in simulated world ticks. Wall time is only a liveness
+watchdog/diagnostic and cannot change the learned trajectory.
 
 Default reward shaping does not reward a particular motor command. It rewards a
 measured state only when the player is physically stopped (`vx=0`) within ±5

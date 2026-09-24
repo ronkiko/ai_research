@@ -90,19 +90,20 @@ runtime `manifest.json`, `brain.pt`, `candidate.pt`, `history.jsonl`, and
 `checkpoints/` in the same package directory. Those files form the portable
 learned organ.
 
-Motor School `velocity_tracking_pg_v3` trains the Motor without Spine. Its
+Motor School `velocity_tracking_pg_v4` trains the Motor without Spine. Its
 goal socket receives continuous normalized velocity commands from
 `[-0.8,+0.8]`, with explicit rest commands mixed into training; local
 proprioception contains only measured velocity/current effort, and the Motor
 alone chooses `motor_x`. Credit assignment stays local to one 60 Hz Motor
-interval using smooth measured velocity-tracking reward plus a small effort
-cost. No critic or long return is allowed to mix credit across later randomized
-velocity goals. Frozen verification runs on unseen command levels and checks
-mean velocity error, worst velocity error, mean rest speed and worst rest speed.
-Every PASS is compared with the best certified brain; a better PASS replaces
-`brain.pt` while the live candidate continues training. Normal mode consumes
-the full requested episode budget; `--stop-on-pass` is reserved for quick/CI
-runs.
+interval. Ordinary commands use smooth velocity-tracking reward; zero commands
+add a near-rest term plus a stronger effort cost so sub-unit drift is not
+indistinguishable from real rest. No critic or long return may mix credit across
+later randomized velocity goals. Frozen verification uses unseen command levels
+and requires zero-command settled samples to hold the GameServer rest contract:
+`vx=0` and `|motor_x|<=0.02`. Every PASS is compared with the best certified
+brain; a better PASS replaces `brain.pt` while the live candidate continues
+training. Normal mode consumes the full requested episode budget;
+`--stop-on-pass` is reserved for quick/CI runs.
 
 ## Learning
 
@@ -129,8 +130,12 @@ Realtime and unpaced TRAIN share the same rollout, sensor, reward, PPO and
 checkpoint code. Their only execution difference is how the next authoritative
 Zone tick arrives. Realtime waits for the external 120 Hz world; unpaced calls
 the canonical ZoneRuntime tick directly. Motor cadence is every 2 world ticks
-(60 Hz), Spine cadence every 12 world ticks (10 Hz), and finite episode timeout
-is counted in world ticks. Wall time is not part of reward, timeout, success or
+(60 Hz) and Spine cadence every 12 world ticks (10 Hz). One latched Spine action
+therefore contributes one discount/GAE step, not six Motor steps. Normal PPO
+updates accumulate at least 256 Spine transitions across episodes, use
+64-sample minibatches for four epochs, start fresh exploration at
+`log_std=-1.2`, and apply no default entropy bonus. Finite episode timeout is
+counted in world ticks. Wall time is not part of reward, timeout, success or
 policy input.
 
 Near-goal shaping is state-based, not an actuator hint. The default shaping
@@ -143,8 +148,11 @@ terminal objective.
 Reward and success measurement may use authoritative state because they belong
 to the training laboratory, not the deployed controller.
 
-Default dense reward measures reduction in absolute target distance. Terminal
-success adds positive reward. Timeout adds negative terminal reward.
+Default dense reward measures reduction in absolute target distance normalized
+by that episode's initial target distance, keeping the total progress scale
+comparable across curriculum stages. The legacy position/speed potential is
+configurable but disabled by default. Terminal success adds positive reward.
+Timeout adds negative terminal reward.
 
 ## Success
 
