@@ -50,7 +50,16 @@ SEGMENT_SECONDS = 0.5
 TARGET_MIN = -0.8
 TARGET_MAX = 0.8
 STAND_COMMAND_PROBABILITY = 0.25
+REST_DRILL_PROBABILITY = 0.65
+AUTO_STABLE_DEVELOPMENT_CHECKS = 3
+AUTO_MAX_EPISODE_MULTIPLIER = 2
 VERIFY_LEVELS = (0.57, 0.0, -0.63, 0.22, 0.0, -0.41, 0.73, 0.0)
+DEVELOPMENT_PROGRAMS = (
+    (0.68, 0.0, -0.31, 0.0, 0.22, 0.0),
+    (-0.66, 0.0, 0.35, 0.0, -0.18, 0.0),
+    (0.18, -0.72, 0.0, 0.41, 0.0, -0.27, 0.0),
+    (-0.24, 0.74, 0.0, -0.38, 0.0, 0.12, 0.0),
+)
 CERTIFICATION_PROGRAMS = (
     (0.34, 0.0, -0.55, 0.18, 0.0, 0.69, 0.0),
     (-0.29, 0.51, 0.0, -0.76, 0.27, 0.0),
@@ -247,6 +256,59 @@ def _local_tracking_reward(
     )
 
 
+def _sample_motion_command(
+    rng: random.Random,
+    previous: float,
+    *,
+    prefer_opposite: bool = False,
+) -> float:
+    candidate = previous
+    for _ in range(32):
+        candidate = rng.uniform(TARGET_MIN, TARGET_MAX)
+        if abs(candidate) < 0.08:
+            continue
+        if abs(candidate - previous) < 0.1:
+            continue
+        if prefer_opposite and previous != 0.0 and candidate * previous >= 0.0:
+            continue
+        return float(candidate)
+    return float(candidate)
+
+
+def _school_program(rng: random.Random, segment_count: int) -> tuple[float, ...]:
+    """Sample physical command curriculum with explicit motion->rest coverage."""
+    if segment_count <= 0:
+        return ()
+    commands: list[float] = []
+    rest_drill = rng.random() < REST_DRILL_PROBABILITY
+    previous = 0.0
+    for segment in range(segment_count):
+        if rest_drill:
+            if segment % 2:
+                desired = 0.0
+            else:
+                desired = _sample_motion_command(
+                    rng,
+                    previous,
+                    prefer_opposite=segment >= 2,
+                )
+        else:
+            # Tracking episodes still include rest, but never waste a stand
+            # segment directly after reset/another stand. Every zero command
+            # therefore trains braking from an actually moving state.
+            if previous != 0.0 and rng.random() < STAND_COMMAND_PROBABILITY:
+                desired = 0.0
+            else:
+                desired = _sample_motion_command(
+                    rng,
+                    previous,
+                    prefer_opposite=previous != 0.0 and rng.random() < 0.5,
+                )
+        commands.append(float(desired))
+        previous = float(desired)
+    return tuple(commands)
+
+
 def _rollout(
     runtime: ZoneRuntime,
     motor: nn.Module,
@@ -259,20 +321,17 @@ def _rollout(
     motor_stride = PHYSICS_HZ // MOTOR_HZ
     steps = int(round(SCHOOL_SECONDS * MOTOR_HZ))
     segment_steps = max(1, int(round(SEGMENT_SECONDS * MOTOR_HZ)))
-    desired = 0.0
+    segment_count = max(1, math.ceil(steps / segment_steps))
+    program = _school_program(rng, segment_count)
+    desired = float(program[0])
     tracking_abs = 0.0
+    rest_entries: list[float] = []
 
     for step in range(steps):
         if step % segment_steps == 0:
-            if rng.random() < STAND_COMMAND_PROBABILITY:
-                desired = 0.0
-            else:
-                candidate = desired
-                for _ in range(16):
-                    candidate = rng.uniform(TARGET_MIN, TARGET_MAX)
-                    if abs(candidate - desired) >= 0.1:
-                        break
-                desired = float(candidate)
+            desired = float(program[min(step // segment_steps, len(program) - 1)])
+            if desired == 0.0:
+                rest_entries.append(abs(float(_player(runtime)["vx"])))
         player = _player(runtime)
         goal = _goal(desired)
         prop = _proprioception(player)
@@ -313,6 +372,10 @@ def _rollout(
 
     return transitions, sequence, {
         "mean_abs_velocity_error": tracking_abs / max(1, steps),
+        "rest_segments": sum(1 for value in program if value == 0.0),
+        "rest_entry_speed_mean": (
+            sum(rest_entries) / len(rest_entries) if rest_entries else 0.0
+        ),
     }
 
 
@@ -404,6 +467,62 @@ def _verify_program(
 
 def _verify(motor: nn.Module) -> dict[str, float | bool]:
     return _verify_program(motor, VERIFY_LEVELS)
+
+
+def _verify_suite(
+    motor: nn.Module,
+    programs: tuple[tuple[float, ...], ...],
+) -> dict:
+    cases = [_verify_program(motor, levels) for levels in programs]
+    pass_count = sum(1 for case in cases if case["passed"])
+    return {
+        "passed": pass_count == len(cases),
+        "pass_count": pass_count,
+        "required_passes": len(cases),
+        "cases": [
+            {
+                "program": index,
+                "levels": list(programs[index - 1]),
+                "verification": case,
+                "passed": bool(case["passed"]),
+            }
+            for index, case in enumerate(cases, start=1)
+        ],
+        "mean_abs_velocity_error": (
+            sum(float(case["mean_abs_velocity_error"]) for case in cases)
+            / max(1, len(cases))
+        ),
+        "max_abs_velocity_error": max(
+            (float(case["max_abs_velocity_error"]) for case in cases),
+            default=0.0,
+        ),
+        "zero_target_mean_abs_speed": max(
+            (float(case["zero_target_mean_abs_speed"]) for case in cases),
+            default=0.0,
+        ),
+        "zero_target_max_abs_speed": max(
+            (float(case["zero_target_max_abs_speed"]) for case in cases),
+            default=0.0,
+        ),
+        "zero_target_max_abs_effort": max(
+            (float(case["zero_target_max_abs_effort"]) for case in cases),
+            default=0.0,
+        ),
+        "zero_target_rest_fraction": min(
+            (float(case["zero_target_rest_fraction"]) for case in cases),
+            default=0.0,
+        ),
+        "mae_limit": VERIFY_MAE_LIMIT,
+        "max_error_limit": VERIFY_MAX_ERROR_LIMIT,
+        "zero_speed_limit": VERIFY_ZERO_SPEED_LIMIT,
+        "zero_max_speed_limit": VERIFY_ZERO_MAX_SPEED_LIMIT,
+        "zero_effort_limit": VERIFY_ZERO_EFFORT_LIMIT,
+        "rest_fraction_required": 1.0,
+    }
+
+
+def _development_verify(motor: nn.Module) -> dict:
+    return _verify_suite(motor, DEVELOPMENT_PROGRAMS)
 
 
 def _verification_quality(verification: dict) -> float:
@@ -697,6 +816,8 @@ def run_school(
     fresh: bool,
     verify_only: bool = False,
     stop_on_pass: bool = False,
+    minimum_episodes: int | None = None,
+    stable_development_checks: int = 0,
 ) -> dict:
     package = get_motor_package(motor_id)
     training_manifest = dict(package.manifest.get("training") or {})
@@ -739,6 +860,14 @@ def run_school(
     episodes_run = 0
     final_verification: dict | None = None
     improved_this_run = False
+    development_streak = 0
+    minimum_episodes = (
+        int(minimum_episodes) if minimum_episodes is not None else int(episodes)
+    )
+    if minimum_episodes <= 0 or minimum_episodes > episodes:
+        raise ValueError("minimum_episodes must be within the training budget")
+    if stable_development_checks < 0:
+        raise ValueError("stable_development_checks must be nonnegative")
 
     try:
         for _ in range(episodes):
@@ -763,7 +892,11 @@ def run_school(
             )
 
             if candidate_episodes % VERIFY_EVERY_EPISODES == 0:
-                final_verification = _verify(motor)
+                final_verification = (
+                    _verify(motor)
+                    if stop_on_pass
+                    else _development_verify(motor)
+                )
                 (
                     best_verification,
                     best_episode,
@@ -782,6 +915,22 @@ def run_school(
                     verification=final_verification,
                     improved=improved,
                 )
+                if stop_on_pass:
+                    development_streak = 0
+                    label = "VERIFY"
+                    pass_text = ""
+                else:
+                    development_streak = (
+                        development_streak + 1
+                        if final_verification["passed"]
+                        else 0
+                    )
+                    label = "DEVELOP"
+                    pass_text = (
+                        f" passes={final_verification['pass_count']}/"
+                        f"{final_verification['required_passes']}"
+                        f" streak={development_streak}"
+                    )
                 best_text = (
                     f" best={_verification_quality(best_verification):.3f}"
                     f"@{best_episode}"
@@ -789,7 +938,8 @@ def run_school(
                     else ""
                 )
                 print(
-                    f"MotorSchool VERIFY episode={candidate_episodes} "
+                    f"MotorSchool {label} episode={candidate_episodes}"
+                    f"{pass_text} "
                     f"mae={final_verification['mean_abs_velocity_error']:.2f} "
                     f"max_error={final_verification['max_abs_velocity_error']:.2f} "
                     f"zero_speed={final_verification['zero_target_mean_abs_speed']:.2f} "
@@ -801,6 +951,13 @@ def run_school(
                     flush=True,
                 )
                 if stop_on_pass and final_verification["passed"]:
+                    break
+                if (
+                    not stop_on_pass
+                    and stable_development_checks
+                    and candidate_episodes >= minimum_episodes
+                    and development_streak >= stable_development_checks
+                ):
                     break
     except KeyboardInterrupt:
         final_verification = final_verification or {
@@ -824,7 +981,11 @@ def run_school(
         final_verification is None
         or candidate_episodes % VERIFY_EVERY_EPISODES != 0
     ):
-        final_verification = _verify(motor)
+        final_verification = (
+            _verify(motor)
+            if stop_on_pass
+            else _development_verify(motor)
+        )
         (
             best_verification,
             best_episode,
@@ -867,6 +1028,8 @@ def run_school(
         "trained": trained,
         "qualification": current_training.get("qualification"),
         "certified": bool(current_training.get("certified")),
+        "development_streak": development_streak,
+        "minimum_episodes": minimum_episodes,
         "promoted": improved_this_run,
         "best_episode": best_episode,
         "best_verification": best_verification,
@@ -963,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=("auto", "quick", "train", "certify"),
         default="auto",
         help=(
-            "auto (default): fresh full training then certification; "
+            "auto (default): fresh train >= budget until development is stable, then certify; "
             "quick: stop on first standard PASS; "
             "train: consume full episode budget and keep BEST; "
             "certify: frozen BEST must pass 10/10 held-out programs"
@@ -1026,10 +1189,14 @@ def main(argv: list[str] | None = None) -> int:
             print("MotorSchool result " + json.dumps(result, sort_keys=True), flush=True)
             return 0 if result["qualification"] in {"best", "certified"} else 2
 
-        # auto is intentionally a new school from the beginning.
+        # AUTO keeps certification held out. It trains for at least the
+        # requested budget, then may continue until development is stable,
+        # bounded by a hard cap of 2x the requested episodes.
         training = run_school(
             args.motor,
-            episodes=args.episodes,
+            episodes=args.episodes * AUTO_MAX_EPISODE_MULTIPLIER,
+            minimum_episodes=args.episodes,
+            stable_development_checks=AUTO_STABLE_DEVELOPMENT_CHECKS,
             seed=args.seed,
             fresh=True,
         )

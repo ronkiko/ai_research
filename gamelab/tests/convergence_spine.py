@@ -30,16 +30,18 @@ def main() -> int:
                                     "GAMELAB_REWARD_CONFIG": str(root / "reward.json")}):
             motor = run_school(
                 "continuous_1d_v1",
-                episodes=200,
+                episodes=400,
+                minimum_episodes=200,
+                stable_development_checks=3,
                 seed=1,
                 fresh=True,
             )
             if not motor["trained"]:
-                raise AssertionError(f"fresh 200-episode Motor did not converge: {motor}")
+                raise AssertionError(f"fresh adaptive Motor did not converge: {motor}")
             certification = certify_motor("continuous_1d_v1")
             if not certification["certified"]:
                 raise AssertionError(
-                    f"fresh 200-episode Motor did not certify 10/10: {certification}"
+                    f"fresh adaptive Motor did not certify 10/10: {certification}"
                 )
             path = root / "spine.pt"
             client = UnpacedHostClient("convergence")

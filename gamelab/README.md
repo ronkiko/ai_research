@@ -108,7 +108,7 @@ the local physical reflex against requested velocity; it never receives
 artifacts inside the selected Motor package and promotes a candidate to
 `brain.pt` only after frozen velocity-tracking verification.
 
-Motor School v5 samples continuous normalized velocity commands from
+Motor School v6 samples continuous normalized velocity commands from
 `[-0.8,+0.8]`; one quarter of command segments explicitly request rest. Each
 Motor action receives local measured velocity-tracking credit over the next
 1/60 second, so the reflex still does not depend on a long strategic horizon.
@@ -122,8 +122,10 @@ Motor School has three evidence grades:
 
 - **PASS** — one standard frozen VERIFY succeeds. `quick` stops here and exists
   for CI/smoke evidence that learning works at all.
-- **BEST** — `train` consumes the complete episode budget and retains the best
-  standard-PASS brain even if the continuing candidate later regresses.
+- **BEST** — full training selects against a separate multi-program
+  development suite, not the single quick VERIFY. The suite stresses tracking,
+  reversals and motion→rest from different entry speeds. The best development
+  PASS is retained even if the continuing candidate later regresses.
 - **CERTIFIED** — the frozen BEST must pass **10/10 distinct held-out command
   programs** containing different velocities, reversals and physical-rest
   transitions. Only CERTIFIED Motor brains may be mounted by serious Spine
@@ -135,16 +137,21 @@ The scenarios are explicit:
 # quick CI/smoke: first standard PASS
 ./gamelab/op/motor-school.sh quick --motor continuous_1d_v1 --fresh --episodes 100
 
-# full training: consume budget and retain BEST
+# full training: consume exactly this budget and retain development BEST
 ./gamelab/op/motor-school.sh train --motor continuous_1d_v1 --fresh --episodes 200
 
 # frozen BEST -> 10/10 held-out certification
 ./gamelab/op/motor-school.sh certify --motor continuous_1d_v1
 ```
 
-With no scenario argument Motor School runs **auto**: it starts a genuinely
-fresh school, trains the full default 200-episode budget, retains BEST, then
-runs certification:
+With no scenario argument Motor School runs **auto**. It starts a genuinely
+fresh school and trains for at least the requested/default 200 episodes.
+Training rollouts deliberately include repeated motion→rest drills from varied
+positive/negative speeds instead of relying on accidental random stand
+commands. After the minimum budget, AUTO continues in ten-episode blocks until
+the current candidate has passed the development suite three checks in a row,
+with a hard cap of 2× the requested budget. Only then is the retained BEST sent
+to the still-unseen certification suite:
 
 ```bash
 ./gamelab/op/motor-school.sh

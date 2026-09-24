@@ -11,10 +11,13 @@ import torch
 from gamelab.motor_school import (
     SchoolTransition,
     CERTIFICATION_REQUIRED_PASSES,
+    DEVELOPMENT_PROGRAMS,
+    _development_verify,
     _local_tracking_reward,
     _new_world,
     _reset_fresh_school,
     _rollout,
+    _school_program,
     _update,
     _verify,
     certify_motor,
@@ -97,6 +100,21 @@ class MotorSchoolTests(unittest.TestCase):
         )
         self.assertGreater(braking, coasting)
         self.assertGreater(exact_rest, near_drift)
+
+    def test_school_program_trains_rest_only_after_motion(self):
+        import random
+
+        rest_rich = 0
+        for seed in range(20):
+            program = _school_program(random.Random(seed), 8)
+            self.assertEqual(len(program), 8)
+            for index, desired in enumerate(program):
+                if desired == 0.0:
+                    self.assertGreater(index, 0)
+                    self.assertNotEqual(program[index - 1], 0.0)
+            if sum(1 for desired in program if desired == 0.0) >= 3:
+                rest_rich += 1
+        self.assertGreaterEqual(rest_rich, 10)
 
     def test_school_rollout_and_local_policy_update_execute_on_canonical_world(self):
         torch.manual_seed(7)
@@ -184,7 +202,7 @@ class MotorSchoolTests(unittest.TestCase):
                 os.environ,
                 {"GAMELAB_MOTOR_ROOT": str(root)},
             ), patch(
-                "gamelab.motor_school._verify",
+                "gamelab.motor_school._development_verify",
                 side_effect=[first, later],
             ):
                 result = run_school(
@@ -225,6 +243,14 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertFalse(training["certified"])
                 self.assertNotIn("best_episode", training)
                 self.assertNotIn("certification", training)
+
+    def test_development_programs_are_distinct_from_certification(self):
+        from gamelab.motor_school import CERTIFICATION_PROGRAMS
+        self.assertTrue(DEVELOPMENT_PROGRAMS)
+        self.assertTrue(set(DEVELOPMENT_PROGRAMS).isdisjoint(CERTIFICATION_PROGRAMS))
+        result = _development_verify(RuleMotor())
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["pass_count"], len(DEVELOPMENT_PROGRAMS))
 
     def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
         from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program

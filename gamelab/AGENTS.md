@@ -74,7 +74,14 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
 
 - Motor School credit must stay local to the measured consequence of one Motor
   interval. Do not reintroduce a critic/GAE horizon spanning later randomized
-  velocity goals; that obscures reflex credit assignment.
+  velocity goals; that obscures reflex credit assignment. Training must provide
+  explicit physical motion→rest coverage from varied positive and negative
+  entry speeds; do not rely on random zero commands after reset to teach stop.
+- Full Motor BEST selection uses a small development suite distinct from the
+  10 held-out certification programs. Certification data must never steer
+  training, early stopping, or BEST selection. AUTO may extend beyond its
+  minimum episode budget only from development evidence, with a documented
+  hard cap.
 - Keep an actual convergence regression for the default Motor School, not only
   shape/update tests. A school that compiles but cannot promote a fresh Motor is
   not acceptable.
