@@ -600,7 +600,7 @@ def _load_candidate(
     if payload.get("school") != SCHOOL_VERSION:
         raise MotorPackageError(
             f"motor {package.motor_id}: candidate belongs to "
-            f"{payload.get('school')!r}; rerun Motor School with --fresh"
+            f"{payload.get('school')!r}; construct a new Motor instance"
         )
     motor.load_state_dict(payload["model"])
     if "optimizer" in payload:
@@ -809,6 +809,14 @@ def run_school(
         raise MotorPackageError(
             f"motor {motor_id}: certified Motor is immutable; "
             f"construct a new Motor instance instead"
+        )
+    if (
+        training_manifest.get("certification_attempted")
+        or training_manifest.get("certification") is not None
+    ):
+        raise MotorPackageError(
+            f"motor {motor_id}: certification has already been attempted; "
+            f"this Motor instance is sealed and cannot resume training"
         )
     prior_school = training_manifest.get("school")
     if prior_school != SCHOOL_VERSION:
@@ -1041,10 +1049,42 @@ def certify_motor(motor_id: str) -> dict:
         raise MotorPackageError(
             f"motor {motor_id}: BEST brain hash mismatch; cannot certify"
         )
+    if (
+        training.get("certification_attempted")
+        or training.get("certification") is not None
+    ):
+        raise MotorPackageError(
+            f"motor {motor_id}: certification has already been attempted; "
+            f"construct a new Motor instance for another generation-"
+            f"{CURRENT_MOTOR_CERTIFICATION_GENERATION} attempt"
+        )
+
+    quality = package.quality
+    if quality is None:
+        raise MotorPackageError(f"motor {motor_id}: BEST has no quality score")
 
     motor = package.new_model()
     motor.load_state_dict(payload["model"])
     motor.eval()
+
+    attempt_id = str(uuid.uuid4())
+    training["certification_attempted"] = True
+    training["certification_attempt_id"] = attempt_id
+    training["qualification"] = "certifying"
+    training["certified"] = False
+    package.manifest["training"] = training
+    package.write_manifest()
+    package.append_history(
+        {
+            "kind": "certification_started",
+            "at": _now(),
+            "attempt_id": attempt_id,
+            "school": SCHOOL_VERSION,
+            "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
+            "brain_sha256": actual_sha,
+        }
+    )
+
     programs = []
     for index, levels in enumerate(CERTIFICATION_PROGRAMS, start=1):
         verification = _verify_program(motor, levels)
@@ -1067,10 +1107,8 @@ def certify_motor(motor_id: str) -> dict:
 
     pass_count = sum(1 for item in programs if item["passed"])
     passed = pass_count == CERTIFICATION_REQUIRED_PASSES
-    quality = package.quality
-    if quality is None:
-        raise MotorPackageError(f"motor {motor_id}: BEST has no quality score")
     certification = {
+        "attempt_id": attempt_id,
         "certificate_id": str(uuid.uuid4()) if passed else None,
         "at": _now(),
         "school": SCHOOL_VERSION,
@@ -1088,7 +1126,7 @@ def certify_motor(motor_id: str) -> dict:
         package.cleanup_training_artifacts()
     training["certification"] = certification
     training["certified"] = passed
-    training["qualification"] = "certified" if passed else "best"
+    training["qualification"] = "certified" if passed else "certification_failed"
     training["status"] = "trained"
     training["verified"] = True
     package.manifest["training"] = training

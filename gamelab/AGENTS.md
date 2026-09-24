@@ -76,11 +76,14 @@ Read `README.md` and `SPEC.md` before changing this laboratory.
   coefficients into Motor-manifest tuning knobs; document those school
   constants instead. Compare quality directly only within the same certificate
   generation.
-- A certified Motor instance is immutable. Motor School has no `--fresh`
-  reset for Motors: a new learning run constructs a new UUID instance. An
-  interrupted uncertified instance may be resumed explicitly with
-  `--motor <uuid>`. Successful certification deletes the instance's entire
-  transient `work/` directory; runtime/evidence files remain.
+- Certification is one-shot for a Motor UUID and certificate generation. Mark
+  the attempt before exposing held-out programs. Once the exam starts, PASS
+  becomes immutable CERTIFIED; FAIL or interruption seals the instance and it
+  must never resume training or retake that generation. A new attempt uses a
+  new UUID. Motor School has no `--fresh` reset for Motors: only an interrupted
+  pre-certification instance may resume explicitly with `--motor <uuid>`.
+  Successful certification deletes the entire transient `work/` directory;
+  runtime/evidence files remain.
 - Certificate generation describes achieved school level, not architecture
   version. Generation 1 is the current contract. Every successful certificate
   has a UUIDv4 `certificate_id` and binds brain/model/architecture hashes plus

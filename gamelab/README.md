@@ -180,9 +180,12 @@ The scenarios are explicit:
 ```
 
 There is no Motor-School `--fresh` lifecycle. A normal run constructs a new
-instance. Resuming is allowed only for an uncertified instance with the exact
-snapshotted architecture/model hashes it was born with. A certified Motor is
-immutable: Motor School will not alter it.
+instance. Resuming is allowed only before certification starts and only with the
+exact snapshotted architecture/model hashes the Motor was born with. A
+certification attempt is one-shot for a Motor UUID and generation: starting the
+held-out exam seals the instance. PASS becomes immutable CERTIFIED; FAIL or an
+interrupted exam cannot resume training or retake that generation. A new attempt
+requires a new Motor UUID.
 
 During training the instance may contain:
 

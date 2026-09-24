@@ -169,6 +169,7 @@ def create_motor_instance(
             "best_brain_sha256": None,
             "qualification": None,
             "certified": False,
+            "certification_attempted": False,
             "certification": None,
         },
     }

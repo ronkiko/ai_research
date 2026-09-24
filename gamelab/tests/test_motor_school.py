@@ -259,6 +259,53 @@ class MotorSchoolTests(unittest.TestCase):
                         seed=1,
                     )
 
+    def test_certification_attempt_is_one_shot_and_seals_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            create_untrained_motor_fixture(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = get_motor_package(FIXTURE_MOTOR_ID)
+                motor = Motor()
+                torch.save(
+                    {
+                        "schema_version": 1,
+                        "motor_id": package.motor_id,
+                        "school": package.manifest["training"]["school"],
+                        "episodes": 10,
+                        "seed": 1,
+                        "model": motor.state_dict(),
+                    },
+                    package.brain_path,
+                )
+                import hashlib
+                digest = hashlib.sha256(package.brain_path.read_bytes()).hexdigest()
+                package.manifest["brain_sha256"] = digest
+                package.manifest["quality"] = 1.0
+                package.manifest["training"].update(
+                    {
+                        "status": "trained",
+                        "verified": True,
+                        "qualification": "best",
+                        "best_verification": _development_verify(RuleMotor()),
+                        "best_brain_sha256": digest,
+                    }
+                )
+                package.write_manifest()
+                failing = _verify(RuleMotor())
+                failing["passed"] = False
+                with patch("gamelab.motor_school._verify_program", return_value=failing):
+                    result = certify_motor(package.motor_id)
+                self.assertFalse(result["certified"])
+                sealed = get_motor_package(package.motor_id)
+                training = sealed.manifest["training"]
+                self.assertTrue(training["certification_attempted"])
+                self.assertEqual(training["qualification"], "certification_failed")
+                self.assertIsNotNone(training["certification"]["attempt_id"])
+                with self.assertRaisesRegex(Exception, "already been attempted"):
+                    certify_motor(package.motor_id)
+                with self.assertRaisesRegex(Exception, "sealed"):
+                    run_school(package.motor_id, episodes=1, seed=1)
+
     def test_auto_safety_cap_is_emergency_scale(self):
         self.assertEqual(AUTO_SAFETY_MAX_EPISODES, 10_000)
 
