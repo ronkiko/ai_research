@@ -114,6 +114,12 @@ StepCost = Annotated[float | None, Field(ge=0.0, le=1.0)]
 RewardMagnitude = Annotated[float | None, Field(ge=0.0, le=20.0)]
 StoppedNearGoalBonus = Annotated[float | None, Field(ge=-20.0, le=20.0)]
 NearGoalRadius = Annotated[float | None, Field(ge=0.1, le=250.0)]
+TargetX = Annotated[float, Field(ge=0.0, le=1000.0)]
+OptionalTargetX = Annotated[float | None, Field(ge=0.0, le=1000.0)]
+EpisodeSeconds = Annotated[float, Field(ge=0.25, le=120.0)]
+TrainingEpisodes = Annotated[int, Field(ge=1, le=500)]
+VerifyRuns = Annotated[int, Field(ge=1, le=20)]
+GoalTolerance = Annotated[float, Field(gt=0.0, le=25.0)]
 
 mcp = MCPServer(
     "GameLab game-mechanics laboratory",
@@ -777,11 +783,11 @@ def reward_set(
 
 @mcp.tool(annotations=WRITE)
 def training_start(
-    episodes: int = 200,
-    target_x: float | None = None,
+    episodes: TrainingEpisodes = 200,
+    target_x: OptionalTargetX = None,
     fresh: bool = False,
     seed: int = 1,
-    max_seconds: float = TRAIN_EPISODE_SECONDS,
+    max_seconds: EpisodeSeconds = TRAIN_EPISODE_SECONDS,
     host_id: str = DEFAULT_HOST_ID,
     motor_id: str = DEFAULT_MOTOR_ID,
 ) -> dict[str, Any]:
@@ -815,10 +821,10 @@ def training_cancel() -> dict[str, Any]:
 
 @mcp.tool(annotations=WRITE)
 def verify_start(
-    target_x: float,
-    runs: int = 3,
-    tolerance: float = SUCCESS_TOLERANCE,
-    max_seconds: float = DEFAULT_GOAL_TIMEOUT,
+    target_x: TargetX,
+    runs: VerifyRuns = 3,
+    tolerance: GoalTolerance = SUCCESS_TOLERANCE,
+    max_seconds: EpisodeSeconds = DEFAULT_GOAL_TIMEOUT,
     host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start frozen-weight verification of the current model."""
@@ -849,9 +855,9 @@ def verify_cancel() -> dict[str, Any]:
 
 @mcp.tool(annotations=WRITE)
 def run_start(
-    target_x: float,
-    tolerance: float = SUCCESS_TOLERANCE,
-    max_seconds: float = DEFAULT_GOAL_TIMEOUT,
+    target_x: TargetX,
+    tolerance: GoalTolerance = SUCCESS_TOLERANCE,
+    max_seconds: EpisodeSeconds = DEFAULT_GOAL_TIMEOUT,
     host_id: str = DEFAULT_HOST_ID,
 ) -> dict[str, Any]:
     """Start the current model acting toward one goal in the live game."""
@@ -874,7 +880,7 @@ def run_status() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=WRITE)
-def run_update_goal(target_x: float) -> dict[str, Any]:
+def run_update_goal(target_x: TargetX) -> dict[str, Any]:
     """Replace the active run's goal without resetting its body or sensor history.
 
     The run's original timeout still applies. Status reports the applied revision.

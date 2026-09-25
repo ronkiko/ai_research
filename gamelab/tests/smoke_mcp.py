@@ -200,6 +200,25 @@ async def run_flow(
 
             payloads: list[Any] = []
 
+            initial_model = await tool(session, "model_info")
+            payloads.append(initial_model)
+            if initial_model.get("checkpoint_ready") is not False:
+                raise AssertionError(
+                    f"stale checkpoint unexpectedly loaded: {initial_model}"
+                )
+            if initial_model.get("trainable") is not True:
+                raise AssertionError(
+                    f"certified Motor did not make fresh Spine training available: {initial_model}"
+                )
+            certified = [
+                item for item in initial_model.get("motors", [])
+                if item.get("status") == "certified"
+            ]
+            if [item.get("motor_id") for item in certified] != [FIXTURE_MOTOR_ID]:
+                raise AssertionError(
+                    f"best Motor catalog is not the certified UUID fixture: {initial_model}"
+                )
+
             hosts = await tool(session, "host_list")
             payloads.append(hosts)
             default_hosts = [
@@ -503,6 +522,12 @@ async def run_flow(
             payloads.append(started)
             if started.get("status") != "starting":
                 raise AssertionError(f"training did not start: {started}")
+            if started.get("motor_id") != FIXTURE_MOTOR_ID:
+                raise AssertionError(
+                    f"default motor selector did not resolve best certified UUID: {started}"
+                )
+            if not started.get("motor_brain_sha256"):
+                raise AssertionError(f"training did not bind Motor brain identity: {started}")
             if started.get("reward", {}).get("timeout_penalty") != 1.0:
                 raise AssertionError(f"fresh realtime TRAIN did not reset reward defaults: {started}")
 
@@ -549,6 +574,10 @@ async def run_flow(
 
             info = await tool(session, "model_info")
             payloads.append(info)
+            if info.get("checkpoint_ready") is not True:
+                raise AssertionError(f"fresh training did not replace stale checkpoint: {info}")
+            if info.get("motor_id") != FIXTURE_MOTOR_ID:
+                raise AssertionError(f"Spine checkpoint lost certified Motor binding: {info}")
             if info.get("episodes_trained") != 1:
                 raise AssertionError(f"checkpoint metadata not updated: {info}")
 
@@ -741,6 +770,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gamelab-mcp-smoke-") as temp:
         temp_path = Path(temp)
         checkpoint = temp_path / "spine_motor.pt"
+        # Simulate the real post-cutover workstation: an old/incompatible Spine
+        # artifact exists, while a current certified Motor is installed.
+        checkpoint.write_bytes(b"legacy-incompatible-spine-checkpoint")
         reward_config = temp_path / "reward.json"
         motor_root = temp_path / "motors"
         create_verified_motor_fixture(motor_root)

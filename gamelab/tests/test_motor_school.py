@@ -24,6 +24,7 @@ from gamelab.motor_school import (
     _verify,
     _verify_rapid_program,
     certify_motor,
+    main as motor_school_main,
     run_school,
 )
 from gamelab.motors.package import (
@@ -34,6 +35,7 @@ from gamelab.motors.package import (
 from gamelab.motors.architectures.continuous_1d.v1.model import Motor
 from gamelab.tests.motor_fixture import (
     FIXTURE_MOTOR_ID,
+    copy_architectures,
     create_untrained_motor_fixture,
 )
 
@@ -56,6 +58,55 @@ class RuleMotor(torch.nn.Module):
 
 
 class MotorSchoolTests(unittest.TestCase):
+    def test_default_cli_constructs_uuid_from_blueprint_then_trains_and_certifies(self):
+        import uuid
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_architectures(root)
+            observed = {}
+
+            def fake_train(motor_id, **kwargs):
+                observed["trained_motor_id"] = motor_id
+                observed["minimum_episodes"] = kwargs.get("minimum_episodes")
+                return {
+                    "trained": True,
+                    "development_streak": 3,
+                    "qualification": "best",
+                }
+
+            def fake_certify(motor_id):
+                observed["certified_motor_id"] = motor_id
+                return {
+                    "motor_id": motor_id,
+                    "certified": True,
+                    "qualification": "certified",
+                }
+
+            with patch.dict(
+                os.environ,
+                {"GAMELAB_MOTOR_ROOT": str(root)},
+            ), patch(
+                "gamelab.motor_school.run_school",
+                side_effect=fake_train,
+            ), patch(
+                "gamelab.motor_school.certify_motor",
+                side_effect=fake_certify,
+            ):
+                result = motor_school_main(["auto", "--episodes", "1", "--seed", "7"])
+                self.assertEqual(result, 0)
+                motor_id = observed["trained_motor_id"]
+                parsed = uuid.UUID(motor_id)
+                self.assertEqual(str(parsed), motor_id)
+                self.assertEqual(parsed.version, 4)
+                self.assertEqual(observed["certified_motor_id"], motor_id)
+                self.assertEqual(observed["minimum_episodes"], 1)
+                package = get_motor_package(motor_id)
+                self.assertEqual(
+                    f"{package.architecture['architecture_id']}/{package.architecture['version']}",
+                    "continuous_1d/v1",
+                )
+
     def test_motor_update_accepts_mixed_rest_and_motion_credit_classes(self):
         motor = Motor()
         optimizer = torch.optim.Adam(motor.parameters(), lr=1e-3)

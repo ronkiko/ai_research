@@ -10,6 +10,32 @@ class McpSchemaTests(unittest.TestCase):
         schema = mcp._tool_manager.get_tool("training_start").parameters
         self.assertIn("motor_id", schema["properties"])
 
+    def test_training_and_goal_tools_expose_runtime_bounds(self):
+        training = mcp._tool_manager.get_tool("training_start").parameters["properties"]
+        self.assertEqual(training["episodes"]["minimum"], 1)
+        self.assertEqual(training["episodes"]["maximum"], 500)
+        self.assertEqual(training["episodes"]["default"], 200)
+        self.assertEqual(training["motor_id"]["default"], "best")
+        target = training["target_x"]["anyOf"][0]
+        self.assertEqual(target["minimum"], 0.0)
+        self.assertEqual(target["maximum"], 1000.0)
+        self.assertEqual(training["max_seconds"]["minimum"], 0.25)
+        self.assertEqual(training["max_seconds"]["maximum"], 120.0)
+
+        verify = mcp._tool_manager.get_tool("verify_start").parameters["properties"]
+        self.assertEqual(verify["runs"]["minimum"], 1)
+        self.assertEqual(verify["runs"]["maximum"], 20)
+        self.assertEqual(verify["tolerance"]["exclusiveMinimum"], 0.0)
+        self.assertEqual(verify["tolerance"]["maximum"], 25.0)
+        self.assertEqual(verify["max_seconds"]["maximum"], 120.0)
+
+        run = mcp._tool_manager.get_tool("run_start").parameters["properties"]
+        self.assertEqual(run["target_x"]["minimum"], 0.0)
+        self.assertEqual(run["target_x"]["maximum"], 1000.0)
+        self.assertEqual(run["tolerance"]["exclusiveMinimum"], 0.0)
+        self.assertEqual(run["tolerance"]["maximum"], 25.0)
+        self.assertEqual(run["max_seconds"]["maximum"], 120.0)
+
     def test_director_signal_exposes_allowed_kinds(self):
         schema = mcp._tool_manager.get_tool("executive_director_signal").parameters
         self.assertEqual(
