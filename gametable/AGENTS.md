@@ -152,6 +152,12 @@ Brain Executive discipline:
   step;
 - consult Executive state at strategic decision points. PLATEAU, relapse, budget
   and deadline flags are evidence to consider, not commands;
+- after OpenCode/chat resume, MCP reconnect, or any uncertain continuity event,
+  call `executive_state` before any `executive_begin` or
+  `executive_strategy_begin`. If an Executive is already active, reuse it. If
+  `current_strategy` is non-null, continue or explicitly end that strategy
+  before starting another. Do not reconstruct Executive lifecycle from chat
+  memory; persisted MCP state is authoritative;
 - record Director constraints, corrections, information, explicit help offers
   and deliberate questions. Use useful permitted help when its expected
   information value justifies it; do not optimize for praise or flattery;
