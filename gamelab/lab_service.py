@@ -51,17 +51,24 @@ class Laboratory:
             "verify": {"status": "idle"},
             "run": {"status": "idle"},
         }
+        self._model_error: str | None = None
         self.ensure_model()
 
     def ensure_model(self) -> bool:
         path = checkpoint_path()
         if not path.is_file():
+            self._model_error = None
             return False
         try:
             model_for_checkpoint(path)
-            return True
-        except (ValueError, MotorPackageError):
+        except Exception as exc:
+            # A stale/corrupt learned artifact must never kill the MCP service.
+            # Treat it as "no usable Spine" and expose the reason through
+            # model_info so the Brain can start fresh training.
+            self._model_error = f"{type(exc).__name__}: {exc}"
             return False
+        self._model_error = None
+        return True
 
     def model_info(self) -> dict[str, Any]:
         path = checkpoint_path()
@@ -70,6 +77,7 @@ class Laboratory:
             return {
                 "checkpoint_ready": False,
                 "checkpoint": path.name,
+                "checkpoint_error": self._model_error,
                 "trainable": any(item.get("status") == "certified" for item in motors),
                 "goal_interface": "target_x",
                 "motor_interface": "built_motor_instance",
