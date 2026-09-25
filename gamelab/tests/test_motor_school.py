@@ -227,6 +227,8 @@ class MotorSchoolTests(unittest.TestCase):
         metrics = _update(motor, optimizer, transitions)
 
         self.assertEqual(len(transitions), 240)
+        self.assertTrue(metrics["updated"])
+        self.assertLess(metrics["dynamics_rmse"], .1)
         self.assertGreater(sequence, 0)
         self.assertGreater(rollout["mean_abs_velocity_error"], 0.0)
         self.assertTrue(
@@ -238,6 +240,15 @@ class MotorSchoolTests(unittest.TestCase):
                 for left, right in zip(before, motor.parameters())
             )
         )
+        # Corrupt only withheld physical consequences: never optimize through
+        # a predictor whose independent next-state check fails.
+        from dataclasses import replace
+        corrupted = [replace(row, next_vx=row.next_vx + 5.) if i % 5 == 0 else row
+                     for i, row in enumerate(transitions)]
+        frozen = [parameter.detach().clone() for parameter in motor.parameters()]
+        with self.assertRaisesRegex(RuntimeError, "local dynamics validation"):
+            _update(motor, optimizer, corrupted)
+        self.assertTrue(all(torch.equal(a, b) for a, b in zip(frozen, motor.parameters())))
 
     def test_default_motor_school_converges_in_quick_stop_mode(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -131,6 +131,16 @@ Useful variants:
 
 There is no Motor `--fresh`. A new Motor learning experiment means a new UUID.
 
+Motor School v8 replaces reward-only reflex updates with gradients through a
+locally measured next-velocity model. Pre-certification v7 candidates cannot
+resume under v8; start `train motor` without `--resume`. Existing artifacts are
+not rewritten. Training `velocity_mae` includes exploration noise; assess frozen
+competence using DEVELOP/CERTIFY, including exact rest and rapid commands.
+
+The v8 Motor-only regression on seeds 1/2/3 completed at 200/290/200 episodes:
+each selected BEST passed generation-2 certification 10/10, including tracking,
+exact rest and 10 Hz goal changes. This does not certify Spine convergence.
+
 Certification is one-shot. Once the held-out exam starts, that UUID is sealed.
 PASS becomes immutable CERTIFIED. FAIL or interruption does not permit resume or
 a repeat attempt on the same UUID/generation; construct a new Motor.

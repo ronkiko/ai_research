@@ -153,6 +153,19 @@ Motor School is an operator-only unpaced laboratory over canonical
 local proprioception, never strategic target position and never teacher
 `motor_x`. Credit remains local to measured physical consequences.
 
+Motor School v8 fits the next-velocity affine response from each physical
+rollout, withholding every fifth sample and rejecting RMSE above 0.1 units/s.
+Wall, saturated-speed and rest-snap samples do not enter this fit. The Motor
+then receives local state-cost gradients through this measured response:
+24 full-batch updates minimize smooth absolute next-velocity tracking error
+(Huber transition 0.1 units/s). This gives near-rest errors useful resolution
+without noisy reward-only credit assignment. Neither action labels nor copied
+physics coefficients are used. The predictor is discarded after each update
+batch and never participates in inference or certification. Reward metrics
+remain observational; `policy_loss` reports the state cost for this school.
+Old v7 candidates require a new Motor UUID; certificates and exam thresholds
+are unchanged by this training-method change.
+
 ## Continuous physical Motor
 
 The active Motor does not classify LEFT/STOP/RIGHT. At 60 Hz it receives the

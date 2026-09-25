@@ -29,6 +29,8 @@ from .config import (
     MOTOR_HZ,
     PHYSICS_HZ,
     PLAYER_MAX_SPEED,
+    WORLD_MAX_X,
+    WORLD_MIN_X,
     SPINE_HZ,
     PPO_BATCH_SIZE,
     PPO_CLIP_EPS,
@@ -117,6 +119,8 @@ class SchoolTransition:
     old_log_prob: float
     reward: float
     is_rest: bool
+    next_vx: float | None = None
+    free_motion: bool = True
 
 
 def _now() -> str:
@@ -195,7 +199,9 @@ def _update(
     optimizer: torch.optim.Optimizer,
     transitions: list[SchoolTransition],
 ) -> dict[str, float]:
-    """Clipped local policy-gradient update for the physical reflex."""
+    """Measured local state gradients; legacy reward-only batches use PPO."""
+    if all(item.next_vx is not None for item in transitions):
+        return _measured_update(motor, optimizer, transitions)
     goals = torch.stack([item.goal for item in transitions])
     props = torch.stack([item.proprioception for item in transitions])
     actions = torch.tensor([item.action for item in transitions], dtype=torch.float32)
@@ -259,6 +265,44 @@ def _update(
             metrics[key] /= updates
     motor.eval()
     return metrics
+
+
+def _measured_update(motor, optimizer, transitions):
+    """Local state-cost gradients through dynamics fitted to physical outcomes.
+
+    No action labels or runtime predictor: only the neural Motor is deployed.
+    Rest snaps, speed saturation and walls are excluded from the affine fit.
+    """
+    goals = torch.stack([row.goal for row in transitions])
+    props = torch.stack([row.proprioception for row in transitions])
+    actions = torch.tensor([row.action for row in transitions])
+    after = torch.tensor([row.next_vx for row in transitions])
+    x = torch.stack((props[:, 0], actions, torch.ones_like(actions)), -1).double()
+    valid = torch.tensor([row.free_motion for row in transitions]) & (after.abs() > .1) & (after.abs() < PLAYER_MAX_SPEED - .1)
+    heldout = torch.arange(len(transitions)) % 5 == 0
+    train = valid & ~heldout
+    test = valid & heldout
+    if train.sum() < 24 or test.sum() < 5 or torch.linalg.matrix_rank(x[train]) < 3:
+        return {"loss": 0., "policy_loss": 0., "reward_mean": 0., "updated": False}
+    weights = torch.linalg.lstsq(x[train], after[train].double()).solution.float()
+    rmse = ((x[test].float() @ weights - after[test]).square().mean()).sqrt()
+    if not torch.isfinite(weights).all() or float(rmse) > .1:
+        raise RuntimeError(f"Motor local dynamics validation failed: rmse={float(rmse)}")
+    motor.train()
+    for _ in range(24):
+        mean, _ = motor.parameters_for(goals, props)
+        effort = mean.tanh()
+        predicted = props[:, 0] * weights[0] + effort * weights[1] + weights[2]
+        error = predicted - goals[:, 0] * PLAYER_MAX_SPEED
+        loss = torch.nn.functional.smooth_l1_loss(error, torch.zeros_like(error), beta=.1)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(motor.parameters(), PPO_MAX_GRAD_NORM)
+        optimizer.step()
+    motor.eval()
+    return {"loss": float(loss.detach()), "policy_loss": float(loss.detach()),
+            "reward_mean": sum(row.reward for row in transitions) / len(transitions),
+            "dynamics_rmse": float(rmse), "updated": True}
 
 
 def _local_tracking_reward(
@@ -431,6 +475,9 @@ def _rollout(
                 old_log_prob=float(log_prob.item()),
                 reward=float(reward),
                 is_rest=desired == 0.0,
+                next_vx=float(after["vx"]),
+                free_motion=WORLD_MIN_X < float(player["x"]) < WORLD_MAX_X
+                            and WORLD_MIN_X < float(after["x"]) < WORLD_MAX_X,
             )
         )
 
