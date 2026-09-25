@@ -279,6 +279,7 @@ class ActionAuthority(JsonContract):
     schema_version: int
     authority_id: str
     character_id: str
+    character_revision: int
     operation: str
     target_scope: str
     expires_at_ms: int
@@ -287,13 +288,15 @@ class ActionAuthority(JsonContract):
         _schema(self.schema_version)
         for name in ("authority_id", "character_id", "operation", "target_scope"):
             _identifier(name, getattr(self, name))
+        _integer("character_revision", self.character_revision)
         _integer("expires_at_ms", self.expires_at_ms, 1)
 
     @classmethod
     def from_dict(cls, value: Any) -> "ActionAuthority":
         data = _mapping("authority", value)
         _exact("authority", data, {"schema_version", "authority_id", "character_id",
-                                  "operation", "target_scope", "expires_at_ms"})
+                                  "character_revision", "operation", "target_scope",
+                                  "expires_at_ms"})
         return cls(**data)
 
 
@@ -408,6 +411,7 @@ class ActionReceipt(JsonContract):
     world_epoch: str
     tick: int
     world_revision: int
+    job_revision: int
     observed_outcome: dict[str, Any]
 
     def __post_init__(self):
@@ -424,6 +428,7 @@ class ActionReceipt(JsonContract):
                 _identifier(name, value)
         _integer("tick", self.tick)
         _integer("world_revision", self.world_revision)
+        _integer("job_revision", self.job_revision)
         _bounded_json("observed_outcome", self.observed_outcome)
 
     @classmethod
@@ -431,7 +436,7 @@ class ActionReceipt(JsonContract):
         data = _mapping("ActionReceipt", value)
         fields = {"schema_version", "action_id", "request_id", "status", "reason_code",
                   "source_zone", "target_zone", "entity_id", "world_epoch", "tick",
-                  "world_revision", "observed_outcome"}
+                  "world_revision", "job_revision", "observed_outcome"}
         _exact("ActionReceipt", data, fields)
         return cls(**data)
 
