@@ -62,6 +62,7 @@ class GameTableTests(unittest.TestCase):
             content = (TABLE / ".opencode" / "agents" / f"{name}.md").read_text(encoding="utf-8")
             frontmatter = content.split("---", 2)[1]
             self.assertIn("mode: subagent", frontmatter)
+            self.assertIn("steps: 1", frontmatter)
             self.assertIn("permission:", frontmatter)
             self.assertIn('"*": deny', frontmatter)
             self.assertNotIn("permissions:", frontmatter)

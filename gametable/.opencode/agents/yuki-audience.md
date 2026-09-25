@@ -2,6 +2,7 @@
 description: "Yuki Audience: periodic independent critic for one requested lens"
 mode: subagent
 hidden: true
+steps: 1
 permission:
   "*": deny
 ---

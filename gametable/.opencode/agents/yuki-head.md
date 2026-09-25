@@ -2,6 +2,7 @@
 description: "Yuki Head: independent rational deliberation for a meaningful internal conflict"
 mode: subagent
 hidden: true
+steps: 1
 permission:
   "*": deny
 ---

@@ -2,6 +2,7 @@
 description: "Yuki Will/Ego: independent system appraisal of behavior under pressure"
 mode: subagent
 hidden: true
+steps: 1
 permission:
   "*": deny
 ---
