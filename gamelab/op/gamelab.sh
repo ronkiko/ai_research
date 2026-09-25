@@ -148,6 +148,8 @@ train_motor() {
   done
 
   [[ -z "$motor_id" ]] || forwarded+=(--motor "$motor_id")
+  echo "GameLab Motor School: loading runtime..." >&2
+  export PYTHONUNBUFFERED=1
   exec "$GAMELAB_PY" -m gamelab.motor_school "$scenario" "${forwarded[@]}"
 }
 
@@ -167,6 +169,8 @@ train_spine() {
   [[ "$have_motor" -eq 1 ]] || defaults+=(--motor best)
   [[ "$have_mode" -eq 1 ]] || defaults+=(--mode unpaced)
 
+  echo "GameLab Spine School: loading runtime..." >&2
+  export PYTHONUNBUFFERED=1
   exec "$GAMELAB_PY" -m gamelab.training "${defaults[@]}" "$@"
 }
 

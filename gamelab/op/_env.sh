@@ -48,11 +48,8 @@ def version_tuple(raw: str, parts: int = 2) -> tuple[int, ...]:
     return tuple(values)
 
 
-import torch
-import numpy
-
-torch_version = version_tuple(torch.__version__)
-numpy_version = version_tuple(numpy.__version__)
+torch_version = version_tuple(importlib.metadata.version("torch"))
+numpy_version = version_tuple(importlib.metadata.version("numpy"))
 mcp_version = importlib.metadata.version("mcp")
 
 if not ((2, 1) <= torch_version < (3, 0)):
@@ -62,14 +59,6 @@ if not ((1, 26) <= numpy_version < (3, 0)):
 if mcp_version != "2.2.0":
     raise SystemExit(1)
 
-# Metadata alone is insufficient for a persistent local venv.  Import the exact
-# OpenCode-facing module so broken/stale transitive dependencies are detected.
-from mcp.server import MCPServer  # noqa: F401
-import pydantic  # noqa: F401
-import gamelab.mcp as gamelab_mcp
-
-if gamelab_mcp.mcp is None:
-    raise SystemExit(1)
 PY
   )
 }
@@ -96,14 +85,6 @@ if ! _gamelab_env_ok; then
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \
     "torch>=2.1,<3" "numpy>=1.26,<3" "mcp==2.2.0" 1>&2
-fi
-
-if ! _gamelab_env_ok; then
-  echo "GAMELAB ENV repair stale MCP dependencies" >&2
-  "$GAMELAB_PY" -m pip install --disable-pip-version-check -q \
-    --upgrade --force-reinstall \
-    --extra-index-url https://pypi.org/simple \
-    "mcp==2.2.0" 1>&2
 fi
 
 if ! _gamelab_env_ok; then

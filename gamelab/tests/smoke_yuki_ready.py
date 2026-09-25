@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 async def main_async() -> None:
+    print("CHECK Yuki GameLab MCP startup", flush=True)
     params = StdioServerParameters(
         command=str(ROOT / "gamelab/op/gamelab.sh"),
         args=["serve"],
@@ -21,10 +22,11 @@ async def main_async() -> None:
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
-            await asyncio.wait_for(session.initialize(), timeout=30.0)
+            await asyncio.wait_for(session.initialize(), timeout=10.0)
+            print("CHECK Yuki GameLab model_info", flush=True)
             response = await asyncio.wait_for(
                 session.call_tool("model_info", {}),
-                timeout=30.0,
+                timeout=10.0,
             )
             if response.is_error:
                 raise RuntimeError(f"model_info MCP error: {response.content}")
