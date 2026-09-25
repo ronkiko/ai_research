@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "world_id": "yuki-world-v1",
+  "map_id": "laboratory",
+  "map_version": 1,
+  "physics": {
+    "profile": "flat_1d",
+    "profile_version": 1,
+    "contract_sha256": "0e6f1b013f39814574a88844ccc7bb10b41fb2e21d797920378a164a984029df",
+    "bounds": {
+      "x_min": 0,
+      "x_max": 1000
+    },
+    "spawns": [
+      {
+        "spawn_id": "from_hallway",
+        "x": 1,
+        "kind": "arrival"
+      },
+      {
+        "spawn_id": "from_training",
+        "x": 901,
+        "kind": "arrival"
+      }
+    ],
+    "portals": [
+      {
+        "portal_id": "portal.laboratory.hallway",
+        "trigger": {
+          "x_min": 0,
+          "x_max": 0.5
+        },
+        "activation": "on_touch",
+        "target_map_id": "hallway",
+        "target_spawn_id": "from_laboratory",
+        "rearm": "exit_trigger"
+      },
+      {
+        "portal_id": "portal.laboratory.training",
+        "trigger": {
+          "x_min": 899.5,
+          "x_max": 900.5
+        },
+        "activation": "on_touch",
+        "target_map_id": "training/flat_run",
+        "target_spawn_id": "from_laboratory",
+        "rearm": "exit_trigger"
+      }
+    ]
+  },
+  "semantics": {
+    "objects": [
+      {
+        "object_id": "portal.laboratory.hallway",
+        "kind": "portal",
+        "x": 0,
+        "interactions": [
+          "navigate"
+        ]
+      },
+      {
+        "object_id": "workstation",
+        "kind": "workstation",
+        "x": 500,
+        "interactions": [
+          "approach",
+          "sit",
+          "work"
+        ]
+      },
+      {
+        "object_id": "portal.laboratory.training",
+        "kind": "portal",
+        "x": 900,
+        "interactions": [
+          "navigate"
+        ]
+      }
+    ]
+  },
+  "presentation": {
+    "theme_id": "laboratory_day",
+    "terrain_revision": "laboratory_flat_v1",
+    "viewport": {
+      "axis": "x",
+      "cells": 1001
+    }
+  }
+}
