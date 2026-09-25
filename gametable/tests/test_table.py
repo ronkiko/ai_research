@@ -36,6 +36,7 @@ class GameTableTests(unittest.TestCase):
             ".opencode/agents/yuki-will.md",
             ".opencode/agents/yuki-audience.md",
             "characters/002-yuki.md",
+            "op/start-go.sh",
         ):
             self.assertTrue((TABLE / relative).is_file(), relative)
 
@@ -53,6 +54,13 @@ class GameTableTests(unittest.TestCase):
             "relationship_consent",
         ):
             self.assertIn(expected, plugin)
+
+    def test_start_go_uses_official_opencode_prompt_flag(self):
+        launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
+        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
+        self.assertNotIn("opencode run", launcher)
+        self.assertNotIn("/tui/", launcher)
+        self.assertNotIn("GAMETABLE_INITIAL_PROMPT", launcher)
 
     def test_fresh_start_resets_only_yuki2_runtime_state(self):
         launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")
