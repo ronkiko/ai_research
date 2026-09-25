@@ -46,3 +46,11 @@ Check this boundary with:
 ~~~bash
 ./world/op/check.sh
 ~~~
+
+## Physics implementation status
+
+Stage 03 implements a versioned `embodied_world_v1` GameServer mode in
+`gameserver/v1/world/embodied.py`. The map catalog is now consumed by real
+fixed-step physics, including blocked intervals and on-touch portal volumes.
+The legacy one-zone supervisor is intentionally still the default launcher until
+the later cutover stage.

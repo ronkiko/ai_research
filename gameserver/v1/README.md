@@ -202,3 +202,35 @@ implement matchmaking, multiple zones, zone transfer, client-side prediction,
 interest management, a database, a message bus, or a standalone replication
 service. Those should be added only when the polished 1D authoritative vertical
 requires them.
+
+## Embodied multi-zone mode (refactor stage 03)
+
+The refactor now includes a second, explicitly versioned world mode:
+`embodied_world_v1`. It is additive and does not replace the legacy
+World/Zone/Mob/Gateway supervisor yet.
+
+The new mode:
+
+- uses the same extracted `flat_1d` fixed-step kernel as legacy ZoneRuntime;
+- loads the physical sections of `world/` MapManifest for hallway,
+  laboratory and training/flat_run;
+- starts with no built-in demo mob or lobby spawn;
+- owns one scheduler/tick domain across all three zones;
+- performs automatic swept `on_touch` portal transfer atomically;
+- keeps entity ID across transfer, resets vx/effort by explicit portal policy,
+  and increments controller generation to fence late commands;
+- applies a controller watchdog that releases effort but does not teleport or
+  claim learned stopping;
+- persists checkpoints, request idempotency and transfer receipts in SQLite;
+- starts a new world epoch after restart and never blind-replays an uncertain
+  queued action;
+- exposes privileged training setup/reset separately from ordinary locomotion.
+
+Run the standalone mode manually when needed:
+
+~~~bash
+python -m gameserver.v1.world.embodied_server --state /tmp/yuki-world.sqlite3
+~~~
+
+The normal `./gameserver/v1/op/server.sh` remains the compatibility runtime
+until the explicit cutover patch.

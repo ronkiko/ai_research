@@ -29,17 +29,34 @@ class _FakeGatewayHandler(socketserver.BaseRequestHandler):
                     player_id=request["player_id"],
                     entity_id="actor-player1",
                     world_id="world1",
-                    zone_id="zone1",
+                    zone_id=self.server.zone_id,
                 )
             elif kind == "snapshot":
                 response = gateway_message(
                     "snapshot",
                     session_id="session-1",
-                    zone_id="zone1",
+                    zone_id=self.server.zone_id,
+                    observation=(
+                        {
+                            "entity_id": "actor-player1",
+                            "zone_id": self.server.zone_id,
+                            "world_epoch": self.server.world_epoch,
+                            "world_revision": self.server.world_revision,
+                        }
+                        if self.server.controller_generation is not None else None
+                    ),
+                    controller=(
+                        {
+                            "controller_id": "controller.player1",
+                            "generation": self.server.controller_generation,
+                        }
+                        if self.server.controller_generation is not None else None
+                    ),
+                    receipts=list(self.server.receipts),
                     snapshot={
                         "version": 1,
                         "type": "zone_snapshot",
-                        "zone_id": "zone1",
+                        "zone_id": self.server.zone_id,
                         "world_tick": 42,
                         "physics_hz": 120,
                         "line_length": 1000.0,
@@ -52,6 +69,11 @@ class _FakeGatewayHandler(socketserver.BaseRequestHandler):
                 )
             elif kind == "input":
                 self.server.sequences.append(request["sequence"])
+                self.server.input_fences.append((
+                    request.get("expected_zone_id"),
+                    request.get("controller_generation"),
+                    request.get("expected_world_epoch"),
+                ))
                 response = gateway_message(
                     "command_queued",
                     command_id=len(self.server.sequences),
@@ -79,6 +101,12 @@ class _FakeGateway(socketserver.ThreadingTCPServer):
         super().__init__(("127.0.0.1", 0), _FakeGatewayHandler)
         self.sequences = []
         self.resets = 0
+        self.zone_id = "zone1"
+        self.controller_generation = None
+        self.world_epoch = None
+        self.world_revision = None
+        self.receipts = []
+        self.input_fences = []
 
 
 class HostVerticalTests(unittest.TestCase):
@@ -156,6 +184,35 @@ class HostVerticalTests(unittest.TestCase):
         finally:
             operator.close()
             lab.close()
+
+    def test_host_follows_authoritative_zone_and_controller_fence(self):
+        client = self.client("cli")
+        try:
+            client.login("player1")
+            self.gateway.zone_id = "laboratory"
+            self.gateway.controller_generation = 4
+            self.gateway.world_epoch = "epoch-new"
+            self.gateway.world_revision = 9
+            self.gateway.receipts = [{"action_id": "transfer.1", "status": "applied"}]
+
+            state = client.state()
+            self.assertEqual(state["session"]["zone_id"], "laboratory")
+            self.assertEqual(state["session"]["controller_generation"], 4)
+            self.assertEqual(state["observation"]["world_epoch"], "epoch-new")
+            self.assertEqual(state["controller"]["generation"], 4)
+            self.assertEqual(state["receipts"][0]["action_id"], "transfer.1")
+
+            client.motor(0.25)
+            self.assertEqual(
+                self.gateway.input_fences[-1], ("laboratory", 4, "epoch-new")
+            )
+            events = client.events(0, limit=20)["events"]
+            transfers = [event for event in events if event["kind"] == "zone_transfer"]
+            self.assertEqual(len(transfers), 1)
+            self.assertEqual(transfers[0]["source_zone"], "zone1")
+            self.assertEqual(transfers[0]["target_zone"], "laboratory")
+        finally:
+            client.close()
 
     def test_event_history_is_memory_bounded_and_page_bounded(self):
         client = self.client("cli")

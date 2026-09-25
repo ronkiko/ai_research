@@ -2,15 +2,26 @@
   "schema_version": 1,
   "world_id": "yuki-world-v1",
   "map_id": "hallway",
-  "map_version": 1,
+  "map_version": 2,
   "physics": {
     "profile": "flat_1d",
     "profile_version": 1,
     "contract_sha256": "0e6f1b013f39814574a88844ccc7bb10b41fb2e21d797920378a164a984029df",
+    "dimensions": [
+      "x"
+    ],
+    "gravity": 0,
+    "units": {
+      "position": "world_unit",
+      "velocity": "world_unit_per_second",
+      "time": "second",
+      "effort": "normalized"
+    },
     "bounds": {
       "x_min": 0,
       "x_max": 1000
     },
+    "blocked": [],
     "spawns": [
       {
         "spawn_id": "yuki_day_start",

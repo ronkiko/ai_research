@@ -40,6 +40,12 @@ class CatalogTests(unittest.TestCase):
         self.assertLessEqual(portal["trigger"]["x_min"], 500.0)
         self.assertGreaterEqual(portal["trigger"]["x_max"], 500.0)
 
+    def test_flat_maps_publish_explicit_blocked_intervals(self):
+        for map_id in self.catalog.map_ids():
+            physics = self.catalog.physics(map_id)
+            self.assertIn("blocked", physics)
+            self.assertEqual(physics["blocked"], [])
+
     def test_graph_links_and_target_spawns_are_valid(self):
         edges = set()
         for source in self.catalog.map_ids():
@@ -80,6 +86,18 @@ class CatalogTests(unittest.TestCase):
         incompatible["physics"]["profile"] = "flat_2d"
         with self.assertRaises(ContractError) as caught:
             MapManifest.from_dict(incompatible)
+        self.assertEqual(caught.exception.code, "unsupported_profile")
+
+        gravity = copy.deepcopy(base)
+        gravity["physics"]["gravity"] = 9.81
+        with self.assertRaises(ContractError) as caught:
+            MapManifest.from_dict(gravity)
+        self.assertEqual(caught.exception.code, "unsupported_profile")
+
+        dimension = copy.deepcopy(base)
+        dimension["physics"]["dimensions"] = ["x", "y"]
+        with self.assertRaises(ContractError) as caught:
+            MapManifest.from_dict(dimension)
         self.assertEqual(caught.exception.code, "unsupported_profile")
 
     def test_manifest_rejects_nan_and_extra_y_axis(self):

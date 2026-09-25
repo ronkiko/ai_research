@@ -171,6 +171,9 @@ class HostService:
                 key: response[key]
                 for key in ("session_id", "player_id", "entity_id", "world_id", "zone_id")
             }
+            for key in ("controller_generation", "world_epoch", "world_revision"):
+                if key in response:
+                    session[key] = response[key]
 
             deadline = time.monotonic() + 2.0
             while True:
@@ -208,10 +211,54 @@ class HostService:
         snapshot = response.get("snapshot")
         if not isinstance(snapshot, dict):
             raise GatewayConnectionError("GameServer Gateway returned an invalid snapshot")
+
+        observation = response.get("observation")
+        controller = response.get("controller")
+        receipts = response.get("receipts", [])
+        if observation is not None:
+            if not isinstance(observation, dict):
+                raise GatewayConnectionError("GameServer Gateway returned an invalid observation")
+            if observation.get("entity_id") != session["entity_id"]:
+                raise GatewayConnectionError("GameServer observation identity mismatch")
+
+        observed_zone = (
+            observation.get("zone_id") if isinstance(observation, dict)
+            else response.get("zone_id", snapshot.get("zone_id"))
+        )
+        previous_zone = session.get("zone_id")
+        if isinstance(observed_zone, str) and observed_zone:
+            with self._state_lock:
+                if self._session is not None:
+                    self._session["zone_id"] = observed_zone
+                    for key, source in (
+                        ("world_epoch", observation if isinstance(observation, dict) else response),
+                        ("world_revision", observation if isinstance(observation, dict) else response),
+                    ):
+                        value = source.get(key)
+                        if value is not None:
+                            self._session[key] = value
+                    if isinstance(controller, dict) and type(controller.get("generation")) is int:
+                        self._session["controller_generation"] = controller["generation"]
+            if observed_zone != previous_zone:
+                self._append_event(
+                    "zone_transfer",
+                    client_id="gameserver",
+                    player_id=session["player_id"],
+                    entity_id=session["entity_id"],
+                    source_zone=previous_zone,
+                    target_zone=observed_zone,
+                )
+            session = self._session_copy()
+
+        if not isinstance(receipts, list):
+            raise GatewayConnectionError("GameServer Gateway returned invalid receipts")
         return message(
             "state",
             session=session,
             snapshot=snapshot,
+            observation=observation,
+            controller=controller,
+            receipts=receipts,
             last_event=self._last_event(),
         )
 
@@ -245,12 +292,17 @@ class HostService:
             with self._state_lock:
                 self._sequence += 1
                 sequence = self._sequence
-            response = self.gateway.request(
-                "input",
-                session_id=session["session_id"],
-                sequence=sequence,
-                motor_x=motor_x,
-            )
+            upstream = {
+                "session_id": session["session_id"],
+                "sequence": sequence,
+                "motor_x": motor_x,
+                "expected_zone_id": session["zone_id"],
+            }
+            if "controller_generation" in session:
+                upstream["controller_generation"] = session["controller_generation"]
+            if "world_epoch" in session:
+                upstream["expected_world_epoch"] = session["world_epoch"]
+            response = self.gateway.request("input", **upstream)
             fields = dict(
                 client_id=client_id,
                 player_id=session["player_id"],

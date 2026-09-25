@@ -1,7 +1,13 @@
 # 03 / 11 — GameServer как физический мир
 
 Зависимость: [02](02-contracts.md). Коммит: `Separate physics kernel and support world zones`.
-Цель: A1, A3, A4, A8. Основные исходные места: `gameserver/v1/zone/model.py`,
+Цель: A1, A3, A4, A8.
+
+Статус: **реализовано как отдельный versioned world mode**, без переключения
+legacy supervisor/Gateway. Следующий этап может переносить организм поверх этой
+границы, а публичный cutover остаётся этапом 09.
+
+Основные исходные места: `gameserver/v1/zone/model.py`,
 `world/server.py`, `common/config.py`, Gateway и протокол/маршрутизация Host.
 
 ## Что переделать
@@ -70,3 +76,31 @@ controller generation/fencing для отбрасывания команд пр�
 transfer и одно тело. Запоздавшее усилие не действует в целевой зоне. Несколько
 медленных подписчиков и выключенный renderer не останавливают tick loop.
 Новый scheduler/physics hash не должен молча переиспользовать несовместимый сертификат.
+
+## Реализованный результат этапа 03
+
+Общая математика `flat_1d` вынесена в чистый
+`gameserver/v1/physics/kernel.py`; legacy ZoneRuntime теперь использует тот же
+kernel, поэтому порядок Euler/drag/clamp/rest не изменён.
+
+Новый `EmbodiedWorldRuntime` загружает physical manifest трёх зон, работает на
+одном tick/scheduler и не создаёт demo mob. Portal transfer определяется swept
+пересечением trigger volume, сохраняет entity ID, переносит membership на одном
+tick boundary, сбрасывает vx/effort и увеличивает controller generation.
+Удалённого teleport endpoint нет.
+
+SQLite checkpoint содержит одно authoritative размещение тела, idempotency
+request ledger и transfer receipts. После restart создаётся новая epoch,
+controller generation увеличивается, latched effort освобождается, а queued
+неподтверждённые actions становятся `unknown_outcome` и не replay-ятся.
+
+GameClient Host умеет принять authoritative observation/receipts, обновить zone
+и controller generation без нового login и передаёт zone/generation fence в
+следующий motor request. Старый Gateway может игнорировать эти дополнительные
+поля до cutover.
+
+Проверки покрывают legacy trajectory parity, bounds/blocked intervals,
+swept portal, отсутствие повторного transfer, stale fence, watchdog, privileged
+training setup, restart/idempotency, incompatible physics hash и scheduler без
+наблюдателей. `./world/op/check.sh` дополнительно прогоняет эти tests и старый
+GameTable gate.

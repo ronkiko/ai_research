@@ -60,9 +60,26 @@ class MapManifest:
 def _validate_physics(value: Any) -> dict[str, Any]:
     data = copy.deepcopy(_mapping("physics", value))
     _exact("physics", data, {"profile", "profile_version", "contract_sha256",
-                             "bounds", "spawns", "portals"})
+                             "dimensions", "gravity", "units", "bounds", "blocked",
+                             "spawns", "portals"})
     if data["profile"] != "flat_1d" or data["profile_version"] != 1:
         raise ContractError("unsupported_profile", "only flat_1d profile_version=1 is supported")
+    if data["dimensions"] != ["x"]:
+        raise ContractError("unsupported_profile", "flat_1d supports only the x dimension")
+    gravity = _finite("physics.gravity", data["gravity"])
+    if gravity != 0.0:
+        raise ContractError("unsupported_profile", "flat_1d does not support gravity")
+    data["gravity"] = gravity
+    units = _mapping("physics.units", data["units"])
+    _exact("physics.units", units, {"position", "velocity", "time", "effort"})
+    expected_units = {
+        "position": "world_unit",
+        "velocity": "world_unit_per_second",
+        "time": "second",
+        "effort": "normalized",
+    }
+    if units != expected_units:
+        raise ContractError("unsupported_profile", "unsupported flat_1d units")
     _sha256("physics.contract_sha256", data["contract_sha256"])
     bounds = _mapping("physics.bounds", data["bounds"])
     _exact("physics.bounds", bounds, {"x_min", "x_max"})
@@ -72,6 +89,20 @@ def _validate_physics(value: Any) -> dict[str, Any]:
         raise ValueError("bounds.x_min must be less than bounds.x_max")
     bounds["x_min"], bounds["x_max"] = x_min, x_max
 
+    if not isinstance(data["blocked"], list):
+        raise ValueError("physics.blocked must be a list")
+    previous_hi = None
+    for interval in data["blocked"]:
+        _exact("blocked interval", _mapping("blocked interval", interval), {"x_min", "x_max"})
+        lo = _finite("blocked.x_min", interval["x_min"], x_min, x_max)
+        hi = _finite("blocked.x_max", interval["x_max"], x_min, x_max)
+        if lo >= hi:
+            raise ValueError("blocked interval x_min must be less than x_max")
+        if previous_hi is not None and lo < previous_hi:
+            raise ValueError("blocked intervals must be sorted and non-overlapping")
+        interval["x_min"], interval["x_max"] = lo, hi
+        previous_hi = hi
+
     if not isinstance(data["spawns"], list) or not data["spawns"]:
         raise ValueError("physics.spawns must be a non-empty list")
     spawn_ids = set()
@@ -80,6 +111,9 @@ def _validate_physics(value: Any) -> dict[str, Any]:
         sid = _identifier("spawn_id", spawn["spawn_id"])
         _identifier("spawn.kind", spawn["kind"])
         spawn["x"] = _finite("spawn.x", spawn["x"], x_min, x_max)
+        if any(interval["x_min"] < spawn["x"] < interval["x_max"]
+               for interval in data["blocked"]):
+            raise ValueError(f"spawn {sid} is inside a blocked interval")
         if sid in spawn_ids:
             raise ValueError(f"duplicate spawn_id: {sid}")
         spawn_ids.add(sid)
@@ -186,12 +220,22 @@ class MapCatalog:
                 if target is None:
                     raise ContractError("unknown_map",
                                         f"portal target {portal['target_map_id']} does not exist")
-                target_spawns = {item["spawn_id"] for item in target.physics["spawns"]}
+                target_spawns = {
+                    item["spawn_id"]: item["x"] for item in target.physics["spawns"]
+                }
                 if portal["target_spawn_id"] not in target_spawns:
                     raise ValueError(
                         f"portal {portal['portal_id']} references missing target spawn "
                         f"{portal['target_spawn_id']}"
                     )
+                arrival_x = target_spawns[portal["target_spawn_id"]]
+                for target_portal in target.physics["portals"]:
+                    trigger = target_portal["trigger"]
+                    if trigger["x_min"] <= arrival_x <= trigger["x_max"]:
+                        raise ValueError(
+                            f"portal {portal['portal_id']} arrival spawn is inside "
+                            f"target trigger {target_portal['portal_id']}"
+                        )
 
     def map_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._maps))

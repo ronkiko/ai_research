@@ -1,10 +1,11 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этап 02 уже добавил типизированные identity/action/world contracts и каталог трёх
-карт в `world/`, но это пока аддитивный слой: активная VN и физический runtime
-ещё работают по прежним границам. Следующий этап — перенос GameServer на
-multi-zone physics из [03-physics.md](docs/refactor/embodied-vn/03-physics.md).
+Этапы 02–03 уже добавили типизированные identity/action/world contracts, каталог
+трёх карт и отдельный `embodied_world_v1` GameServer scheduler с multi-zone
+physics и portal receipts. Legacy supervisor остаётся публичным runtime до
+cutover. Следующий этап — перенос Spine/Motor training core в `organism/` по
+[04-organism.md](docs/refactor/embodied-vn/04-organism.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом

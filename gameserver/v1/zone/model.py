@@ -18,6 +18,7 @@ from ..common.config import (
     LineConfig,
 )
 from ..common.protocol import ProtocolError, finite_number
+from ..physics.kernel import FlatProfile, MotionState, step_flat_1d
 
 
 @dataclass
@@ -220,22 +221,21 @@ class ZoneRuntime:
             applied = self._drain_commands()
             for entity_id in sorted(self.entities):
                 entity = self.entities[entity_id]
-                acceleration = entity.max_acceleration * entity.motor_x - entity.drag * entity.vx
-                entity.vx += acceleration * self.dt
-                entity.vx = max(-entity.max_speed, min(entity.max_speed, entity.vx))
-                if abs(entity.motor_x) <= REST_MOTOR_EPS and abs(entity.vx) <= REST_VELOCITY_EPS:
-                    entity.vx = 0.0
-                next_x = entity.x + entity.vx * self.dt
-                if next_x >= self.line.length:
-                    entity.x = self.line.length
-                    if entity.vx > 0.0:
-                        entity.vx = 0.0
-                elif next_x <= 0.0:
-                    entity.x = 0.0
-                    if entity.vx < 0.0:
-                        entity.vx = 0.0
-                else:
-                    entity.x = next_x
+                result = step_flat_1d(
+                    MotionState(entity.x, entity.vx, entity.motor_x),
+                    FlatProfile(
+                        0.0,
+                        self.line.length,
+                        entity.max_speed,
+                        entity.max_acceleration,
+                        entity.drag,
+                        REST_VELOCITY_EPS,
+                        REST_MOTOR_EPS,
+                    ),
+                    self.dt,
+                )
+                entity.x = result.state.x
+                entity.vx = result.state.vx
             self._latest_snapshot = self._snapshot(tuple(applied))
             return self._latest_snapshot
 

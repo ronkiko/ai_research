@@ -5,6 +5,9 @@ on:
     paths:
       - "gameserver/v1/**"
       - "gameclient/v1/**"
+      - "world/**"
+      - "docs/refactor/embodied-vn/03-physics.md"
+      - "ARCHITECTURE.md"
       - "op/process.sh"
       - "op/test-process.sh"
       - ".github/workflows/game-v1.yml"
@@ -12,6 +15,9 @@ on:
     paths:
       - "gameserver/v1/**"
       - "gameclient/v1/**"
+      - "world/**"
+      - "docs/refactor/embodied-vn/03-physics.md"
+      - "ARCHITECTURE.md"
       - ".github/workflows/game-v1.yml"
 
 jobs:
