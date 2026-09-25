@@ -27,7 +27,7 @@ rest — переход сцены к отдыху, boundary — несогла�
 respond — ответ по существу, warm — тёплый ответ, playful — добродушная шутка.
 Категория одна из {json.dumps(CATEGORIES)}.
 Верни только JSON без markdown, все поля обязательны:
-{{"event_id":"из event.id", "revision":0, "role":"{role}", "category":"neutral",
+{{"event_id":"из event.id", "revision":{data["revision"]}, "role":"{role}", "category":"neutral",
 "impacts":{{"mood":0,"affection":0,"trust":0}},
 "scores":{{"respond":0,"warm":0,"playful":0,"boundary":0,"clarify":0,"rest":0,"work":0}},
 "evidence":["точная непустая короткая цитата event.text"], "summary":"Краткий вывод на русском"}}
