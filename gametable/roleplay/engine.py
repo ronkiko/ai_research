@@ -8,17 +8,15 @@ import math
 from pathlib import Path
 
 RULES_PATH = Path(__file__).with_name("rules.json")
-ACTIONS = ("respond", "warm", "playful", "boundary", "clarify", "rest", "work")
+DISPOSITIONS = ("respond", "accept", "decline", "clarify")
+TONES = ("neutral", "warm", "playful", "firm", "shy", "upset")
 CATEGORIES = ("neutral", "praise", "criticism", "care", "affection", "promise", "conflict", "research")
 SOCIAL = ("mood", "affection", "trust")
 ANCHORS = {
     "respond": "Я отвечу по существу.",
-    "warm": "Мне хочется ответить тебе тепло.",
-    "playful": "Я позволю себе немного пошутить.",
-    "boundary": "Сейчас я не готова с этим согласиться.",
+    "accept": "Я согласна.",
+    "decline": "Сейчас я не готова с этим согласиться.",
     "clarify": "Мне нужно уточнение, прежде чем решать.",
-    "rest": "Сейчас я выберу отдых.",
-    "work": "Я займусь проверкой в лаборатории.",
 }
 
 
@@ -36,7 +34,7 @@ def initial_state(rules):
     return {"revision": 0, "rules_version": rules["version"], "rules_hash": rules["hash"],
             "stats": copy.deepcopy(rules["initial_stats"]), "minutes": 9 * 60,
             "location": rules["initial_location"], "memories": [], "recent_events": [],
-            "last_action": None}
+            "last_decision": None}
 
 
 def number(value, lo, hi):
@@ -56,7 +54,7 @@ def validate_report(report, event, state, role):
         raise InvalidReport("Чужой или устаревший отчёт")
     if report["category"] not in CATEGORIES:
         raise InvalidReport("Неизвестный тип события")
-    for key, names, lo, hi in (("impacts", SOCIAL, -2, 2), ("scores", ACTIONS, -1, 1)):
+    for key, names, lo, hi in (("impacts", SOCIAL, -2, 2), ("scores", DISPOSITIONS, -1, 1)):
         values = report[key]
         if not isinstance(values, dict) or set(values) != set(names):
             raise InvalidReport(f"Неверные шкалы {key}")
@@ -76,6 +74,50 @@ def clamp(value, lo=0, hi=100):
     return round(max(lo, min(hi, value)), 2)
 
 
+def _tone_for(stats, disposition, traits):
+    """Presentation only. Tone never participates in decision utility."""
+    if disposition == "decline":
+        return "firm"
+    if stats["mood"] < 35:
+        return "upset"
+    if stats["mood"] >= 75 and traits["shyness"] < 60:
+        return "playful"
+    if stats["affection"] >= 50 and stats["mood"] >= 45:
+        return "warm"
+    if disposition == "clarify" and traits["shyness"] >= 65:
+        return "shy"
+    return "neutral"
+
+
+def _decision_bias(intent_id, stats, traits):
+    bias = {
+        "respond": 0.1,
+        "accept": 0.0,
+        "decline": (50 - stats["trust"]) / 200 + traits["independence"] / 600,
+        "clarify": 0.0,
+    }
+    if intent_id == "talk":
+        bias["respond"] += 0.3
+        bias["accept"] -= 0.6
+    elif intent_id == "request_lab_work":
+        bias["accept"] += traits["curiosity"] / 400 - stats["fatigue"] / 150
+        bias["clarify"] += 0.05
+    elif intent_id == "request_rest":
+        bias["accept"] += stats["fatigue"] / 100 - 0.2
+    elif intent_id == "request_sleep":
+        bias["accept"] += stats["fatigue"] / 90 - 0.35
+    return bias
+
+
+def _project_activity(intent_id, disposition, forced_activity, rules):
+    """Temporary v1 world projection. Patch 2 replaces this with EffectPlan."""
+    if forced_activity:
+        return forced_activity
+    if disposition == "accept":
+        return rules["intents"][intent_id]["accepted_activity"]
+    return "chat"
+
+
 def reduce_turn(state, event, heart, head, rules):
     """No I/O, wall clock or random choices. Same inputs -> identical result."""
     if state["rules_hash"] != rules["hash"]:
@@ -83,13 +125,14 @@ def reduce_turn(state, event, heart, head, rules):
     location = state.get("location", rules["initial_location"])
     if location not in rules["locations"]:
         raise ValueError("Неизвестная локация")
+    intent_id = event.get("intent_id")
+    if intent_id not in rules["intents"]:
+        raise ValueError("Неизвестное намерение Директора")
     heart = validate_report(heart, event, state, "heart")
     head = validate_report(head, event, state, "head")
-    if event["activity"] not in rules["activities"]:
-        raise ValueError("Неизвестное занятие")
     after = copy.deepcopy(state)
     stats = after["stats"]
-    # Repeated input or repeated social category has diminishing, bounded effect.
+
     fingerprint = hashlib.sha256(" ".join(event["text"].casefold().split()).encode()).hexdigest()
     category = heart["category"] if heart["category"] == head["category"] else "mixed"
     recent = state["recent_events"][-8:]
@@ -102,7 +145,6 @@ def reduce_turn(state, event, heart, head, rules):
         weight = rules["heart_weights"][name]
         impact = weight * heart["impacts"][name] + (1 - weight) * head["impacts"][name]
         delta = rules["impact_steps"][name] * novelty * impact
-        # Affection-prone characters warm more quickly, without raising trust for free.
         if name == "affection":
             delta *= 0.5 + rules["character"]["traits"]["attachment"] / 100
         stats[name] = clamp(stats[name] + delta)
@@ -111,27 +153,31 @@ def reduce_turn(state, event, heart, head, rules):
     traits = rules["character"]["traits"]
     weight_h = max(0.25, min(0.75, 0.35 + traits["attachment"] / 500
                             + (stats["affection"] - 50) / 500 - traits["independence"] / 1000))
-    bias = {"respond": 0.1, "warm": (stats["affection"] + stats["mood"] - 100) / 220,
-            "playful": (stats["mood"] - traits["shyness"]) / 150,
-            "boundary": (50 - stats["trust"]) / 160 + traits["independence"] / 500,
-            "clarify": 0, "rest": stats["fatigue"] / 100 - 0.5,
-            "work": traits["curiosity"] / 400 - stats["fatigue"] / 150}
-    allowed = list(ACTIONS)
-    if event["activity"] != "lab":
-        allowed.remove("work")  # Chat never silently starts real laboratory operations.
-    utilities = {a: round(weight_h * heart["scores"][a] + (1 - weight_h) * head["scores"][a]
-                          + bias[a], 5) for a in allowed}
-    forced = None
-    if event["activity"] in ("rest", "sleep"):
-        action = "rest"
-        forced = "Выбран переход сцены с отдыхом"
-    elif stats["fatigue"] >= 85 or stats["health"] <= 25:
-        action = "rest"
-        forced = "Нужен отдых: ресурсный предел"
+    bias = _decision_bias(intent_id, stats, traits)
+    utilities = {d: round(weight_h * heart["scores"][d] + (1 - weight_h) * head["scores"][d]
+                          + bias[d], 5) for d in DISPOSITIONS}
+    forced_reason = None
+    forced_activity = None
+    if stats["fatigue"] >= 85 or stats["health"] <= 25:
+        if intent_id in ("request_rest", "request_sleep"):
+            disposition = "accept"
+            forced_activity = rules["intents"][intent_id]["accepted_activity"]
+            forced_reason = "Ресурсный предел совпадает с просьбой об отдыхе"
+        else:
+            disposition = "decline"
+            forced_activity = "rest"
+            forced_reason = "Ресурсный предел: сначала отдых"
     else:
-        action = max(allowed, key=lambda a: utilities[a])
-    activity = (event["activity"] if action == "rest" and event["activity"] in ("rest", "sleep")
-                else "rest" if action == "rest" else "lab" if action == "work" else "chat")
+        disposition = max(DISPOSITIONS, key=lambda d: utilities[d])
+
+    conflict = round(sum(abs(heart["scores"][d] - head["scores"][d])
+                         for d in DISPOSITIONS) / len(DISPOSITIONS), 3)
+    tone = _tone_for(stats, disposition, traits)
+    decision = {"disposition": disposition, "tone": tone}
+
+    # Compatibility projection only. Patch 2 replaces activities/location mutation
+    # with an explicit EffectPlan + WorldReducer.
+    activity = _project_activity(intent_id, disposition, forced_activity, rules)
     effect = rules["activities"][activity]
     old_fatigue = stats["fatigue"]
     stats["fatigue"] = clamp(stats["fatigue"] + effect["fatigue"])
@@ -140,35 +186,58 @@ def reduce_turn(state, event, heart, head, rules):
     if activity in ("rest", "sleep"):
         stats["mood"] = clamp(stats["mood"] + (55 - stats["mood"]) * (0.15 if activity == "rest" else 0.5))
     after["minutes"] += effect["minutes"]
-    # A laboratory request is the Director's permission to leave the hallway,
-    # sit at Yuki's workstation, and begin the lab step.
-    if event["activity"] == "lab":
+    if activity == "lab":
         after["location"] = "laboratory"
     else:
         after["location"] = location
+
     after["revision"] += 1
-    after["last_action"] = action
+    after["last_decision"] = copy.deepcopy(decision)
     after["recent_events"] = (recent + [{"fingerprint": fingerprint, "category": category}])[-8:]
-    # Keep observations, not generated claims about what the Director did.
-    after["memories"] = (state["memories"] + [{"event_id": event["id"],
-        "director": event["text"], "action": action, "activity": activity}])[-24:]
-    conflict = round(sum(abs(heart["scores"][a] - head["scores"][a]) for a in ACTIONS) / len(ACTIONS), 3)
-    contract = {"event_id": event["id"], "revision": after["revision"], "action": action,
-                "anchor": ANCHORS[action], "activity": activity, "minutes": effect["minutes"],
-                "location": after["location"],
-                "stats": copy.deepcopy(stats), "conflict": conflict,
-                "tone": {"warmth": round((stats["affection"] + stats["mood"]) / 2),
-                         "shyness": traits["shyness"], "tiredness": stats["fatigue"]},
-                "forced_reason": forced}
-    audit = {"heart_weight": weight_h, "novelty": novelty, "social_delta": social_delta,
-             "utilities": utilities, "forced_reason": forced, "conflict": conflict}
+    after["memories"] = (state["memories"] + [{
+        "event_id": event["id"],
+        "director": event["text"],
+        "intent_id": intent_id,
+        "decision": copy.deepcopy(decision),
+        "activity": activity,
+    }])[-24:]
+    contract = {
+        "event_id": event["id"],
+        "revision": after["revision"],
+        "intent_id": intent_id,
+        "decision": decision,
+        "anchor": ANCHORS[disposition],
+        "activity": activity,
+        "minutes": effect["minutes"],
+        "location": after["location"],
+        "stats": copy.deepcopy(stats),
+        "conflict": conflict,
+        "delivery": {
+            "tone": tone,
+            "warmth": round((stats["affection"] + stats["mood"]) / 2),
+            "shyness": traits["shyness"],
+            "tiredness": stats["fatigue"],
+        },
+        "forced_reason": forced_reason,
+    }
+    audit = {
+        "heart_weight": weight_h,
+        "novelty": novelty,
+        "social_delta": social_delta,
+        "utilities": utilities,
+        "decision": copy.deepcopy(decision),
+        "forced_reason": forced_reason,
+        "conflict": conflict,
+    }
     return after, contract, audit
 
 
 def validate_draft(value, contract):
-    if not isinstance(value, dict) or set(value) != {"event_id", "action", "text"}:
+    required = {"event_id", "disposition", "text"}
+    if not isinstance(value, dict) or set(value) != required:
         raise InvalidReport("Неверная структура реплики")
-    if value["event_id"] != contract["event_id"] or value["action"] != contract["action"]:
+    disposition = contract["decision"]["disposition"]
+    if value["event_id"] != contract["event_id"] or value["disposition"] != disposition:
         raise InvalidReport("Вербализатор подменил решение")
     if not isinstance(value["text"], str) or not 1 <= len(value["text"].strip()) <= 3500:
         raise InvalidReport("Пустая или слишком длинная реплика")

@@ -10,22 +10,22 @@ import tempfile
 import threading
 import unittest
 
-from gametable.roleplay.engine import (ACTIONS, InvalidReport, initial_state, load_rules,
+from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_state, load_rules,
                                      reduce_turn, validate_draft, validate_report)
 from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
-from gametable.roleplay.server import Application, handler_for
+from gametable.roleplay.server import Application, handler_for, normalize_turn_body
 
 
-def event(event_id="turn-0001", text="Привет, Юки", activity="chat"):
-    return {"id": event_id, "text": text, "activity": activity}
+def event(event_id="turn-0001", text="Привет, Юки", intent_id="talk"):
+    return {"id": event_id, "text": text, "intent_id": intent_id}
 
 
-def report(role, e, state, action="respond"):
+def report(role, e, state, disposition="respond"):
     return {"event_id": e["id"], "revision": state["revision"], "role": role,
             "category": "neutral", "impacts": {"mood": 0, "affection": 0, "trust": 0},
-            "scores": {a: (0.9 if a == action else -0.5) for a in ACTIONS},
+            "scores": {d: (0.9 if d == disposition else -0.5) for d in DISPOSITIONS},
             "evidence": [e["text"]], "summary": "Нейтральный разговор"}
 
 
@@ -46,7 +46,7 @@ class RulesTests(unittest.TestCase):
         for key in ("health", "affection", "trust", "mood"):
             self.assertEqual(after["stats"][key], self.state["stats"][key])
         self.assertEqual(after["stats"]["fatigue"], 11)
-        self.assertEqual(contract["action"], "respond")
+        self.assertEqual(contract["decision"]["disposition"], "respond")
         self.assertEqual(after["minutes"], 542)
         self.assertEqual(self.run_turn(), (after, contract, audit))
         self.assertEqual(self.state["revision"], 0)
@@ -76,35 +76,43 @@ class RulesTests(unittest.TestCase):
         self.assertLess(changed["stats"]["trust"], base["stats"]["trust"])
         # Construct a close decision and change only one voice, not its counterpart.
         for r in (self.heart, self.head):
-            r["scores"] = dict.fromkeys(ACTIONS, -1)
-            r["scores"].update(respond=0, warm=0)
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"].update(respond=-0.1, clarify=0)
         for role in (self.heart, self.head):
-            previous = role["scores"]["warm"]
-            role["scores"]["warm"] = 1
-            self.assertEqual(self.run_turn()[1]["action"], "warm")
-            role["scores"]["warm"] = previous
-        self.assertEqual(self.run_turn()[1]["action"], "respond")
+            previous = role["scores"]["clarify"]
+            role["scores"]["clarify"] = 1
+            self.assertEqual(self.run_turn()[1]["decision"]["disposition"], "clarify")
+            role["scores"]["clarify"] = previous
+        self.assertEqual(self.run_turn()[1]["decision"]["disposition"], "respond")
 
     def test_exhaustion_forces_rest_and_blocks_lab(self):
         self.state["stats"]["fatigue"] = 90
-        self.event["activity"] = "lab"
-        for r in (self.heart, self.head): r["scores"]["work"] = 1
+        self.event["intent_id"] = "request_lab_work"
+        for r in (self.heart, self.head): r["scores"]["accept"] = 1
         after, contract, _ = self.run_turn()
-        self.assertEqual(contract["action"], "rest")
+        self.assertEqual(contract["decision"]["disposition"], "decline")
+        self.assertEqual(contract["activity"], "rest")
         self.assertEqual(after["stats"]["fatigue"], 72)
 
     def test_rest_sleep_and_no_wall_clock_progress(self):
         self.state["stats"].update(health=60, fatigue=80)
-        self.event["activity"] = "sleep"
+        self.event["intent_id"] = "request_sleep"
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["accept"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(after["stats"]["health"], 75)
         self.assertEqual(after["stats"]["fatigue"], 0)
         self.assertEqual(contract["minutes"], 480)
         self.assertEqual(after["stats"]["affection"], 15)
 
-    def test_chat_cannot_launch_work_even_if_both_want_it(self):
-        for r in (self.heart, self.head): r["scores"]["work"] = 1
-        self.assertNotEqual(self.run_turn()[1]["action"], "work")
+    def test_talk_cannot_launch_work_even_if_both_prefer_accept(self):
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["accept"] = 1
+        _, contract, _ = self.run_turn()
+        self.assertEqual(contract["activity"], "chat")
+        self.assertNotEqual(contract["intent_id"], "request_lab_work")
 
     def test_repeated_praise_has_diminishing_effect_and_caps(self):
         for r in (self.heart, self.head):
@@ -124,22 +132,52 @@ class RulesTests(unittest.TestCase):
         original = self.run_turn()[0]["stats"]["affection"]
         self.rules["character"]["traits"]["attachment"] = 0
         self.assertLess(self.run_turn()[0]["stats"]["affection"], original)
-        self.heart["scores"] = dict.fromkeys(ACTIONS, 1)
-        self.head["scores"] = dict.fromkeys(ACTIONS, -1)
+        self.heart["scores"] = dict.fromkeys(DISPOSITIONS, 1)
+        self.head["scores"] = dict.fromkeys(DISPOSITIONS, -1)
         self.assertEqual(self.run_turn()[1]["conflict"], 2)
 
     def test_narrator_cannot_change_contract_fields(self):
         contract = self.run_turn()[1]
         with self.assertRaises(InvalidReport):
-            validate_draft({"event_id": self.event["id"], "action": "work", "text": "Пойду работать"}, contract)
+            validate_draft({"event_id": self.event["id"], "disposition": "accept", "text": "Пойду работать"}, contract)
 
+
+    def test_lab_request_decline_has_no_work_effect(self):
+        self.event["intent_id"] = "request_lab_work"
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["decline"] = 1
+        after, contract, _ = self.run_turn()
+        self.assertEqual(contract["decision"], {"disposition": "decline", "tone": "firm"})
+        self.assertEqual(contract["activity"], "chat")
+        self.assertEqual(after["location"], "hallway")
+
+    def test_tone_is_separate_from_disposition(self):
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["respond"] = 1
+        _, initial_contract, _ = self.run_turn()
+        warmer = copy.deepcopy(self.state)
+        warmer["stats"].update(affection=80, mood=80)
+        h, d = copy.deepcopy(self.heart), copy.deepcopy(self.head)
+        _, warm_contract, _ = self.run_turn(state=warmer, h=h, d=d)
+        self.assertEqual(initial_contract["decision"]["disposition"], "respond")
+        self.assertEqual(warm_contract["decision"]["disposition"], "respond")
+        self.assertNotEqual(initial_contract["decision"]["tone"], warm_contract["decision"]["tone"])
+
+    def test_director_intent_is_authoritative_input_contract(self):
+        bad = copy.deepcopy(self.event)
+        bad["intent_id"] = "teleport_to_lab"
+        with self.assertRaises(ValueError):
+            self.run_turn(e=bad)
 
 class FakeBackend:
     model = "test/fake"
-    def __init__(self, e, state, reject=False, fail_voice=False):
+    def __init__(self, e, state, reject=False, fail_voice=False, disposition=None):
         self.e, self.state = e, state
         self.calls = []
         self.reject, self.fail_voice = reject, fail_voice
+        self.disposition = disposition
         self.barrier = threading.Barrier(2, timeout=3)
         self.lab_calls = 0
 
@@ -151,14 +189,16 @@ class FakeBackend:
             self.barrier.wait()  # Proves both calls were dispatched independently.
             role = agent.removeprefix("yuki-")
             if self.fail_voice and role == "head": raise BackendError("missing head")
-            value = report(role, self.e, self.state, "work" if self.e["activity"] == "lab" else "respond")
+            chosen = self.disposition or ("accept" if self.e["intent_id"] == "request_lab_work" else "respond")
+            value = report(role, self.e, self.state, chosen)
         elif "MODE: REVIEW" in prompt:
             value = {"event_id": self.e["id"], "ok": not self.reject, "reason": "test"}
         elif lab:
             self.lab_calls += 1
             return {"session_id": "ses_lab", "text": "Недоступно", "tools": []}
         else:
-            value = {"event_id": self.e["id"], "action": "work" if self.e["activity"] == "lab" else "respond", "text": "Привет, Директор."}
+            chosen = self.disposition or ("accept" if self.e["intent_id"] == "request_lab_work" else "respond")
+            value = {"event_id": self.e["id"], "disposition": chosen, "text": "Привет, Директор."}
         return {"session_id": "ses_"+agent, "text": json.dumps(value), "tools": []}
 
 
@@ -211,12 +251,29 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("unreviewed", json.dumps(public_turn(self.store.get(self.event["id"]))))
 
     def test_lab_requires_explicit_mode_and_cannot_write_social_state(self):
-        self.event["activity"] = "lab"
+        self.event["intent_id"] = "request_lab_work"
         backend, turn = self.run_runtime()
         self.assertEqual(backend.lab_calls, 1)
-        self.assertEqual(turn["result"]["contract"]["action"], "work")
+        self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "accept")
         for name in LAB_TOOLS:
             self.assertFalse(any(s in name for s in ("relationship", "volition", "duality", "executive")))
+
+    def test_declined_lab_request_never_calls_mcp(self):
+        self.event["intent_id"] = "request_lab_work"
+        backend, turn = self.run_runtime(disposition="decline")
+        self.assertEqual(turn["status"], "done", turn.get("error"))
+        self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "decline")
+        self.assertEqual(turn["result"]["contract"]["activity"], "chat")
+        self.assertEqual(backend.lab_calls, 0)
+
+    def test_heart_and_head_receive_the_same_frozen_packet(self):
+        backend, turn = self.run_runtime()
+        self.assertEqual(turn["status"], "done")
+        appraisal_prompts = [prompt for _, prompt, _ in backend.calls if "MODE: APPRAISAL" in prompt]
+        self.assertEqual(len(appraisal_prompts), 2)
+        packets = [json.loads(prompt.split("Ниже данные сцены:\n", 1)[1]) for prompt in appraisal_prompts]
+        self.assertEqual(packets[0], packets[1])
+        self.assertEqual(packets[0]["event"]["intent_id"], "talk")
 
     def test_crash_marks_pending_failed_without_replay(self):
         self.store.begin(self.event)
@@ -326,10 +383,19 @@ class WebBoundaryTests(unittest.TestCase):
         h.do_GET()
         self.assertNotIn("SECRET DRAFT", json.dumps(h.send.call_args.args[1]))
 
+    def test_http_compat_activity_is_normalized_to_director_intent(self):
+        body = {"id": "turn-0001", "text": "Проверь стенд", "activity": "lab"}
+        self.assertEqual(
+            normalize_turn_body(body, self.rules),
+            {"id": "turn-0001", "text": "Проверь стенд", "intent_id": "request_lab_work"},
+        )
+        native = {"id": "turn-0002", "text": "Привет", "intent_id": "talk"}
+        self.assertEqual(normalize_turn_body(native, self.rules), native)
+
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)
         h.do_POST(); self.assertEqual(h.send.call_args.args[0], 404)
-        h = self.handler("/api/turn", event(activity="injury"), token=self.app.token)
+        h = self.handler("/api/turn", {"id": "turn-0001", "text": "Привет, Юки", "activity": "injury"}, token=self.app.token)
         h.do_POST(); self.assertEqual(h.send.call_args.args[0], 400)
         self.app.runtime.submit.assert_not_called()
 

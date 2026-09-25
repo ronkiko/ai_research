@@ -41,6 +41,28 @@ def free_port():
         return sock.getsockname()[1]
 
 
+def normalize_turn_body(body, rules):
+    """Compatibility ends here: runtime/store only see DirectorIntent."""
+    if not isinstance(body, dict):
+        raise ValueError("Неверный формат хода")
+    fields = set(body)
+    if fields == {"id", "text", "intent_id"}:
+        intent_id = body["intent_id"]
+    elif fields == {"id", "text", "activity"}:
+        intent_id = rules.get("ui_activity_compat", {}).get(body["activity"])
+        if not intent_id:
+            raise ValueError("Неизвестное занятие")
+    else:
+        raise ValueError("Неверный формат хода")
+    if not isinstance(body["id"], str) or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}", body["id"]):
+        raise ValueError("Неверный идентификатор")
+    if not isinstance(body["text"], str) or not 1 <= len(body["text"].strip()) <= 4000:
+        raise ValueError("Сообщение должно содержать от 1 до 4000 символов")
+    if not isinstance(intent_id, str) or intent_id not in rules["intents"]:
+        raise ValueError("Неизвестное намерение Директора")
+    return {"id": body["id"], "text": body["text"].strip(), "intent_id": intent_id}
+
+
 class Application:
     def __init__(self, store, runtime, backend, rules, prompt=None):
         self.store, self.runtime, self.backend, self.rules = store, runtime, backend, rules
@@ -111,15 +133,8 @@ def handler_for(app):
                 if not 0 < length <= 20000:
                     raise ValueError("Сообщение слишком большое")
                 body = json.loads(self.rfile.read(length))
-                if not isinstance(body, dict) or set(body) != {"id", "text", "activity"}:
-                    raise ValueError("Неверный формат хода")
-                if not isinstance(body["id"], str) or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}", body["id"]):
-                    raise ValueError("Неверный идентификатор")
-                if not isinstance(body["text"], str) or not 1 <= len(body["text"].strip()) <= 4000:
-                    raise ValueError("Сообщение должно содержать от 1 до 4000 символов")
-                if body["activity"] not in app.rules["activities"]:
-                    raise ValueError("Неизвестное занятие")
-                turn = app.runtime.submit(body)
+                event = normalize_turn_body(body, app.rules)
+                turn = app.runtime.submit(event)
                 self.send(202, public_turn(turn))
             except (ValueError, TypeError) as exc:
                 self.send(409 if "текущего" in str(exc) else 400, {"error": str(exc)})

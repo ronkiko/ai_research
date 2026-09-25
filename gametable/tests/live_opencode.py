@@ -43,7 +43,7 @@ def main():
                 rules = load_rules()
                 store = Store(root / "save.sqlite3", rules)
                 runtime = Runtime(store, backend, rules)
-                event = {"id": "live-smoke-" + secrets.token_hex(6), "activity": "chat",
+                event = {"id": "live-smoke-" + secrets.token_hex(6), "intent_id": "talk",
                          "text": "Привет, Юки. Я Директор. Сегодня мы впервые знакомимся. Как ты себя чувствуешь?"}
                 runtime.submit(event)
                 stage = None

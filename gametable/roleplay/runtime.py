@@ -25,60 +25,81 @@ class Runtime:
 
     def run(self, event):
         before = self.store.state()
-        self.log(f"ход {event['id']}: activity={event['activity']}")
+        self.log(f"ход {event['id']}: intent={event['intent_id']}")
         audit = {"before": before, "model": self.backend.model, "rules": self.rules,
                  "assessments": {}, "draft_attempts": [], "laboratory": {"text": "", "tools": []}}
         try:
             parent = self.backend.create("GameTable turn " + event["id"])
             audit["parent_session"] = parent
             data = prompts.packet(event, before, self.rules)
-            # Both packets exist before either response. No shared mutable conversation.
             requests = {role: prompts.appraisal(role, data) for role in ("heart", "head")}
+
             def assess(role):
                 response = self.backend.complete(parent, "yuki-" + role, requests[role])
                 report = validate_report(parse_json(response["text"]), event, before, role)
                 return {"report": report, "session_id": response["session_id"]}
+
             with ThreadPoolExecutor(max_workers=2) as pool:
                 futures = {role: pool.submit(assess, role) for role in requests}
                 for role, future in futures.items():
                     audit["assessments"][role] = future.result()
-            after, contract, calculations = reduce_turn(before, event,
-                audit["assessments"]["heart"]["report"], audit["assessments"]["head"]["report"], self.rules)
+
+            after, contract, calculations = reduce_turn(
+                before, event,
+                audit["assessments"]["heart"]["report"],
+                audit["assessments"]["head"]["report"],
+                self.rules,
+            )
             audit.update(after=after, contract=contract, calculations=calculations)
-            self.log(f"ход {event['id']}: action={contract['action']}"
-                     + ("; MCP разрешён для лабораторного шага" if contract["action"] == "work"
+            disposition = contract["decision"]["disposition"]
+            self.log(f"ход {event['id']}: disposition={disposition}; tone={contract['decision']['tone']}"
+                     + ("; MCP разрешён для лабораторного шага" if contract["activity"] == "lab"
                         else "; MCP отключён"))
             self.store.progress(event["id"], "Решение принято", audit)
-            if contract["action"] == "work":
-                # Persist intent before any external effect. No automatic tool retries.
+
+            # Temporary physical projection until Patch 2 EffectPlan. A laboratory
+            # side effect is possible only after request_lab_work + accept.
+            if contract["activity"] == "lab":
                 self.store.progress(event["id"], "Лаборатория: проверка через MCP", audit)
                 try:
-                    audit["laboratory"] = self.backend.complete(parent, "yuki",
-                        prompts.laboratory_task(data, self.manuals), lab=True)
+                    audit["laboratory"] = self.backend.complete(
+                        parent, "yuki", prompts.laboratory_task(data, self.manuals), lab=True)
                 except BackendError as exc:
-                    audit["laboratory"] = {"text": str(exc) +
-                        ". Результат операции неизвестен: не повторять запуск без проверки статуса.", "tools": [], "uncertain": True}
+                    audit["laboratory"] = {
+                        "text": str(exc) +
+                            ". Результат операции неизвестен: не повторять запуск без проверки статуса.",
+                        "tools": [],
+                        "uncertain": True,
+                    }
                 self.store.progress(event["id"], "Лабораторный шаг завершён", audit)
+
             text = None
             correction = ""
             for attempt in range(2):
-                self.store.progress(event["id"], "Юки подбирает слова" if not attempt else "Проверка формулировки", audit)
+                self.store.progress(
+                    event["id"],
+                    "Юки подбирает слова" if not attempt else "Проверка формулировки",
+                    audit,
+                )
                 record = {}
                 try:
-                    response = self.backend.complete(parent, "yuki",
+                    response = self.backend.complete(
+                        parent, "yuki",
                         prompts.narration(data, contract, audit["laboratory"], correction))
                     draft = parse_json(response["text"])
                     record["draft"] = draft
                     record["session_id"] = response["session_id"]
                     candidate = validate_draft(draft, contract)
-                    # Same Head role, but a fresh context and separate review job, not a third arbiter.
-                    verdict_response = self.backend.complete(parent, "yuki-head",
+                    verdict_response = self.backend.complete(
+                        parent, "yuki-head",
                         prompts.review(data, contract, draft, audit["laboratory"]))
                     verdict = parse_json(verdict_response["text"])
                     record["review"] = verdict
                     record["review_session"] = verdict_response["session_id"]
-                    if (not isinstance(verdict, dict) or set(verdict) != {"event_id", "ok", "reason"}
-                            or verdict["event_id"] != event["id"] or type(verdict["ok"]) is not bool
+                    if (not isinstance(verdict, dict)
+                            or set(verdict) != {"event_id", "ok", "reason"}
+                            or verdict["event_id"] != event["id"]
+                            or type(verdict["ok"]) is not bool
                             or not isinstance(verdict["reason"], str)):
                         raise InvalidReport("Неверный формат проверки")
                     if not verdict["ok"]:
@@ -90,15 +111,18 @@ class Runtime:
                 audit["draft_attempts"].append(record)
                 if text is not None:
                     break
-            # Fail closed: fixed decision remains visible, not unreviewed prose.
-            audit["reply"] = {"anchor": contract["anchor"], "text": text or "",
-                              "fallback": text is None, "action": contract["action"]}
+
+            audit["reply"] = {
+                "anchor": contract["anchor"],
+                "text": text or "",
+                "fallback": text is None,
+                "disposition": disposition,
+                "tone": contract["decision"]["tone"],
+            }
             audit["notice"] = ("Не удалось проверить свободную реплику. Показано только решение движка."
                                if text is None else None)
             after["memories"][-1]["yuki"] = {"anchor": contract["anchor"], "text": text or ""}
-            if contract["action"] == "work":
-                # Keep observed job identifiers/statuses for the next research turn.
-                # The full, original trace remains in this turn's audit.
+            if contract["activity"] == "lab":
                 after["memories"][-1]["laboratory"] = {
                     "report": audit["laboratory"].get("text", "")[:1600],
                     "uncertain": audit["laboratory"].get("uncertain", False),
