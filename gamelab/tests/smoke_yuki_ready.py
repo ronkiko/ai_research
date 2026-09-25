@@ -26,9 +26,9 @@ async def main_async() -> None:
                 session.call_tool("model_info", {}),
                 timeout=30.0,
             )
-            if response.isError:
+            if response.is_error:
                 raise RuntimeError(f"model_info MCP error: {response.content}")
-            payload = response.structuredContent
+            payload = response.structured_content
             if not isinstance(payload, dict):
                 # MCP 2.2 fallback for result payloads without structuredContent.
                 import json
