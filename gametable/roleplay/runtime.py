@@ -1,17 +1,21 @@
-"""The model cannot schedule votes, pick results, mutate stats or publish drafts."""
+"""Explicit GameTable turn pipeline. Models appraise/speak; pure code owns world state."""
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import threading
 
 from . import prompts
-from .engine import InvalidReport, reduce_turn, validate_draft, validate_report
+from .engine import (InvalidReport, apply_effect_plan, build_contract, build_effect_plan,
+                     calculation_audit, decide_turn, validate_draft, validate_report)
+from .external import ExternalExecutor
 from .opencode import BackendError, parse_json
 
 
 class Runtime:
-    def __init__(self, store, backend, rules, manuals="", log=None, events=None):
+    def __init__(self, store, backend, rules, manuals="", log=None, events=None, external=None):
         self.store, self.backend, self.rules, self.manuals = store, backend, rules, manuals
         self.log = log or (lambda _message, _level="INFO": None)
         self.events = events or (lambda _name, _payload: None)
+        self.external = external or ExternalExecutor(backend, manuals)
         self.lock = threading.Lock()
         self.thread = None
 
@@ -33,122 +37,150 @@ class Runtime:
                 self.thread.start()
         return self.store.get(event["id"])
 
+    def appraise(self, parent, event, before, data):
+        requests = {role: prompts.appraisal(role, data) for role in ("heart", "head")}
+
+        def assess(role):
+            response = self.backend.complete(parent, "yuki-" + role, requests[role])
+            report = validate_report(parse_json(response["text"]), event, before, role)
+            return {"report": report, "session_id": response["session_id"]}
+
+        assessments = {}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {role: pool.submit(assess, role) for role in requests}
+            for role, future in futures.items():
+                assessments[role] = future.result()
+        return assessments
+
+    def execute_external(self, event, parent, data, effect_plan, audit, revision):
+        effects = effect_plan["external_effects"]
+        audit["external"] = {"planned": copy.deepcopy(effects), "results": []}
+        if not effects:
+            return []
+
+        # This durable progress record happens before the MCP-enabled call.
+        # On crash Store marks the turn failed; Runtime never auto-replays it.
+        self.progress(event["id"], "Внешние эффекты подтверждены", audit, revision)
+        results = self.external.execute_all(parent, data, effects)
+        audit["external"]["results"] = copy.deepcopy(results)
+        self.progress(event["id"], "Внешние эффекты наблюдены", audit, revision)
+        return results
+
+    def verbalize(self, parent, event, contract, facts, audit, revision):
+        text = None
+        correction = ""
+        for attempt in range(2):
+            self.progress(event["id"],
+                          "Юки подбирает слова" if not attempt else "Проверка формулировки",
+                          audit, revision)
+            record = {}
+            try:
+                response = self.backend.complete(
+                    parent, "yuki", prompts.narration(facts, correction))
+                draft = parse_json(response["text"])
+                record["draft"] = draft
+                record["session_id"] = response["session_id"]
+                candidate = validate_draft(draft, contract)
+
+                verdict_response = self.backend.complete(
+                    parent, "yuki-head", prompts.review(facts, draft))
+                verdict = parse_json(verdict_response["text"])
+                record["review"] = verdict
+                record["review_session"] = verdict_response["session_id"]
+                if (not isinstance(verdict, dict)
+                        or set(verdict) != {"event_id", "ok", "reason"}
+                        or verdict["event_id"] != event["id"]
+                        or type(verdict["ok"]) is not bool
+                        or not isinstance(verdict["reason"], str)):
+                    raise InvalidReport("Неверный формат проверки")
+                if not verdict["ok"]:
+                    raise InvalidReport(verdict["reason"][:700])
+                text = candidate
+            except (InvalidReport, BackendError) as exc:
+                correction = str(exc)
+                record["rejected"] = correction
+            audit["draft_attempts"].append(record)
+            if text is not None:
+                break
+        return text
+
     def run(self, event):
         before = self.store.state()
         self.log(f"ход {event['id']}: intent={event['intent_id']}")
         audit = {"before": before, "model": self.backend.model, "rules": self.rules,
-                 "assessments": {}, "draft_attempts": [], "laboratory": {"text": "", "tools": []}}
+                 "assessments": {}, "draft_attempts": [],
+                 "external": {"planned": [], "results": []}}
         try:
+            # 1. Freeze input snapshot.
             parent = self.backend.create("GameTable turn " + event["id"])
             audit["parent_session"] = parent
             data = prompts.packet(event, before, self.rules)
-            requests = {role: prompts.appraisal(role, data) for role in ("heart", "head")}
 
-            def assess(role):
-                response = self.backend.complete(parent, "yuki-" + role, requests[role])
-                report = validate_report(parse_json(response["text"]), event, before, role)
-                return {"report": report, "session_id": response["session_id"]}
+            # 2. Independent Heart/Head appraisal.
+            audit["assessments"] = self.appraise(parent, event, before, data)
 
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                futures = {role: pool.submit(assess, role) for role in requests}
-                for role, future in futures.items():
-                    audit["assessments"][role] = future.result()
-
-            after, contract, calculations = reduce_turn(
+            # 3. DecisionEngine.
+            decision, context = decide_turn(
                 before, event,
                 audit["assessments"]["heart"]["report"],
                 audit["assessments"]["head"]["report"],
-                self.rules,
-            )
+                self.rules)
+
+            # 4. EffectPlanner.
+            effect_plan = build_effect_plan(before, event, decision, context, self.rules)
+
+            # 5. WorldReducer builds provisional after-state; SQLite is unchanged.
+            after, world_audit = apply_effect_plan(
+                before, event, decision, effect_plan, context, self.rules)
+            contract = build_contract(event, after, decision, effect_plan, context, self.rules)
+            calculations = calculation_audit(decision, effect_plan, context, world_audit)
             audit.update(after=after, contract=contract, calculations=calculations)
-            disposition = contract["decision"]["disposition"]
-            external_effects = contract["effect_plan"]["external_effects"]
-            laboratory_effect = any(effect.get("type") == "laboratory_step"
-                                    for effect in external_effects)
-            self.log(f"ход {event['id']}: disposition={disposition}; tone={contract['decision']['tone']}; "
-                     f"scene={before['scene_id']}->{after['scene_id']}"
-                     + ("; MCP разрешён EffectPlan" if laboratory_effect else "; MCP отключён"))
+            disposition = decision["disposition"]
+            self.log(f"ход {event['id']}: disposition={disposition}; tone={decision['tone']}; "
+                     f"scene={before['scene_id']}->{after['scene_id']}; "
+                     f"external={len(effect_plan['external_effects'])}")
             self.progress(event["id"], "Решение и эффекты приняты", audit, before["revision"])
             if before["scene_id"] != after["scene_id"]:
                 self.emit("scene.transition", event["id"], before["revision"],
                           from_scene=before["scene_id"], to_scene=after["scene_id"],
                           next_revision=after["revision"])
 
-            if laboratory_effect:
-                self.progress(event["id"], "Лаборатория: проверка через MCP",
-                              audit, before["revision"])
-                try:
-                    audit["laboratory"] = self.backend.complete(
-                        parent, "yuki", prompts.laboratory_task(data, self.manuals), lab=True)
-                except BackendError as exc:
-                    audit["laboratory"] = {
-                        "text": str(exc) +
-                            ". Результат операции неизвестен: не повторять запуск без проверки статуса.",
-                        "tools": [],
-                        "uncertain": True,
-                    }
-                self.progress(event["id"], "Лабораторный шаг завершён",
-                              audit, before["revision"])
+            # 6-7. Persist intent, then execute only typed external effects.
+            external_results = self.execute_external(
+                event, parent, data, effect_plan, audit, before["revision"])
 
-            text = None
-            correction = ""
-            for attempt in range(2):
-                self.progress(
-                    event["id"],
-                    "Юки подбирает слова" if not attempt else "Проверка формулировки",
-                    audit,
-                    before["revision"],
-                )
-                record = {}
-                try:
-                    response = self.backend.complete(
-                        parent, "yuki",
-                        prompts.narration(data, contract, audit["laboratory"], correction))
-                    draft = parse_json(response["text"])
-                    record["draft"] = draft
-                    record["session_id"] = response["session_id"]
-                    candidate = validate_draft(draft, contract)
-                    verdict_response = self.backend.complete(
-                        parent, "yuki-head",
-                        prompts.review(data, contract, draft, audit["laboratory"]))
-                    verdict = parse_json(verdict_response["text"])
-                    record["review"] = verdict
-                    record["review_session"] = verdict_response["session_id"]
-                    if (not isinstance(verdict, dict)
-                            or set(verdict) != {"event_id", "ok", "reason"}
-                            or verdict["event_id"] != event["id"]
-                            or type(verdict["ok"]) is not bool
-                            or not isinstance(verdict["reason"], str)):
-                        raise InvalidReport("Неверный формат проверки")
-                    if not verdict["ok"]:
-                        raise InvalidReport(verdict["reason"][:700])
-                    text = candidate
-                except (InvalidReport, BackendError) as exc:
-                    correction = str(exc)
-                    record["rejected"] = correction
-                audit["draft_attempts"].append(record)
-                if text is not None:
-                    break
+            # 8. Narrator sees only fixed facts and observed external results.
+            facts = prompts.narration_facts(
+                data, before, contract, world_audit, after, external_results)
+            audit["narration_facts"] = facts
+
+            # 9. Fresh Head review cannot alter fixed facts or state.
+            text = self.verbalize(
+                parent, event, contract, facts, audit, before["revision"])
 
             audit["reply"] = {
                 "anchor": contract["anchor"],
                 "text": text or "",
                 "fallback": text is None,
                 "disposition": disposition,
-                "tone": contract["decision"]["tone"],
+                "tone": decision["tone"],
             }
             audit["notice"] = ("Не удалось проверить свободную реплику. Показано только решение движка."
                                if text is None else None)
             after["memories"][-1]["yuki"] = {"anchor": contract["anchor"], "text": text or ""}
-            if laboratory_effect:
-                after["memories"][-1]["laboratory"] = {
-                    "report": audit["laboratory"].get("text", "")[:1600],
-                    "uncertain": audit["laboratory"].get("uncertain", False),
-                    "tools": [{"tool": item.get("tool"),
-                               "status": (item.get("state") or {}).get("status"),
-                               "output": str((item.get("state") or {}).get("output", ""))[:2500]}
-                              for item in audit["laboratory"].get("tools", [])[-6:]],
-                }
+            if external_results:
+                after["memories"][-1]["external_results"] = [{
+                    "effect": copy.deepcopy(item["effect"]),
+                    "status": item["status"],
+                    "uncertain": item["uncertain"],
+                    "report": item.get("report", "")[:1600],
+                    "tools": [{"tool": tool.get("tool"),
+                               "status": (tool.get("state") or {}).get("status"),
+                               "output": str((tool.get("state") or {}).get("output", ""))[:2500]}
+                              for tool in item.get("tools", [])[-6:]],
+                } for item in external_results]
+
+            # 10. Publish GameState + reviewed reply atomically.
             self.store.finish(event["id"], before, after, audit)
             self.emit("state.changed", event["id"], after["revision"],
                       scene_id=after["scene_id"])
@@ -164,7 +196,7 @@ class Runtime:
 
 
 def public_turn(turn):
-    """Never expose in-flight or rejected drafts through polling endpoints."""
+    """Never expose in-flight or rejected drafts through browser endpoints."""
     item = {k: turn[k] for k in ("id", "event", "status", "stage", "error")}
     if turn["status"] == "done":
         result = turn["result"]
