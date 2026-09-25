@@ -1,7 +1,9 @@
 # GameLab
 
-GameLab is the research laboratory for the composite AI organism in this
-repository. The current physical vertical is a learned hierarchy:
+GameLab is currently the compatibility service/operator facade for the composite
+AI organism. Since refactor stage 04, the learned controller/models/schools and
+artifact validation are canonical in [../organism/](../organism/); GameLab's old
+core module paths delegate there. The current physical vertical is:
 
 ```text
 LLM / Director goal
@@ -51,8 +53,8 @@ realtime prerequisites, failure cases, and examples, read
 - **[SPEC.md](SPEC.md)** — GameLab machine-facing service/MCP semantics,
   including retained compatibility APIs (not active VN state).
 - **[COMPATIBILITY.md](COMPATIBILITY.md)** — previous cognitive experiments.
-- **[motors/architectures/continuous_1d/v1/README.md](motors/architectures/continuous_1d/v1/README.md)**
-  — active Motor blueprint and revision contract.
+- **[../organism/motors/architectures/continuous_1d/v1/README.md](../organism/motors/architectures/continuous_1d/v1/README.md)**
+  — canonical active Motor blueprint and revision contract.
 - **[AGENTS.md](AGENTS.md)** — non-negotiable development rules for agents
   modifying GameLab.
 

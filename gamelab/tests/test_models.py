@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.config import (
+from organism.config import (
     HISTORY_FRAMES,
     MOTOR_GOAL_SIZE,
     MOTOR_STATE_SIZE,
     SPINE_CHANNELS,
 )
-from gamelab.models import (
+from organism.models import (
     SensorHistory,
     SpineMotorPolicy,
     load_checkpoint,
@@ -21,7 +21,7 @@ from gamelab.models import (
     save_checkpoint,
     sensor_frame,
 )
-from gamelab.motors.continuous import ContinuousMotor, squashed_action
+from organism.motors.continuous import ContinuousMotor, squashed_action
 
 
 class ModelTests(unittest.TestCase):
@@ -121,7 +121,7 @@ class ModelTests(unittest.TestCase):
             model = SpineMotorPolicy.fresh(1)
             save_checkpoint(path, model)
             original = path.read_bytes()
-            with patch("gamelab.models.torch.save", side_effect=OSError("disk failure")):
+            with patch("organism.models.torch.save", side_effect=OSError("disk failure")):
                 with self.assertRaises(OSError):
                     save_checkpoint(path, SpineMotorPolicy.fresh(2))
             self.assertEqual(path.read_bytes(), original)

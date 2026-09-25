@@ -7,27 +7,27 @@ from typing import Any
 
 import torch
 
-from .config import (
+from organism.config import (
     DEFAULT_GOAL_TIMEOUT,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
     WORLD_MAX_X,
     WORLD_MIN_X,
 )
-from .host import HostClient, HostError
-from .models import (
+from organism.host import HostClient, HostError
+from organism.models import (
     build_spine_policy,
     load_checkpoint,
     model_for_checkpoint,
     policy_id,
 )
-from .motors.package import DEFAULT_MOTOR_ID, MotorPackageError, list_motor_packages
-from .control import GoalMailbox
-from .journal import Journal
-from .reward import RewardConfig, RewardStore
-from .runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
-from .training import _prepare_reward_config
-from .spine_school import ALGORITHM, train_school
+from organism.motors.package import DEFAULT_MOTOR_ID, MotorPackageError, list_motor_packages
+from organism.control import GoalMailbox
+from organism.journal import Journal
+from organism.reward import RewardConfig, RewardStore
+from organism.runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
+from organism.training import _prepare_reward_config
+from organism.spine_school import ALGORITHM, train_school
 
 
 class LaboratoryBusyError(RuntimeError):

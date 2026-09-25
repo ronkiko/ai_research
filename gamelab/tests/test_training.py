@@ -9,7 +9,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from gamelab.config import (
+from organism.config import (
     HISTORY_FRAMES,
     MOTOR_STATE_SIZE,
     PPO_ROLLOUT_STEPS,
@@ -18,16 +18,16 @@ from gamelab.config import (
     SPINE_INITIAL_LOG_STD,
     WORLD_MAX_X,
 )
-from gamelab.models import (
+from organism.models import (
     SensorHistory,
     SpineMotorPolicy,
     motor_state,
     sensor_frame,
 )
-from gamelab.runtime import ensure_player
-from gamelab.unpaced import UnpacedHostClient
-from gamelab.motors.continuous import squashed_action
-from gamelab.reward import (
+from organism.runtime import ensure_player
+from organism.unpaced import UnpacedHostClient
+from organism.motors.continuous import squashed_action
+from organism.reward import (
     RewardConfig,
     RewardStore,
     goal_state_potential,
@@ -35,7 +35,7 @@ from gamelab.reward import (
     stopped_near_goal_proximity,
     step_reward,
 )
-from gamelab.training import (
+from organism.training import (
     Transition,
     CurriculumTask,
     EpisodeResult,
@@ -299,7 +299,7 @@ class TrainingTests(unittest.TestCase):
             evidence={"vx": 0.0},
         )
         with patch(
-            "gamelab.training.collect_episode",
+            "organism.training.collect_episode",
             return_value=probe,
         ) as collect:
             advanced, measured = _measure_curriculum_frontier(

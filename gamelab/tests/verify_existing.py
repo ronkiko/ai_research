@@ -6,9 +6,9 @@ import random
 
 import torch
 
-from gamelab.host import HostClient, HostError
-from gamelab.models import model_for_checkpoint, policy_id
-from gamelab.training import collect_episode, verify_spine_policy, verify_recovery_policy
+from organism.host import HostClient, HostError
+from organism.models import model_for_checkpoint, policy_id
+from organism.training import collect_episode, verify_spine_policy, verify_recovery_policy
 
 
 def main():

@@ -9,16 +9,16 @@ import shutil
 
 import torch
 
-from gamelab.motors.package import (
+from organism.motors.package import (
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
     CURRENT_MOTOR_SCHOOL_VERSION,
     DEFAULT_MOTOR_ARCHITECTURE,
     create_motor_instance,
 )
-from gamelab.motors.architectures.continuous_1d.v1.model import Motor
+from organism.motors.architectures.continuous_1d.v1.model import Motor
 
-ROOT = Path(__file__).resolve().parents[1]
-ARCHITECTURES_SOURCE = ROOT / "motors" / "architectures"
+ROOT = Path(__file__).resolve().parents[2]
+ARCHITECTURES_SOURCE = ROOT / "organism" / "motors" / "architectures"
 FIXTURE_MOTOR_ID = "11111111-1111-4111-8111-111111111111"
 FIXTURE_CERTIFICATE_ID = "22222222-2222-4222-8222-222222222222"
 

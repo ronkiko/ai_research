@@ -10,7 +10,12 @@ OP = ROOT / "gamelab" / "op"
 
 class ScopeTests(unittest.TestCase):
     def test_gamelab_uses_official_gameclient_host_api_only(self):
-        host = (ROOT / "gamelab/host.py").read_text(encoding="utf-8")
+        legacy_host = (ROOT / "gamelab/host.py").read_text(encoding="utf-8")
+        legacy_hosts = (ROOT / "gamelab/hosts.py").read_text(encoding="utf-8")
+        self.assertIn("from organism.host import *", legacy_host)
+        self.assertIn("from organism.hosts import *", legacy_hosts)
+
+        host = (ROOT / "organism/host.py").read_text(encoding="utf-8")
         self.assertIn(
             "from gameclient.v1.clients.base import HostClient as BaseHostClient, HostClientError",
             host,
@@ -18,7 +23,7 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn("socket.", host)
         self.assertNotIn("json.", host)
 
-        hosts = (ROOT / "gamelab/hosts.py").read_text(encoding="utf-8")
+        hosts = (ROOT / "organism/hosts.py").read_text(encoding="utf-8")
         self.assertIn(
             "from gameclient.v1.clients.base import HostClient as BaseHostClient, HostClientError",
             hosts,
@@ -27,13 +32,13 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn("from gameserver", hosts)
 
         for relative in (
-            "gamelab/models.py",
-            "gamelab/spine_school.py",
-            "gamelab/runtime.py",
-            "gamelab/training.py",
+            "organism/models.py",
+            "organism/spine_school.py",
+            "organism/runtime.py",
+            "organism/training.py",
+            "organism/reward.py",
             "gamelab/mcp.py",
             "gamelab/lab_service.py",
-            "gamelab/reward.py",
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("import gameclient", text, relative)
@@ -58,36 +63,52 @@ class ScopeTests(unittest.TestCase):
         self.assertNotIn(".logout(", mcp)
 
     def test_active_motor_has_no_strategic_target_and_legacy_is_not_active(self):
-        motor_source = (
+        legacy_motor = (
             ROOT / "gamelab/motors/architectures/continuous_1d/v1/model.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "from organism.motors.architectures.continuous_1d.v1.model import *",
+            legacy_motor,
+        )
+        self.assertNotIn("class Motor", legacy_motor)
+
+        motor_source = (
+            ROOT / "organism/motors/architectures/continuous_1d/v1/model.py"
         ).read_text(encoding="utf-8")
         self.assertIn("class Motor", motor_source)
         self.assertNotIn("target_x", motor_source)
         self.assertNotIn("goal_dx", motor_source)
 
-        models = (ROOT / "gamelab/models.py").read_text(encoding="utf-8")
+        models = (ROOT / "organism/models.py").read_text(encoding="utf-8")
         self.assertIn("from .motors.continuous import ContinuousMotor", models)
-        registry = (ROOT / "gamelab/motors/package.py").read_text(encoding="utf-8")
+        registry = (ROOT / "organism/motors/package.py").read_text(encoding="utf-8")
         self.assertIn("require_trained_motor", registry)
         self.assertNotIn("legacy_discrete", models)
         self.assertNotIn("LegacyDiscreteMotorMLP", models)
 
-    def test_only_operator_unpaced_and_motor_school_import_canonical_gameserver(self):
-        unpaced = (ROOT / "gamelab/unpaced.py").read_text(encoding="utf-8")
+    def test_only_unpaced_and_motor_school_import_canonical_gameserver(self):
+        legacy_unpaced = (ROOT / "gamelab/unpaced.py").read_text(encoding="utf-8")
+        legacy_school = (ROOT / "gamelab/motor_school.py").read_text(encoding="utf-8")
+        self.assertIn("from organism.unpaced import *", legacy_unpaced)
+        self.assertIn("from organism.motor_school import *", legacy_school)
+
+        unpaced = (ROOT / "organism/unpaced.py").read_text(encoding="utf-8")
         self.assertIn("from gameserver.v1.zone.model import ZoneRuntime", unpaced)
-        school = (ROOT / "gamelab/motor_school.py").read_text(encoding="utf-8")
+        school = (ROOT / "organism/motor_school.py").read_text(encoding="utf-8")
         self.assertIn("from gameserver.v1.zone.model import ZoneRuntime", school)
 
         for relative in (
-            "gamelab/host.py",
-            "gamelab/hosts.py",
-            "gamelab/models.py",
-            "gamelab/runtime.py",
-            "gamelab/training.py",
+            "organism/host.py",
+            "organism/hosts.py",
+            "organism/models.py",
+            "organism/runtime.py",
+            "organism/training.py",
+            "organism/reward.py",
+            "organism/control.py",
+            "organism/controller.py",
+            "organism/jobs.py",
             "gamelab/mcp.py",
             "gamelab/lab_service.py",
-            "gamelab/reward.py",
-            "gamelab/control.py",
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("import gameserver", text, relative)

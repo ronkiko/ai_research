@@ -9,8 +9,8 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from .motors.package import DEFAULT_MOTOR_ID
-from .config import (
+from organism.motors.package import DEFAULT_MOTOR_ID
+from organism.config import (
     DEFAULT_GOAL_TIMEOUT,
     DEFAULT_HOST_ID,
     MOTOR_HZ,
@@ -24,8 +24,8 @@ from .executive import BrainExecutive
 from .duality import DualityRuntime
 from .relationship import RelationshipError, RelationshipRuntime
 from .volition import VolitionError, VolitionRuntime
-from .host import HostClient, HostError
-from .hosts import (
+from organism.host import HostClient, HostError
+from organism.hosts import (
     LabHostError,
     LabHostPermissionDenied,
     host_catalog,

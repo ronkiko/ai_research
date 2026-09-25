@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from gamelab.host import HostError
-from gamelab.runtime import ensure_player, reset_player_state
+from organism.host import HostError
+from organism.runtime import ensure_player, reset_player_state
 
 
 class _HubClient:

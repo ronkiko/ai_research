@@ -1,11 +1,11 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–03 уже добавили типизированные identity/action/world contracts, каталог
-трёх карт и отдельный `embodied_world_v1` GameServer scheduler с multi-zone
-physics и portal receipts. Legacy supervisor остаётся публичным runtime до
-cutover. Следующий этап — перенос Spine/Motor training core в `organism/` по
-[04-organism.md](docs/refactor/embodied-vn/04-organism.md).
+Этапы 02–04 уже добавили identity/action/world contracts, multi-zone physics и
+вынесли learned-body core в `organism/`. GameLab пока остаётся совместимым
+service/operator facade, а legacy GameServer supervisor — публичным runtime до
+cutover. Следующий этап — semantic navigation lifecycle из
+[05-navigation.md](docs/refactor/embodied-vn/05-navigation.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом
@@ -50,8 +50,8 @@ Brain LLM остаётся основным смысловым «неокорт�
 
 ## Структура
 
-Текущая линия realtime-исследования — `gameserver`, `gameclient`, `gamelab`,
-`gametable`: LLM Brain, temporal CNN Spine и MLP Motor. Общий контракт: [ARCHITECTURE.md](ARCHITECTURE.md).
+Текущая линия realtime-исследования — `gameserver`, `gameclient`, `organism`,
+`gamelab`, `gametable`: LLM Brain, temporal CNN Spine и MLP Motor. Общий контракт: [ARCHITECTURE.md](ARCHITECTURE.md).
 Физический контур: [gamelab/ARCHITECTURE.md](gamelab/ARCHITECTURE.md).
 Старые `game1` и `game2` вынесены в ветку `legacy` и в текущую линию не входят.
 
@@ -70,7 +70,8 @@ ai_research/
 ├── director/          ← архив опыта и разметки Brain
 ├── gameserver/        ← authoritative realtime world
 ├── gameclient/        ← Host и клиенты к GameServer
-├── gamelab/           ← лаборатория обучаемого управления
+├── organism/          ← canonical learned controller/models/schools
+├── gamelab/           ← временный compatibility service/operator facade
 └── gametable/         ← visual novel и Brain runtime
 ```
 
@@ -79,9 +80,10 @@ ai_research/
   telemetry. Она предназначена как фундамент самостоятельного игрового мира.
 - [`gameclient/`](gameclient/) — Host владеет подключением к публичному Gateway,
   сессией игрока и последовательностью команд. CLI/GUI/MCP подключаются к Host.
-- [`gamelab/`](gamelab/) — отдельная лаборатория иерархического обучаемого
-  управления: LLM задаёт стратегическую цель, Spine CNN и Motor MLP обучаются
-  самостоятельно замыкать realtime motor loop через GameClient Host.
+- [`organism/`](organism/) — канонический learned-body core: sensors,
+  BodyController, Spine/Motor models, schools, verification, jobs и artifacts.
+- [`gamelab/`](gamelab/) — пока сохраняет старый public service/operator
+  surface и делегирует физическое обучение/управление в `organism/`.
 - [`gametable/`](gametable/) — локальная visual novel с Юки и OpenCode-бэкендом:
   директор ставит задачу в диалоге, а на столе лежат руководства по игровому
   клиенту, основной лаборатории, advanced-настройкам и будущим plugins — без

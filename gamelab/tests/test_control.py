@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.control import GoalMailbox, control_loop
+from organism.control import GoalMailbox, control_loop
 
 
 class Clock:
@@ -72,8 +72,8 @@ class Client:
 class ControlTests(unittest.TestCase):
     def run_loop(self, client, **kwargs):
         clock = Clock()
-        with patch("gamelab.control.time.monotonic", clock.monotonic), patch(
-            "gamelab.control.time.sleep", clock.sleep
+        with patch("organism.control.time.monotonic", clock.monotonic), patch(
+            "organism.control.time.sleep", clock.sleep
         ):
             return control_loop(
                 StopModel(), client, client.state(),
@@ -150,8 +150,8 @@ class ControlTests(unittest.TestCase):
 
         clock, client, transitions = Clock(), DelayedClient(), []
         model = RightModel()
-        with patch("gamelab.control.time.monotonic", clock.monotonic), patch(
-            "gamelab.control.time.sleep", clock.sleep
+        with patch("organism.control.time.monotonic", clock.monotonic), patch(
+            "organism.control.time.sleep", clock.sleep
         ):
             result = control_loop(
                 model, client, client.state(), target_x=900,

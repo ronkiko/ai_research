@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "gamelab/**"
+      - "organism/**"
+      - "world/**"
       - "gameserver/v1/**"
       - "gameclient/v1/host/**"
       - "gameclient/v1/clients/base.py"
@@ -12,6 +14,8 @@ on:
   pull_request:
     paths:
       - "gamelab/**"
+      - "organism/**"
+      - "world/**"
       - "gameserver/v1/**"
       - "gameclient/v1/host/**"
       - "gameclient/v1/clients/base.py"

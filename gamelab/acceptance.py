@@ -12,9 +12,9 @@ import time
 
 import torch
 
-from gamelab.host import HostClient, player_from_state
-from gamelab.models import SensorHistory, SpineMotorPolicy, motor_state, sensor_frame
-from gamelab.runtime import ensure_player, reset_player_state
+from organism.host import HostClient, player_from_state
+from organism.models import SensorHistory, SpineMotorPolicy, motor_state, sensor_frame
+from organism.runtime import ensure_player, reset_player_state
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +53,7 @@ def stop_group(process: subprocess.Popen | None) -> None:
 
 
 def run_paced_acceptance(*, learned_checkpoint: Path | None = None) -> int:
-    import gamelab.hosts as catalog_module
+    import organism.hosts as catalog_module
     existing = os.environ.get("GAMELAB_TEST_EXISTING_SERVER") == "1"
     saved_port = catalog_module.HOST_PORT
     host_port = HOST_PORT
@@ -188,8 +188,8 @@ def run_paced_acceptance(*, learned_checkpoint: Path | None = None) -> int:
                     raise AssertionError("backend died during GameLab inference smoke")
 
                 if learned_checkpoint is not None:
-                    from gamelab.runtime import load_runtime_model
-                    from gamelab.training import verify_spine_policy, verify_recovery_policy
+                    from organism.runtime import load_runtime_model
+                    from organism.training import verify_spine_policy, verify_recovery_policy
                     learned = load_runtime_model(learned_checkpoint)
                     verification = verify_spine_policy(learned, lab, player_id=player_id)
                     verification["recovery"] = verify_recovery_policy(learned, lab, player_id=player_id)

@@ -4,11 +4,11 @@ import unittest
 
 import torch
 
-from gamelab.config import SPINE_GOAL_DISTANCE_SCALE, WORLD_MAX_X
-from gamelab.control import control_loop
-from gamelab.host import HostError, player_from_state
-from gamelab.runtime import ensure_player, reset_player_state
-from gamelab.unpaced import UnpacedHostClient
+from organism.config import SPINE_GOAL_DISTANCE_SCALE, WORLD_MAX_X
+from organism.control import control_loop
+from organism.host import HostError, player_from_state
+from organism.runtime import ensure_player, reset_player_state
+from organism.unpaced import UnpacedHostClient
 from gameserver.v1.common.config import PHYSICS_CONTRACT_SHA256
 from gameserver.v1.zone.model import ZoneRuntime
 

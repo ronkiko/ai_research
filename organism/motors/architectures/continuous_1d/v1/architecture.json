@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "architecture_id": "continuous_1d",
+  "version": "v1",
+  "revision": 3,
+  "name": "Continuous 1D physical effort motor",
+  "description": "Learned scalar physical-effort actuator blueprint for the GameServer v1 x-axis body.",
+  "model": {
+    "file": "model.py",
+    "class": "Motor",
+    "policy": "gaussian_tanh_v1"
+  },
+  "socket": {
+    "motor_goal_size": 4,
+    "proprioception": [
+      "vx_norm",
+      "motor_x"
+    ],
+    "output": "motor_x",
+    "output_range": [
+      -1,
+      1
+    ],
+    "goal_contract": {
+      "name": "desired_velocity_norm_v1",
+      "desired_vx_index": 0,
+      "desired_vx_range": [
+        -1,
+        1
+      ],
+      "reserved_zero_indexes": [
+        1,
+        2,
+        3
+      ],
+      "max_update_hz": 10
+    }
+  },
+  "compatibility": {
+    "world": "gameserver_v1_continuous_1d",
+    "physics_hz": 120,
+    "motor_hz": 60,
+    "player_max_speed": 180,
+    "player_max_acceleration": 720,
+    "player_drag": 4,
+    "rest_velocity_eps": 0.05,
+    "rest_motor_eps": 0.02,
+    "physics_contract_version": 1,
+    "physics_contract_sha256": "0e6f1b013f39814574a88844ccc7bb10b41fb2e21d797920378a164a984029df"
+  }
+}

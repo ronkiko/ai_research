@@ -13,12 +13,12 @@ from unittest.mock import patch
 import torch
 
 from gamelab.acceptance import run_paced_acceptance
-from gamelab.motor_school import certify_motor, run_school
-from gamelab.models import model_for_checkpoint
-from gamelab.spine_school import train_school
-from gamelab.training import collect_episode
-from gamelab.unpaced import UnpacedHostClient
-from gamelab.motors.package import DEFAULT_MOTOR_ROOT, create_motor_instance
+from organism.motor_school import certify_motor, run_school
+from organism.models import model_for_checkpoint
+from organism.spine_school import train_school
+from organism.training import collect_episode
+from organism.unpaced import UnpacedHostClient
+from organism.motors.package import DEFAULT_MOTOR_ROOT, create_motor_instance
 
 
 def _parse_seeds(value: str) -> tuple[int, ...]:

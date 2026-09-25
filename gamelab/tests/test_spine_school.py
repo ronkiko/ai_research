@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.models import build_spine_policy, load_checkpoint, policy_id
-from gamelab.spine_school import (
+from organism.models import build_spine_policy, load_checkpoint, policy_id
+from organism.spine_school import (
     DELAY_MODES,
     MAX_VARIABLE_DELAY_TICKS,
     MeasuredDynamics,
@@ -18,8 +18,8 @@ from gamelab.spine_school import (
     delay_mode_schedule,
     train_school,
 )
-from gamelab.training import collect_episode
-from gamelab.unpaced import UnpacedHostClient
+from organism.training import collect_episode
+from organism.unpaced import UnpacedHostClient
 from gamelab.tests.motor_fixture import (
     FIXTURE_MOTOR_ID,
     create_verified_motor_fixture,
@@ -102,8 +102,8 @@ class SpineSchoolTests(unittest.TestCase):
         self.assertIn(MAX_VARIABLE_DELAY_TICKS, variable)
 
     def test_identified_variable_delay_matches_canonical_ticks(self):
-        from gamelab.host import player_from_state
-        from gamelab.runtime import reset_player_state
+        from organism.host import player_from_state
+        from organism.runtime import reset_player_state
 
         dynamics = MeasuredDynamics()
         dynamics.add(self.samples())
@@ -135,8 +135,8 @@ class SpineSchoolTests(unittest.TestCase):
             self.assertLess(abs(float(vx * 180) - after["vx"]), .15)
 
     def test_variable_delay_prediction_truncates_at_world_deadline(self):
-        from gamelab.host import player_from_state
-        from gamelab.runtime import reset_player_state
+        from organism.host import player_from_state
+        from organism.runtime import reset_player_state
 
         dynamics = MeasuredDynamics()
         dynamics.add(self.samples())
@@ -170,8 +170,8 @@ class SpineSchoolTests(unittest.TestCase):
             dynamics.fit()
 
     def test_identified_half_interval_delay_matches_canonical_ticks(self):
-        from gamelab.host import player_from_state
-        from gamelab.runtime import reset_player_state
+        from organism.host import player_from_state
+        from organism.runtime import reset_player_state
         dynamics = MeasuredDynamics()
         dynamics.add(self.samples())
         dynamics.fit()

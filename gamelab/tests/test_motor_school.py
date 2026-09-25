@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.motor_school import (
+from organism.motor_school import (
     SchoolTransition,
     AUTO_SAFETY_MAX_EPISODES,
     CERTIFICATION_REQUIRED_PASSES,
@@ -27,14 +27,14 @@ from gamelab.motor_school import (
     main as motor_school_main,
     run_school,
 )
-from gamelab.motors.package import (
+from organism.motors.package import (
     create_motor_instance,
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
     CURRENT_MOTOR_SCHOOL_VERSION,
     get_motor_package,
     list_motor_packages,
 )
-from gamelab.motors.architectures.continuous_1d.v1.model import Motor
+from organism.motors.architectures.continuous_1d.v1.model import Motor
 from gamelab.tests.motor_fixture import (
     FIXTURE_MOTOR_ID,
     copy_architectures,
@@ -112,10 +112,10 @@ class MotorSchoolTests(unittest.TestCase):
                 os.environ,
                 {"GAMELAB_MOTOR_ROOT": str(root)},
             ), patch(
-                "gamelab.motor_school.run_school",
+                "organism.motor_school.run_school",
                 side_effect=fake_train,
             ), patch(
-                "gamelab.motor_school.certify_motor",
+                "organism.motor_school.certify_motor",
                 side_effect=fake_certify,
             ):
                 result = motor_school_main(["auto", "--episodes", "1", "--seed", "7"])
@@ -145,7 +145,7 @@ class MotorSchoolTests(unittest.TestCase):
             with torch.no_grad():
                 mean, log_std = motor.parameters_for(goal, prop)
                 action = torch.tanh(mean)
-                from gamelab.motors.continuous import squashed_log_prob
+                from organism.motors.continuous import squashed_log_prob
                 log_prob, _ = squashed_log_prob(mean, log_std, action)
             transitions.append(
                 SchoolTransition(
@@ -329,7 +329,7 @@ class MotorSchoolTests(unittest.TestCase):
                 os.environ,
                 {"GAMELAB_MOTOR_ROOT": str(root)},
             ), patch(
-                "gamelab.motor_school._development_verify",
+                "organism.motor_school._development_verify",
                 side_effect=[first, later],
             ):
                 result = run_school(
@@ -399,7 +399,7 @@ class MotorSchoolTests(unittest.TestCase):
                 package.write_manifest()
                 failing = _verify(RuleMotor())
                 failing["passed"] = False
-                with patch("gamelab.motor_school._verify_program", return_value=failing):
+                with patch("organism.motor_school._verify_program", return_value=failing):
                     result = certify_motor(package.motor_id)
                 self.assertFalse(result["certified"])
                 sealed = get_motor_package(package.motor_id)
@@ -444,7 +444,7 @@ class MotorSchoolTests(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {"GAMELAB_MOTOR_ROOT": str(root)},
-            ), patch("gamelab.motor_school._verify", return_value=standard):
+            ), patch("organism.motor_school._verify", return_value=standard):
                 result = run_school(
                     FIXTURE_MOTOR_ID,
                     episodes=1,
@@ -456,7 +456,7 @@ class MotorSchoolTests(unittest.TestCase):
                     certify_motor(FIXTURE_MOTOR_ID)
 
     def test_development_programs_are_distinct_from_certification(self):
-        from gamelab.motor_school import (
+        from organism.motor_school import (
             CERTIFICATION_PROGRAMS,
             CERTIFICATION_RAPID_PROGRAMS,
         )
@@ -483,7 +483,7 @@ class MotorSchoolTests(unittest.TestCase):
         self.assertEqual(result["rest_fraction"], 1.0)
 
     def test_full_range_steady_exam_has_physical_settling_margin(self):
-        from gamelab.motor_school import _verify_program
+        from organism.motor_school import _verify_program
 
         result = _verify_program(RuleMotor(), (1.0, 0.0, -1.0, 0.0))
         self.assertTrue(result["passed"], result)
@@ -542,10 +542,10 @@ class MotorSchoolTests(unittest.TestCase):
                     "rest_required": 1.0,
                 }
                 with patch(
-                    "gamelab.motor_school._verify_program",
+                    "organism.motor_school._verify_program",
                     return_value=passing,
                 ), patch(
-                    "gamelab.motor_school._verify_rapid_program",
+                    "organism.motor_school._verify_rapid_program",
                     return_value=rapid_passing,
                 ):
                     result = certify_motor(package.motor_id)
@@ -564,7 +564,7 @@ class MotorSchoolTests(unittest.TestCase):
                 self.assertEqual(result["quality"], 0.0)
 
     def test_certification_programs_are_distinct_and_frozen_rule_passes_all(self):
-        from gamelab.motor_school import CERTIFICATION_PROGRAMS, _verify_program
+        from organism.motor_school import CERTIFICATION_PROGRAMS, _verify_program
         motor = RuleMotor()
         results = [_verify_program(motor, levels) for levels in CERTIFICATION_PROGRAMS]
         self.assertEqual(len(results), CERTIFICATION_REQUIRED_PASSES)

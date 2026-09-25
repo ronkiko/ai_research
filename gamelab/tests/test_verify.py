@@ -4,7 +4,7 @@ from io import StringIO
 import unittest
 from unittest.mock import patch
 
-from gamelab import verify
+from organism import verify
 from gamelab.lab_service import Laboratory
 
 

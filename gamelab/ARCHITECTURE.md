@@ -1,5 +1,11 @@
 # Realtime AI research laboratory
 
+> **Stage 04 status.** Learned controller, sensors, models, Motor registry,
+> Motor/Spine schools, verification, reward/journal and Host adapters are now
+> canonical in [../organism/](../organism/). GameLab keeps the current MCP and
+> operator compatibility surface until cutover; its former core modules are
+> thin shims and do not form a second trainer/control loop.
+
 ## Related docs
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — whole-organism contract and implementation gaps.
@@ -126,13 +132,13 @@ effective intervals may be longer and are recorded, not synthetically filled.
 ## Motor blueprints, built instances and Motor School
 
 A Motor blueprint is source design, not a trained Motor. Blueprints live under
-`gamelab/motors/architectures/<name>/<version>/`. The current continuous
+`organism/motors/architectures/<name>/<version>/`. The current continuous
 blueprint is `continuous_1d/v1`; compatible design edits increment
 `architecture.json.revision`, while a new architecture version requires an
 explicit Operator decision.
 
 Motor School constructs a built Motor under
-`gamelab/motors/instances/<motor_uuid>/`. Construction copies the blueprint
+`organism/motors/instances/<motor_uuid>/`. Construction copies the blueprint
 descriptor and model implementation into the instance and records their hashes.
 Subsequent blueprint edits therefore cannot mutate an existing Motor.
 
@@ -194,7 +200,7 @@ actuator and drag dissipates velocity; opposite effort can actively brake. No
 controller sets `vx` or snaps `x` to a target.
 
 The former three-logit discrete MLP is archived under
-`gamelab/motors/legacy_discrete.py` only as a future configurable-motor
+`organism/motors/legacy_discrete.py` only as a future configurable-motor
 specimen. It is not imported by the active policy and cannot act as a fallback.
 
 ## One tick-domain executor, two pacing modes

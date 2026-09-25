@@ -1,0 +1,1 @@
+"""Tracked Motor architecture blueprints."""

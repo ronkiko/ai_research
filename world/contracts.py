@@ -27,6 +27,8 @@ ERROR_CODES = frozenset({
     "request_conflict",
     "unsupported_version",
     "unknown_map",
+    "unknown_object",
+    "unknown_route",
     "blocked",
     "cancelled",
     "timeout",

@@ -9,13 +9,13 @@ from unittest.mock import patch
 
 import torch
 
-from gamelab.models import (
+from organism.models import (
     build_spine_policy,
     model_for_checkpoint,
     motor_checkpoint_extra,
     save_checkpoint,
 )
-from gamelab.motors.package import (
+from organism.motors.package import (
     DEFAULT_MOTOR_ARCHITECTURE,
     MotorPackageError,
     create_motor_instance,
@@ -56,7 +56,7 @@ class MotorPackageTests(unittest.TestCase):
             root = Path(directory) / "motors"
             copy_architectures(root)
             with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}), patch(
-                "gamelab.motors.package.shutil.copyfile",
+                "organism.motors.package.shutil.copyfile",
                 side_effect=OSError("copy failed"),
             ):
                 with self.assertRaisesRegex(OSError, "copy failed"):

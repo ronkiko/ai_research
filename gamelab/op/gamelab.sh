@@ -87,10 +87,13 @@ quick_check() {
     export GAMELAB_TEST_EXISTING_SERVER=1
   fi
 
-  echo "CHECK GameLab compile"
-  "$GAMELAB_PY" -m compileall -q -x '/\.venv/' gamelab
+  echo "CHECK Organism + GameLab compile"
+  "$GAMELAB_PY" -m compileall -q -x '/\.venv/' organism gamelab
 
-  echo "CHECK GameLab unit tests"
+  echo "CHECK Organism extraction boundaries"
+  "$GAMELAB_PY" -m unittest discover -s organism/tests -p 'test_*.py' -v
+
+  echo "CHECK GameLab compatibility/unit tests"
   "$GAMELAB_PY" -m unittest discover -s gamelab/tests -p 'test_*.py' -v
 
   echo "CHECK real GameLab model -> Host -> GameServer smoke"
