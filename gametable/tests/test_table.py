@@ -37,6 +37,8 @@ class GameTableTests(unittest.TestCase):
             ".opencode/agents/yuki-audience.md",
             "characters/002-yuki.md",
             "op/start-go.sh",
+            "tui.json",
+            ".opencode/tui/initial-prompt.js",
         ):
             self.assertTrue((TABLE / relative).is_file(), relative)
 
@@ -55,15 +57,20 @@ class GameTableTests(unittest.TestCase):
         ):
             self.assertIn(expected, plugin)
 
-    def test_start_go_creates_fresh_trial_with_immediate_director_prompt(self):
+    def test_start_go_uses_mounted_tui_prompt_once(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
-        self.assertIn('DEFAULT_PROMPT=$(cat <<\'EOF\'', launcher)
-        self.assertIn('opencode run --format json "$PROMPT"', launcher)
-        self.assertIn('event.get("sessionID")', launcher)
-        self.assertIn('exec "$ROOT/gametable/op/start.sh" --session "$SESSION_ID"', launcher)
-        self.assertNotIn("/tui/append-prompt", launcher)
-        self.assertNotIn("/tui/submit-prompt", launcher)
-        self.assertIn("--prompt-file", launcher)
+        config = json.loads((TABLE / "tui.json").read_text(encoding="utf-8"))
+        plugin = (TABLE / ".opencode/tui/initial-prompt.js").read_text(encoding="utf-8")
+
+        self.assertIn('export GAMETABLE_INITIAL_PROMPT="$PROMPT"', launcher)
+        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh', launcher)
+        self.assertIn("./.opencode/tui/initial-prompt.js", config["plugin"])
+        self.assertIn("api.state.mcp()", plugin)
+        self.assertIn('statuses.get("game_v1") === "connected"', plugin)
+        self.assertIn('statuses.get("gamelab_v1") === "connected"', plugin)
+        self.assertIn("ref.submit()", plugin)
+        self.assertNotIn("opencode run", launcher)
+        self.assertNotIn("/tui/", launcher)
 
     def test_fresh_start_resets_only_yuki2_runtime_state(self):
         launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")

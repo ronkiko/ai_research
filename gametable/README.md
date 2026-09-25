@@ -39,15 +39,11 @@ The Director starts GameServer and then launches a fresh Yuki2 trial:
 ```
 
 `start-go.sh` is the normal alpha-test entry point. It clears only Yuki2's
-personal/Executive runtime, executes the operator-owned first Director message
-through OpenCode's persisted `opencode run --format json` path, extracts that
-run's real session ID, and then opens the ordinary interactive TUI with
-`--session <id>`. The first exchange therefore exists in session storage before
-the TUI opens; no transient TUI event injection is used.
-
-First-turn diagnostics are written to
-`gametable/runtime/start-go-first-turn.jsonl` and
-`gametable/runtime/start-go-first-turn.stderr.log`.
+personal/Executive runtime and starts one ordinary OpenCode TUI process. A small
+project TUI plugin receives the mounted home prompt, waits until both GameTable
+MCP servers are connected, then inserts and submits the Operator's first
+Director message from inside the live TUI. No second OpenCode process, HTTP
+injector, or `opencode run` bootstrap is used.
 
 The default first message is intentionally written directly inside
 `gametable/op/start-go.sh`, so the Operator can edit one obvious place before
