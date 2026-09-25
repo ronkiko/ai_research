@@ -35,7 +35,6 @@ class GameTableTests(unittest.TestCase):
             ".opencode/agents/yuki-head.md",
             ".opencode/agents/yuki-will.md",
             ".opencode/agents/yuki-audience.md",
-            "characters/002-yuki.md",
             "op/start-go.sh",
         ):
             self.assertTrue((TABLE / relative).is_file(), relative)
@@ -53,10 +52,8 @@ class GameTableTests(unittest.TestCase):
             "relationship_consent",
             "YUKI_CHARACTER_CORE",
             "GAMELAB_CHARACTER_PROFILE",
-            "../gamelab/characters/yuki-02.json",
+            "../characters/yuki-02/character.json",
             "characterSystemPrompt",
-            "TEMP_CHARACTER_INJECTION_PROBE",
-            "Я дура. Я дура. Я дура.",
         ):
             self.assertIn(expected, plugin)
 

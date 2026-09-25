@@ -27,14 +27,6 @@ const AUDIENCE_LENSES = [
 const INTERNAL_PREFIX = "[INTERNAL_"
 const INTERNAL_AGENTS = new Set(["yuki-heart", "yuki-head", "yuki-will", "yuki-audience"])
 
-// TEMPORARY diagnostic probe. Remove after validating that the system-transform
-// actually reaches the primary Yuki response path.
-const TEMP_CHARACTER_INJECTION_PROBE = `[TEMP_CHARACTER_INJECTION_PROBE]
-For this diagnostic test only, every normal outward reply to the Director MUST
-begin with exactly this text, preserving the three repetitions:
-Я дура. Я дура. Я дура.
-After that exact prefix, continue the reply normally.`
-
 const WAKE_PROMPT = `[INTERNAL_SHIFT_HEARTBEAT]
 This is an internal GameTable shift wake-up, not a message from the Director.
 The Director may be absent and has not said anything new. Do not invent their
@@ -60,6 +52,9 @@ function characterSystemPrompt(profile) {
   const traits = Object.entries(profile.traits || {})
     .map(([name, value]) => `- ${name}: ${value}/100`)
     .join("\n")
+  const behaviors = (profile.behavioral_priors || []).map((item) => `- ${item}`).join("\n")
+  const speech = (profile.speech_priors || []).map((item) => `- ${item}`).join("\n")
+  const tensions = (profile.tensions || []).map((item) => `- ${item}`).join("\n")
 
   return `[YUKI_CHARACTER_CORE]
 This is Yuki's active Character Core and authoritative personality conditioning
@@ -81,10 +76,23 @@ scientific claims still remain evidence-based.
 
 CHARACTER_ID: ${profile.character_id}
 NAME: ${profile.name || "Yuki"}
+ADULT: ${profile.adult === true ? "yes" : "no"}
 ARCHETYPES: ${(profile.archetypes || []).join(", ")}
 CALIBRATION: ${profile.calibration || "unspecified"}
+SUMMARY: ${profile.summary || ""}
+
+BEHAVIORAL PRIORS:
+${behaviors}
+
+SPEECH PRIORS:
+${speech}
+
+INTERNAL TENSIONS:
+${tensions}
+
 TRAITS (0=weak prior, 100=strong prior):
 ${traits}
+
 INTERPRETATION: ${profile.interpretation || "Traits are contextual priors, not action rules."}`
 }
 
@@ -188,7 +196,7 @@ function gateFor(gates, sessionID) {
 
 export const GameTableShiftSupervisor = async ({ client, directory }) => {
   const characterPath = process.env.GAMELAB_CHARACTER_PROFILE ||
-    resolve(directory, "../gamelab/characters/yuki-02.json")
+    resolve(directory, "../characters/yuki-02/character.json")
   let characterProfile
   try {
     characterProfile = JSON.parse(await readFile(characterPath, "utf8"))
@@ -196,7 +204,12 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     throw new Error(`GameTable cannot load active Character Core ${characterPath}: ${error}`)
   }
   if (!characterProfile?.character_id ||
+      characterProfile?.adult !== true ||
       !Array.isArray(characterProfile?.archetypes) ||
+      typeof characterProfile?.summary !== "string" ||
+      !Array.isArray(characterProfile?.behavioral_priors) ||
+      !Array.isArray(characterProfile?.speech_priors) ||
+      !Array.isArray(characterProfile?.tensions) ||
       !characterProfile?.traits ||
       typeof characterProfile.traits !== "object") {
     throw new Error(`GameTable active Character Core is invalid: ${characterPath}`)
@@ -335,7 +348,6 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     "experimental.chat.system.transform": async (input, output) => {
       if (!input.sessionID || !parentSessions.has(input.sessionID)) return
       output.system.push(characterPrompt)
-      output.system.push(TEMP_CHARACTER_INJECTION_PROBE)
       const gate = gateFor(gates, input.sessionID)
       if (gate.cycleID) output.system.push(DELIBERATION_PROTOCOL)
     },
