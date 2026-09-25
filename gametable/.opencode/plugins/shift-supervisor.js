@@ -168,6 +168,23 @@ function parseJSONOutput(value) {
   }
 }
 
+function toolResultText(result) {
+  if (typeof result?.output === "string") return result.output
+  if (!Array.isArray(result?.content)) return ""
+  return result.content
+    .filter((item) => item?.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n\n")
+}
+
+function parseToolResultJSON(result) {
+  if (result?.structuredContent && typeof result.structuredContent === "object" &&
+      !Array.isArray(result.structuredContent)) {
+    return result.structuredContent
+  }
+  return parseJSONOutput(toolResultText(result))
+}
+
 function parseReport(value) {
   const result = {}
   for (const line of String(value || "").split(/\r?\n/)) {
@@ -449,7 +466,9 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
       const args = input.args || {}
 
       if (toolIs(tool, "volition_cycle_begin")) {
-        const payload = parseJSONOutput(output.output)
+        // OpenCode 1.18.x invokes this hook for MCP tools with the raw
+        // CallToolResult before it builds the later UI output string.
+        const payload = parseToolResultJSON(output)
         const cycle = payload?.active_cycle
         if (cycle?.cycle_id) {
           gate.cycleID = cycle.cycle_id
@@ -464,13 +483,13 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
       }
 
       if (tool === "task" && args.subagent_type === "yuki-heart") {
-        gate.heart = parseReport(output.output)
+        gate.heart = parseReport(toolResultText(output))
       }
       if (tool === "task" && args.subagent_type === "yuki-head") {
-        gate.head = parseReport(output.output)
+        gate.head = parseReport(toolResultText(output))
       }
       if (tool === "task" && args.subagent_type === "yuki-will") {
-        gate.will = parseReport(output.output)
+        gate.will = parseReport(toolResultText(output))
       }
 
       if (toolIs(tool, "duality_appraise") && ["heart", "brain"].includes(args.side)) {

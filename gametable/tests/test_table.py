@@ -67,6 +67,14 @@ class GameTableTests(unittest.TestCase):
             self.assertIn('"*": deny', frontmatter)
             self.assertNotIn("permissions:", frontmatter)
 
+    def test_shift_supervisor_reads_raw_mcp_after_hook_results(self):
+        plugin = PLUGIN.read_text(encoding="utf-8")
+        self.assertIn("function toolResultText(result)", plugin)
+        self.assertIn("result?.structuredContent", plugin)
+        self.assertIn("result?.content", plugin)
+        self.assertIn("parseToolResultJSON(output)", plugin)
+        self.assertIn("parseReport(toolResultText(output))", plugin)
+
     def test_start_go_uses_official_opencode_prompt_flag(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
         self.assertNotIn('gameclient/v1/op/gui.sh', launcher)
