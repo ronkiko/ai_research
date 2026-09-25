@@ -84,11 +84,11 @@ def main():
                 voices = result["assessments"]
                 assert voices["heart"]["session_id"] != voices["head"]["session_id"]
                 assert store.state()["revision"] == 1
-                assert result["external"]["planned"] == []
+                assert result["actions"]["planned"] == []
                 print("LIVE chat reply:", result["reply"]["text"], flush=True)
 
-                # Vertical 2: deterministic accepted route into the workstation, followed
-                # by a real MCP-enabled session whose permissions contain read-only tools only.
+                # Vertical 2: deterministic accepted request creates only a semantic
+                # navigation proposal; the pure decision must not claim physical arrival.
                 before = store.state()
                 lab_event = {
                     "id": "live-safe-lab-" + secrets.token_hex(6),
@@ -99,10 +99,12 @@ def main():
                 head = report("head", lab_event, before, "accept")
                 after, contract, calculations = reduce_turn(
                     before, lab_event, heart, head, rules)
-                assert after["scene_id"] == "laboratory.workstation", after["scene_id"]
-                assert contract["effect_plan"]["external_effects"] == [{"type": "laboratory_step"}]
-                assert calculations["world"]["scene_before"] == "hallway"
-                assert calculations["world"]["scene_after"] == "laboratory.workstation"
+                assert after["scene_id"] == "hallway", after["scene_id"]
+                actions = contract["effect_plan"]["actions"]
+                assert len(actions) == 1, actions
+                assert actions[0]["action_type"] == "navigate", actions
+                assert actions[0]["target_id"] == "laboratory", actions
+                assert calculations["character_state"]["physical_movement_applied"] is False
 
                 parent = backend.create("GameTable live read-only laboratory")
                 safe_prompt = """MODE: SAFE LIVE LABORATORY SMOKE.
@@ -122,7 +124,7 @@ After both read-only observations, answer with one short factual sentence."""
                 # not advanced by the smoke laboratory check.
                 assert store.state()["revision"] == 1
                 assert store.state()["scene_id"] == "hallway"
-                print("PASS live OpenCode: chat vertical + read-only laboratory MCP boundary; Director save untouched",
+                print("PASS live OpenCode: chat vertical + semantic action contract + read-only legacy lab boundary; Director save untouched",
                       flush=True)
             finally:
                 backend.close_sessions()

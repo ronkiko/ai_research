@@ -2,11 +2,11 @@
 
 Уточнение цели: [план из 11 коммитов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
-навигации и обучения через MCP. Этапы 02–06 уже зафиксировали identity/action/world
-contracts, multi-zone physics, канонический learned-body core, `navigation_v1`
-и независимый graphics RenderFrame pipeline. GameTable shell уже потребляет
-кадры этого формата, но до cutover 09 default source остаётся явно
-non-authoritative legacy compatibility adapter.
+навигации и обучения через MCP. Этапы 02–07 уже зафиксировали identity/action/world
+contracts, multi-zone physics, learned-body core, `navigation_v1`, graphics
+RenderFrame и semantic CharacterActionProposal/ActionExecutor в GameTable.
+Physical location больше не меняется VN reducer-ом; до cutover 09 graphics
+default source всё ещё явно non-authoritative legacy compatibility adapter.
 
 Цель — один продолжающийся персонаж-исследователь, который общается с Директором,
 накапливает опыт и учится управлять физическим аватаром. Визуальная новелла и
@@ -55,7 +55,7 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 
 | Область | Единственный владелец | Что это не означает |
 | --- | --- | --- |
-| Сцена VN, её минуты, статы, опубликованный диалог | GameTable Store/SQLite через WorldReducer | Переход сцены не телепортирует физический аватар |
+| Narrative minutes, social/resource stats, published dialogue | GameTable Store/SQLite через CharacterStateReducer | Legacy scene_id не является physical location |
 | Координата, скорость, усилие, epoch/tick | GameServer physics world (legacy Zone до cutover; embodied_world_v1 целевой runtime) | Текст модели не является физическим действием |
 | Сессия игрока, последовательность ввода | GameClient Host | Host не определяет успех обучения |
 | Веса, сертификаты, controller/jobs и verification artifacts | Organism (GameLab facade до cutover) | Рассказ об успехе не заменяет VERIFY |
@@ -101,18 +101,20 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 
 1. Просьба → независимые оценки → решение → план → эффекты → наблюдение → речь.
    Намерение не является действием, запуск не является завершением.
-2. Только ExternalExecutor открывает рабочие tools после принятого задания и
-   валидного плана лабораторной сцены. Знание о стенде доступно в обычном диалоге.
+2. Обычные Heart/Head/Narrator/Review deny-all. Semantic body action проходит
+   через ActionExecutor с server-side target scope; navigation permission не
+   означает learning permission.
 3. Юки не имеет прямого `game_v1_move`: целевой physical path идёт через
-   `navigation_v1` → BodyController → Spine/Motor. До этапа cutover текущая
-   GameTable ещё вызывает прежний GameLab facade. Ручные CLI/GUI остаются
+   world/navigation (`navigation_v1`) → BodyController → Spine/Motor.
+   Ручные CLI/GUI остаются
    инструментами оператора; вмешательство в измеряемый
    rollout делает его загрязнённым, а не успешным примером работы сети.
 4. TRAIN/VERIFY/RUN используют общий control executor. RUN не сбрасывает тело;
    VERIFY замораживает веса. Нет скрытого PID, учителя действий или fallback.
-5. GameTable сохраняет внешний план перед вызовом. SQLite commit и MCP не образуют
-   общей транзакции: после сбоя внешний эффект мог состояться при несохранённой
-   VN-сцене. Не повторять его вслепую; сначала сверить внешний статус.
+5. GameTable сохраняет CharacterActionProposal в action_outbox перед dispatch.
+   Character/dialogue commit и physical action не образуют общей транзакции:
+   после сбоя действие могло состояться при несохранённой реплике. Не повторять
+   его вслепую; сверять durable action/world status.
 6. Публикуются только проверенные реплики. Старое воспоминание об опыте не служит
    текущим статусом job. Источник истины — инструмент и журнал эксперимента.
 7. Правила сцены не получают доступ к весам, а эмоциональные статы не становятся

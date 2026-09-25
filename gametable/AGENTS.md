@@ -1,75 +1,53 @@
-# GameTable — VN Shell v2 agent contract
+# GameTable agent contract — embodied actions
 
-The active experiment is yuki-vn-1, an adult fictional researcher. The canonical
-profile, intents, scene graph and world rules live in roleplay/rules.json.
-Archived Character Core / relationship / duality / Volition protocols are not
-part of this runtime.
+DirectorIntent является запросом человека, а не фактом мира.
 
-The human is the Director. Browser requests are DirectorIntent objects with
-id, text and intent_id. Never treat an intent as an already completed world
-action.
+Heart и Head:
+- fresh independent child sessions;
+- один frozen packet;
+- без tools;
+- оценивают disposition/social impact, но не выполняют действия.
 
-## Cognitive roles
+CharacterAction proposer:
+- отдельный fresh tool-less Brain context;
+- возвращает proposal или null;
+- proposal — не side effect и не receipt;
+- self initiative вызывается только bounded event/idle scheduler, не tick loop.
 
-APPRAISAL:
-- Heart and Head run in separate fresh child sessions.
-- They receive the same frozen packet and never see each other's report.
-- They score disposition only: respond, accept, decline, clarify.
-- They may estimate social impact but cannot change GameState.
-
-NARRATION:
-- receives fixed before-state, CharacterDecision, EffectPlan, applied world
-  effects, after-state and observed external results;
-- verbalizes those facts only;
-- may not invent movement, work, tool success, Director actions or new state.
-
-REVIEW:
-- checks a draft against the same frozen facts;
-- cannot replace decision, tone, effects or state.
-
-LABORATORY:
-- exists only behind ExternalExecutor;
-- uses the session permission allowlist supplied by GameTable;
-- reports observed tool results, not invented success;
-- an async *_start is not completion.
+Narrator и Review:
+- без tools;
+- получают frozen decision, state effects, approved proposals и persisted action results;
+- queued/approaching нельзя описывать как arrived;
+- world observation/receipt имеет больший авторитет, чем текст или legacy scene.
 
 ## Ownership
 
-DecisionEngine chooses CharacterDecision.
-EffectPlanner creates typed effects.
-WorldReducer is the only layer that changes scene_id, game time or stats.
-ExternalExecutor is the only roleplay layer allowed to open an MCP-enabled
-OpenCode context.
-Store/SQLite is the only authoritative persisted state.
-ViewProjector creates browser-facing ViewState and affordances.
-Browser renders and submits intents; it does not implement world rules.
+DecisionEngine выбирает CharacterDecision.
+EffectPlanner формирует state effects + CharacterActionProposal.
+CharacterStateReducer меняет только GameTable social/resource/narrative state.
+Он никогда не меняет physical location.
+ActionExecutor — server-side semantic action boundary.
+world/navigation владеет navigation lifecycle.
+GameServer владеет x/vx/effort/zone/ticks.
+Store хранит dialogue state, durable action references и bounded observed-fact inbox.
+Graphics рендерит world snapshots.
+Browser не реализует world rules.
 
-Health, fatigue, mood, affection and trust are game values, not medical
-measurements. Affection, trust, agreement and consent remain distinct concepts.
+`scene_id` в существующем save — только pre-cutover compatibility field.
+Новый код не должен использовать его как доказательство физической локации.
 
-## Development invariants
+## Side-effect invariants
 
-Keep reducers pure and replayable. Do not introduce client-side scene-transition
-rules, direct location mutation, legacy activity requests, arbitrary set_stats
-endpoints or MCP access in ordinary voices.
+1. Durable action_outbox записывается до dispatch.
+2. request_id/proposal_id идемпотентны.
+3. Unknown dispatch outcome = uncertain; blind replay запрещён.
+4. LLM не задаёт entity/embodiment/x/vx/motor_x.
+5. ActionExecutor проверяет semantic target/scope кодом.
+6. Arrival утверждается только по navigation/world observation.
+7. Narrator failure не отменяет сохранённый external fact.
+8. Ordinary voices deny-all; navigation/learning permission scopes не смешиваются.
 
-Persist an approved external effect before executing it. On ambiguous transport
-failure mark it uncertain and do not blind-retry it.
+Не возвращать прямой VN `move`, `scene_id = ...`, client-side transitions или
+старый laboratory_step как способ физического перемещения.
 
-Do not publish unreviewed drafts. One event_id must never mutate state twice.
-Live tests must use temporary saves, delete owned OpenCode sessions and avoid
-training, run, player movement or other destructive laboratory actions.
-
-Run:
-
-~~~bash
-./gametable/op/check.sh
-~~~
-
-Optional real-model/MCP smoke:
-
-~~~bash
-./gametable/op/check.sh --live
-~~~
-
-Read README.md and ROLEPLAY_ENGINE_DESIGN.md before changing the runtime boundary.
+Run: `./gametable/op/check.sh`.

@@ -40,7 +40,7 @@ function handleEvent(name,data){
   if(name==='turn.stage'){showStatus((data.stage||'Юки обдумывает ответ')+'…');controls.setDisabled(true);return;}
   if(name==='scene.transition'){showStatus('Переход подтверждается…');return;}
   if(name==='turn.failed'){lastError=data.error||'Ход остановлен';queueSync();return;}
-  if(name==='state.changed'||name==='turn.completed')queueSync();
+  if(name==='state.changed'||name==='turn.completed'||name==='action.updated')queueSync();
 }
 async function start(){
   await sync();

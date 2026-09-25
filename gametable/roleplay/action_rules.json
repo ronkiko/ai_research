@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "locations": [
+    "hallway",
+    "laboratory",
+    "training/flat_run"
+  ],
+  "actions": {
+    "navigate": {
+      "targets": [
+        "hallway",
+        "laboratory",
+        "training/flat_run"
+      ]
+    },
+    "approach": {
+      "targets": [
+        "workstation"
+      ]
+    }
+  },
+  "director_intents": {
+    "request_lab_work": {
+      "default": {
+        "action_type": "navigate",
+        "target_id": "laboratory"
+      },
+      "when_location_laboratory": {
+        "action_type": "approach",
+        "target_id": "workstation"
+      }
+    },
+    "request_leave_lab": {
+      "default": {
+        "action_type": "navigate",
+        "target_id": "hallway"
+      }
+    }
+  },
+  "notes": {
+    "physical_authority": "world/navigation",
+    "legacy_scene_id": "presentation compatibility only until cutover 09",
+    "learning_scope": "not granted by navigation proposals"
+  }
+}

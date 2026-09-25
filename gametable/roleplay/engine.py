@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 
 RULES_PATH = Path(__file__).with_name("rules.json")
+ACTION_RULES_PATH = Path(__file__).with_name("action_rules.json")
 DISPOSITIONS = ("respond", "accept", "decline", "clarify")
 TONES = ("neutral", "warm", "playful", "firm", "shy", "upset")
 CATEGORIES = ("neutral", "praise", "criticism", "care", "affection", "promise", "conflict", "research")
@@ -163,77 +164,180 @@ def _select_decision(projected_stats, event, heart, head, rules):
     }
 
 
-def _transition(rules, from_scene, to_scene):
-    matches = [item for item in rules["transitions"]
-               if item["from"] == from_scene and item["to"] == to_scene]
-    if len(matches) != 1:
-        raise ValueError(f"Переход сцены запрещён: {from_scene} -> {to_scene}")
-    return matches[0]
-
-
 def _world_action(name, rules):
     try:
         action = rules["world_actions"][name]
     except KeyError as exc:
-        raise ValueError(f"Неизвестный эффект мира: {name}") from exc
+        raise ValueError(f"Неизвестный эффект состояния: {name}") from exc
     return {"type": name, "minutes": action["minutes"]}
 
 
-def plan_effects(state, event, decision, social_delta, rules, forced_effect=None):
-    """Pure CharacterDecision -> EffectPlan. Director intent never mutates world."""
+def _load_action_rules():
+    value = json.loads(ACTION_RULES_PATH.read_text())
+    if value.get("schema_version") != 1:
+        raise ValueError("Unsupported action_rules schema")
+    return value
+
+
+ACTION_RULES = _load_action_rules()
+KNOWN_WORLD_LOCATIONS = tuple(ACTION_RULES["locations"])
+
+
+def legacy_location(state):
+    """Temporary pre-cutover location hint. It never proves physical movement."""
     scene_id = state.get("scene_id")
-    if scene_id not in rules["scenes"]:
-        raise ValueError("Неизвестная сцена")
+    if scene_id == "laboratory.workstation":
+        return "laboratory"
+    return "hallway"
+
+
+def observation_ref(observation, state):
+    if isinstance(observation, dict) and observation.get("location_id") in KNOWN_WORLD_LOCATIONS:
+        return {
+            "source": "world",
+            "world_epoch": observation.get("world_epoch"),
+            "observed_tick": observation.get("observed_tick"),
+            "location_id": observation["location_id"],
+        }
+    return {
+        "source": "legacy_vn_hint",
+        "world_epoch": None,
+        "observed_tick": None,
+        "location_id": legacy_location(state),
+    }
+
+
+def validate_action_proposal(value, *, allowed_source=None):
+    required = {
+        "proposal_id", "source", "action_type", "target_id",
+        "rationale", "observation_ref", "scope",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("Неверная структура CharacterActionProposal")
+    if not isinstance(value["proposal_id"], str) or not value["proposal_id"]:
+        raise ValueError("proposal_id обязателен")
+    if value["source"] not in {"director_request", "self_initiated"}:
+        raise ValueError("Неизвестный источник CharacterActionProposal")
+    if allowed_source and value["source"] != allowed_source:
+        raise ValueError("Источник CharacterActionProposal не разрешён")
+    if value["action_type"] not in {"navigate", "approach"}:
+        raise ValueError("Неизвестный тип CharacterActionProposal")
+    if not isinstance(value["target_id"], str) or not value["target_id"]:
+        raise ValueError("Semantic target обязателен")
+    if not isinstance(value["rationale"], str) or not value["rationale"].strip():
+        raise ValueError("CharacterActionProposal требует rationale")
+    ref = value["observation_ref"]
+    if not isinstance(ref, dict) or set(ref) != {
+        "source", "world_epoch", "observed_tick", "location_id",
+    }:
+        raise ValueError("Неверная ссылка на наблюдение")
+    if ref["location_id"] not in KNOWN_WORLD_LOCATIONS:
+        raise ValueError("CharacterActionProposal ссылается на неизвестную location")
+    scope = value["scope"]
+    if not isinstance(scope, dict) or set(scope) != {"capability", "target_id"}:
+        raise ValueError("Неверный action scope")
+    if scope["capability"] != value["action_type"] or scope["target_id"] != value["target_id"]:
+        raise ValueError("Action scope не совпадает с semantic target")
+    allowed_targets = set(
+        ACTION_RULES["actions"].get(value["action_type"], {}).get("targets", [])
+    )
+    if value["target_id"] not in allowed_targets:
+        raise ValueError("Semantic target не разрешён action_rules")
+    return copy.deepcopy(value)
+
+
+def _proposal(event, state, action_type, target_id, observation, rationale):
+    value = {
+        "proposal_id": f"proposal.{event['id']}",
+        "source": "director_request",
+        "action_type": action_type,
+        "target_id": target_id,
+        "rationale": rationale,
+        "observation_ref": observation_ref(observation, state),
+        "scope": {"capability": action_type, "target_id": target_id},
+    }
+    return validate_action_proposal(value, allowed_source="director_request")
+
+
+def build_director_action_proposal(state, event, decision, observation=None):
+    """Translate an accepted Director request into a semantic proposal, never a movement fact."""
+    if decision["disposition"] != "accept":
+        return None
+    current = observation_ref(observation, state)["location_id"]
+    intent_id = event["intent_id"]
+    policy = ACTION_RULES["director_intents"].get(intent_id)
+    if policy is None:
+        return None
+    selected = policy.get(f"when_location_{current}", policy["default"])
+    rationale = (
+        "Директорская просьба принята; физический результат должен быть подтверждён "
+        "semantic action lifecycle."
+    )
+    return _proposal(
+        event, state, selected["action_type"], selected["target_id"],
+        observation, rationale,
+    )
+
+
+def plan_effects(
+    state, event, decision, social_delta, rules, forced_effect=None,
+    *, observation=None, self_proposal=None,
+):
+    """Pure CharacterDecision -> state effects + approved semantic action proposal."""
+    if state.get("scene_id") not in rules["scenes"]:
+        raise ValueError("Неизвестная legacy VN scene")
     intent_id = event["intent_id"]
     if intent_id not in rules["intents"]:
         raise ValueError("Неизвестное намерение Директора")
 
-    world = [{"type": "social", "delta": copy.deepcopy(social_delta)}]
-    external = []
+    effects = [{"type": "social", "delta": copy.deepcopy(social_delta)}]
+    actions = []
 
     if forced_effect:
-        world.append(_world_action(forced_effect, rules))
-    elif intent_id == "talk" or decision["disposition"] != "accept":
-        world.append(_world_action("converse", rules))
-    elif intent_id == "request_rest":
-        world.append(_world_action("rest", rules))
-    elif intent_id == "request_sleep":
-        world.append(_world_action("sleep", rules))
-    elif intent_id == "request_lab_work":
-        workstation = "laboratory.workstation"
-        if scene_id != workstation:
-            transition = _transition(rules, scene_id, workstation)
-            world.append({"type": "move", "from": scene_id, "to": workstation,
-                          "minutes": transition["minutes"]})
-        world.append(_world_action("lab_work", rules))
-        external.append({"type": "laboratory_step"})
-    elif intent_id == "request_leave_lab":
-        transition = _transition(rules, scene_id, "hallway")
-        world.append({"type": "move", "from": scene_id, "to": "hallway",
-                      "minutes": transition["minutes"]})
+        effects.append(_world_action(forced_effect, rules))
+    elif intent_id == "request_rest" and decision["disposition"] == "accept":
+        effects.append(_world_action("rest", rules))
+    elif intent_id == "request_sleep" and decision["disposition"] == "accept":
+        effects.append(_world_action("sleep", rules))
     else:
-        raise ValueError("Для намерения не задан план эффектов")
+        # Conversation time/resource changes are character-state effects only.
+        effects.append(_world_action("converse", rules))
 
-    duration = sum(effect.get("minutes", 0) for effect in world)
-    return {"world_effects": world, "external_effects": external, "duration": duration}
+    director_proposal = build_director_action_proposal(
+        state, event, decision, observation
+    )
+    if director_proposal is not None:
+        actions.append(director_proposal)
+
+    if self_proposal is not None:
+        proposal = validate_action_proposal(
+            self_proposal, allowed_source="self_initiated"
+        )
+        if director_proposal is not None:
+            raise ValueError("Один ход не может запускать две physical action")
+        actions.append(proposal)
+
+    duration = sum(effect.get("minutes", 0) for effect in effects)
+    return {"state_effects": effects, "actions": actions, "duration": duration}
 
 
-def reduce_world(state, event, decision, effect_plan, rules, fingerprint, category):
-    """Pure WorldReducer. This is the only function that changes scene/time/stats."""
+def reduce_character_state(
+    state, event, decision, effect_plan, rules, fingerprint, category
+):
+    """Pure reducer for social/resource/narrative state. It never moves the body."""
     if state["rules_hash"] != rules["hash"]:
         raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
     if state.get("scene_id") not in rules["scenes"]:
-        raise ValueError("Неизвестная сцена")
+        raise ValueError("Неизвестная legacy VN scene")
     if not isinstance(effect_plan, dict) or set(effect_plan) != {
-            "world_effects", "external_effects", "duration"}:
+        "state_effects", "actions", "duration",
+    }:
         raise ValueError("Неверный EffectPlan")
 
     after = copy.deepcopy(state)
     applied = []
     elapsed = 0
-    saw_lab_work = False
-
-    for effect in effect_plan["world_effects"]:
+    for effect in effect_plan["state_effects"]:
         kind = effect.get("type")
         if kind == "social":
             delta = effect.get("delta")
@@ -243,59 +347,57 @@ def reduce_world(state, event, decision, effect_plan, rules, fingerprint, catego
                 if not number(value, -20, 20):
                     raise ValueError("Неверное изменение social stat")
                 after["stats"][name] = clamp(after["stats"][name] + value)
-        elif kind == "move":
-            if effect.get("from") != after["scene_id"]:
-                raise ValueError("Move начинается не из текущей сцены")
-            transition = _transition(rules, after["scene_id"], effect.get("to"))
-            if effect.get("minutes") != transition["minutes"]:
-                raise ValueError("Неверная длительность перехода")
-            after["scene_id"] = effect["to"]
-            after["minutes"] += transition["minutes"]
-            elapsed += transition["minutes"]
-        elif kind in rules["world_actions"]:
+        elif kind in {"converse", "rest", "sleep"}:
             config = rules["world_actions"][kind]
             if effect.get("minutes") != config["minutes"]:
-                raise ValueError("Неверная длительность world effect")
-            required = config.get("required_scene")
-            if required and after["scene_id"] != required:
-                raise ValueError(f"{kind} недоступен в сцене {after['scene_id']}")
+                raise ValueError("Неверная длительность state effect")
             old_fatigue = after["stats"]["fatigue"]
             after["stats"]["fatigue"] = clamp(old_fatigue + config["fatigue"])
-            strain = 2 if kind == "lab_work" and old_fatigue >= 70 else 0
-            after["stats"]["health"] = clamp(after["stats"]["health"] + config["health"] - strain)
+            after["stats"]["health"] = clamp(
+                after["stats"]["health"] + config["health"]
+            )
             if kind in ("rest", "sleep"):
                 factor = 0.15 if kind == "rest" else 0.5
                 after["stats"]["mood"] = clamp(
-                    after["stats"]["mood"] + (55 - after["stats"]["mood"]) * factor)
+                    after["stats"]["mood"]
+                    + (55 - after["stats"]["mood"]) * factor
+                )
             after["minutes"] += config["minutes"]
             elapsed += config["minutes"]
-            saw_lab_work = saw_lab_work or kind == "lab_work"
         else:
-            raise ValueError(f"Неизвестный world effect: {kind}")
+            raise ValueError(f"Неверный character-state effect: {kind}")
         applied.append(copy.deepcopy(effect))
 
     if elapsed != effect_plan["duration"]:
-        raise ValueError("EffectPlan duration не совпадает с эффектами")
-    for effect in effect_plan["external_effects"]:
-        if effect != {"type": "laboratory_step"}:
-            raise ValueError("Неизвестный внешний effect")
-        if not saw_lab_work or after["scene_id"] != "laboratory.workstation":
-            raise ValueError("Лабораторный внешний effect не подкреплён world effect")
+        raise ValueError("EffectPlan duration не совпадает с state effects")
+    for proposal in effect_plan["actions"]:
+        validate_action_proposal(proposal)
 
     after["revision"] += 1
     after["last_decision"] = copy.deepcopy(decision)
     recent = state["recent_events"][-8:]
-    after["recent_events"] = (recent + [{"fingerprint": fingerprint, "category": category}])[-8:]
+    after["recent_events"] = (
+        recent + [{"fingerprint": fingerprint, "category": category}]
+    )[-8:]
     after["memories"] = (state["memories"] + [{
         "event_id": event["id"],
         "director": event["text"],
         "intent_id": event["intent_id"],
         "decision": copy.deepcopy(decision),
-        "world_effects": copy.deepcopy(effect_plan["world_effects"]),
-        "external_effects": copy.deepcopy(effect_plan["external_effects"]),
+        "state_effects": copy.deepcopy(effect_plan["state_effects"]),
+        "action_proposals": copy.deepcopy(effect_plan["actions"]),
+        "action_results": [],
     }])[-24:]
-    return after, {"applied": applied, "elapsed": elapsed,
-                   "scene_before": state["scene_id"], "scene_after": after["scene_id"]}
+    return after, {
+        "applied": applied,
+        "elapsed": elapsed,
+        "legacy_scene_id": state["scene_id"],
+        "physical_movement_applied": False,
+    }
+
+
+# Compatibility name for callers from earlier patches. It no longer owns world movement.
+reduce_world = reduce_character_state
 
 
 def decide_turn(state, event, heart, head, rules):
@@ -303,61 +405,96 @@ def decide_turn(state, event, heart, head, rules):
     if state["rules_hash"] != rules["hash"]:
         raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
     if state.get("scene_id") not in rules["scenes"]:
-        raise ValueError("Неизвестная сцена")
+        raise ValueError("Неизвестная legacy VN scene")
     if event.get("intent_id") not in rules["intents"]:
         raise ValueError("Неизвестное намерение Директора")
     heart = validate_report(heart, event, state, "heart")
     head = validate_report(head, event, state, "head")
     social_delta, projected, fingerprint, category, novelty = _social_assessment(
-        state, event, heart, head, rules)
+        state, event, heart, head, rules
+    )
     decision, selected = _select_decision(projected, event, heart, head, rules)
-    return decision, {**selected, "social_delta": social_delta, "fingerprint": fingerprint,
-                      "category": category, "novelty": novelty}
+    return decision, {
+        **selected,
+        "social_delta": social_delta,
+        "fingerprint": fingerprint,
+        "category": category,
+        "novelty": novelty,
+    }
 
 
-def build_effect_plan(state, event, decision, context, rules):
-    """Pure EffectPlanner."""
-    return plan_effects(state, event, decision, context["social_delta"], rules,
-                        context["forced_effect"])
+def build_effect_plan(
+    state, event, decision, context, rules, *, observation=None, self_proposal=None
+):
+    """Pure EffectPlanner: character state is separate from semantic physical action."""
+    return plan_effects(
+        state, event, decision, context["social_delta"], rules,
+        context["forced_effect"], observation=observation,
+        self_proposal=self_proposal,
+    )
 
 
 def apply_effect_plan(state, event, decision, effect_plan, context, rules):
-    """Pure WorldReducer entrypoint."""
-    return reduce_world(state, event, decision, effect_plan, rules,
-                        context["fingerprint"], context["category"])
+    """Pure CharacterStateReducer entrypoint; never changes physical location."""
+    return reduce_character_state(
+        state, event, decision, effect_plan, rules,
+        context["fingerprint"], context["category"],
+    )
 
 
 def build_contract(event, after, decision, effect_plan, context, rules):
     return {
-        "event_id": event["id"], "revision": after["revision"], "intent_id": event["intent_id"],
-        "decision": copy.deepcopy(decision), "anchor": ANCHORS[decision["disposition"]],
-        "effect_plan": copy.deepcopy(effect_plan), "minutes": effect_plan["duration"],
-        "scene_id": after["scene_id"], "stats": copy.deepcopy(after["stats"]),
+        "event_id": event["id"],
+        "revision": after["revision"],
+        "intent_id": event["intent_id"],
+        "decision": copy.deepcopy(decision),
+        "anchor": ANCHORS[decision["disposition"]],
+        "effect_plan": copy.deepcopy(effect_plan),
+        "minutes": effect_plan["duration"],
+        "legacy_scene_id": after["scene_id"],
+        "stats": copy.deepcopy(after["stats"]),
         "conflict": context["conflict"],
-        "delivery": {"tone": decision["tone"],
-                     "warmth": round((after["stats"]["affection"] + after["stats"]["mood"]) / 2),
-                     "shyness": rules["character"]["traits"]["shyness"],
-                     "tiredness": after["stats"]["fatigue"]},
+        "delivery": {
+            "tone": decision["tone"],
+            "warmth": round(
+                (after["stats"]["affection"] + after["stats"]["mood"]) / 2
+            ),
+            "shyness": rules["character"]["traits"]["shyness"],
+            "tiredness": after["stats"]["fatigue"],
+        },
         "forced_reason": context["forced_reason"],
     }
 
 
-def calculation_audit(decision, effect_plan, context, world_audit):
-    return {"heart_weight": context["heart_weight"], "novelty": context["novelty"],
-            "social_delta": copy.deepcopy(context["social_delta"]),
-            "utilities": copy.deepcopy(context["utilities"]),
-            "decision": copy.deepcopy(decision), "effect_plan": copy.deepcopy(effect_plan),
-            "world": copy.deepcopy(world_audit), "forced_reason": context["forced_reason"],
-            "conflict": context["conflict"]}
+def calculation_audit(decision, effect_plan, context, state_audit):
+    return {
+        "heart_weight": context["heart_weight"],
+        "novelty": context["novelty"],
+        "social_delta": copy.deepcopy(context["social_delta"]),
+        "utilities": copy.deepcopy(context["utilities"]),
+        "decision": copy.deepcopy(decision),
+        "effect_plan": copy.deepcopy(effect_plan),
+        "character_state": copy.deepcopy(state_audit),
+        "forced_reason": context["forced_reason"],
+        "conflict": context["conflict"],
+    }
 
 
-def reduce_turn(state, event, heart, head, rules):
-    """Compatibility pure orchestration; Runtime executes these stages explicitly."""
+def reduce_turn(state, event, heart, head, rules, *, observation=None, self_proposal=None):
+    """Compatibility pure orchestration used by deterministic unit tests."""
     decision, context = decide_turn(state, event, heart, head, rules)
-    effect_plan = build_effect_plan(state, event, decision, context, rules)
-    after, world_audit = apply_effect_plan(state, event, decision, effect_plan, context, rules)
+    effect_plan = build_effect_plan(
+        state, event, decision, context, rules,
+        observation=observation, self_proposal=self_proposal,
+    )
+    after, state_audit = apply_effect_plan(
+        state, event, decision, effect_plan, context, rules
+    )
     contract = build_contract(event, after, decision, effect_plan, context, rules)
-    return after, contract, calculation_audit(decision, effect_plan, context, world_audit)
+    return after, contract, calculation_audit(
+        decision, effect_plan, context, state_audit
+    )
+
 
 def validate_draft(value, contract):
     required = {"event_id", "disposition", "text"}

@@ -124,8 +124,10 @@ class Application:
         self.frames = frames or FrameHub()
 
     def snapshot(self):
+        self.runtime.poll_actions()
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
+        world_observation = self.store.latest_world_observation()
         running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
         graphics = self.graphics.snapshot(state)
         self.frames.publish(graphics["frame"])
@@ -141,9 +143,11 @@ class Application:
             state, self.rules, busy=running is not None,
             stage=running["stage"] if running else None,
             frame_ref=frame_ref, presentation_mode="vn_dialogue",
+            world_observation=world_observation,
         )
         return {
             "view": view, "history": history, "dialogue": self.store.dialogue(),
+            "actions": self.store.active_actions(),
             "graphics": graphics, "character": self.rules["character"],
             "model": self.backend.model, "token": self.token,
             "initial_prompt": self.prompt,
@@ -235,7 +239,7 @@ def handler_for(app):
                     "assessments": result.get("assessments"),
                     "calculations": result.get("calculations"),
                     "contract": result.get("contract"), "before": result.get("before"),
-                    "after": result.get("after"), "external": result.get("external"),
+                    "after": result.get("after"), "actions": result.get("actions"),
                     "narration_facts": result.get("narration_facts"),
                     "checks": [{"review": a.get("review"), "rejected": a.get("rejected")}
                                for a in result.get("draft_attempts", [])]})
@@ -255,7 +259,9 @@ def handler_for(app):
                 if not 0 < length <= 20000:
                     raise ValueError("Сообщение слишком большое")
                 body = json.loads(self.rfile.read(length))
-                allowed = available_intent_ids(app.store.state(), app.rules)
+                allowed = available_intent_ids(
+                    app.store.state(), app.rules, app.store.latest_world_observation()
+                )
                 event = normalize_turn_body(body, app.rules, allowed)
                 turn = app.runtime.submit(event)
                 self.send(202, public_turn(turn))
@@ -322,7 +328,7 @@ def main():
         logger.write(f"OpenCode: healthy; model={backend.model}")
         try:
             mcps = backend.request("GET", "/mcp") or {}
-            for name in ("game_v1", "gamelab_v1"):
+            for name in ("game_v1", "gamelab_v1", "navigation_v1"):
                 status = (mcps.get(name) or {}).get("status", "missing")
                 level = "INFO" if status == "connected" else "WARN"
                 logger.write(f"MCP {name}: {status}", level)

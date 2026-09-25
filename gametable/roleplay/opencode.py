@@ -23,6 +23,16 @@ READ_ONLY_LAB_TOOLS = (
     "gamelab_v1_health", "gamelab_v1_describe",
 )
 
+NAVIGATION_TOOLS = (
+    "navigation_v1_describe",
+    "navigation_v1_observe",
+    "navigation_v1_locations",
+    "navigation_v1_navigate",
+    "navigation_v1_approach",
+    "navigation_v1_action_status",
+    "navigation_v1_action_cancel",
+)
+
 class BackendError(RuntimeError):
     pass
 
@@ -77,9 +87,18 @@ class OpenCode:
             return {"providerID": provider, "modelID": model}
         raise BackendError("Модель не задана. Укажи --model provider/model; автоматическая замена провайдера запрещена.")
 
-    def create(self, title, agent="yuki", parent=None, lab=False, lab_tools=None):
+    def create(
+        self, title, agent="yuki", parent=None, lab=False, lab_tools=None,
+        allowed_tools=None,
+    ):
         permissions = [{"permission": "*", "pattern": "*", "action": "deny"}]
-        allowed = tuple(lab_tools) if lab_tools is not None else (LAB_TOOLS if lab else ())
+        if allowed_tools is not None and (lab or lab_tools is not None):
+            raise ValueError("allowed_tools cannot be combined with legacy lab scope")
+        allowed = (
+            tuple(allowed_tools) if allowed_tools is not None
+            else tuple(lab_tools) if lab_tools is not None
+            else LAB_TOOLS if lab else ()
+        )
         permissions.extend({"permission": tool, "pattern": "*", "action": "allow"} for tool in allowed)
         body = {"title": title, "agent": agent, "permission": permissions}
         if parent:
@@ -91,8 +110,12 @@ class OpenCode:
             self.sessions.add(sid)
         return sid
 
-    def complete(self, parent, agent, prompt, lab=False, lab_tools=None):
-        sid = self.create("GameTable " + agent, agent, parent, lab, lab_tools)
+    def complete(
+        self, parent, agent, prompt, lab=False, lab_tools=None, allowed_tools=None
+    ):
+        sid = self.create(
+            "GameTable " + agent, agent, parent, lab, lab_tools, allowed_tools
+        )
         model = self.model.split("/", 1)
         body = {"agent": agent, "model": {"providerID": model[0], "modelID": model[1]},
                 "parts": [{"type": "text", "text": prompt}]}
@@ -117,7 +140,7 @@ class OpenCode:
         if not text.strip():
             raise BackendError("OpenCode вернул пустой ответ")
         trace = []
-        if lab or lab_tools is not None:
+        if lab or lab_tools is not None or allowed_tools is not None:
             messages = self.request("GET", f"/session/{sid}/message")
             for msg in messages:
                 for part in msg.get("parts", []):

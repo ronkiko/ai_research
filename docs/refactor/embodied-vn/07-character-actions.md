@@ -2,6 +2,10 @@
 
 Зависимости: [05](05-navigation.md), [06](06-graphics.md).
 Коммит: `Connect character decisions to embodied world actions`. Цель: A1, A3, A6, A8.
+
+Статус: **реализовано**. GameTable больше не создаёт physical move через VN
+reducer. Semantic action lifecycle подключён аддитивно; полный process/MCP/data
+cutover остаётся этапом 09.
 Исходные места: `gametable/roleplay/{engine,runtime,external,prompts,store,view}.py`.
 
 ## Изменение authority
@@ -73,3 +77,33 @@ Review проверяет просьбу без выдуманного согл�
 недоступны у обычных голосов; navigation доступна вне laboratory.
 Обновить AGENTS/DESK/rules/prompts: старое «только WorldReducer меняет scene_id»
 после этого коммита недопустимо как действующий контракт.
+
+## Реализованный результат этапа 07
+
+`EffectPlan` теперь содержит `state_effects` и `actions`. Прямой VN
+`move`, присваивание physical location и автоматический `lab_work` удалены
+из активного reducer. `scene_id` сохранён только как pre-cutover compatibility
+поле и не меняется новым CharacterStateReducer.
+
+Добавлен `CharacterActionProposal` с source/action_type/target/rationale,
+observation_ref и exact scope. Policy находится в
+`gametable/roleplay/action_rules.json`. Director request создаёт proposal
+только после accept; self-initiated proposal имеет отдельный tool-less Brain
+валидатор и внутренний bounded-scheduler hook.
+
+`ActionExecutor` проверяет target/scope server-side и вызывает канонический
+`world.navigation.NavigationService`, который сам владеет actor binding.
+Ни entity/embodiment, ни coordinate/actuator поля из proposal не принимаются.
+OpenCode получил отдельный NAVIGATION_TOOLS permission scope, но обычные
+Heart/Head/Narrator/Review остаются deny-all.
+
+SQLite хранит action_outbox отдельно от turn publish. Наблюдённые status/world
+facts попадают в дедуплицированный bounded world_inbox. Crash между approval и
+наблюдённым dispatch outcome даёт uncertain, а не автоматический повтор.
+
+Navigation start не держит dialogue turn до arrival. Narrator получает persisted
+start/status и обязан различать queued/approaching и arrived. Последующий status
+poll не откатывается при ошибке Narrator и не создаёт LLM turn на каждый tick.
+
+До cutover 09 default graphics source по-прежнему честно помечен
+`legacy_vn_compat`; это не используется как доказательство movement.

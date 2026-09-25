@@ -5,6 +5,7 @@ export const EVENT_TYPES = [
   'state.changed',
   'turn.completed',
   'turn.failed',
+  'action.updated',
 ];
 
 export function connectEvents({onEvent, onOpen, onError}) {

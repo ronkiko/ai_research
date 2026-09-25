@@ -12,8 +12,9 @@ import unittest
 
 from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_state, load_rules,
                                      plan_effects, reduce_turn, reduce_world,
-                                     validate_draft, validate_report)
-from gametable.roleplay.opencode import (LAB_TOOLS, READ_ONLY_LAB_TOOLS,
+                                     validate_action_proposal, validate_draft, validate_report)
+from gametable.roleplay.external import ActionExecutor, ActionScopeError
+from gametable.roleplay.opencode import (LAB_TOOLS, NAVIGATION_TOOLS, READ_ONLY_LAB_TOOLS,
                                          BackendError, OpenCode)
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
@@ -95,9 +96,9 @@ class RulesTests(unittest.TestCase):
         for r in (self.heart, self.head): r["scores"]["accept"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"]["disposition"], "decline")
-        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["state_effects"]],
                          ["social", "rest"])
-        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(contract["effect_plan"]["actions"], [])
         self.assertEqual(after["scene_id"], "hallway")
         self.assertEqual(after["stats"]["fatigue"], 72)
 
@@ -118,9 +119,9 @@ class RulesTests(unittest.TestCase):
             r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
             r["scores"]["accept"] = 1
         _, contract, _ = self.run_turn()
-        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["state_effects"]],
                          ["social", "converse"])
-        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(contract["effect_plan"]["actions"], [])
         self.assertNotEqual(contract["intent_id"], "request_lab_work")
 
     def test_repeated_praise_has_diminishing_effect_and_caps(self):
@@ -158,30 +159,33 @@ class RulesTests(unittest.TestCase):
             r["scores"]["decline"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"], {"disposition": "decline", "tone": "firm"})
-        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["state_effects"]],
                          ["social", "converse"])
-        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(contract["effect_plan"]["actions"], [])
         self.assertEqual(after["scene_id"], "hallway")
 
     def test_fresh_scene_is_hallway(self):
         self.assertEqual(self.state["scene_id"], "hallway")
         self.assertNotIn("location", self.state)
 
-    def test_accepted_lab_request_moves_then_works(self):
+    def test_accepted_lab_request_proposes_navigation_but_does_not_move_state(self):
         self.event["intent_id"] = "request_lab_work"
         for r in (self.heart, self.head):
             r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
             r["scores"]["accept"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"]["disposition"], "accept")
-        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
-                         ["social", "move", "lab_work"])
-        self.assertEqual(contract["effect_plan"]["external_effects"],
-                         [{"type": "laboratory_step"}])
-        self.assertEqual(contract["minutes"], 22)
-        self.assertEqual(after["scene_id"], "laboratory.workstation")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["state_effects"]],
+                         ["social", "converse"])
+        actions = contract["effect_plan"]["actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["action_type"], "navigate")
+        self.assertEqual(actions[0]["target_id"], "laboratory")
+        self.assertEqual(actions[0]["source"], "director_request")
+        self.assertEqual(contract["minutes"], 2)
+        self.assertEqual(after["scene_id"], "hallway")
 
-    def test_clarified_lab_request_does_not_move(self):
+    def test_clarified_lab_request_does_not_propose_action(self):
         self.event["intent_id"] = "request_lab_work"
         for r in (self.heart, self.head):
             r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
@@ -189,40 +193,34 @@ class RulesTests(unittest.TestCase):
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"]["disposition"], "clarify")
         self.assertEqual(after["scene_id"], "hallway")
-        self.assertFalse(any(e["type"] == "move"
-                             for e in contract["effect_plan"]["world_effects"]))
-        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(contract["effect_plan"]["actions"], [])
 
-    def test_laboratory_has_normal_return_transition(self):
-        self.event["intent_id"] = "request_lab_work"
-        for r in (self.heart, self.head):
-            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
-            r["scores"]["accept"] = 1
-        in_lab, _, _ = self.run_turn()
-
+    def test_physical_observation_routes_return_without_mutating_legacy_scene(self):
         leave = event("turn-0002", "Пойдём обратно в коридор", "request_leave_lab")
-        h = report("heart", leave, in_lab, "accept")
-        d = report("head", leave, in_lab, "accept")
-        back, contract, _ = self.run_turn(in_lab, leave, h, d)
-        self.assertEqual(back["scene_id"], "hallway")
-        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
-                         ["social", "move"])
-        self.assertEqual(contract["minutes"], 2)
+        state = copy.deepcopy(self.state)
+        h = report("heart", leave, state, "accept")
+        d = report("head", leave, state, "accept")
+        observation = {
+            "world_epoch": "epoch.1", "observed_tick": 42,
+            "location_id": "laboratory",
+        }
+        after, contract, _ = reduce_turn(
+            state, leave, h, d, self.rules, observation=observation
+        )
+        self.assertEqual(after["scene_id"], "hallway")
+        action = contract["effect_plan"]["actions"][0]
+        self.assertEqual(action["target_id"], "hallway")
+        self.assertEqual(action["observation_ref"]["location_id"], "laboratory")
 
-    def test_invalid_transition_and_work_without_workstation_are_rejected(self):
-        leave = event("turn-0002", "Выйдем", "request_leave_lab")
+    def test_move_or_lab_work_cannot_be_forged_into_character_state_reducer(self):
         decision = {"disposition": "accept", "tone": "neutral"}
-        with self.assertRaises(ValueError):
-            plan_effects(self.state, leave, decision,
-                         {"mood": 0, "affection": 0, "trust": 0}, self.rules)
-
         forged = {
-            "world_effects": [
+            "state_effects": [
                 {"type": "social", "delta": {"mood": 0, "affection": 0, "trust": 0}},
-                {"type": "lab_work", "minutes": 20},
+                {"type": "move", "minutes": 2},
             ],
-            "external_effects": [{"type": "laboratory_step"}],
-            "duration": 20,
+            "actions": [],
+            "duration": 2,
         }
         with self.assertRaises(ValueError):
             reduce_world(self.state, self.event, decision, forged, self.rules,
@@ -247,6 +245,64 @@ class RulesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_turn(e=bad)
 
+class FakeActions:
+    def __init__(self, status="queued"):
+        self.status = status
+        self.started = []
+        self.polled = []
+
+    def start(self, proposal, request_id):
+        self.started.append((copy.deepcopy(proposal), request_id))
+        return {
+            "proposal": copy.deepcopy(proposal),
+            "request_id": request_id,
+            "status": self.status,
+            "uncertain": self.status == "uncertain",
+            "action_id": "nav.test.1",
+            "result": {
+                "action_id": "nav.test.1",
+                "request_id": request_id,
+                "status": self.status,
+            },
+        }
+
+    def poll(self, action_id):
+        self.polled.append(action_id)
+        return {
+            "action_id": action_id,
+            "status": self.status,
+            "uncertain": self.status == "uncertain",
+            "result": {
+                "action_id": action_id,
+                "status": self.status,
+                "freshness": {"same_epoch": True, "age_ticks": 0},
+                "current_observation": {
+                    "world_epoch": "epoch.test",
+                    "observed_tick": 12,
+                    "location_id": "hallway",
+                    "physical": {"x": 10.0, "vx": 0.0, "effort": 0.0},
+                },
+            },
+        }
+
+
+class FakeNavigation:
+    def __init__(self):
+        self.calls = []
+    def navigate(self, target, request_id):
+        self.calls.append(("navigate", target, request_id))
+        return {"action_id": "nav.1", "request_id": request_id, "status": "queued"}
+    def approach(self, target, request_id):
+        self.calls.append(("approach", target, request_id))
+        return {"action_id": "nav.2", "request_id": request_id, "status": "queued"}
+    def action_status(self, action_id):
+        return {"action_id": action_id, "status": "arrived",
+                "current_observation": {"world_epoch": "e", "observed_tick": 2,
+                                        "location_id": "laboratory",
+                                        "physical": {"x": 500.0, "vx": 0.0, "effort": 0.0}}}
+    def close(self): pass
+
+
 class FakeBackend:
     model = "test/fake"
     def __init__(self, e, state, reject=False, fail_voice=False, disposition=None):
@@ -259,7 +315,7 @@ class FakeBackend:
 
     def create(self, title): return "ses_parent"
     def close_sessions(self): pass
-    def complete(self, parent, agent, prompt, lab=False):
+    def complete(self, parent, agent, prompt, lab=False, **kwargs):
         self.calls.append((agent, prompt, lab))
         if "MODE: APPRAISAL" in prompt:
             self.barrier.wait()  # Proves both calls were dispatched independently.
@@ -288,15 +344,16 @@ class RuntimeTests(unittest.TestCase):
     def tearDown(self):
         self.store.close(); self.temp.cleanup()
 
-    def run_runtime(self, **kwargs):
+    def run_runtime(self, action_status="queued", **kwargs):
         backend = FakeBackend(self.event, self.store.state(), **kwargs)
-        runtime = Runtime(self.store, backend, self.rules)
+        actions = FakeActions(action_status)
+        runtime = Runtime(self.store, backend, self.rules, actions=actions)
         self.store.begin(self.event)
         runtime.run(self.event)
-        return backend, self.store.get(self.event["id"])
+        return backend, actions, self.store.get(self.event["id"])
 
     def test_commit_is_persistent_idempotent_and_auditable(self):
-        backend, turn = self.run_runtime()
+        backend, actions, turn = self.run_runtime()
         self.assertEqual(turn["status"], "done", turn.get("error"))
         self.assertEqual(self.store.state()["revision"], 1)
         self.assertFalse(self.store.begin(self.event))
@@ -309,13 +366,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.state()["revision"], 1)
 
     def test_failed_head_cannot_be_invented_by_parent(self):
-        _, turn = self.run_runtime(fail_voice=True)
+        _, _, turn = self.run_runtime(fail_voice=True)
         self.assertEqual(turn["status"], "failed")
         self.assertEqual(self.store.state()["revision"], 0)
         self.assertNotIn("reply", public_turn(turn))
 
     def test_semantic_rejection_has_fixed_fallback_and_no_leaked_draft(self):
-        backend, turn = self.run_runtime(reject=True)
+        backend, actions, turn = self.run_runtime(reject=True)
         self.assertTrue(turn["result"]["reply"]["fallback"])
         self.assertEqual(turn["result"]["reply"]["text"], "")
         self.assertEqual(len(turn["result"]["draft_attempts"]), 2)
@@ -326,27 +383,32 @@ class RuntimeTests(unittest.TestCase):
         self.store.progress(self.event["id"], "Проверка", {"draft": "unreviewed"})
         self.assertNotIn("unreviewed", json.dumps(public_turn(self.store.get(self.event["id"]))))
 
-    def test_lab_requires_explicit_mode_and_cannot_write_social_state(self):
+    def test_accepted_lab_request_starts_navigation_without_claiming_arrival(self):
         self.event["intent_id"] = "request_lab_work"
-        backend, turn = self.run_runtime()
-        self.assertEqual(backend.lab_calls, 1)
+        backend, actions, turn = self.run_runtime()
+        self.assertEqual(turn["status"], "done", turn.get("error"))
         self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "accept")
-        self.assertEqual(turn["result"]["after"]["scene_id"], "laboratory.workstation")
-        self.assertEqual(turn["result"]["contract"]["effect_plan"]["external_effects"],
-                         [{"type": "laboratory_step"}])
-        for name in LAB_TOOLS:
-            self.assertFalse(any(s in name for s in ("relationship", "volition", "duality", "executive")))
+        self.assertEqual(turn["result"]["after"]["scene_id"], "hallway")
+        self.assertEqual(len(actions.started), 1)
+        proposal, request_id = actions.started[0]
+        self.assertEqual(proposal["action_type"], "navigate")
+        self.assertEqual(proposal["target_id"], "laboratory")
+        self.assertTrue(request_id.startswith("action.proposal."))
+        self.assertEqual(turn["result"]["actions"]["results"][0]["status"], "queued")
+        self.assertNotEqual(turn["result"]["actions"]["results"][0]["status"], "arrived")
+        self.assertEqual(backend.lab_calls, 0)
 
-    def test_declined_lab_request_never_calls_mcp(self):
+    def test_declined_lab_request_never_starts_body_action(self):
         self.event["intent_id"] = "request_lab_work"
-        backend, turn = self.run_runtime(disposition="decline")
+        backend, actions, turn = self.run_runtime(disposition="decline")
         self.assertEqual(turn["status"], "done", turn.get("error"))
         self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "decline")
-        self.assertEqual(turn["result"]["contract"]["effect_plan"]["external_effects"], [])
+        self.assertEqual(turn["result"]["contract"]["effect_plan"]["actions"], [])
+        self.assertEqual(actions.started, [])
         self.assertEqual(backend.lab_calls, 0)
 
     def test_heart_and_head_receive_the_same_frozen_packet(self):
-        backend, turn = self.run_runtime()
+        backend, actions, turn = self.run_runtime()
         self.assertEqual(turn["status"], "done")
         appraisal_prompts = [prompt for _, prompt, _ in backend.calls if "MODE: APPRAISAL" in prompt]
         self.assertEqual(len(appraisal_prompts), 2)
@@ -371,6 +433,73 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.store.begin(event("turn-0002"))
         bad = self.store.state(); bad["revision"] = 5
         with self.assertRaises(ValueError): self.store.finish(self.event["id"], bad, bad, {})
+
+
+class CharacterActionTests(unittest.TestCase):
+    def test_self_initiated_navigation_is_validated_and_server_scoped(self):
+        proposal = {
+            "proposal_id": "proposal.self.demo",
+            "source": "self_initiated",
+            "action_type": "navigate",
+            "target_id": "laboratory",
+            "rationale": "Хочу продолжить исследование в лаборатории.",
+            "observation_ref": {
+                "source": "world", "world_epoch": "epoch.1",
+                "observed_tick": 10, "location_id": "hallway",
+            },
+            "scope": {"capability": "navigate", "target_id": "laboratory"},
+        }
+        validated = validate_action_proposal(proposal, allowed_source="self_initiated")
+        nav = FakeNavigation()
+        executor = ActionExecutor(navigation_factory=lambda: nav)
+        result = executor.start(validated, "action.self.demo")
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(nav.calls, [("navigate", "laboratory", "action.self.demo")])
+
+        forged = copy.deepcopy(proposal)
+        forged["scope"]["target_id"] = "training/flat_run"
+        with self.assertRaises((ValueError, ActionScopeError)):
+            executor.start(forged, "action.self.forged")
+        self.assertEqual(len(nav.calls), 1)
+
+    def test_action_outbox_persists_independently_from_turn_publish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rules = load_rules()
+            store = Store(Path(directory) / "save.sqlite3", rules)
+            proposal = {
+                "proposal_id": "proposal.turn-persist",
+                "source": "director_request",
+                "action_type": "navigate",
+                "target_id": "laboratory",
+                "rationale": "accepted request",
+                "observation_ref": {
+                    "source": "legacy_vn_hint", "world_epoch": None,
+                    "observed_tick": None, "location_id": "hallway",
+                },
+                "scope": {"capability": "navigate", "target_id": "laboratory"},
+            }
+            record = store.reserve_action("turn-persist", proposal)
+            self.assertTrue(record["created"])
+            store.record_action_result(proposal["proposal_id"], {
+                "status": "queued", "uncertain": False, "action_id": "nav.persist",
+                "result": {"action_id": "nav.persist", "status": "queued"},
+            })
+            persisted = store.action(proposal["proposal_id"])
+            self.assertEqual(persisted["status"], "queued")
+            self.assertEqual(persisted["action_id"], "nav.persist")
+            store.close()
+
+    def test_ordinary_voice_is_deny_all_but_navigation_scope_can_be_explicit(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        backend.request = Mock(return_value={"id": "ses"})
+        backend.create("voice", parent="parent")
+        ordinary = backend.request.call_args.args[2]["permission"]
+        self.assertEqual(ordinary, [{"permission": "*", "pattern": "*", "action": "deny"}])
+        backend.create("nav", parent="parent", allowed_tools=NAVIGATION_TOOLS)
+        scoped = backend.request.call_args.args[2]["permission"]
+        self.assertEqual(scoped[0], {"permission": "*", "pattern": "*", "action": "deny"})
+        self.assertEqual({x["permission"] for x in scoped[1:]}, set(NAVIGATION_TOOLS))
+        self.assertNotIn("gamelab_v1_training_start", {x["permission"] for x in scoped[1:]})
 
 
 class TransportTests(unittest.TestCase):
@@ -638,6 +767,7 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn('"gameclient/v1/clients/mcp.py"', workflow)
         self.assertIn('"gamelab/mcp.py"', workflow)
         self.assertIn('"graphics/**"', workflow)
+        self.assertIn('"world/navigation.py"', workflow)
 
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)
