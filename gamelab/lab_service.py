@@ -70,15 +70,27 @@ class Laboratory:
         self._model_error = None
         return True
 
+    def _fresh_spine_preflight(self) -> tuple[str | None, str | None]:
+        try:
+            _, package = build_spine_policy(DEFAULT_MOTOR_ID, seed=1)
+        except Exception as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+        return package.motor_id, None
+
     def model_info(self) -> dict[str, Any]:
         path = checkpoint_path()
+        selected_motor_id, training_preflight_error = self._fresh_spine_preflight()
+        trainable = selected_motor_id is not None
         if not self.ensure_model():
             motors = list_motor_packages()
             return {
                 "checkpoint_ready": False,
                 "checkpoint": path.name,
                 "checkpoint_error": self._model_error,
-                "trainable": any(item.get("status") == "certified" for item in motors),
+                "trainable": trainable,
+                "training_motor_selector": DEFAULT_MOTOR_ID,
+                "selected_motor_id": selected_motor_id,
+                "training_preflight_error": training_preflight_error,
                 "goal_interface": "target_x",
                 "motor_interface": "built_motor_instance",
                 "episodes_trained": 0,
@@ -89,7 +101,10 @@ class Laboratory:
         return {
             "checkpoint_ready": True,
             "checkpoint": path.name,
-            "trainable": True,
+            "trainable": trainable,
+            "training_motor_selector": DEFAULT_MOTOR_ID,
+            "selected_motor_id": selected_motor_id,
+            "training_preflight_error": training_preflight_error,
             "goal_interface": "target_x",
             "motor_interface": "built_motor_instance",
             "motor_id": package.motor_id,

@@ -47,15 +47,24 @@ async def main_async() -> None:
                 and item.get("certified") is True
                 and item.get("brain_ready") is True
             ]
-            if not certified or payload.get("trainable") is not True:
+            selected_motor_id = payload.get("selected_motor_id")
+            preflight_error = payload.get("training_preflight_error")
+            if (
+                not certified
+                or payload.get("trainable") is not True
+                or not isinstance(selected_motor_id, str)
+                or not selected_motor_id
+                or preflight_error is not None
+            ):
                 raise RuntimeError(
-                    "GameLab is not ready for Yuki: no compatible certified Motor. "
-                    "Run ./gamelab/op/gamelab.sh train motor before the trial. "
+                    "GameLab is not ready for Yuki fresh Spine training. "
+                    "The default 'best' Motor must resolve and load into a fresh Spine policy. "
                     f"model_info={payload}"
                 )
             print(
                 "PASS Yuki GameLab readiness "
                 f"certified_motors={len(certified)} "
+                f"selected_motor={selected_motor_id} "
                 f"checkpoint_ready={bool(payload.get('checkpoint_ready'))}"
             )
 

@@ -68,6 +68,14 @@ class BrainExecutiveTests(unittest.TestCase):
         state = self.executive.strategy_begin(**args, new_evidence="network latency fixed")
         self.assertNotIn("STRATEGY_RELAPSE", state["alerts"])
 
+    def test_information_director_signal_is_valid(self):
+        self.begin()
+        state = self.executive.director_signal(
+            kind="information",
+            text="Director reported a GameLab system error.",
+        )
+        self.assertEqual(state["director_signals"][-1]["kind"], "information")
+
     def test_plateau_and_help_are_surface_signals_not_actions(self):
         self.begin(plateau_minutes=1)
         self.executive.director_signal(kind="offer_help", text="Ask me for one hint")
