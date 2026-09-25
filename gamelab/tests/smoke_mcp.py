@@ -666,6 +666,24 @@ async def run_flow(
                 },
             )
             payloads.append(ended_strategy)
+
+            information = await tool(
+                session,
+                "executive_director_signal",
+                {
+                    "kind": "information",
+                    "text": (
+                        "Director reports a GameLab system issue affecting Motor "
+                        "and model availability."
+                    ),
+                },
+            )
+            payloads.append(information)
+            if information.get("phase") not in {"orientation", "search", "verification", "deadline"}:
+                raise AssertionError(
+                    f"information Director signal did not preserve active Executive: {information}"
+                )
+
             executive_summary = await tool(
                 session,
                 "executive_finish",
