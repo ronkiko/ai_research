@@ -44,8 +44,8 @@ Job: queued → approaching → transfer_pending → continuing → arrived;
 Маршрут имеет общий tick-domain deadline и ограничение числа переходов.
 Status возвращает observed_tick и freshness; старый status не выдаётся за текущий.
 
-Controller доводит тело до portal volume; затем physics проверяет и выполняет
-transfer. Новый goal начинается после receipt целевой зоны. Request повторно
+Controller доводит тело до portal volume; physics автоматически выполняет
+transfer при касании, без ↑ и без предварительной остановки. Новый goal начинается после receipt целевой зоны. Request повторно
 не создаёт новый маршрут. World журналирует каждый внешний command до отправки.
 После timeout транспорта query по request/action ID восстанавливает исход;
 повторно отправлять можно лишь с server-side idempotency, никогда с новым ID.

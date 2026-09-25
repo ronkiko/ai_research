@@ -18,15 +18,15 @@
 | --- | --- |
 | A1: одно тело | Один binding/entity во всех трёх зонах, browser frames и physics receipts |
 | A2: явный режим управления | Learned trace CNN/Motor → Host без fallback; scripted_escort отдельно, без updates/сертификатов |
-| A3: подтверждённые переходы | Подход к portal, отказ издалека, один transfer receipt, arrived после применения |
+| A3: подтверждённые переходы | Касание/swept crossing portal без ↑, один receipt, отсутствие обратного bounce на spawn |
 | A4: независимые часы | Мир движется во время медленной LLM/review/render; ticks/overruns измерены |
 | A5: обучение через MCP | LLM вызывает Motor+Spine start/status/cancel/verify/select без filesystem tools |
 | A6: доступ | Navigation из hallway, learning на курсе, deny-all голосам, scope enforcement |
 | A7: честные результаты | Frozen held-out VERIFY, валидные сертификаты, setup/reset исключены из успеха |
 | A8: восстановление | Fault injection в dispatch/apply/publish; нет дублей, uncertain не скрыт |
-| A9: graphics | Видеозапись/скриншоты и frame/world IDs, stale/reconnect, правильная поза и тело |
+| A9: graphics | Два X-слоя/1001 ячейка, placeholders, VN-реплики снизу, frame IDs и stale/reconnect |
 | A10: cutover | Чистый запуск без GameLab, migration artifacts, новый CI/operator workflow |
-| A11: день и сопровождение | EXIT placement после сна, ручной Director actor, browser/GUI escort, hashes весов неизменны |
+| A11: день и сопровождение | P@0/D@1, просьба Юки после 300 сек, согласие → world_control, сон/EXIT, неизменные веса |
 
 ## Сквозные сценарии
 
@@ -53,10 +53,16 @@
    после transfer. Сверить UI с world snapshot. Пройти миграцию копии старого save,
    повтор миграции и документированный rollback без потери исходных артефактов.
 
-7. **Первый день и сопровождение.** У EXIT находятся обе entity; человек предлагает
-   проводить Юки. Проверить accept/decline, browser/GUI manual input и scripted
-   следование до laboratory без начального навыка. Проверить дистанцию/обгон,
-   остановку, разворот, portal handoff и потерю лидера по сценариям патча 10.
+7. **Первый день и сопровождение.** P@0/D@1 у EXIT. Сообщение человека из sidebar
+   и проверенный ответ Юки по очереди отображаются в VN-окне снизу. После 300
+   активных секунд Юки завершает реплику просьбой проводить её; проверить silence,
+   LLM latency, restart и две вкладки. Отказ/неясный ответ сохраняют modal VN;
+   явное согласие + start receipt закрывают его и разрешают browser/GUI input.
+   Пройти scripted escort без навыка: дистанция, разворот, остановка, потеря лидера,
+   автоматический teleport при касании на скорости, без ↑ и без bounce обратно.
+   Проверить неизменность terrain при движении, 1001 индекс, две entity в одной
+   display cell, заглушки без PNG; новые реплики во время движения не останавливают
+   escort и не крадут manual lease, стрелки при наборе текста не двигают actor.
 8. **Следующий день.** После завершённого сна из любой зоны один placement Юки
    у EXIT, новый day_id, прежняя память/веса; Директор не телепортируется вслед.
    Проверить crash/retry, rest и reload. Escort не обучает сеть, optional recorder

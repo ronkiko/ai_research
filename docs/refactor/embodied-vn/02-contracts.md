@@ -31,6 +31,13 @@
 в laboratory. Представление `laboratory.workstation` старой VN мигрируется в
 `zone=laboratory + interaction=workstation`, а не сохраняется второй zone_id.
 
+Уточнение первой карты: flat X ∈ [0,1000], EXIT/Юки x=0, Director actor x=1,
+lab portal x=500. У portal явный `activation=on_touch`, arrival/rearm policy;
+↑ не является ни входом, ни осью Y. Terrain/occupancy — две одномерные проекции
+с 1001 индексом, не физическая база и не ограничение на количество entity в cell.
+Добавить message_id/speaker_id/dialogue sequence в UI-контракт; tutorial flow
+хранит offer_id, accumulated intro time и presentation/control mode (см. 10).
+
 ## Владение и причинность
 
 Физический GameServer владеет положением/zone membership/epoch/tick. World хранит
