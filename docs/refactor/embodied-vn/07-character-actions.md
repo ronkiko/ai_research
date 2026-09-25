@@ -1,4 +1,4 @@
-# 07 / 10 — Юки принимает решения и действует своим телом
+# 07 / 11 — Юки принимает решения и действует своим телом
 
 Зависимости: [05](05-navigation.md), [06](06-graphics.md).
 Коммит: `Connect character decisions to embodied world actions`. Цель: A1, A3, A6, A8.

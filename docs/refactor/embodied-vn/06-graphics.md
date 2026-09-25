@@ -1,4 +1,4 @@
-# 06 / 10 — Графический движок и отображение тела в shell
+# 06 / 11 — Графический движок и отображение тела в shell
 
 Зависимости: [02](02-contracts.md), [03](03-physics.md), [05](05-navigation.md).
 Коммит: `Project physical world into a dedicated graphics pipeline`. Цель: A1, A4, A9.

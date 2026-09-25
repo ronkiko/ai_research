@@ -1,4 +1,4 @@
-# 08 / 10 — Обучение через MCP, курс и ноутбук
+# 08 / 11 — Обучение через MCP, курс и ноутбук
 
 Зависимости: [04](04-organism.md)–[07](07-character-actions.md).
 Коммит: `Expose embodied Motor and Spine learning through MCP`. Цель: A5–A8.

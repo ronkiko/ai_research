@@ -1,4 +1,4 @@
-# 04 / 10 — Перенос обучаемого организма из GameLab
+# 04 / 11 — Перенос обучаемого организма из GameLab
 
 Зависимости: [02](02-contracts.md), [03](03-physics.md).
 Коммит: `Extract organism control and learning core from GameLab`. Цель: A2, A4, A5, A7.
@@ -34,6 +34,10 @@ Body controller — долгоживущий worker, независимый от
 Семантическая цель world преобразуется в цель внутри карты через один адаптер:
 он выбирает позицию объекта/portal approach region, но не скорости, торможение,
 усилие или trajectory. Unsupported body/map contract → blocked, без fallback.
+
+Описанный здесь learned controller сохраняет эти ограничения после патча
+[10](10-director-escort.md). Его временный scripted_escort — отдельный адаптер
+с явно выбранным режимом, не fallback executor и не участник TRAIN/VERIFY/RUN.
 
 ## Артефакты и обучение
 

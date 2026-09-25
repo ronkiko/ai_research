@@ -1,4 +1,4 @@
-# 09 / 10 — Миграция, единый запуск и вывод GameLab из эксплуатации
+# 09 / 11 — Миграция, единый запуск и вывод GameLab из эксплуатации
 
 Зависимости: [02](02-contracts.md)–[08](08-learning.md).
 Коммит: `Switch VN to embodied runtime and retire GameLab service`. Цель: A8, A10.

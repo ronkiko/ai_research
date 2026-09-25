@@ -1,4 +1,4 @@
-# 05 / 10 — Навигационный MCP и жизненный цикл действия
+# 05 / 11 — Навигационный MCP и жизненный цикл действия
 
 Зависимости: [02](02-contracts.md)–[04](04-organism.md).
 Коммит: `Add semantic navigation MCP over learned body control`. Цель: A1–A4, A6, A8.
@@ -26,6 +26,10 @@ Embodiment/authority привязаны server-side к сессии инстру
 В describe различать возможные capabilities сервиса и разрешённые текущему actor.
 
 ## Реализация маршрута
+
+Этот этап задаёт learned navigation. Дополнительный `escort_start` и временный
+scripted controller вводятся отдельно в [10](10-director-escort.md); они используют
+тот же action lifecycle, но не включаются автоматически при неудаче navigate.
 
 Минимальный граф: hallway ⇄ laboratory ⇄ training/flat_run. Route planner
 выбирает следующий portal и approach target; физический путь внутри комнаты

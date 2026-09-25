@@ -1,4 +1,4 @@
-# 03 / 10 — GameServer как физический мир
+# 03 / 11 — GameServer как физический мир
 
 Зависимость: [02](02-contracts.md). Коммит: `Separate physics kernel and support world zones`.
 Цель: A1, A3, A4, A8. Основные исходные места: `gameserver/v1/zone/model.py`,
@@ -42,6 +42,10 @@ Retention/compaction ledger не должны позволять повтори�
 Отдельный privileged `setup/reset` используется лишь подготовкой обучения:
 подтверждённая область курса, причина, episode ID и отдельный receipt. Он не
 доступен как navigation shortcut и не считается learned success.
+
+В патче [10](10-director-escort.md) добавляется ещё один явно типизированный
+placement: начало дня после сна. Он имеет отдельные полномочия и idempotency,
+не расширяет обычный navigation API до произвольной телепортации.
 
 ## Host
 
