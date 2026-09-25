@@ -71,7 +71,14 @@ class Application:
 
     def snapshot(self):
         history = [public_turn(t) for t in self.store.history()]
-        return {"state": self.store.state(), "history": history, "character": self.rules["character"],
+        state = self.store.state()
+        # Patch 2 compatibility only: the current prototype renderer still expects
+        # hallway/laboratory. The authoritative save contains scene_id, not location.
+        browser_state = dict(state)
+        browser_state["location"] = ("laboratory"
+                                     if state["scene_id"] == "laboratory.workstation"
+                                     else "hallway")
+        return {"state": browser_state, "history": history, "character": self.rules["character"],
                 "busy": any(t["status"] == "running" for t in history), "model": self.backend.model,
                 "token": self.token, "initial_prompt": self.prompt}
 

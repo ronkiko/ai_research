@@ -10,7 +10,7 @@ def packet(event, state, rules):
         "event": event,
         "revision": state["revision"],
         "character": rules["character"],
-        "location": state["location"],
+        "scene_id": state["scene_id"],
         "stats": state["stats"],
         "memories": state["memories"],
         "intent": {"id": event["intent_id"], **intent},
@@ -60,8 +60,9 @@ def narration(data, contract, laboratory, correction=""):
 Disposition фиксирован: {contract["decision"]["disposition"]}.
 Tone фиксирован отдельно и задаёт только подачу: {contract["decision"]["tone"]}.
 Не превращай tone в согласие, отказ или физическое действие.
-Исходная локация дана в сцене; итоговая локация и временно спроецированное физическое
-занятие даны в контракте. Не придумывай переход, работу или отдых, которых нет в контракте.
+Исходная scene_id дана в сцене. Итоговая scene_id и утверждённый EffectPlan даны в контракте.
+Описывай только world_effects, которые действительно присутствуют в EffectPlan: не придумывай
+переход, работу, отдых или сон. Director intent сам по себе не является фактом мира.
 Инструментальные успехи допустимы только по приложенным результатам laboratory.
 Можно описать собственный взгляд или жест, но не действия, слова и чувства Директора.
 Не обязана испытывать эмоцию в каждом предложении. Усталость влияет на длину и энергичность.
@@ -97,8 +98,8 @@ def review(data, contract, draft, laboratory):
 
 
 def laboratory_task(data, manuals):
-    return f"""MODE: LABORATORY. Директор дал явную лабораторную просьбу, и runtime уже
-зафиксировал disposition=accept перед выдачей инструментов. Выполни один ограниченный шаг
+    return f"""MODE: LABORATORY. Runtime уже зафиксировал disposition=accept, применил разрешённый
+move/lab_work EffectPlan и только после этого выдал инструменты. Выполни один ограниченный шаг
 по этой просьбе через разрешённые game_v1/gamelab_v1 MCP. Сначала health и describe.
 Если среда не готова, верни честный блокер. Не меняй правила мира, не придумывай Motor
 и успешное обучение. Асинхронный запуск не означает завершение; верни идентификатор

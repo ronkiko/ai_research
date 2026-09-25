@@ -1,4 +1,4 @@
-"""Pure, replayable game rules. Only this module computes state and decisions."""
+"""Pure, replayable decisions, effect planning and world rules."""
 from __future__ import annotations
 
 import copy
@@ -33,7 +33,7 @@ def load_rules():
 def initial_state(rules):
     return {"revision": 0, "rules_version": rules["version"], "rules_hash": rules["hash"],
             "stats": copy.deepcopy(rules["initial_stats"]), "minutes": 9 * 60,
-            "location": rules["initial_location"], "memories": [], "recent_events": [],
+            "scene_id": rules["initial_scene"], "memories": [], "recent_events": [],
             "last_decision": None}
 
 
@@ -49,8 +49,7 @@ def validate_report(report, event, state, role):
     if set(report) != required:
         raise InvalidReport("Неверные поля отчёта")
     if (report["event_id"] != event["id"] or type(report["revision"]) is not int
-            or report["revision"] != state["revision"]
-            or report["role"] != role):
+            or report["revision"] != state["revision"] or report["role"] != role):
         raise InvalidReport("Чужой или устаревший отчёт")
     if report["category"] not in CATEGORIES:
         raise InvalidReport("Неизвестный тип события")
@@ -109,30 +108,7 @@ def _decision_bias(intent_id, stats, traits):
     return bias
 
 
-def _project_activity(intent_id, disposition, forced_activity, rules):
-    """Temporary v1 world projection. Patch 2 replaces this with EffectPlan."""
-    if forced_activity:
-        return forced_activity
-    if disposition == "accept":
-        return rules["intents"][intent_id]["accepted_activity"]
-    return "chat"
-
-
-def reduce_turn(state, event, heart, head, rules):
-    """No I/O, wall clock or random choices. Same inputs -> identical result."""
-    if state["rules_hash"] != rules["hash"]:
-        raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
-    location = state.get("location", rules["initial_location"])
-    if location not in rules["locations"]:
-        raise ValueError("Неизвестная локация")
-    intent_id = event.get("intent_id")
-    if intent_id not in rules["intents"]:
-        raise ValueError("Неизвестное намерение Директора")
-    heart = validate_report(heart, event, state, "heart")
-    head = validate_report(head, event, state, "head")
-    after = copy.deepcopy(state)
-    stats = after["stats"]
-
+def _social_assessment(state, event, heart, head, rules):
     fingerprint = hashlib.sha256(" ".join(event["text"].casefold().split()).encode()).hexdigest()
     category = heart["category"] if heart["category"] == head["category"] else "mixed"
     recent = state["recent_events"][-8:]
@@ -147,87 +123,229 @@ def reduce_turn(state, event, heart, head, rules):
         delta = rules["impact_steps"][name] * novelty * impact
         if name == "affection":
             delta *= 0.5 + rules["character"]["traits"]["attachment"] / 100
-        stats[name] = clamp(stats[name] + delta)
         social_delta[name] = round(delta, 3)
+    projected = copy.deepcopy(state["stats"])
+    for name, delta in social_delta.items():
+        projected[name] = clamp(projected[name] + delta)
+    return social_delta, projected, fingerprint, category, novelty
 
+
+def _select_decision(projected_stats, event, heart, head, rules):
     traits = rules["character"]["traits"]
     weight_h = max(0.25, min(0.75, 0.35 + traits["attachment"] / 500
-                            + (stats["affection"] - 50) / 500 - traits["independence"] / 1000))
-    bias = _decision_bias(intent_id, stats, traits)
+                            + (projected_stats["affection"] - 50) / 500
+                            - traits["independence"] / 1000))
+    bias = _decision_bias(event["intent_id"], projected_stats, traits)
     utilities = {d: round(weight_h * heart["scores"][d] + (1 - weight_h) * head["scores"][d]
                           + bias[d], 5) for d in DISPOSITIONS}
     forced_reason = None
-    forced_activity = None
-    if stats["fatigue"] >= 85 or stats["health"] <= 25:
-        if intent_id in ("request_rest", "request_sleep"):
+    forced_effect = None
+    if projected_stats["fatigue"] >= 85 or projected_stats["health"] <= 25:
+        if event["intent_id"] in ("request_rest", "request_sleep"):
             disposition = "accept"
-            forced_activity = rules["intents"][intent_id]["accepted_activity"]
             forced_reason = "Ресурсный предел совпадает с просьбой об отдыхе"
         else:
             disposition = "decline"
-            forced_activity = "rest"
+            forced_effect = "rest"
             forced_reason = "Ресурсный предел: сначала отдых"
     else:
         disposition = max(DISPOSITIONS, key=lambda d: utilities[d])
-
+    decision = {"disposition": disposition,
+                "tone": _tone_for(projected_stats, disposition, traits)}
     conflict = round(sum(abs(heart["scores"][d] - head["scores"][d])
                          for d in DISPOSITIONS) / len(DISPOSITIONS), 3)
-    tone = _tone_for(stats, disposition, traits)
-    decision = {"disposition": disposition, "tone": tone}
+    return decision, {
+        "heart_weight": weight_h,
+        "utilities": utilities,
+        "forced_reason": forced_reason,
+        "forced_effect": forced_effect,
+        "conflict": conflict,
+    }
 
-    # Compatibility projection only. Patch 2 replaces activities/location mutation
-    # with an explicit EffectPlan + WorldReducer.
-    activity = _project_activity(intent_id, disposition, forced_activity, rules)
-    effect = rules["activities"][activity]
-    old_fatigue = stats["fatigue"]
-    stats["fatigue"] = clamp(stats["fatigue"] + effect["fatigue"])
-    strain = 2 if activity == "lab" and old_fatigue >= 70 else 0
-    stats["health"] = clamp(stats["health"] + effect["health"] - strain)
-    if activity in ("rest", "sleep"):
-        stats["mood"] = clamp(stats["mood"] + (55 - stats["mood"]) * (0.15 if activity == "rest" else 0.5))
-    after["minutes"] += effect["minutes"]
-    if activity == "lab":
-        after["location"] = "laboratory"
+
+def _transition(rules, from_scene, to_scene):
+    matches = [item for item in rules["transitions"]
+               if item["from"] == from_scene and item["to"] == to_scene]
+    if len(matches) != 1:
+        raise ValueError(f"Переход сцены запрещён: {from_scene} -> {to_scene}")
+    return matches[0]
+
+
+def _world_action(name, rules):
+    try:
+        action = rules["world_actions"][name]
+    except KeyError as exc:
+        raise ValueError(f"Неизвестный эффект мира: {name}") from exc
+    return {"type": name, "minutes": action["minutes"]}
+
+
+def plan_effects(state, event, decision, social_delta, rules, forced_effect=None):
+    """Pure CharacterDecision -> EffectPlan. Director intent never mutates world."""
+    scene_id = state.get("scene_id")
+    if scene_id not in rules["scenes"]:
+        raise ValueError("Неизвестная сцена")
+    intent_id = event["intent_id"]
+    if intent_id not in rules["intents"]:
+        raise ValueError("Неизвестное намерение Директора")
+
+    world = [{"type": "social", "delta": copy.deepcopy(social_delta)}]
+    external = []
+
+    if forced_effect:
+        world.append(_world_action(forced_effect, rules))
+    elif intent_id == "talk" or decision["disposition"] != "accept":
+        world.append(_world_action("converse", rules))
+    elif intent_id == "request_rest":
+        world.append(_world_action("rest", rules))
+    elif intent_id == "request_sleep":
+        world.append(_world_action("sleep", rules))
+    elif intent_id == "request_lab_work":
+        workstation = "laboratory.workstation"
+        if scene_id != workstation:
+            transition = _transition(rules, scene_id, workstation)
+            world.append({"type": "move", "from": scene_id, "to": workstation,
+                          "minutes": transition["minutes"]})
+        world.append(_world_action("lab_work", rules))
+        external.append({"type": "laboratory_step"})
+    elif intent_id == "request_leave_lab":
+        transition = _transition(rules, scene_id, "hallway")
+        world.append({"type": "move", "from": scene_id, "to": "hallway",
+                      "minutes": transition["minutes"]})
     else:
-        after["location"] = location
+        raise ValueError("Для намерения не задан план эффектов")
+
+    duration = sum(effect.get("minutes", 0) for effect in world)
+    return {"world_effects": world, "external_effects": external, "duration": duration}
+
+
+def reduce_world(state, event, decision, effect_plan, rules, fingerprint, category):
+    """Pure WorldReducer. This is the only function that changes scene/time/stats."""
+    if state["rules_hash"] != rules["hash"]:
+        raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
+    if state.get("scene_id") not in rules["scenes"]:
+        raise ValueError("Неизвестная сцена")
+    if not isinstance(effect_plan, dict) or set(effect_plan) != {
+            "world_effects", "external_effects", "duration"}:
+        raise ValueError("Неверный EffectPlan")
+
+    after = copy.deepcopy(state)
+    applied = []
+    elapsed = 0
+    saw_lab_work = False
+
+    for effect in effect_plan["world_effects"]:
+        kind = effect.get("type")
+        if kind == "social":
+            delta = effect.get("delta")
+            if not isinstance(delta, dict) or set(delta) != set(SOCIAL):
+                raise ValueError("Неверный social effect")
+            for name, value in delta.items():
+                if not number(value, -20, 20):
+                    raise ValueError("Неверное изменение social stat")
+                after["stats"][name] = clamp(after["stats"][name] + value)
+        elif kind == "move":
+            if effect.get("from") != after["scene_id"]:
+                raise ValueError("Move начинается не из текущей сцены")
+            transition = _transition(rules, after["scene_id"], effect.get("to"))
+            if effect.get("minutes") != transition["minutes"]:
+                raise ValueError("Неверная длительность перехода")
+            after["scene_id"] = effect["to"]
+            after["minutes"] += transition["minutes"]
+            elapsed += transition["minutes"]
+        elif kind in rules["world_actions"]:
+            config = rules["world_actions"][kind]
+            if effect.get("minutes") != config["minutes"]:
+                raise ValueError("Неверная длительность world effect")
+            required = config.get("required_scene")
+            if required and after["scene_id"] != required:
+                raise ValueError(f"{kind} недоступен в сцене {after['scene_id']}")
+            old_fatigue = after["stats"]["fatigue"]
+            after["stats"]["fatigue"] = clamp(old_fatigue + config["fatigue"])
+            strain = 2 if kind == "lab_work" and old_fatigue >= 70 else 0
+            after["stats"]["health"] = clamp(after["stats"]["health"] + config["health"] - strain)
+            if kind in ("rest", "sleep"):
+                factor = 0.15 if kind == "rest" else 0.5
+                after["stats"]["mood"] = clamp(
+                    after["stats"]["mood"] + (55 - after["stats"]["mood"]) * factor)
+            after["minutes"] += config["minutes"]
+            elapsed += config["minutes"]
+            saw_lab_work = saw_lab_work or kind == "lab_work"
+        else:
+            raise ValueError(f"Неизвестный world effect: {kind}")
+        applied.append(copy.deepcopy(effect))
+
+    if elapsed != effect_plan["duration"]:
+        raise ValueError("EffectPlan duration не совпадает с эффектами")
+    for effect in effect_plan["external_effects"]:
+        if effect != {"type": "laboratory_step"}:
+            raise ValueError("Неизвестный внешний effect")
+        if not saw_lab_work or after["scene_id"] != "laboratory.workstation":
+            raise ValueError("Лабораторный внешний effect не подкреплён world effect")
 
     after["revision"] += 1
     after["last_decision"] = copy.deepcopy(decision)
+    recent = state["recent_events"][-8:]
     after["recent_events"] = (recent + [{"fingerprint": fingerprint, "category": category}])[-8:]
     after["memories"] = (state["memories"] + [{
         "event_id": event["id"],
         "director": event["text"],
-        "intent_id": intent_id,
+        "intent_id": event["intent_id"],
         "decision": copy.deepcopy(decision),
-        "activity": activity,
+        "world_effects": copy.deepcopy(effect_plan["world_effects"]),
+        "external_effects": copy.deepcopy(effect_plan["external_effects"]),
     }])[-24:]
+    return after, {"applied": applied, "elapsed": elapsed,
+                   "scene_before": state["scene_id"], "scene_after": after["scene_id"]}
+
+
+def reduce_turn(state, event, heart, head, rules):
+    """Pure orchestration: appraisal -> decision -> EffectPlan -> WorldReducer."""
+    if state["rules_hash"] != rules["hash"]:
+        raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
+    if state.get("scene_id") not in rules["scenes"]:
+        raise ValueError("Неизвестная сцена")
+    if event.get("intent_id") not in rules["intents"]:
+        raise ValueError("Неизвестное намерение Директора")
+    heart = validate_report(heart, event, state, "heart")
+    head = validate_report(head, event, state, "head")
+
+    social_delta, projected_stats, fingerprint, category, novelty = _social_assessment(
+        state, event, heart, head, rules)
+    decision, decision_audit = _select_decision(projected_stats, event, heart, head, rules)
+    effect_plan = plan_effects(
+        state, event, decision, social_delta, rules, decision_audit["forced_effect"])
+    after, world_audit = reduce_world(
+        state, event, decision, effect_plan, rules, fingerprint, category)
+
     contract = {
         "event_id": event["id"],
         "revision": after["revision"],
-        "intent_id": intent_id,
+        "intent_id": event["intent_id"],
         "decision": decision,
-        "anchor": ANCHORS[disposition],
-        "activity": activity,
-        "minutes": effect["minutes"],
-        "location": after["location"],
-        "stats": copy.deepcopy(stats),
-        "conflict": conflict,
+        "anchor": ANCHORS[decision["disposition"]],
+        "effect_plan": copy.deepcopy(effect_plan),
+        "minutes": effect_plan["duration"],
+        "scene_id": after["scene_id"],
+        "stats": copy.deepcopy(after["stats"]),
+        "conflict": decision_audit["conflict"],
         "delivery": {
-            "tone": tone,
-            "warmth": round((stats["affection"] + stats["mood"]) / 2),
-            "shyness": traits["shyness"],
-            "tiredness": stats["fatigue"],
+            "tone": decision["tone"],
+            "warmth": round((after["stats"]["affection"] + after["stats"]["mood"]) / 2),
+            "shyness": rules["character"]["traits"]["shyness"],
+            "tiredness": after["stats"]["fatigue"],
         },
-        "forced_reason": forced_reason,
+        "forced_reason": decision_audit["forced_reason"],
     }
     audit = {
-        "heart_weight": weight_h,
+        "heart_weight": decision_audit["heart_weight"],
         "novelty": novelty,
         "social_delta": social_delta,
-        "utilities": utilities,
+        "utilities": decision_audit["utilities"],
         "decision": copy.deepcopy(decision),
-        "forced_reason": forced_reason,
-        "conflict": conflict,
+        "effect_plan": copy.deepcopy(effect_plan),
+        "world": world_audit,
+        "forced_reason": decision_audit["forced_reason"],
+        "conflict": decision_audit["conflict"],
     }
     return after, contract, audit
 

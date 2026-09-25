@@ -52,14 +52,15 @@ class Runtime:
             )
             audit.update(after=after, contract=contract, calculations=calculations)
             disposition = contract["decision"]["disposition"]
-            self.log(f"ход {event['id']}: disposition={disposition}; tone={contract['decision']['tone']}"
-                     + ("; MCP разрешён для лабораторного шага" if contract["activity"] == "lab"
-                        else "; MCP отключён"))
-            self.store.progress(event["id"], "Решение принято", audit)
+            external_effects = contract["effect_plan"]["external_effects"]
+            laboratory_effect = any(effect.get("type") == "laboratory_step"
+                                    for effect in external_effects)
+            self.log(f"ход {event['id']}: disposition={disposition}; tone={contract['decision']['tone']}; "
+                     f"scene={before['scene_id']}->{after['scene_id']}"
+                     + ("; MCP разрешён EffectPlan" if laboratory_effect else "; MCP отключён"))
+            self.store.progress(event["id"], "Решение и эффекты приняты", audit)
 
-            # Temporary physical projection until Patch 2 EffectPlan. A laboratory
-            # side effect is possible only after request_lab_work + accept.
-            if contract["activity"] == "lab":
+            if laboratory_effect:
                 self.store.progress(event["id"], "Лаборатория: проверка через MCP", audit)
                 try:
                     audit["laboratory"] = self.backend.complete(
@@ -122,7 +123,7 @@ class Runtime:
             audit["notice"] = ("Не удалось проверить свободную реплику. Показано только решение движка."
                                if text is None else None)
             after["memories"][-1]["yuki"] = {"anchor": contract["anchor"], "text": text or ""}
-            if contract["activity"] == "lab":
+            if laboratory_effect:
                 after["memories"][-1]["laboratory"] = {
                     "report": audit["laboratory"].get("text", "")[:1600],
                     "uncertain": audit["laboratory"].get("uncertain", False),

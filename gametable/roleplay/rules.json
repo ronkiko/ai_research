@@ -1,10 +1,5 @@
 {
-  "version": "vn-3",
-  "initial_location": "hallway",
-  "locations": {
-    "hallway": "Коридор",
-    "laboratory": "Лаборатория"
-  },
+  "version": "vn-4",
   "character": {
     "id": "yuki-vn-1",
     "name": "Юки",
@@ -35,8 +30,57 @@
     "affection": 2,
     "trust": 2
   },
-  "activities": {
-    "chat": {
+  "intents": {
+    "talk": {
+      "kind": "conversation",
+      "accepted_effect": "converse"
+    },
+    "request_lab_work": {
+      "kind": "request",
+      "accepted_effect": "lab_work"
+    },
+    "request_rest": {
+      "kind": "request",
+      "accepted_effect": "rest"
+    },
+    "request_sleep": {
+      "kind": "request",
+      "accepted_effect": "sleep"
+    },
+    "request_leave_lab": {
+      "kind": "request",
+      "accepted_effect": "leave_lab"
+    }
+  },
+  "ui_activity_compat": {
+    "chat": "talk",
+    "lab": "request_lab_work",
+    "rest": "request_rest",
+    "sleep": "request_sleep"
+  },
+  "initial_scene": "hallway",
+  "scenes": {
+    "hallway": {
+      "label": "Коридор"
+    },
+    "laboratory.workstation": {
+      "label": "Лаборатория · рабочее место"
+    }
+  },
+  "transitions": [
+    {
+      "from": "hallway",
+      "to": "laboratory.workstation",
+      "minutes": 2
+    },
+    {
+      "from": "laboratory.workstation",
+      "to": "hallway",
+      "minutes": 2
+    }
+  ],
+  "world_actions": {
+    "converse": {
       "minutes": 2,
       "fatigue": 1,
       "health": 0
@@ -51,34 +95,11 @@
       "fatigue": -80,
       "health": 15
     },
-    "lab": {
+    "lab_work": {
       "minutes": 20,
       "fatigue": 10,
-      "health": 0
+      "health": 0,
+      "required_scene": "laboratory.workstation"
     }
-  },
-  "intents": {
-    "talk": {
-      "kind": "conversation",
-      "accepted_activity": "chat"
-    },
-    "request_lab_work": {
-      "kind": "request",
-      "accepted_activity": "lab"
-    },
-    "request_rest": {
-      "kind": "request",
-      "accepted_activity": "rest"
-    },
-    "request_sleep": {
-      "kind": "request",
-      "accepted_activity": "sleep"
-    }
-  },
-  "ui_activity_compat": {
-    "chat": "talk",
-    "lab": "request_lab_work",
-    "rest": "request_rest",
-    "sleep": "request_sleep"
   }
 }

@@ -11,7 +11,8 @@ import threading
 import unittest
 
 from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_state, load_rules,
-                                     reduce_turn, validate_draft, validate_report)
+                                     plan_effects, reduce_turn, reduce_world,
+                                     validate_draft, validate_report)
 from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
@@ -91,7 +92,10 @@ class RulesTests(unittest.TestCase):
         for r in (self.heart, self.head): r["scores"]["accept"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"]["disposition"], "decline")
-        self.assertEqual(contract["activity"], "rest")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+                         ["social", "rest"])
+        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(after["scene_id"], "hallway")
         self.assertEqual(after["stats"]["fatigue"], 72)
 
     def test_rest_sleep_and_no_wall_clock_progress(self):
@@ -111,7 +115,9 @@ class RulesTests(unittest.TestCase):
             r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
             r["scores"]["accept"] = 1
         _, contract, _ = self.run_turn()
-        self.assertEqual(contract["activity"], "chat")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+                         ["social", "converse"])
+        self.assertEqual(contract["effect_plan"]["external_effects"], [])
         self.assertNotEqual(contract["intent_id"], "request_lab_work")
 
     def test_repeated_praise_has_diminishing_effect_and_caps(self):
@@ -149,8 +155,75 @@ class RulesTests(unittest.TestCase):
             r["scores"]["decline"] = 1
         after, contract, _ = self.run_turn()
         self.assertEqual(contract["decision"], {"disposition": "decline", "tone": "firm"})
-        self.assertEqual(contract["activity"], "chat")
-        self.assertEqual(after["location"], "hallway")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+                         ["social", "converse"])
+        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+        self.assertEqual(after["scene_id"], "hallway")
+
+    def test_fresh_scene_is_hallway(self):
+        self.assertEqual(self.state["scene_id"], "hallway")
+        self.assertNotIn("location", self.state)
+
+    def test_accepted_lab_request_moves_then_works(self):
+        self.event["intent_id"] = "request_lab_work"
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["accept"] = 1
+        after, contract, _ = self.run_turn()
+        self.assertEqual(contract["decision"]["disposition"], "accept")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+                         ["social", "move", "lab_work"])
+        self.assertEqual(contract["effect_plan"]["external_effects"],
+                         [{"type": "laboratory_step"}])
+        self.assertEqual(contract["minutes"], 22)
+        self.assertEqual(after["scene_id"], "laboratory.workstation")
+
+    def test_clarified_lab_request_does_not_move(self):
+        self.event["intent_id"] = "request_lab_work"
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["clarify"] = 1
+        after, contract, _ = self.run_turn()
+        self.assertEqual(contract["decision"]["disposition"], "clarify")
+        self.assertEqual(after["scene_id"], "hallway")
+        self.assertFalse(any(e["type"] == "move"
+                             for e in contract["effect_plan"]["world_effects"]))
+        self.assertEqual(contract["effect_plan"]["external_effects"], [])
+
+    def test_laboratory_has_normal_return_transition(self):
+        self.event["intent_id"] = "request_lab_work"
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(DISPOSITIONS, -1)
+            r["scores"]["accept"] = 1
+        in_lab, _, _ = self.run_turn()
+
+        leave = event("turn-0002", "Пойдём обратно в коридор", "request_leave_lab")
+        h = report("heart", leave, in_lab, "accept")
+        d = report("head", leave, in_lab, "accept")
+        back, contract, _ = self.run_turn(in_lab, leave, h, d)
+        self.assertEqual(back["scene_id"], "hallway")
+        self.assertEqual([e["type"] for e in contract["effect_plan"]["world_effects"]],
+                         ["social", "move"])
+        self.assertEqual(contract["minutes"], 2)
+
+    def test_invalid_transition_and_work_without_workstation_are_rejected(self):
+        leave = event("turn-0002", "Выйдем", "request_leave_lab")
+        decision = {"disposition": "accept", "tone": "neutral"}
+        with self.assertRaises(ValueError):
+            plan_effects(self.state, leave, decision,
+                         {"mood": 0, "affection": 0, "trust": 0}, self.rules)
+
+        forged = {
+            "world_effects": [
+                {"type": "social", "delta": {"mood": 0, "affection": 0, "trust": 0}},
+                {"type": "lab_work", "minutes": 20},
+            ],
+            "external_effects": [{"type": "laboratory_step"}],
+            "duration": 20,
+        }
+        with self.assertRaises(ValueError):
+            reduce_world(self.state, self.event, decision, forged, self.rules,
+                         "fingerprint", "neutral")
 
     def test_tone_is_separate_from_disposition(self):
         for r in (self.heart, self.head):
@@ -255,6 +328,9 @@ class RuntimeTests(unittest.TestCase):
         backend, turn = self.run_runtime()
         self.assertEqual(backend.lab_calls, 1)
         self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "accept")
+        self.assertEqual(turn["result"]["after"]["scene_id"], "laboratory.workstation")
+        self.assertEqual(turn["result"]["contract"]["effect_plan"]["external_effects"],
+                         [{"type": "laboratory_step"}])
         for name in LAB_TOOLS:
             self.assertFalse(any(s in name for s in ("relationship", "volition", "duality", "executive")))
 
@@ -263,7 +339,7 @@ class RuntimeTests(unittest.TestCase):
         backend, turn = self.run_runtime(disposition="decline")
         self.assertEqual(turn["status"], "done", turn.get("error"))
         self.assertEqual(turn["result"]["contract"]["decision"]["disposition"], "decline")
-        self.assertEqual(turn["result"]["contract"]["activity"], "chat")
+        self.assertEqual(turn["result"]["contract"]["effect_plan"]["external_effects"], [])
         self.assertEqual(backend.lab_calls, 0)
 
     def test_heart_and_head_receive_the_same_frozen_packet(self):
@@ -382,6 +458,12 @@ class WebBoundaryTests(unittest.TestCase):
         h = self.handler("/api/state")
         h.do_GET()
         self.assertNotIn("SECRET DRAFT", json.dumps(h.send.call_args.args[1]))
+
+    def test_browser_snapshot_projects_legacy_location_without_owning_world_state(self):
+        snapshot = self.app.snapshot()
+        self.assertEqual(snapshot["state"]["scene_id"], "hallway")
+        self.assertEqual(snapshot["state"]["location"], "hallway")
+        self.assertNotIn("location", self.store.state())
 
     def test_http_compat_activity_is_normalized_to_director_intent(self):
         body = {"id": "turn-0001", "text": "Проверь стенд", "activity": "lab"}
