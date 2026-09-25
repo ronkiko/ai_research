@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const labels = {health:'Здоровье',fatigue:'Усталость',mood:'Настроение',affection:'Симпатия',trust:'Доверие'};
+const locations = {hallway:'КОРИДОР · HALLWAY',laboratory:'ЛАБОРАТОРИЯ · LABORATORY'};
 const colors = {health:'#709988',fatigue:'#b39970',mood:'#8c9dc0',affection:'#bf8796',trust:'#668f9d'};
 let token='', busy=false, lastHistory='', initialized=false, posting=false, pending=null, lastError='';
 function node(tag, text, className) { const el=document.createElement(tag); if(text!==undefined)el.textContent=text; if(className)el.className=className; return el; }
@@ -13,6 +14,7 @@ function renderStats(s) {
   }
   const day=1+Math.floor(s.minutes/1440), hour=Math.floor(s.minutes%1440/60), minute=s.minutes%60;
   $('clock').textContent=`День ${day} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  $('location-label').textContent=locations[s.location]||s.location||'НЕИЗВЕСТНАЯ ЛОКАЦИЯ';
   // Display labels only: no extra hidden relationship-stage mechanics.
   $('relation').textContent=s.stats.affection>=65&&s.stats.trust>=60?'Близость и доверие':s.stats.affection>=65?'Тянется к тебе, но сомневается':s.stats.trust>=60?'Полагается на тебя':s.stats.trust<20?'Осторожность':'Узнаёте друг друга';
   $('scene-label').textContent=s.stats.fatigue>=70?'Нужна передышка':s.stats.mood<35?'Непростой разговор':s.stats.affection>60?'Знакомый голос':'Тихий день';

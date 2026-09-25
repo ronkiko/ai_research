@@ -1,5 +1,10 @@
 {
-  "version": "vn-1",
+  "version": "vn-2",
+  "initial_location": "hallway",
+  "locations": {
+    "hallway": "Коридор",
+    "laboratory": "Лаборатория"
+  },
   "character": {
     "id": "yuki-vn-1",
     "name": "Юки",

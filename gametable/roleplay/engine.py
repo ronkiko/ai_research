@@ -35,7 +35,8 @@ def load_rules():
 def initial_state(rules):
     return {"revision": 0, "rules_version": rules["version"], "rules_hash": rules["hash"],
             "stats": copy.deepcopy(rules["initial_stats"]), "minutes": 9 * 60,
-            "memories": [], "recent_events": [], "last_action": None}
+            "location": rules["initial_location"], "memories": [], "recent_events": [],
+            "last_action": None}
 
 
 def number(value, lo, hi):
@@ -79,6 +80,9 @@ def reduce_turn(state, event, heart, head, rules):
     """No I/O, wall clock or random choices. Same inputs -> identical result."""
     if state["rules_hash"] != rules["hash"]:
         raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
+    location = state.get("location", rules["initial_location"])
+    if location not in rules["locations"]:
+        raise ValueError("Неизвестная локация")
     heart = validate_report(heart, event, state, "heart")
     head = validate_report(head, event, state, "head")
     if event["activity"] not in rules["activities"]:
@@ -136,6 +140,12 @@ def reduce_turn(state, event, heart, head, rules):
     if activity in ("rest", "sleep"):
         stats["mood"] = clamp(stats["mood"] + (55 - stats["mood"]) * (0.15 if activity == "rest" else 0.5))
     after["minutes"] += effect["minutes"]
+    # A laboratory request is the Director's permission to leave the hallway,
+    # sit at Yuki's workstation, and begin the lab step.
+    if event["activity"] == "lab":
+        after["location"] = "laboratory"
+    else:
+        after["location"] = location
     after["revision"] += 1
     after["last_action"] = action
     after["recent_events"] = (recent + [{"fingerprint": fingerprint, "category": category}])[-8:]
@@ -145,6 +155,7 @@ def reduce_turn(state, event, heart, head, rules):
     conflict = round(sum(abs(heart["scores"][a] - head["scores"][a]) for a in ACTIONS) / len(ACTIONS), 3)
     contract = {"event_id": event["id"], "revision": after["revision"], "action": action,
                 "anchor": ANCHORS[action], "activity": activity, "minutes": effect["minutes"],
+                "location": after["location"],
                 "stats": copy.deepcopy(stats), "conflict": conflict,
                 "tone": {"warmth": round((stats["affection"] + stats["mood"]) / 2),
                          "shyness": traits["shyness"], "tiredness": stats["fatigue"]},

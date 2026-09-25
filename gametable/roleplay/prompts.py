@@ -6,7 +6,8 @@ from .engine import ACTIONS, CATEGORIES
 
 def packet(event, state, rules):
     return {"event": event, "revision": state["revision"], "character": rules["character"],
-        "stats": state["stats"], "memories": state["memories"], "actions": ACTIONS}
+        "location": state["location"], "stats": state["stats"],
+        "memories": state["memories"], "actions": ACTIONS}
 
 
 def appraisal(role, data):
