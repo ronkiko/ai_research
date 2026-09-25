@@ -41,6 +41,37 @@ class BrainExecutiveTests(unittest.TestCase):
         self.assertEqual(state["phase"], "orientation")
         self.assertLessEqual(state["time_remaining_seconds"], 10800)
 
+    def test_resume_reloads_active_session_and_current_strategy(self):
+        self.begin()
+        self.executive.strategy_begin(
+            name="precision-control",
+            hypothesis="closed-loop control can meet the tolerance",
+            expected_signal="stable lower error",
+            budget="12 episodes",
+            stop_condition="no improvement",
+            next_if_positive="verify",
+            next_if_negative="inspect evidence",
+        )
+
+        resumed = BrainExecutive(Path(self.temp.name), clock=self.clock)
+        state = resumed.state()
+
+        self.assertEqual(state["status"], "active")
+        self.assertIsNotNone(state["current_strategy"])
+        self.assertEqual(state["current_strategy"]["name"], "precision-control")
+        with self.assertRaisesRegex(ExecutiveError, "already active"):
+            resumed.begin(objective="duplicate", acceptance_criteria="duplicate")
+        with self.assertRaisesRegex(ExecutiveError, "finish the active strategy"):
+            resumed.strategy_begin(
+                name="duplicate-strategy",
+                hypothesis="duplicate",
+                expected_signal="duplicate",
+                budget="duplicate",
+                stop_condition="duplicate",
+                next_if_positive="duplicate",
+                next_if_negative="duplicate",
+            )
+
     def test_failed_strategy_retry_without_evidence_is_visible(self):
         self.begin()
         args = dict(
