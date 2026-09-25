@@ -9,7 +9,9 @@ for file in gametable/web/js/*.js; do
 done
 python3 -m json.tool gametable/opencode.json >/dev/null
 python3 -m json.tool gametable/roleplay/rules.json >/dev/null
-echo "CHECK GameTable runtime"
+echo "CHECK Graphics + GameTable runtime"
+python3 -m compileall -q graphics
+python3 -m unittest discover -s graphics/tests -p 'test_*.py' -v
 python3 -m unittest discover -s gametable/tests -p 'test_*.py' -v
 if [[ "${1:-}" == "--live" ]]; then
   echo "CHECK GameTable live OpenCode (temporary save)"

@@ -81,5 +81,20 @@ export function createDialogue(fetchAudit) {
     initialized = true;
   }
 
-  return {renderHistory, showAudit};
+  function renderPublished(messages) {
+    const panel = $('vn-dialogue');
+    if (!messages?.length) {
+      $('vn-speaker').textContent = 'ЮКИ';
+      $('vn-text').textContent = 'Лаборатория ещё тиха. Поздоровайся — ваша история начинается здесь.';
+      panel.dataset.messageId = '';
+      return;
+    }
+    const message = messages[messages.length - 1];
+    if (panel.dataset.messageId === message.message_id) return;
+    panel.dataset.messageId = message.message_id;
+    $('vn-speaker').textContent = message.speaker_id === 'director' ? 'ДИРЕКТОР' : 'ЮКИ';
+    $('vn-text').textContent = message.text;
+  }
+
+  return {renderHistory, renderPublished, showAudit};
 }

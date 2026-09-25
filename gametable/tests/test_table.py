@@ -472,6 +472,28 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn('"revision":1', frame)
         self.app.runtime.submit.assert_not_called()
 
+    def test_graphics_snapshot_and_dialogue_stream_are_stable(self):
+        first = self.app.snapshot()
+        self.assertEqual(first["graphics"]["frame"]["zone_id"], "hallway")
+        self.assertEqual(len(first["graphics"]["terrain"]["cells"]), 1001)
+        e = event("turn-0099", text="Привет")
+        self.store.begin(e)
+        running = self.app.snapshot()
+        self.assertEqual(running["dialogue"][-1]["speaker_id"], "director")
+        self.assertEqual(running["dialogue"][-1]["message_id"],
+                         "dialogue.turn-0099.director")
+        self.assertEqual(running["dialogue"][-1]["text"], "Привет")
+        again = self.app.snapshot()
+        self.assertEqual([x["message_id"] for x in again["dialogue"]],
+                         [x["message_id"] for x in running["dialogue"]])
+
+    def test_frame_stream_is_local_only_and_separate_from_turn_events(self):
+        h = self.handler("/api/frames?token=forged", host="attacker.example:17880")
+        h.do_GET()
+        self.assertEqual(h.send.call_args.args[0], 403)
+        self.app.runtime.submit.assert_not_called()
+        self.assertIsNot(self.app.frames, self.app.events)
+
     def test_sse_endpoint_is_local_only_and_never_uses_token_query(self):
         h = self.handler("/api/events?token=forged", host="attacker.example:17880")
         h.do_GET()
@@ -499,29 +521,39 @@ class WebBoundaryTests(unittest.TestCase):
     def test_hallway_viewstate_is_server_driven_and_does_not_mutate_state(self):
         before = copy.deepcopy(self.store.state())
         view = project_view(before, self.rules)
-        self.assertEqual(view["scene"]["id"], "hallway")
-        self.assertEqual(view["scene"]["label"], "КОРИДОР · HALLWAY")
+        self.assertNotIn("scene", view)
+        self.assertEqual(view["presentation_mode"], "vn_dialogue")
+        self.assertIsNone(view["frame_ref"])
         self.assertEqual([a["intent_id"] for a in view["affordances"]],
                          ["talk", "request_lab_work", "request_rest", "request_sleep"])
         self.assertNotIn("request_leave_lab", [a["intent_id"] for a in view["affordances"]])
         view["stats"]["trust"] = 999
-        view["scene"]["props"].append("forged")
+        view["affordances"].append({"intent_id": "forged"})
         self.assertEqual(self.store.state(), before)
 
-    def test_laboratory_viewstate_exposes_leave_intent(self):
+    def test_laboratory_viewstate_exposes_leave_intent_without_world_presentation(self):
         state = copy.deepcopy(self.store.state())
         state["scene_id"] = "laboratory.workstation"
         view = project_view(state, self.rules)
         ids = [a["intent_id"] for a in view["affordances"]]
         self.assertIn("request_leave_lab", ids)
-        self.assertEqual(view["scene"]["css_class"], "laboratory")
-        self.assertEqual(view["scene"]["character"]["pose"], "seated_working")
+        self.assertNotIn("scene", view)
+        self.assertNotIn("background", json.dumps(view))
+        self.assertNotIn("pose", json.dumps(view))
 
     def test_snapshot_exposes_viewstate_not_raw_authoritative_state(self):
         snapshot = self.app.snapshot()
         self.assertIn("view", snapshot)
         self.assertNotIn("state", snapshot)
-        self.assertEqual(snapshot["view"]["scene"]["id"], "hallway")
+        self.assertNotIn("scene", snapshot["view"])
+        self.assertIn("graphics", snapshot)
+        self.assertEqual(snapshot["graphics"]["frame"]["zone_id"], "hallway")
+        self.assertFalse(snapshot["graphics"]["frame"]["freshness"]["authoritative"])
+        self.assertEqual(snapshot["graphics"]["frame"]["freshness"]["source"],
+                         "legacy_vn_compat")
+        self.assertEqual(snapshot["view"]["frame_ref"]["frame_id"],
+                         snapshot["graphics"]["frame"]["frame_id"])
+        self.assertIn("dialogue", snapshot)
         dumped = json.dumps(snapshot, ensure_ascii=False)
         self.assertNotIn("rules_hash", dumped)
         self.assertNotIn("recent_events", dumped)
@@ -577,7 +609,10 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertNotIn("setInterval(", scripts)
         self.assertNotIn("request_lab_work", renderer)
         self.assertNotIn("laboratory.workstation", renderer)
-        self.assertIn("view.scene", renderer)
+        self.assertNotIn("view.scene", renderer)
+        frame_renderer = (web / "js" / "frame-renderer.js").read_text()
+        self.assertIn("frame.zone_id", frame_renderer)
+        self.assertNotIn("portal.", frame_renderer)
         self.assertIn("items.map", controls)
         self.assertFalse((web / "app.js").exists())
         self.assertFalse((web / "style.css").exists())
@@ -602,6 +637,7 @@ class WebBoundaryTests(unittest.TestCase):
         workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "gametable.yml").read_text()
         self.assertIn('"gameclient/v1/clients/mcp.py"', workflow)
         self.assertIn('"gamelab/mcp.py"', workflow)
+        self.assertIn('"graphics/**"', workflow)
 
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)

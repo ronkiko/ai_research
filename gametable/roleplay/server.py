@@ -22,6 +22,7 @@ from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
 from .store import Store
 from .view import available_intent_ids, project_view
+from graphics import FrameHub, LegacyVNGraphics, public_asset_catalog
 
 TABLE = Path(__file__).resolve().parents[1]
 DEFAULT_SAVE = TABLE / "runtime/yuki-vn"
@@ -33,6 +34,8 @@ STATIC_FILES = {
     "/css/dialogue.css": ("css/dialogue.css", "text/css; charset=utf-8"),
     "/js/api.js": ("js/api.js", "text/javascript; charset=utf-8"),
     "/js/events.js": ("js/events.js", "text/javascript; charset=utf-8"),
+    "/js/frames.js": ("js/frames.js", "text/javascript; charset=utf-8"),
+    "/js/frame-renderer.js": ("js/frame-renderer.js", "text/javascript; charset=utf-8"),
     "/js/scene-renderer.js": ("js/scene-renderer.js", "text/javascript; charset=utf-8"),
     "/js/dialogue.js": ("js/dialogue.js", "text/javascript; charset=utf-8"),
     "/js/controls.js": ("js/controls.js", "text/javascript; charset=utf-8"),
@@ -109,21 +112,42 @@ def normalize_turn_body(body, rules, allowed_intents=None):
 
 
 class Application:
-    def __init__(self, store, runtime, backend, rules, prompt=None, events=None):
+    def __init__(
+        self, store, runtime, backend, rules, prompt=None, events=None,
+        graphics=None, frames=None,
+    ):
         self.store, self.runtime, self.backend, self.rules = store, runtime, backend, rules
         self.token = secrets.token_urlsafe(32)
         self.prompt = prompt or ""
         self.events = events or EventHub()
+        self.graphics = graphics or LegacyVNGraphics()
+        self.frames = frames or FrameHub()
 
     def snapshot(self):
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
         running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
-        view = project_view(state, self.rules, busy=running is not None,
-                            stage=running["stage"] if running else None)
-        return {"view": view, "history": history, "character": self.rules["character"],
-                "model": self.backend.model, "token": self.token,
-                "initial_prompt": self.prompt}
+        graphics = self.graphics.snapshot(state)
+        self.frames.publish(graphics["frame"])
+        frame = graphics["frame"]
+        frame_ref = {
+            "frame_id": frame["frame_id"],
+            "source_world_epoch": frame["source_world_epoch"],
+            "source_world_tick": frame["source_world_tick"],
+            "source_world_revision": frame["source_world_revision"],
+            "terrain_revision": frame["terrain_revision"],
+        }
+        view = project_view(
+            state, self.rules, busy=running is not None,
+            stage=running["stage"] if running else None,
+            frame_ref=frame_ref, presentation_mode="vn_dialogue",
+        )
+        return {
+            "view": view, "history": history, "dialogue": self.store.dialogue(),
+            "graphics": graphics, "character": self.rules["character"],
+            "model": self.backend.model, "token": self.token,
+            "initial_prompt": self.prompt,
+        }
 
 
 def handler_for(app):
@@ -156,7 +180,7 @@ def handler_for(app):
                        f"localhost:{self.server.server_port}"}
             return host in allowed
 
-        def stream_events(self):
+        def stream_hub(self, hub, retry_ms=1500):
             raw_last = self.headers.get("Last-Event-ID", "0")
             try:
                 last_id = max(0, int(raw_last))
@@ -168,10 +192,10 @@ def handler_for(app):
             self.security_headers()
             self.end_headers()
             try:
-                self.wfile.write(b"retry: 1500\n\n")
+                self.wfile.write(f"retry: {retry_ms}\n\n".encode())
                 self.wfile.flush()
                 while True:
-                    items = app.events.wait(last_id, timeout=10)
+                    items = hub.wait(last_id, timeout=10)
                     if not items:
                         self.wfile.write(b": keepalive\n\n")
                         self.wfile.flush()
@@ -183,6 +207,12 @@ def handler_for(app):
             except (BrokenPipeError, ConnectionResetError):
                 return
 
+        def stream_events(self):
+            return self.stream_hub(app.events)
+
+        def stream_frames(self):
+            return self.stream_hub(app.frames, retry_ms=500)
+
         def do_GET(self):
             if not self.local_request():
                 return self.send(403, {"error": "Local access only"})
@@ -191,6 +221,10 @@ def handler_for(app):
                 return self.send(200, app.snapshot())
             if path == "/api/events":
                 return self.stream_events()
+            if path == "/api/frames":
+                return self.stream_frames()
+            if path == "/api/graphics/assets":
+                return self.send(200, public_asset_catalog())
             if path.startswith("/api/audit/"):
                 event_id = path.rsplit("/", 1)[1]
                 turn = app.store.get(event_id)
@@ -297,9 +331,14 @@ def main():
         manuals = "\n\n".join(
             p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
         events = EventHub()
+        frames = FrameHub()
+        graphics = LegacyVNGraphics()
         runtime = Runtime(store, backend, rules, manuals, log=logger.write,
                           events=events.publish)
-        app = Application(store, runtime, backend, rules, args.prompt, events=events)
+        app = Application(
+            store, runtime, backend, rules, args.prompt,
+            events=events, graphics=graphics, frames=frames,
+        )
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
         logger.write(f"Модель: {backend.model}")

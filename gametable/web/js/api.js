@@ -24,3 +24,7 @@ export function submitTurn(turn) {
 export function fetchAudit(id) {
   return request('/api/audit/' + encodeURIComponent(id));
 }
+
+export function fetchAssetCatalog() {
+  return request('/api/graphics/assets');
+}

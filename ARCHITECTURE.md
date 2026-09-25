@@ -2,11 +2,11 @@
 
 Уточнение цели: [план из 11 коммитов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
-навигации и обучения через MCP. Этапы 02–05 уже зафиксировали identity/action/world
-contracts, multi-zone physics, канонический learned-body core и `navigation_v1`
-с durable semantic actions. GameLab пока остаётся compatibility facade, а
-текущая VN ещё не переключена на новый стек: публичный cutover остаётся отдельным
-этапом.
+навигации и обучения через MCP. Этапы 02–06 уже зафиксировали identity/action/world
+contracts, multi-zone physics, канонический learned-body core, `navigation_v1`
+и независимый graphics RenderFrame pipeline. GameTable shell уже потребляет
+кадры этого формата, но до cutover 09 default source остаётся явно
+non-authoritative legacy compatibility adapter.
 
 Цель — один продолжающийся персонаж-исследователь, который общается с Директором,
 накапливает опыт и учится управлять физическим аватаром. Визуальная новелла и
@@ -59,7 +59,8 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 | Координата, скорость, усилие, epoch/tick | GameServer physics world (legacy Zone до cutover; embodied_world_v1 целевой runtime) | Текст модели не является физическим действием |
 | Сессия игрока, последовательность ввода | GameClient Host | Host не определяет успех обучения |
 | Веса, сертификаты, controller/jobs и verification artifacts | Organism (GameLab facade до cutover) | Рассказ об успехе не заменяет VERIFY |
-| Представление сцены и кнопки | ViewProjector → browser shell | Браузер не выбирает последствия |
+| Физическое представление | Graphics RenderFrame → browser shell | Renderer не выбирает zone/transfer и не является sensor authority |
+| Social UI и кнопки | GameTable ViewProjector | ViewProjector не владеет координатой/позой тела |
 | Архив наблюдений и исследовательские выводы | director | Архив не подмешивается в память автоматически |
 
 120/60/10 Гц — номинальные частоты в домене world ticks. Пропущенные слоты

@@ -1,0 +1,34 @@
+name: Graphics checks
+on:
+  push:
+    paths:
+      - "graphics/**"
+      - "world/catalog.py"
+      - "world/maps/**"
+      - "gametable/roleplay/view.py"
+      - "gametable/roleplay/server.py"
+      - "gametable/roleplay/store.py"
+      - "gametable/web/**"
+      - "docs/refactor/embodied-vn/06-graphics.md"
+      - ".github/workflows/graphics.yml"
+  pull_request:
+    paths:
+      - "graphics/**"
+      - "world/catalog.py"
+      - "world/maps/**"
+      - "gametable/roleplay/view.py"
+      - "gametable/roleplay/server.py"
+      - "gametable/roleplay/store.py"
+      - "gametable/web/**"
+      - "docs/refactor/embodied-vn/06-graphics.md"
+      - ".github/workflows/graphics.yml"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Graphics projection contract
+        run: ./graphics/op/check.sh

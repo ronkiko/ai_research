@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - "gametable/**"
+      - "graphics/**"
+      - "world/catalog.py"
+      - "world/maps/**"
       - "gamelab/mcp.py"
       - "gamelab/lab_service.py"
       - "gamelab/tests/smoke_mcp_startup.py"
@@ -20,6 +23,9 @@ on:
   pull_request:
     paths:
       - "gametable/**"
+      - "graphics/**"
+      - "world/catalog.py"
+      - "world/maps/**"
       - "gamelab/mcp.py"
       - "gamelab/lab_service.py"
       - "gamelab/tests/smoke_mcp_startup.py"

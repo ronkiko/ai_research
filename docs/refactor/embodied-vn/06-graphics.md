@@ -3,6 +3,11 @@
 Зависимости: [02](02-contracts.md), [03](03-physics.md), [05](05-navigation.md).
 Коммит: `Project physical world into a dedicated graphics pipeline`. Цель: A1, A4, A9.
 
+Статус: **реализовано аддитивно**. Канонический projector уже принимает
+authoritative world snapshots; текущая VN до cutover 09 подаёт в тот же shell
+явно помеченный `legacy_vn_compat` кадр, который не считается физическим
+доказательством.
+
 ## Разделение ответственности
 
 Создать `graphics/`: scene projector, asset catalog, camera/layout, presentation
@@ -115,3 +120,38 @@ requestAnimationFrame. Не отправлять кадры в LLM и turn journ
 Согласие переводит в world_control; отказ/reconnect не включает ввод самовольно.
 Проверить reorder/stale frames, две вкладки и bounded queues. Измерить throughput;
 renderer не влияет на физические исходы и не является сенсором контроллера.
+
+## Реализованный результат этапа 06
+
+Создан отдельный `graphics/`: RenderFrame contract, asset catalog, flat camera,
+static terrain projection, sparse entity projector и bounded latest-frame hub.
+RenderFrame всегда содержит source world epoch/tick/revision и ровно одну zone.
+Физический projector не читает GameTable, OpenCode или Organism и не может
+передавать actuator commands.
+
+Hallway static layer имеет 1001 cell: `@` в 0, portal `%` в 500 и boundary
+`!` в 1000. Occupancy строится отдельно и хранит все entity IDs в cell, поэтому
+P@0/D@1 и два actor в одной cell не стирают terrain/друг друга. Browser получает
+исходный float X и нормализованный screen_x; quantized cell остаётся диагностикой.
+
+Asset IDs и placeholder palette/glyph находятся в graphics asset catalog.
+Browser canvas не знает map/portal IDs и не вычисляет переходы. Seated pose
+возникает только из подтверждённого workstation interaction record, а не из
+одного location ID.
+
+Frame transport отделён от turn/dialogue SSE: `/api/frames` coalesces до latest
+frame, имеет bounded queue и отбрасывает same-epoch reorder. Новый epoch
+принимается только со ссылкой на previous epoch; поздний старый frame не
+перематывает экран. Bootstrap `/api/state` содержит текущий frame+terrain.
+
+GameTable ViewProjector больше не формирует world scene/background/pose/props:
+он оставляет social stats, controls, presentation_mode и frame_ref. Публикуемые
+реплики дополнительно имеют SQLite dialogue stream со стабильными message_id,
+speaker_id и sequence. Принятый Director message появляется при begin;
+проверенная реплика Юки — только при finish. Sidebar history сохранён.
+
+До этапа 09 default GameTable использует `LegacyVNGraphics`: это только
+визуальная совместимость со старым save. Кадр помечен
+`authoritative=false/source=legacy_vn_compat`, поэтому он не доказывает
+реальное движение. Старые presentation поля rules пока оставлены инертными,
+чтобы этап 06 сам по себе не делал несовместимым существующий VN save.

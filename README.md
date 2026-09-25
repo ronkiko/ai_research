@@ -1,11 +1,12 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–05 уже добавили identity/action/world contracts, multi-zone physics,
-канонический learned-body core и semantic `navigation_v1` с durable action
-lifecycle. GameLab пока остаётся compatibility facade, а GameTable ещё не
-переключён на новый MCP. Следующий этап — world-driven graphics из
-[06-graphics.md](docs/refactor/embodied-vn/06-graphics.md).
+Этапы 02–06 уже добавили identity/action/world contracts, multi-zone physics,
+канонический learned-body core, semantic `navigation_v1` и отдельный
+world-driven `graphics/` RenderFrame pipeline. GameTable shell уже умеет
+рисовать этот контракт, но до cutover использует честно помеченный legacy
+compatibility source. Следующий этап — character actions из
+[07-character-actions.md](docs/refactor/embodied-vn/07-character-actions.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом
@@ -72,6 +73,7 @@ ai_research/
 ├── gameclient/        ← Host и клиенты к GameServer
 ├── organism/          ← canonical learned controller/models/schools
 ├── gamelab/           ← временный compatibility service/operator facade
+├── graphics/          ← world snapshot → RenderFrame → browser projection
 └── gametable/         ← visual novel и Brain runtime
 ```
 
@@ -84,6 +86,8 @@ ai_research/
   BodyController, Spine/Motor models, schools, verification, jobs и artifacts.
 - [`gamelab/`](gamelab/) — пока сохраняет старый public service/operator
   surface и делегирует физическое обучение/управление в `organism/`.
+- [`graphics/`](graphics/) — независимая проекция world snapshots в
+  RenderFrame/asset IDs; не является physics или sensor authority.
 - [`gametable/`](gametable/) — локальная visual novel с Юки и OpenCode-бэкендом:
   директор ставит задачу в диалоге, а на столе лежат руководства по игровому
   клиенту, основной лаборатории, advanced-настройкам и будущим plugins — без

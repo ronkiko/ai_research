@@ -25,14 +25,63 @@ class Store:
         CREATE TABLE IF NOT EXISTS turns (
           id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL,
           stage TEXT NOT NULL, payload TEXT NOT NULL, error TEXT, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS dialogue (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          message_id TEXT NOT NULL UNIQUE,
+          turn_id TEXT NOT NULL,
+          speaker_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          published REAL NOT NULL);
         """)
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO save VALUES (1,?)", (encode(initial_state(rules)),))
             # Never automatically replay potentially side-effecting MCP work after a crash.
             self.db.execute("UPDATE turns SET status='failed', error=? WHERE status='running'",
                 ("Запуск прервался. Статы не изменены; если началась лабораторная операция, её статус нужно проверить отдельно.",))
+        self._backfill_dialogue()
         if self.state()["rules_hash"] != rules["hash"]:
             raise ValueError("Сохранение создано с другой версией правил. Запусти --fresh.")
+
+    def _backfill_dialogue(self):
+        with self.lock, self.db:
+            count = self.db.execute("SELECT COUNT(*) FROM dialogue").fetchone()[0]
+            if count:
+                return
+            rows = self.db.execute(
+                "SELECT id,request,status,payload,created FROM turns ORDER BY created,id"
+            ).fetchall()
+            for turn_id, request_raw, status, payload_raw, created in rows:
+                request = json.loads(request_raw)
+                text = str(request.get("text") or "").strip()
+                if text:
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO dialogue(message_id,turn_id,speaker_id,text,published) "
+                        "VALUES(?,?,?,?,?)",
+                        (f"dialogue.{turn_id}.director", turn_id, "director", text, created),
+                    )
+                if status == "done":
+                    payload = json.loads(payload_raw)
+                    reply_text = str((payload.get("reply") or {}).get("text") or "").strip()
+                    if reply_text:
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO dialogue(message_id,turn_id,speaker_id,text,published) "
+                            "VALUES(?,?,?,?,?)",
+                            (f"dialogue.{turn_id}.yuki", turn_id, "character.yuki",
+                             reply_text, created + 0.000001),
+                        )
+
+    def dialogue(self, limit=80):
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT sequence,message_id,turn_id,speaker_id,text "
+                "FROM dialogue ORDER BY sequence DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {"sequence": row[0], "message_id": row[1], "turn_id": row[2],
+             "speaker_id": row[3], "text": row[4]}
+            for row in reversed(rows)
+        ]
 
     def state(self):
         with self.lock:
@@ -55,8 +104,14 @@ class Store:
                 return False
             if self.db.execute("SELECT 1 FROM turns WHERE status='running'").fetchone():
                 raise ValueError("Дождись завершения текущего хода")
+            created = time.time()
             self.db.execute("INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
-                (event["id"], encode(event), "running", "Оценки сердца и головы", "{}", None, time.time()))
+                (event["id"], encode(event), "running", "Оценки сердца и головы", "{}", None, created))
+            self.db.execute(
+                "INSERT INTO dialogue(message_id,turn_id,speaker_id,text,published) VALUES(?,?,?,?,?)",
+                (f"dialogue.{event['id']}.director", event["id"], "director",
+                 event["text"], created),
+            )
             return True
 
     def progress(self, event_id, stage, payload):
@@ -74,6 +129,14 @@ class Store:
             self.db.execute("UPDATE save SET value=? WHERE id=1", (encode(after),))
             self.db.execute("UPDATE turns SET status='done',stage='Готово',payload=? WHERE id=?",
                             (encode(payload), event_id))
+            reply_text = str((payload.get("reply") or {}).get("text") or "").strip()
+            if reply_text:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO dialogue(message_id,turn_id,speaker_id,text,published) "
+                    "VALUES(?,?,?,?,?)",
+                    (f"dialogue.{event_id}.yuki", event_id, "character.yuki",
+                     reply_text, time.time()),
+                )
 
     def fail(self, event_id, error):
         with self.lock, self.db:
