@@ -57,6 +57,15 @@ class GameTableTests(unittest.TestCase):
         ):
             self.assertIn(expected, plugin)
 
+    def test_internal_agents_are_toolless_subagents(self):
+        for name in ("yuki-heart", "yuki-head", "yuki-will", "yuki-audience"):
+            content = (TABLE / ".opencode" / "agents" / f"{name}.md").read_text(encoding="utf-8")
+            frontmatter = content.split("---", 2)[1]
+            self.assertIn("mode: subagent", frontmatter)
+            self.assertIn("permission:", frontmatter)
+            self.assertIn('"*": deny', frontmatter)
+            self.assertNotIn("permissions:", frontmatter)
+
     def test_start_go_uses_official_opencode_prompt_flag(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
         self.assertNotIn('gameclient/v1/op/gui.sh', launcher)
