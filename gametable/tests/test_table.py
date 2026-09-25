@@ -1,129 +1,337 @@
 from __future__ import annotations
 
+import copy
 import json
+import io
+from types import SimpleNamespace
+from unittest.mock import Mock
 from pathlib import Path
-import subprocess
+import tempfile
+import threading
 import unittest
 
-
-ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "gametable"
-PLUGIN = TABLE / ".opencode" / "plugins" / "shift-supervisor.js"
-
-
-class GameTableTests(unittest.TestCase):
-    def test_opencode_connects_exactly_the_two_runtime_mcp_servers(self):
-        config = json.loads((TABLE / "opencode.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(config.get("mcp", {})), {"game_v1", "gamelab_v1"})
-
-        game = config["mcp"]["game_v1"]
-        lab = config["mcp"]["gamelab_v1"]
-        self.assertEqual(game["command"], ["./gameclient/v1/op/mcp.sh"])
-        self.assertEqual(
-            lab["command"],
-            ["./gamelab/op/gamelab.sh", "serve"],
-        )
-        for item in (game, lab):
-            self.assertEqual(item["type"], "local")
-            self.assertEqual(item["cwd"], "..")
-            self.assertIs(item["enabled"], True)
-            self.assertGreaterEqual(item["timeout"], 5000)
-
-    def test_runtime_assets_for_yuki2_exist(self):
-        for relative in (
-            ".opencode/plugins/shift-supervisor.js",
-            ".opencode/agents/yuki-heart.md",
-            ".opencode/agents/yuki-head.md",
-            ".opencode/agents/yuki-will.md",
-            ".opencode/agents/yuki-audience.md",
-            "op/start-go.sh",
-        ):
-            self.assertTrue((TABLE / relative).is_file(), relative)
-
-    def test_shift_supervisor_enforces_causal_volition_in_code(self):
-        plugin = PLUGIN.read_text(encoding="utf-8")
-        for expected in (
-            "gamelab_v1_volition_cycle_begin",
-            "yuki-heart",
-            "yuki-head",
-            "yuki-will",
-            "volition_will_appraise",
-            "volition_commit",
-            "Direct volition_decide is disabled",
-            "relationship_consent",
-            "YUKI_CHARACTER_CORE",
-            "GAMELAB_CHARACTER_PROFILE",
-            "../characters/yuki-02/character.json",
-            "characterSystemPrompt",
-        ):
-            self.assertIn(expected, plugin)
-
-    def test_shift_supervisor_parses_wrapped_task_reports(self):
-        script = f"""
-import {{ parseReport }} from {json.dumps(PLUGIN.as_uri())}
-const report = parseReport({{
-  task_result: "POSITION: test position\\nDIRECTION: toward\\nINTENSITY: meaningful\\nEVIDENCE: test evidence",
-}})
-if (report.DIRECTION !== "strengthen" || report.POSITION !== "test position" || report.EVIDENCE !== "test evidence") {{
-  process.exit(1)
-}}
-"""
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_internal_agents_are_toolless_subagents(self):
-        for name in ("yuki-heart", "yuki-head", "yuki-will", "yuki-audience"):
-            content = (TABLE / ".opencode" / "agents" / f"{name}.md").read_text(encoding="utf-8")
-            frontmatter = content.split("---", 2)[1]
-            self.assertIn("mode: subagent", frontmatter)
-            self.assertIn("steps: 1", frontmatter)
-            self.assertIn("permission:", frontmatter)
-            self.assertIn('"*": deny', frontmatter)
-            self.assertNotIn("permissions:", frontmatter)
-
-    def test_shift_supervisor_reads_raw_mcp_after_hook_results(self):
-        plugin = PLUGIN.read_text(encoding="utf-8")
-        self.assertIn("function toolResultText(result)", plugin)
-        self.assertIn("result?.structuredContent", plugin)
-        self.assertIn("result?.content", plugin)
-        self.assertIn("parseToolResultJSON(output)", plugin)
-        self.assertIn("parseReport(toolResultText(output))", plugin)
-
-    def test_start_go_uses_official_opencode_prompt_flag(self):
-        launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
-        self.assertNotIn('gameclient/v1/op/gui.sh', launcher)
-        self.assertNotIn('gameserver/v1/op/server.sh', launcher)
-        self.assertNotIn('gameclient/v1/op/host.sh', launcher)
-        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
-        self.assertNotIn("opencode run", launcher)
-        self.assertNotIn("/tui/", launcher)
-        self.assertNotIn("GAMETABLE_INITIAL_PROMPT", launcher)
-
-    def test_fresh_start_resets_only_yuki2_runtime_state(self):
-        launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")
-        self.assertIn('--fresh) ACTION="start"; FRESH=1', launcher)
-        self.assertIn('GAMETABLE_STATE_ROOT="$ROOT/gametable/runtime/$GAMETABLE_BRAIN_ID"', launcher)
-        self.assertIn('rm -rf -- "$GAMETABLE_STATE_ROOT"', launcher)
-        self.assertNotIn('rm -rf -- "$ROOT/gamelab/runtime"', launcher)
-
-    def test_gametable_start_does_not_bootstrap_infrastructure(self):
-        launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")
-        self.assertNotIn("check --mcp-startup", launcher)
-        self.assertNotIn("gameserver/v1/op/server.sh", launcher)
-        self.assertNotIn("gameclient/v1/op/host.sh", launcher)
-        self.assertNotIn("gameclient/v1/op/gui.sh", launcher)
-
-    def test_gameclient_mcp_launcher_self_bootstraps(self):
-        launcher = (ROOT / "gameclient/v1/op/mcp.sh").read_text(encoding="utf-8")
-        self.assertIn("mcp_env_ready", launcher)
-        self.assertIn("gameclient/v1/op/mcp-setup.sh", launcher)
-        self.assertIn('exec "$PYTHON_BIN" -m gameclient.v1.clients.mcp', launcher)
+from gametable.roleplay.engine import (ACTIONS, InvalidReport, initial_state, load_rules,
+                                     reduce_turn, validate_draft, validate_report)
+from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
+from gametable.roleplay.runtime import Runtime, public_turn
+from gametable.roleplay.store import Store
+from gametable.roleplay.server import Application, handler_for
 
 
-if __name__ == "__main__":
-    unittest.main()
+def event(event_id="turn-0001", text="Привет, Юки", activity="chat"):
+    return {"id": event_id, "text": text, "activity": activity}
+
+
+def report(role, e, state, action="respond"):
+    return {"event_id": e["id"], "revision": state["revision"], "role": role,
+            "category": "neutral", "impacts": {"mood": 0, "affection": 0, "trust": 0},
+            "scores": {a: (0.9 if a == action else -0.5) for a in ACTIONS},
+            "evidence": [e["text"]], "summary": "Нейтральный разговор"}
+
+
+class RulesTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = load_rules()
+        self.state = initial_state(self.rules)
+        self.event = event()
+        self.heart = report("heart", self.event, self.state)
+        self.head = report("head", self.event, self.state)
+
+    def run_turn(self, state=None, e=None, h=None, d=None):
+        return reduce_turn(state or self.state, e or self.event,
+                           h or self.heart, d or self.head, self.rules)
+
+    def test_neutral_turn_does_not_farm_relationship_or_health(self):
+        after, contract, audit = self.run_turn()
+        for key in ("health", "affection", "trust", "mood"):
+            self.assertEqual(after["stats"][key], self.state["stats"][key])
+        self.assertEqual(after["stats"]["fatigue"], 11)
+        self.assertEqual(contract["action"], "respond")
+        self.assertEqual(after["minutes"], 542)
+        self.assertEqual(self.run_turn(), (after, contract, audit))
+        self.assertEqual(self.state["revision"], 0)
+
+    def test_reports_reject_stale_spoofed_and_nonfinite_values(self):
+        mutations = (("event_id", "other"), ("revision", 3), ("role", "head"))
+        for key, value in mutations:
+            bad = copy.deepcopy(self.heart); bad[key] = value
+            with self.assertRaises(InvalidReport):
+                validate_report(bad, self.event, self.state, "heart")
+        for value in (float('nan'), float('inf'), True, 3, "1"):
+            bad = copy.deepcopy(self.heart); bad["impacts"]["trust"] = value
+            with self.assertRaises(InvalidReport):
+                self.run_turn(h=bad)
+        bad = copy.deepcopy(self.heart); bad["evidence"] = ["Несуществующий факт"]
+        with self.assertRaises(InvalidReport): self.run_turn(h=bad)
+        bad = copy.deepcopy(self.heart); bad["impacts"]["health"] = -2
+        with self.assertRaises(InvalidReport): self.run_turn(h=bad)
+
+    def test_each_voice_has_causal_influence(self):
+        base = self.run_turn()[0]
+        self.heart["impacts"]["affection"] = 2
+        changed = self.run_turn()[0]
+        self.assertGreater(changed["stats"]["affection"], base["stats"]["affection"])
+        self.head["impacts"]["trust"] = -2
+        changed = self.run_turn()[0]
+        self.assertLess(changed["stats"]["trust"], base["stats"]["trust"])
+        # Construct a close decision and change only one voice, not its counterpart.
+        for r in (self.heart, self.head):
+            r["scores"] = dict.fromkeys(ACTIONS, -1)
+            r["scores"].update(respond=0, warm=0)
+        for role in (self.heart, self.head):
+            previous = role["scores"]["warm"]
+            role["scores"]["warm"] = 1
+            self.assertEqual(self.run_turn()[1]["action"], "warm")
+            role["scores"]["warm"] = previous
+        self.assertEqual(self.run_turn()[1]["action"], "respond")
+
+    def test_exhaustion_forces_rest_and_blocks_lab(self):
+        self.state["stats"]["fatigue"] = 90
+        self.event["activity"] = "lab"
+        for r in (self.heart, self.head): r["scores"]["work"] = 1
+        after, contract, _ = self.run_turn()
+        self.assertEqual(contract["action"], "rest")
+        self.assertEqual(after["stats"]["fatigue"], 72)
+
+    def test_rest_sleep_and_no_wall_clock_progress(self):
+        self.state["stats"].update(health=60, fatigue=80)
+        self.event["activity"] = "sleep"
+        after, contract, _ = self.run_turn()
+        self.assertEqual(after["stats"]["health"], 75)
+        self.assertEqual(after["stats"]["fatigue"], 0)
+        self.assertEqual(contract["minutes"], 480)
+        self.assertEqual(after["stats"]["affection"], 15)
+
+    def test_chat_cannot_launch_work_even_if_both_want_it(self):
+        for r in (self.heart, self.head): r["scores"]["work"] = 1
+        self.assertNotEqual(self.run_turn()[1]["action"], "work")
+
+    def test_repeated_praise_has_diminishing_effect_and_caps(self):
+        for r in (self.heart, self.head):
+            r["category"] = "praise"; r["impacts"]["affection"] = 2
+        first, _, _ = self.run_turn()
+        e = event("turn-0002")
+        h, d = copy.deepcopy(self.heart), copy.deepcopy(self.head)
+        for r in (h, d): r.update(event_id=e["id"], revision=first["revision"])
+        second, _, _ = self.run_turn(first, e, h, d)
+        self.assertLess(second["stats"]["affection"]-first["stats"]["affection"],
+                        first["stats"]["affection"]-self.state["stats"]["affection"])
+        self.state["stats"]["affection"] = 99
+        self.assertEqual(self.run_turn()[0]["stats"]["affection"], 100)
+
+    def test_profile_matters_and_conflict_is_not_averaged_away(self):
+        self.heart["impacts"]["affection"] = 1
+        original = self.run_turn()[0]["stats"]["affection"]
+        self.rules["character"]["traits"]["attachment"] = 0
+        self.assertLess(self.run_turn()[0]["stats"]["affection"], original)
+        self.heart["scores"] = dict.fromkeys(ACTIONS, 1)
+        self.head["scores"] = dict.fromkeys(ACTIONS, -1)
+        self.assertEqual(self.run_turn()[1]["conflict"], 2)
+
+    def test_narrator_cannot_change_contract_fields(self):
+        contract = self.run_turn()[1]
+        with self.assertRaises(InvalidReport):
+            validate_draft({"event_id": self.event["id"], "action": "work", "text": "Пойду работать"}, contract)
+
+
+class FakeBackend:
+    model = "test/fake"
+    def __init__(self, e, state, reject=False, fail_voice=False):
+        self.e, self.state = e, state
+        self.calls = []
+        self.reject, self.fail_voice = reject, fail_voice
+        self.barrier = threading.Barrier(2, timeout=3)
+        self.lab_calls = 0
+
+    def create(self, title): return "ses_parent"
+    def close_sessions(self): pass
+    def complete(self, parent, agent, prompt, lab=False):
+        self.calls.append((agent, prompt, lab))
+        if "MODE: APPRAISAL" in prompt:
+            self.barrier.wait()  # Proves both calls were dispatched independently.
+            role = agent.removeprefix("yuki-")
+            if self.fail_voice and role == "head": raise BackendError("missing head")
+            value = report(role, self.e, self.state, "work" if self.e["activity"] == "lab" else "respond")
+        elif "MODE: REVIEW" in prompt:
+            value = {"event_id": self.e["id"], "ok": not self.reject, "reason": "test"}
+        elif lab:
+            self.lab_calls += 1
+            return {"session_id": "ses_lab", "text": "Недоступно", "tools": []}
+        else:
+            value = {"event_id": self.e["id"], "action": "work" if self.e["activity"] == "lab" else "respond", "text": "Привет, Директор."}
+        return {"session_id": "ses_"+agent, "text": json.dumps(value), "tools": []}
+
+
+class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / "save.sqlite3"
+        self.rules = load_rules()
+        self.store = Store(self.path, self.rules)
+        self.event = event()
+    def tearDown(self):
+        self.store.close(); self.temp.cleanup()
+
+    def run_runtime(self, **kwargs):
+        backend = FakeBackend(self.event, self.store.state(), **kwargs)
+        runtime = Runtime(self.store, backend, self.rules)
+        self.store.begin(self.event)
+        runtime.run(self.event)
+        return backend, self.store.get(self.event["id"])
+
+    def test_commit_is_persistent_idempotent_and_auditable(self):
+        backend, turn = self.run_runtime()
+        self.assertEqual(turn["status"], "done", turn.get("error"))
+        self.assertEqual(self.store.state()["revision"], 1)
+        self.assertFalse(self.store.begin(self.event))
+        self.assertEqual(len(self.store.history()), 1)
+        self.assertEqual(turn["result"]["assessments"]["heart"]["report"]["role"], "heart")
+        self.assertEqual(self.store.state()["memories"][-1]["yuki"]["text"], "Привет, Директор.")
+        for agent, prompt, _ in backend.calls[:2]:
+            self.assertNotIn('"assessments"', prompt)
+        self.store.close(); self.store = Store(self.path, self.rules)
+        self.assertEqual(self.store.state()["revision"], 1)
+
+    def test_failed_head_cannot_be_invented_by_parent(self):
+        _, turn = self.run_runtime(fail_voice=True)
+        self.assertEqual(turn["status"], "failed")
+        self.assertEqual(self.store.state()["revision"], 0)
+        self.assertNotIn("reply", public_turn(turn))
+
+    def test_semantic_rejection_has_fixed_fallback_and_no_leaked_draft(self):
+        backend, turn = self.run_runtime(reject=True)
+        self.assertTrue(turn["result"]["reply"]["fallback"])
+        self.assertEqual(turn["result"]["reply"]["text"], "")
+        self.assertEqual(len(turn["result"]["draft_attempts"]), 2)
+        self.assertNotIn("Привет, Директор.", json.dumps(public_turn(turn), ensure_ascii=False))
+
+    def test_inflight_drafts_are_not_public(self):
+        self.store.begin(self.event)
+        self.store.progress(self.event["id"], "Проверка", {"draft": "unreviewed"})
+        self.assertNotIn("unreviewed", json.dumps(public_turn(self.store.get(self.event["id"]))))
+
+    def test_lab_requires_explicit_mode_and_cannot_write_social_state(self):
+        self.event["activity"] = "lab"
+        backend, turn = self.run_runtime()
+        self.assertEqual(backend.lab_calls, 1)
+        self.assertEqual(turn["result"]["contract"]["action"], "work")
+        for name in LAB_TOOLS:
+            self.assertFalse(any(s in name for s in ("relationship", "volition", "duality", "executive")))
+
+    def test_crash_marks_pending_failed_without_replay(self):
+        self.store.begin(self.event)
+        self.store.progress(self.event["id"], "Лаборатория", {"external_effect": "unknown"})
+        self.store.close(); self.store = Store(self.path, self.rules)
+        self.assertEqual(self.store.get(self.event["id"])["status"], "failed")
+        self.assertEqual(self.store.state()["revision"], 0)
+        self.assertFalse(self.store.begin(self.event))
+
+    def test_one_event_id_cannot_hide_a_different_message(self):
+        self.store.begin(self.event)
+        with self.assertRaises(ValueError): self.store.begin(event(text="other"))
+
+    def test_busy_and_revision_conflicts_are_rejected(self):
+        self.store.begin(self.event)
+        with self.assertRaises(ValueError): self.store.begin(event("turn-0002"))
+        bad = self.store.state(); bad["revision"] = 5
+        with self.assertRaises(ValueError): self.store.finish(self.event["id"], bad, bad, {})
+
+
+class TransportTests(unittest.TestCase):
+    def test_project_defaults_to_luna(self):
+        config = json.loads((Path(__file__).parents[1] / "opencode.json").read_text())
+        self.assertEqual(config["model"], "openai/gpt-5.6-luna")
+        backend = OpenCode("http://localhost", "/table")
+        backend.request = Mock(return_value=config)
+        self.assertEqual(backend.select_model(), {"providerID": "openai", "modelID": "gpt-5.6-luna"})
+        backend.request.assert_called_once_with("GET", "/config")
+
+    def test_missing_model_does_not_select_an_arbitrary_provider(self):
+        backend = OpenCode("http://localhost", "/table")
+        backend.request = Mock(return_value={})
+        with self.assertRaises(BackendError): backend.select_model()
+        backend.request.assert_called_once_with("GET", "/config")
+
+    def test_explicit_override_is_shared_by_all_voices(self):
+        backend = OpenCode("http://localhost", "/table", "test/selected")
+        backend.request = Mock(return_value={"model": "openai/gpt-5.6-luna"})
+        self.assertEqual(backend.select_model(), {"providerID": "test", "modelID": "selected"})
+        calls = []
+        def request(method, path, body=None, **_):
+            calls.append((path, body))
+            if path == "/session": return {"id": "ses_child"}
+            return {"info": {"providerID": "test", "modelID": "selected"},
+                    "parts": [{"type": "text", "text": "{}"}]}
+        backend.request = request
+        for agent in ("yuki", "yuki-heart", "yuki-head"):
+            backend.complete("ses_parent", agent, "test")
+        for path, body in calls:
+            if path == "/session":
+                self.assertEqual(body["permission"], [{"permission": "*", "pattern": "*", "action": "deny"}])
+                self.assertEqual(body["parentID"], "ses_parent")
+            else:
+                self.assertEqual(body["model"], {"providerID": "test", "modelID": "selected"})
+
+    def test_provider_cannot_silently_return_another_model(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        backend.request = Mock(side_effect=[{"id": "ses_child"},
+            {"info": {"providerID": "other", "modelID": "other"}, "parts": [{"type": "text", "text": "{}"}]}])
+        with self.assertRaises(BackendError): backend.complete("ses_parent", "yuki", "test")
+
+    def test_lab_session_has_only_a_scoped_allowlist(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        backend.request = Mock(return_value={"id": "ses_lab"})
+        backend.create("Lab", parent="ses_parent", lab=True)
+        body = backend.request.call_args.args[2]
+        rules = body["permission"]
+        self.assertEqual(rules[0], {"permission": "*", "pattern": "*", "action": "deny"})
+        self.assertEqual({r["permission"] for r in rules[1:]}, set(LAB_TOOLS))
+        self.assertNotIn("task", {r["permission"] for r in rules})
+
+
+class WebBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.rules = load_rules()
+        self.store = Store(Path(self.temp.name) / "test.sqlite3", self.rules)
+        self.app = Application(self.store, Mock(), SimpleNamespace(model="openai/gpt-5.6-luna"), self.rules)
+        self.handler_class = handler_for(self.app)
+
+    def tearDown(self):
+        self.store.close(); self.temp.cleanup()
+
+    def handler(self, path, body=None, token=None, host="127.0.0.1:17880"):
+        h = object.__new__(self.handler_class)
+        h.path = path
+        h.server = SimpleNamespace(server_port=17880)
+        raw = json.dumps(body).encode() if body is not None else b""
+        h.rfile = io.BytesIO(raw)
+        h.headers = {"Host": host, "Content-Length": str(len(raw)), "X-GameTable-Token": token or ""}
+        h.send = Mock()
+        return h
+
+    def test_cross_origin_cannot_submit_or_read_token(self):
+        h = self.handler("/api/turn", event())
+        h.do_POST(); self.assertEqual(h.send.call_args.args[0], 403)
+        h = self.handler("/api/state", host="attacker.example:17880")
+        h.do_GET(); self.assertEqual(h.send.call_args.args[0], 403)
+        self.app.runtime.submit.assert_not_called()
+
+    def test_unvalidated_drafts_cannot_be_read_through_audit_endpoint(self):
+        e = event(); self.store.begin(e)
+        self.store.progress(e["id"], "Checking", {"draft": "SECRET DRAFT"})
+        h = self.handler("/api/audit/" + e["id"])
+        h.do_GET(); self.assertEqual(h.send.call_args.args[0], 404)
+        h = self.handler("/api/state")
+        h.do_GET()
+        self.assertNotIn("SECRET DRAFT", json.dumps(h.send.call_args.args[1]))
+
+    def test_no_set_stats_or_arbitrary_activity_endpoint(self):
+        h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)
+        h.do_POST(); self.assertEqual(h.send.call_args.args[0], 404)
+        h = self.handler("/api/turn", event(activity="injury"), token=self.app.token)
+        h.do_POST(); self.assertEqual(h.send.call_args.args[0], 400)
+        self.app.runtime.submit.assert_not_called()
+
+
+if __name__ == '__main__': unittest.main()

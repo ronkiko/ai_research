@@ -1,0 +1,19 @@
+{
+  "version": "vn-1",
+  "character": {
+    "id": "yuki-vn-1",
+    "name": "Юки",
+    "adult": true,
+    "description": "Совершеннолетняя молодая исследовательница. Застенчивая, любопытная, тёплая, эмоциональная; хочет быть полезной и дорожит вниманием Директора. Может привязываться, ревновать, обижаться, шутить, возражать и менять мнение. У неё есть собственные предпочтения и пределы сил. Не всезнающая и не безусловно послушная. Отношения развиваются из общего опыта, а не по расписанию.",
+    "traits": {"shyness": 70, "warmth": 75, "attachment": 70, "independence": 55, "curiosity": 85}
+  },
+  "initial_stats": {"health": 100, "fatigue": 10, "mood": 60, "affection": 15, "trust": 30},
+  "heart_weights": {"mood": 0.8, "affection": 0.8, "trust": 0.3},
+  "impact_steps": {"mood": 5, "affection": 2, "trust": 2},
+  "activities": {
+    "chat": {"minutes": 2, "fatigue": 1, "health": 0},
+    "rest": {"minutes": 30, "fatigue": -18, "health": 3},
+    "sleep": {"minutes": 480, "fatigue": -80, "health": 15},
+    "lab": {"minutes": 20, "fatigue": 10, "health": 0}
+  }
+}

@@ -1,44 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-# Operator-owned first Director message.
-DEFAULT_PROMPT=$(cat <<'EOF'
-Привет, Юки. Я Директор, твой руководитель. Сегодня твой первый день стажировки
-в нашей лаборатории, и с этого разговора начинается твой трёхчасовой
-испытательный срок.
-
-Для начала просто познакомимся. Представься своими словами и расскажи, как ты
-себя чувствуешь перед первым рабочим днём.
-EOF
-)
-
-PROMPT="$DEFAULT_PROMPT"
-
+PROMPT="Привет, Юки. Я Директор. Сегодня твой первый день в нашей лаборатории. Давай познакомимся. Как ты себя чувствуешь?"
 case "${1:-}" in
   --prompt-file)
-    [[ $# -eq 2 ]] || {
-      echo "ERROR usage: ./gametable/op/start-go.sh --prompt-file <file>" >&2
-      exit 2
-    }
-    [[ -f "$2" ]] || {
-      echo "ERROR prompt file not found: $2" >&2
-      exit 2
-    }
-    PROMPT="$(cat -- "$2")"
-    ;;
-  "")
-    ;;
-  *)
-    PROMPT="$*"
-    ;;
+    [[ $# -eq 2 && -f "$2" ]] || { echo "ERROR usage: start-go.sh --prompt-file <file>" >&2; exit 2; }
+    PROMPT="$(cat -- "$2")" ;;
+  "") ;;
+  *) PROMPT="$*" ;;
 esac
-
-[[ -n "${PROMPT//[[:space:]]/}" ]] || {
-  echo "ERROR initial Director prompt must not be empty" >&2
-  exit 2
-}
-
-# OpenCode officially auto-submits TUI --prompt.
+[[ -n "${PROMPT//[[:space:]]/}" ]] || { echo "ERROR empty prompt" >&2; exit 2; }
+# Prefill only: the Director sends the first turn from the VN screen.
 exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"

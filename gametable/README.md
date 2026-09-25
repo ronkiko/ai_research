@@ -1,137 +1,121 @@
-# GameTable
+# GameTable · Юки
 
-GameTable is the OpenCode workstation for the LLM laboratory assistant.
+Локальная visual novel с совершеннолетней героиней-исследовательницей. Директор
+разговаривает с Юки, проводит с ней время и даёт лабораторные задания. OpenCode
+запускает LLM, два независимых контекста сердца/головы и MCP. GameTable владеет
+состоянием персонажа и единственным каналом публикации реплик.
 
-The human Operator is the Director. The workstation intentionally contains no
-concrete game assignment and no prewritten solution. The Director gives the
-assignment in the OpenCode conversation after launch.
+## Запуск
 
-The second Brain character is Yuki, an adult junior researcher on a three-hour
-internship. Her profile is in `../characters/yuki-02/character.md`. GameTable keeps Yuki2's
-persistent personal/Executive state under `gametable/runtime/yuki-02`, separate
-from Motor/Spine checkpoints and from test state. Restarting OpenCode preserves
-that same Yuki2 history; the first real relationship begin starts the 180-minute
-shift.
-
-The assistant's working interface consists of four local manuals:
-
-1. `001-игровой_клиент_и_базовая_информация_об_игре`
-2. `002-игровая_лаборатория_по_изучению_игровых_механик`
-3. `003-лаборатория_расширеные_настройки`
-4. `003-лаборатория_плагины_подключаем_и_пишем_свои`
-
-They describe the two preconfigured MCP servers `game_v1` and `gamelab_v1`.
-The two 003 manuals cover advanced laboratory-only features and the reserved
-future plugins surface.
-
-Yuki2 works only through the two configured MCP servers. She does not inspect
-neighboring source trees or run laboratory shell scripts. Realtime Spine training, reward instrumentation, verification, and model runs
-are available through `gamelab_v1`. Motor construction/certification is
-Operator-side preparation; the GameTable agent consumes installed certified
-Motor instances through the laboratory.
-
-## Operator launch
-
-The Operator prepares GameServer, GameClient/GUI as desired, and the laboratory
-before handing the workstation to Yuki. GameTable launchers do not bootstrap
-that infrastructure.
-
-A fresh Yuki2 trial starts with:
+Нужны Python 3.10+, установленный OpenCode и настроенный в нём провайдер модели.
 
 ```bash
-./gametable/op/start-go.sh
+./gametable/op/start.sh
 ```
 
-`start-go.sh` only clears Yuki2's personal/Executive runtime and starts the
-ordinary OpenCode TUI with its official `--prompt` flag. It does not start,
-restart, repair, or preflight GameServer, GameClient Host, GUI, or GameLab.
-Those are assumed to be ready already. OpenCode auto-submits the prompt as the
-first turn.
-
-The default first message is intentionally written directly inside
-`gametable/op/start-go.sh`, so the Operator can edit one obvious place before
-an experiment. For a one-off launch, pass replacement text directly:
+Открой **http://127.0.0.1:17880**. Скрипт запускает web-интерфейс и приватный
+`opencode serve`, а не прежний TUI. Остановка — Ctrl+C; сохранение автоматическое.
 
 ```bash
-./gametable/op/start-go.sh "Ты молодая девушка-лаборант... твой начальник Директор..."
-```
-
-or use a file:
-
-```bash
-./gametable/op/start-go.sh --prompt-file ./my-first-message.txt
-```
-
-For a plain workstation start without automatically sending a Director message,
-use `./gametable/op/start.sh`.
-
-The `game_v1` MCP ensures its default Host `game-v1-default:17700` is
-running. Starting `./gameclient/v1/op/host.sh` manually is still supported,
-for example when GUI is needed before OpenCode.
-
-`gametable/opencode.json` connects both MCP servers. After OpenCode starts,
-the Director gives the actual assignment in chat.
-
-Meaningful Heart–Head conflicts use two project OpenCode subagents:
-`.opencode/agents/yuki-heart.md` and `.opencode/agents/yuki-head.md`. Under
-material pressure, `.opencode/agents/yuki-will.md` then evaluates whether the
-intended choice survives without equating outward compliance with desire.
-`.opencode/agents/yuki-audience.md` supplies one independent Social Chorus
-critique at each audience tick. None pins a model, so all inherit the primary
-Yuki session's LLM. They run as bounded child contexts with all OpenCode
-permission actions denied; parent Yuki alone integrates the reports and acts.
-
-The OpenCode launcher is also managed:
-
-```bash
+./gametable/op/start.sh --model openai/gpt-5.6-luna
+./gametable/op/start.sh --port 17881
 ./gametable/op/start.sh --status
 ./gametable/op/start.sh --stop
 ./gametable/op/start.sh --restart
-```
-
-For a deliberately new Yuki2 trial, discard the current Yuki2
-relationship/Executive/volition runtime and start a clean OpenCode process:
-
-```bash
 ./gametable/op/start.sh --fresh
 ```
 
-`--fresh` resets only `gametable/runtime/yuki-02`. It does not remove Motor,
-Spine, GameServer, or other learned/runtime artifacts. Without a management flag
-the launcher starts/resumes the existing Yuki2 workspace normally.
+`--model provider/model` фиксирует одну модель для Юки, сердца и головы.
+Без него берётся `model` конфигурации GameTable: **openai/gpt-5.6-luna**.
+Автоматической замены провайдера нет. Выбранная модель отображается в интерфейсе. `--variant` передаёт
+вариант модели OpenCode. Авторизация остаётся в OpenCode.
 
-The project-level Shift Supervisor wakes an idle current relationship session
-without waiting for another Director message. The first idle wake defaults to
-45 seconds and later heartbeats to 120 seconds. A Director message resets the
-idle interval; a busy Brain is never interrupted. The absolute work-shift
-deadline produces one final-shift wake but does not close relationship memory,
-Heart/Head or Will/Ego; later personal dialogue remains valid. Heartbeats are
-internal laboratory events,
-not Director speech, and may be tuned with `GAMETABLE_FIRST_HEARTBEAT_MS`,
-`GAMETABLE_HEARTBEAT_MS`, and `GAMETABLE_HEARTBEAT_CHECK_MS`.
+`--fresh` удаляет только новое сохранение `gametable/runtime/yuki-vn`.
+`start-go.sh` начинает fresh-историю и заполняет поле первого сообщения;
+Директор отправляет его сам. Замена текста: аргумент или `--prompt-file FILE`.
 
-For meaningful personal decisions, the same OpenCode plugin also enforces a
-causal Volition protocol. Parent Yuki freezes one event, fresh Heart and Head
-subagents appraise it independently, and fresh Will/Ego predicts behavior from
-their captured outputs. GameLab refuses out-of-order writes, while the plugin
-replaces appraisal arguments with the actual child-session reports. The parent
-LLM therefore narrates the committed result but cannot directly set behavior,
-agency or voluntariness. A changed material event starts a new cycle.
+Предыдущая память Yuki2 удалена по решению Директора. Новая версия не читает
+архивный Character Core, старые relationship/duality/volition состояния или
+прошлые OpenCode-чаты. Старые глобальные чаты OpenCode не используются как память.
 
-While the shift is active, the same supervisor schedules a Social Chorus tick
-after a session-seeded interval between one and ten minutes. It waits for the
-Brain to become idle and never interrupts a response. The schedule is transport,
-not a personality script: an Audience LLM evaluates the new event window, and
-its report is merely one piece of social input. Tune the range with
-`GAMETABLE_AUDIENCE_MIN_MS` and `GAMETABLE_AUDIENCE_MAX_MS`; neither may be
-lower than one minute.
+## Пять статов
 
-## Contract check
+| Стат | Начало | Что означает |
+|---|---:|---|
+| Здоровье | 100 | игровой запас физических сил; не медицинская оценка |
+| Усталость | 10 | растёт от занятий, снижается отдыхом |
+| Настроение | 60 | быстро меняющееся эмоциональное состояние |
+| Симпатия | 15 | личная теплота и привязанность к Директору |
+| Доверие | 30 | оценка его надёжности, отдельно от симпатии |
+
+Профиль, стартовые значения, веса и темп развития находятся в
+`roleplay/rules.json`. Изменённые правила требуют `--fresh`: сохранение привязано
+к SHA-256 правил и не должно молча менять смысл. Нет скрытых стадий отношений:
+подпись в интерфейсе — только описание текущих шкал.
+
+Занятия имеют игровые длительности: разговор 2 минуты, перерыв 30 минут,
+сон 8 часов, лабораторный шаг 20 минут. Реальное время ожидания LLM или закрытого
+приложения не меняет статы. Разговор добавляет 1 усталости, работа — 10;
+перерыв снимает 18, сон — 80. Перерыв восстанавливает 3 здоровья, сон — 15.
+Работа при исходной усталости от 70 отнимает 2 здоровья. При усталости от 85
+или здоровье до 25 движок выбирает отдых. Значения ограничены диапазоном 0..100.
+Оскорбления не отнимают HP. Отдых сам по себе не создаёт любовь/доверие.
+
+Выбранные «перерыв» и «сон» — согласованный переход сцены, а не рекомендация,
+которую модель может игнорировать. В обычном разговоре Юки тоже может выбрать
+отдых. Категория «лаборатория» разрешает MCP-работу, но Юки может предпочесть
+уточнение, разговор или отказ согласно оценкам и состоянию.
+
+## Сердце, голова и ответ
+
+Runtime отправляет одинаковое исходное событие, профиль и снимок памяти двум
+свежим контекстам параллельно. Они возвращают числовые оценки и короткие
+основания. Ни одна сторона не видит отчёт другой. Ни родительская LLM, ни
+субагенты не могут записывать статы.
+
+Код вычисляет изменения, выбирает намерение и фиксирует контракт. Юки создаёт
+реплику в отдельном контексте без инструментов. Голова в ещё одном свежем
+контексте проверяет соответствие текста контракту — это проверка, не новый голос
+или право переиграть выбор. После двух неудачных формулировок показывается
+только неизменяемая строка решения и техническое уведомление. Черновики не
+стримятся и не публикуются. Встроенные правила гарантируют состояние и решение;
+семантическая проверка свободного текста моделью не является абсолютной гарантией.
+
+Под репликой видны изменения статов и кнопка «Сердце и голова»: выводы сторон,
+числа, выбор движка и результаты проверки. Это операторский аудит, не скрытая
+цепочка рассуждений модели. Повтор доставки одного хода не меняет статы снова.
+
+В MVP нет прежней Audience, Will/Ego, autonomous heartbeat и трёхчасового
+испытательного таймера. Состояние находится в SQLite; при прерывании незавершённый
+ход помечается ошибкой, а потенциальные MCP-действия не повторяются автоматически.
+
+## GameLab
+
+Для настоящей работы выбери «Лаборатория · MCP» и напиши задачу. Только если
+движок выберет работу, отдельная сессия Юки получит узкий allowlist инструментов
+`game_v1`/`gamelab_v1`. Прочие сессии не имеют инструментов вообще. Shell, правка
+файлов, социальные MCP-записи и произвольные субагенты запрещены правами сессий.
+
+GameTable не запускает GameServer, GUI и не готовит Motor. Подготовкой
+лаборатории управляет Оператор. MCP-подключение не доказывает готовность игрового
+мира. Успех должен подтверждаться результатами инструментов. Асинхронные jobs
+продолжают иметь собственный жизненный цикл; время сцены не ускоряет обучение.
+После неопределённого сбоя сначала запроси статус, не повторяй запуск вслепую.
+
+## Проверки
 
 ```bash
 ./gametable/op/check.sh
 ```
 
-This validates the workstation runtime/configuration contract. Documentation
-is reviewed as documentation and is not an executable test target. The check
-does not attempt to solve a game task.
+Проверяются формулы, влияние обеих сторон, отдых, лимиты, независимый запуск,
+изоляция черновиков, fallback, replay, двойная доставка, сбои и разрешения.
+Тесты используют временные сохранения и имитацию backend. Они не обращаются
+к модели и не меняют вашу игру.
+
+`./gametable/op/check.sh --live` дополнительно проверяет реальный ход на Luna
+и подключение обоих MCP. Он делает платные LLM-вызовы, использует временное
+сохранение и удаляет свои OpenCode-сессии. История Директора не затрагивается.
+
+Архитектура: [ROLEPLAY_ENGINE_DESIGN.md](ROLEPLAY_ENGINE_DESIGN.md).
+API интеграции: [OpenCode Server](https://opencode.ai/docs/server/).

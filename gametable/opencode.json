@@ -20,5 +20,7 @@
       "enabled": true,
       "timeout": 300000
     }
-  }
+  },
+  "default_agent": "yuki",
+  "model": "openai/gpt-5.6-luna"
 }

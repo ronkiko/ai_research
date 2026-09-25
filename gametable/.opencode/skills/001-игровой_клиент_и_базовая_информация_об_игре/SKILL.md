@@ -22,7 +22,7 @@ description: "Руководство по прямому игровому кли
 - `game_v1_game_state`
 - `game_v1_move`
 - `game_v1_recent_events`
-- `game_v1_logout`
+- `game_v1_logout` — операторская операция; в ограниченном VN-шаге недоступна
 
 Начинай с `game_v1_health`. Состояние `connected` у MCP само по себе не
 доказывает готовность GameServer и GameClient Host.
