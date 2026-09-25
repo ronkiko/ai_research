@@ -28,6 +28,7 @@ from gamelab.motor_school import (
     run_school,
 )
 from gamelab.motors.package import (
+    create_motor_instance,
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
     get_motor_package,
     list_motor_packages,
