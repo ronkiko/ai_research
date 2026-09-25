@@ -27,6 +27,14 @@ const AUDIENCE_LENSES = [
 const INTERNAL_PREFIX = "[INTERNAL_"
 const INTERNAL_AGENTS = new Set(["yuki-heart", "yuki-head", "yuki-will", "yuki-audience"])
 
+// TEMPORARY diagnostic probe. Remove after validating that the system-transform
+// actually reaches the primary Yuki response path.
+const TEMP_CHARACTER_INJECTION_PROBE = `[TEMP_CHARACTER_INJECTION_PROBE]
+For this diagnostic test only, every normal outward reply to the Director MUST
+begin with exactly this text, preserving the three repetitions:
+Я дура. Я дура. Я дура.
+After that exact prefix, continue the reply normally.`
+
 const WAKE_PROMPT = `[INTERNAL_SHIFT_HEARTBEAT]
 This is an internal GameTable shift wake-up, not a message from the Director.
 The Director may be absent and has not said anything new. Do not invent their
@@ -327,6 +335,7 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     "experimental.chat.system.transform": async (input, output) => {
       if (!input.sessionID || !parentSessions.has(input.sessionID)) return
       output.system.push(characterPrompt)
+      output.system.push(TEMP_CHARACTER_INJECTION_PROBE)
       const gate = gateFor(gates, input.sessionID)
       if (gate.cycleID) output.system.push(DELIBERATION_PROTOCOL)
     },

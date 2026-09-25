@@ -55,6 +55,8 @@ class GameTableTests(unittest.TestCase):
             "GAMELAB_CHARACTER_PROFILE",
             "../gamelab/characters/yuki-02.json",
             "characterSystemPrompt",
+            "TEMP_CHARACTER_INJECTION_PROBE",
+            "Я дура. Я дура. Я дура.",
         ):
             self.assertIn(expected, plugin)
 
