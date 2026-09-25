@@ -14,6 +14,11 @@ Narrator и Review остаются tool-less.
 game_v1 и gamelab_v1. Социальные relationship/Volition/Executive tools не входят
 в этот контур.
 
+Прямой game_v1_move также не разрешён: Brain задаёт цель через GameLab,
+а тело ведут обученные Spine/Motor. Ручной клиент — инструмент оператора.
+До начала обучения Spine нужен сертифицированный Motor, подготовленный оператором.
+Описание сервиса перечисляет его полные возможности, а не разрешения этой сессии.
+
 Перед side effect утверждённый внешний effect записывается в turn journal.
 Transport ambiguity означает uncertain; автоматический повтор запрещён.
 

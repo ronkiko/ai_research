@@ -11,7 +11,7 @@ from typing import Callable
 
 # A session permission allowlist, not a model instruction. Social state tools are absent.
 LAB_TOOLS = tuple("game_v1_" + x for x in (
-    "health", "describe", "players", "login", "session", "game_state", "move", "recent_events")) + tuple(
+    "health", "describe", "players", "login", "session", "game_state", "recent_events")) + tuple(
     "gamelab_v1_" + x for x in (
         "health", "login", "describe", "host_list", "model_info", "reward_get", "reward_set",
         "training_start", "training_status", "training_cancel", "verify_start", "verify_status",

@@ -146,8 +146,13 @@ class Runtime:
                           next_revision=after["revision"])
 
             # 6-7. Persist intent, then execute only typed external effects.
+            # Preserve prior published memory, but give the executor the approved
+            # provisional scene/resources, not the pre-move appraisal snapshot.
+            external_data = copy.deepcopy(data)
+            external_data.update(scene_id=after["scene_id"], stats=copy.deepcopy(after["stats"]))
+            external_data["approved_world_effects"] = copy.deepcopy(world_audit["applied"])
             external_results = self.execute_external(
-                event, parent, data, effect_plan, audit, before["revision"])
+                event, parent, external_data, effect_plan, audit, before["revision"])
 
             # 8. Narrator sees only fixed facts and observed external results.
             facts = prompts.narration_facts(

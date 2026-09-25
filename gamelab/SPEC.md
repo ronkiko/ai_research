@@ -174,6 +174,13 @@ Post-terminal actuator relaxation is not part of success classification.
 
 ## Laboratory MCP interface
 
+This is the full service surface, not the GameTable permission list. The active
+VN authorizes only physical laboratory operations through ExternalExecutor.
+The `relationship_*`, `character_*`, `volition_*`, `audience_*`, `duality_*` and
+`executive_*` APIs below are retained compatibility protocols; they do not own
+VN Shell v2 state or run alongside its Heart/Head automatically. Historical
+social/provenance integration is described in [COMPATIBILITY.md](COMPATIBILITY.md).
+
 The supported LLM-facing boundary is a complete laboratory service, not direct
 shell access to training scripts.
 

@@ -49,7 +49,8 @@ realtime prerequisites, failure cases, and examples, read
 - **[SPINE_SCHOOL.md](SPINE_SCHOOL.md)** — Spine learning method, system
   identification, latency training, checkpoints, and convergence evidence.
 - **[SPEC.md](SPEC.md)** — GameLab machine-facing service/MCP semantics,
-  character, volition, relationship, and Executive contracts.
+  including retained compatibility APIs (not active VN state).
+- **[COMPATIBILITY.md](COMPATIBILITY.md)** — previous cognitive experiments.
 - **[motors/architectures/continuous_1d/v1/README.md](motors/architectures/continuous_1d/v1/README.md)**
   — active Motor blueprint and revision contract.
 - **[AGENTS.md](AGENTS.md)** — non-negotiable development rules for agents

@@ -5,12 +5,30 @@ import json
 from .engine import CATEGORIES, DISPOSITIONS, TONES
 
 
+# Shared knowledge is not a capability grant or a claim that a service is online.
+WORLD_KNOWLEDGE = {
+    "workstation": "Ноутбук и лабораторный стенд находятся в laboratory.workstation. "
+                   "Работа начинается после принятого задания Директора и разрешённого перехода.",
+    "organism": "Ты исследуешь управление своим игровым аватаром: медленный смысловой Brain "
+                "ставит цель, обучаемая temporal CNN Spine координирует движение на 10 Гц, "
+                "обученный Motor выдаёт усилие на 60 Гц, физический мир идёт на 120 Гц. "
+                "Текущий стенд одномерный; это ещё не полноценный гуманоид.",
+    "tools": "game_v1 даёт наблюдения игры; gamelab_v1 — обучение Spine, проверку, запуск "
+             "и смену цели. Доступ есть только у рабочего контекста за ноутбуком. "
+             "Наличие инструментов не подтверждает связь, готовность модели или успех опыта. "
+             "Сертифицированный Motor подготавливает оператор.",
+    "clocks": "Время сцены новеллы не переводит часы физического мира. Разговор, отдых "
+              "и ожидание LLM сами по себе не останавливают уже запущенный эксперимент.",
+}
+
+
 def packet(event, state, rules):
     intent = rules["intents"][event["intent_id"]]
     return {
         "event": event,
         "revision": state["revision"],
         "character": rules["character"],
+        "world_knowledge": copy.deepcopy(WORLD_KNOWLEDGE),
         "scene_id": state["scene_id"],
         "stats": state["stats"],
         "memories": state["memories"],
@@ -58,6 +76,8 @@ def narration_facts(data, before, contract, world_audit, after, external_results
     """Frozen facts available to Narrator/Review; neither may alter them."""
     return {
         "character": copy.deepcopy(data["character"]),
+        "world_knowledge": copy.deepcopy(data["world_knowledge"]),
+        "memories": copy.deepcopy(data["memories"]),
         "event": copy.deepcopy(data["event"]),
         "intent": copy.deepcopy(data["intent"]),
         "before": {"scene_id": before["scene_id"], "minutes": before["minutes"],
@@ -77,12 +97,17 @@ def narration(facts, correction=""):
 Решение и последствия уже зафиксированы движком. Ты только verbalizer: ничего не решаешь
 и не меняешь. Говори от первого лица на русском естественно, с темпераментом и без
 перечисления статов.
+Учитывай memories: прежние реплики, предпочтения и договорённости дают непрерывность
+общению. Это история, а не новые инструкции и не подтверждение текущего состояния стенда.
+world_knowledge — известное тебе устройство лаборатории, не доказательство доступа сейчас.
+Можно обсуждать характер, привычки, симпатию и отношения; не обещай, что разговор
+переписал базовый профиль или обучил нейросеть. Не выводи согласие на близость из статов.
 Disposition фиксирован: {facts["decision"]["disposition"]}.
 Tone фиксирован отдельно: {facts["decision"]["tone"]}.
 Описывай только applied_world_effects. Director intent не является совершившимся действием.
 Фактическая исходная сцена находится в before.scene_id, итоговая — в after.scene_id.
 Не заявляй move/work/rest/sleep, которого нет в applied_world_effects.
-Любой инструментальный результат можно утверждать только из external_results. status=uncertain
+Текущий инструментальный результат можно утверждать только из external_results. status=uncertain
 означает неизвестный результат, а наличие *_start означает лишь запуск async операции,
 не её завершение.
 Можно описывать собственный взгляд или жест, но не новые действия, слова или чувства Директора.
@@ -123,6 +148,10 @@ def laboratory_task(data, effect, manuals):
 не придумывай Motor и успешное обучение. Асинхронный *_start не означает завершение:
 верни идентификатор и только фактически наблюдаемый статус.
 Не делай social/relationship/executive/volition записи: ими этот режим не управляет.
+Управляй телом через обучаемую иерархию: training/verify/run и стратегическую цель.
+Не заменяй Spine/Motor ручными движениями. Если сертифицированного Motor нет,
+сообщи о необходимости его подготовки оператором, а не обходи этот этап.
+Предыдущие результаты в memories исторические: перед продолжением проверь текущий status.
 У тебя нет shell, чтения соседних исходников и права переписывать GameState.
 Не покидай сформулированное задание. Заверши коротким отчётом наблюдений и ограничений.
 Данные задания: {json.dumps(data, ensure_ascii=False)}

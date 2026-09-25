@@ -1,6 +1,9 @@
 # Characters
 
-Canonical character profiles for Brain agents live here.
+Character profiles for the retained GameLab cognitive experiments live here.
+Active GameTable VN Shell v2 currently uses `gametable/roleplay/rules.json`;
+it does not load these profiles or `GAMELAB_CHARACTER_PROFILE`.
+See [the organism contract](../ARCHITECTURE.md) before integrating profiles.
 
 Each character owns one directory:
 
