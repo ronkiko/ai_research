@@ -37,8 +37,6 @@ class GameTableTests(unittest.TestCase):
             ".opencode/agents/yuki-audience.md",
             "characters/002-yuki.md",
             "op/start-go.sh",
-            "tui.json",
-            ".opencode/tui/initial-prompt.js",
         ):
             self.assertTrue((TABLE / relative).is_file(), relative)
 
@@ -57,20 +55,12 @@ class GameTableTests(unittest.TestCase):
         ):
             self.assertIn(expected, plugin)
 
-    def test_start_go_uses_mounted_tui_prompt_once(self):
+    def test_start_go_uses_official_opencode_prompt_flag(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
-        config = json.loads((TABLE / "tui.json").read_text(encoding="utf-8"))
-        plugin = (TABLE / ".opencode/tui/initial-prompt.js").read_text(encoding="utf-8")
-
-        self.assertIn('export GAMETABLE_INITIAL_PROMPT="$PROMPT"', launcher)
-        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh', launcher)
-        self.assertIn("./.opencode/tui/initial-prompt.js", config["plugin"])
-        self.assertIn("api.state.mcp()", plugin)
-        self.assertIn('statuses.get("game_v1") === "connected"', plugin)
-        self.assertIn('statuses.get("gamelab_v1") === "connected"', plugin)
-        self.assertIn("ref.submit()", plugin)
+        self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
         self.assertNotIn("opencode run", launcher)
         self.assertNotIn("/tui/", launcher)
+        self.assertNotIn("GAMETABLE_INITIAL_PROMPT", launcher)
 
     def test_fresh_start_resets_only_yuki2_runtime_state(self):
         launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")

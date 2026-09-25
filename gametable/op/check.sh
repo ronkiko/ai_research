@@ -9,8 +9,6 @@ bash -n gametable/op/start.sh gametable/op/start-go.sh
 
 echo "CHECK GameTable config"
 python3 -m json.tool gametable/opencode.json >/dev/null
-python3 -m json.tool gametable/tui.json >/dev/null
-node --check gametable/.opencode/tui/initial-prompt.js
 
 echo "CHECK GameTable contract"
 python3 -m unittest discover -s gametable/tests -p 'test_*.py' -v

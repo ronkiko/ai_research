@@ -40,8 +40,5 @@ esac
   exit 2
 }
 
-export GAMETABLE_INITIAL_PROMPT="$PROMPT"
-
-# One process only.  The GameTable TUI plugin submits the first message from the
-# mounted home prompt after OpenCode and both MCP servers are actually ready.
-exec "$ROOT/gametable/op/start.sh" --fresh
+# OpenCode officially auto-submits TUI --prompt.
+exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"
