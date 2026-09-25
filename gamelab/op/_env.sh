@@ -21,7 +21,10 @@ PY
 
 _gamelab_env_ok() {
   _gamelab_python_ok || return 1
-  "$GAMELAB_PY" - <<'PY' >/dev/null 2>&1
+  (
+    cd "$ROOT"
+    GAMELAB_BRAIN_STATE_ROOT="$GAMELAB_VENV/.startup-probe-state" \
+      "$GAMELAB_PY" - <<'PY' >/dev/null 2>&1
 from __future__ import annotations
 
 import importlib.metadata
@@ -58,7 +61,17 @@ if not ((1, 26) <= numpy_version < (3, 0)):
     raise SystemExit(1)
 if mcp_version != "2.2.0":
     raise SystemExit(1)
+
+# Metadata alone is insufficient for a persistent local venv.  Import the exact
+# OpenCode-facing module so broken/stale transitive dependencies are detected.
+from mcp.server import MCPServer  # noqa: F401
+import pydantic  # noqa: F401
+import gamelab.mcp as gamelab_mcp
+
+if gamelab_mcp.mcp is None:
+    raise SystemExit(1)
 PY
+  )
 }
 
 BOOTSTRAP_PY="$(command -v python3 || true)"
@@ -79,6 +92,24 @@ fi
 
 if ! _gamelab_env_ok; then
   echo "GAMELAB ENV synchronize dependencies" >&2
+  "$GAMELAB_PY" -m pip install --disable-pip-version-check -q --upgrade \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    "torch>=2.1,<3" "numpy>=1.26,<3" "mcp==2.2.0" 1>&2
+fi
+
+if ! _gamelab_env_ok; then
+  echo "GAMELAB ENV repair stale MCP dependencies" >&2
+  "$GAMELAB_PY" -m pip install --disable-pip-version-check -q \
+    --upgrade --force-reinstall \
+    --extra-index-url https://pypi.org/simple \
+    "mcp==2.2.0" 1>&2
+fi
+
+if ! _gamelab_env_ok; then
+  echo "GAMELAB ENV rebuild broken private runtime" >&2
+  rm -rf "$GAMELAB_VENV"
+  "$BOOTSTRAP_PY" -m venv "$GAMELAB_VENV"
   "$GAMELAB_PY" -m pip install --disable-pip-version-check -q \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple \
@@ -86,7 +117,7 @@ if ! _gamelab_env_ok; then
 fi
 
 if ! _gamelab_env_ok; then
-  echo "ERROR GameLab private runtime is not usable" >&2
+  echo "ERROR GameLab private runtime is not usable after rebuild" >&2
   exit 2
 fi
 
