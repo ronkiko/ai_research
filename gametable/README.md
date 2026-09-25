@@ -38,9 +38,10 @@ The Director starts GameServer and then launches a fresh Yuki2 trial:
 ./gametable/op/start-go.sh
 ```
 
-`start-go.sh` is the normal alpha-test entry point. It clears only Yuki2's
-personal/Executive runtime and starts the ordinary OpenCode TUI with its
-official `--prompt` flag. OpenCode auto-submits that prompt as the first turn;
+`start-go.sh` is the normal alpha-test entry point. It also starts/reuses the
+GameClient GUI, then clears only Yuki2's personal/Executive runtime and starts
+the ordinary OpenCode TUI with its official `--prompt` flag. The GUI retries
+its login until the default Host provided by `game_v1` is ready. OpenCode auto-submits that prompt as the first turn;
 GameTable does not inject TUI events, start a second OpenCode process, or use
 `opencode run` as a bootstrap.
 
