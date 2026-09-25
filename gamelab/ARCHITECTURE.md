@@ -9,7 +9,7 @@
 
 
 The MMO research line consists of GameServer, GameClient Host, GameLab and
-GameTable. Game1/Game2 are separate legacy experiments, not dependencies.
+GameTable. The archived experiments in the `legacy` branch are not dependencies.
 
 ## Primary goal: a composite artificial organism
 

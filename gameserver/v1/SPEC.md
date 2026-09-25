@@ -87,12 +87,3 @@ Snapshots include a Zone process epoch and persistent per-entity input/reset
 application acknowledgements. Telemetry records forward gaps and continues
 accepting newer ticks; duplicates/backwards ticks are rejected. A new epoch
 starts a new continuity interval, discarding the old epoch's buffered frames.
-
-## Relationship to Game2 Console
-
-GameServer v1 is independent of `game2/v2/console`; neither imports the other.
-It deliberately preserves the Console's proven realtime principles: autonomous
-world progress, authoritative server-side state, latched current input,
-read-only presentation/observation, narrow capabilities, and explicit tick
-causality. GameServer applies those principles to an MMO-style
-Gateway/World/Zone topology intended for a future standalone game world.

@@ -7,8 +7,6 @@ on:
       - "gameclient/v1/**"
       - "op/process.sh"
       - "op/test-process.sh"
-      - "op/process.sh"
-      - "op/test-process.sh"
       - ".github/workflows/game-v1.yml"
   pull_request:
     paths:

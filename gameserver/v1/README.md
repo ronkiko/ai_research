@@ -1,10 +1,8 @@
 # GameServer v1
 
 GameServer v1 is the MMO-style foundation of the current research laboratory.
-It is not a refactor of Console and does not import Game2.
-Both projects provide the same fundamental experimental property: an external
-human, bot, or learning system interacts with a real-time world that exists on
-its own clock and **does not wait for the player**.
+An external human, bot, or learning system interacts with a real-time world that
+exists on its own clock and **does not wait for the player**.
 
 GameLab and GameTable build hierarchical realtime AI research on this boundary.
 See `gamelab/ARCHITECTURE.md` for the complete laboratory contract.
@@ -16,8 +14,7 @@ fixed-step loop runs at 120 Hz whether there are zero, one, or many connected
 players. Input is current actuator effort, not a future schedule: the latest accepted
 `motor_x` remains latched until another command changes it.
 
-This deliberately carries forward the strongest Game2 Console rules from
-`game2/v2/console/SPEC.md` and `game2/v2/doc/REALTIME_SYSTEM.md`:
+The v1 contract is built around these realtime principles:
 
 - one autonomous authoritative world clock;
 - gameplay never waits for Player, model, renderer, telemetry, or UI;
