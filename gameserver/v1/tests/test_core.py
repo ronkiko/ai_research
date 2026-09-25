@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
+import tempfile
 import unittest
 
 from gameserver.v1.common.protocol import LineReader, ProtocolError, encode_line, message
 from gameserver.v1.mob.server import MobService
-from gameserver.v1.telemetry.server import TelemetryRing
+from gameserver.v1.telemetry.server import RotatingTrace, TelemetryRing
 from gameserver.v1.world.server import WorldRegistry
 from gameserver.v1.zone.model import ZoneRuntime
 from gameserver.v1.zone.server import ZoneService
@@ -208,6 +210,24 @@ class TelemetryRingTests(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "out-of-order"):
             ring.append(dict(zone_id="zone1", world_tick=1, epoch="b", entities=[]))
         self.assertEqual([f["world_tick"] for f in ring.frames()], [1, 2])
+
+
+class TelemetryTraceTests(unittest.TestCase):
+    def test_trace_rotates_before_exceeding_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.jsonl"
+            trace = RotatingTrace(path, max_bytes=100)
+            trace.open()
+            try:
+                for tick in range(10):
+                    trace.write({"type": "snapshot", "world_tick": tick,
+                                 "entities": []})
+            finally:
+                trace.close()
+
+            self.assertLessEqual(path.stat().st_size, 100)
+            self.assertTrue(path.with_name("telemetry.jsonl.1").exists())
+            self.assertLessEqual(path.with_name("telemetry.jsonl.1").stat().st_size, 100)
 
 
 if __name__ == "__main__":

@@ -135,6 +135,10 @@ Default trace:
 gameserver/v1/runtime/telemetry.jsonl
 ```
 
+The active trace is rotated before it reaches 1,000,000,000 bytes. The
+previous file is kept as `telemetry.jsonl.1` and replaced on the next rotation;
+the limit can be changed with `--trace-max-bytes`.
+
 ### Persistence Server
 
 A deliberately small persistence boundary. v1 exposes three demo identities:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 import json
+import os
 from pathlib import Path
 import socket
 import threading
@@ -13,6 +14,45 @@ from ..common.config import (HOST, TELEMETRY_QUERY_PORT, TELEMETRY_RING_TICKS,
                              TELEMETRY_UDP_PORT)
 from ..common.protocol import ProtocolError, message
 from ..common.server import JsonRpcServer
+
+
+DEFAULT_TRACE_MAX_BYTES = 1_000_000_000
+
+
+class RotatingTrace:
+    """Append JSONL records while keeping the active trace below a byte limit."""
+
+    def __init__(self, path: Path, max_bytes: int):
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.path = path
+        self.backup_path = path.with_name(f"{path.name}.1")
+        self.max_bytes = max_bytes
+        self._file = None
+
+    def open(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("a", encoding="utf-8", buffering=1)
+
+    def write(self, record: dict[str, Any]) -> None:
+        if self._file is None:
+            raise RuntimeError("trace is not open")
+        line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
+        line_bytes = len(line.encode("utf-8"))
+        if line_bytes > self.max_bytes:
+            raise ValueError("trace record exceeds max trace size")
+        current_size = os.fstat(self._file.fileno()).st_size
+        if current_size and current_size + line_bytes > self.max_bytes:
+            self._file.close()
+            self.path.replace(self.backup_path)
+            self._file = self.path.open("w", encoding="utf-8", buffering=1)
+        self._file.write(line)
+        self._file.flush()
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
 
 
 class TelemetryRing:
@@ -84,14 +124,16 @@ class TelemetryRing:
 class TelemetryService:
     def __init__(self, *, host: str = HOST, udp_port: int = TELEMETRY_UDP_PORT,
                  query_port: int = TELEMETRY_QUERY_PORT,
-                 trace_path: str | Path | None = None):
+                 trace_path: str | Path | None = None,
+                 trace_max_bytes: int = DEFAULT_TRACE_MAX_BYTES):
         self.ring = TelemetryRing()
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._udp.bind((host, udp_port))
         self._query = JsonRpcServer(host, query_port, self.dispatch)
         self._query_thread = threading.Thread(target=self._query.serve_forever, daemon=True)
         self.trace_path = Path(trace_path) if trace_path else None
-        self._trace = None
+        self._trace = (RotatingTrace(self.trace_path, trace_max_bytes)
+                       if self.trace_path is not None else None)
         self.validation_errors = 0
 
     def dispatch(self, request: dict) -> dict:
@@ -113,13 +155,11 @@ class TelemetryService:
 
     def _record(self, record: dict[str, Any]) -> None:
         if self._trace is not None:
-            self._trace.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
-            self._trace.flush()
+            self._trace.write(record)
 
     def run(self) -> None:
         if self.trace_path is not None:
-            self.trace_path.parent.mkdir(parents=True, exist_ok=True)
-            self._trace = self.trace_path.open("a", encoding="utf-8", buffering=1)
+            self._trace.open()
         self._query_thread.start()
         print(json.dumps({"component": "telemetry", "status": "READY",
                           "ring_ticks": self.ring.capacity}), flush=True)
@@ -153,9 +193,11 @@ def main() -> int:
     parser.add_argument("--udp-port", type=int, default=TELEMETRY_UDP_PORT)
     parser.add_argument("--query-port", type=int, default=TELEMETRY_QUERY_PORT)
     parser.add_argument("--trace", default="gameserver/v1/runtime/telemetry.jsonl")
+    parser.add_argument("--trace-max-bytes", type=int, default=DEFAULT_TRACE_MAX_BYTES)
     args = parser.parse_args()
     TelemetryService(host=args.host, udp_port=args.udp_port,
-                     query_port=args.query_port, trace_path=args.trace).run()
+                     query_port=args.query_port, trace_path=args.trace,
+                     trace_max_bytes=args.trace_max_bytes).run()
     return 0
 
 
