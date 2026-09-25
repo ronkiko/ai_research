@@ -17,6 +17,7 @@ from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
 from gametable.roleplay.server import Application, handler_for, normalize_turn_body
+from gametable.roleplay.view import available_intent_ids, project_view
 
 
 def event(event_id="turn-0001", text="Привет, Юки", intent_id="talk"):
@@ -457,13 +458,68 @@ class WebBoundaryTests(unittest.TestCase):
         h.do_GET(); self.assertEqual(h.send.call_args.args[0], 404)
         h = self.handler("/api/state")
         h.do_GET()
-        self.assertNotIn("SECRET DRAFT", json.dumps(h.send.call_args.args[1]))
+        payload = h.send.call_args.args[1]
+        self.assertNotIn("SECRET DRAFT", json.dumps(payload))
+        self.assertNotIn("draft_attempts", json.dumps(payload))
 
-    def test_browser_snapshot_projects_legacy_location_without_owning_world_state(self):
+    def test_hallway_viewstate_is_server_driven_and_does_not_mutate_state(self):
+        before = copy.deepcopy(self.store.state())
+        view = project_view(before, self.rules)
+        self.assertEqual(view["scene"]["id"], "hallway")
+        self.assertEqual(view["scene"]["label"], "КОРИДОР · HALLWAY")
+        self.assertEqual([a["intent_id"] for a in view["affordances"]],
+                         ["talk", "request_lab_work", "request_rest", "request_sleep"])
+        self.assertNotIn("request_leave_lab", [a["intent_id"] for a in view["affordances"]])
+        view["stats"]["trust"] = 999
+        view["scene"]["props"].append("forged")
+        self.assertEqual(self.store.state(), before)
+
+    def test_laboratory_viewstate_exposes_leave_intent(self):
+        state = copy.deepcopy(self.store.state())
+        state["scene_id"] = "laboratory.workstation"
+        view = project_view(state, self.rules)
+        ids = [a["intent_id"] for a in view["affordances"]]
+        self.assertIn("request_leave_lab", ids)
+        self.assertEqual(view["scene"]["css_class"], "laboratory")
+        self.assertEqual(view["scene"]["character"]["pose"], "seated_working")
+
+    def test_snapshot_exposes_viewstate_not_raw_authoritative_state(self):
         snapshot = self.app.snapshot()
-        self.assertEqual(snapshot["state"]["scene_id"], "hallway")
-        self.assertEqual(snapshot["state"]["location"], "hallway")
-        self.assertNotIn("location", self.store.state())
+        self.assertIn("view", snapshot)
+        self.assertNotIn("state", snapshot)
+        self.assertEqual(snapshot["view"]["scene"]["id"], "hallway")
+        dumped = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn("rules_hash", dumped)
+        self.assertNotIn("recent_events", dumped)
+        self.assertNotIn("memories", dumped)
+
+    def test_presentation_labels_do_not_change_world_reducer(self):
+        variant = copy.deepcopy(self.rules)
+        variant["scenes"]["hallway"]["presentation"]["label"] = "ДРУГАЯ ПОДПИСЬ"
+        base = self.store.state()
+        e = event()
+        h = report("heart", e, base)
+        d = report("head", e, base)
+        original = reduce_turn(base, e, h, d, self.rules)
+        changed = reduce_turn(base, e, h, d, variant)
+        self.assertEqual(original, changed)
+
+    def test_unavailable_intent_is_rejected_for_current_scene(self):
+        allowed = available_intent_ids(self.store.state(), self.rules)
+        with self.assertRaises(ValueError):
+            normalize_turn_body(
+                {"id": "turn-0003", "text": "Выйдем", "intent_id": "request_leave_lab"},
+                self.rules,
+                allowed,
+            )
+        h = self.handler(
+            "/api/turn",
+            {"id": "turn-0003", "text": "Выйдем", "intent_id": "request_leave_lab"},
+            token=self.app.token,
+        )
+        h.do_POST()
+        self.assertEqual(h.send.call_args.args[0], 400)
+        self.app.runtime.submit.assert_not_called()
 
     def test_http_compat_activity_is_normalized_to_director_intent(self):
         body = {"id": "turn-0001", "text": "Проверь стенд", "activity": "lab"}

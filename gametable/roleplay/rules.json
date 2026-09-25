@@ -1,5 +1,5 @@
 {
-  "version": "vn-4",
+  "version": "vn-5",
   "character": {
     "id": "yuki-vn-1",
     "name": "Юки",
@@ -33,23 +33,38 @@
   "intents": {
     "talk": {
       "kind": "conversation",
-      "accepted_effect": "converse"
+      "accepted_effect": "converse",
+      "label": "Поговорить · 2 мин",
+      "ui_kind": "conversation",
+      "default_text": ""
     },
     "request_lab_work": {
       "kind": "request",
-      "accepted_effect": "lab_work"
+      "accepted_effect": "lab_work",
+      "label": "Лаборатория · MCP",
+      "ui_kind": "request",
+      "default_text": ""
     },
     "request_rest": {
       "kind": "request",
-      "accepted_effect": "rest"
+      "accepted_effect": "rest",
+      "label": "Перерыв · 30 мин",
+      "ui_kind": "request",
+      "default_text": "Давай сделаем перерыв на полчаса."
     },
     "request_sleep": {
       "kind": "request",
-      "accepted_effect": "sleep"
+      "accepted_effect": "sleep",
+      "label": "Сон · 8 часов",
+      "ui_kind": "request",
+      "default_text": "На сегодня всё. Пора выспаться."
     },
     "request_leave_lab": {
       "kind": "request",
-      "accepted_effect": "leave_lab"
+      "accepted_effect": "leave_lab",
+      "label": "Выйти в коридор · 2 мин",
+      "ui_kind": "movement",
+      "default_text": "Давай вернёмся в коридор."
     }
   },
   "ui_activity_compat": {
@@ -61,10 +76,46 @@
   "initial_scene": "hallway",
   "scenes": {
     "hallway": {
-      "label": "Коридор"
+      "label": "Коридор",
+      "affordances": [
+        "talk",
+        "request_lab_work",
+        "request_rest",
+        "request_sleep"
+      ],
+      "presentation": {
+        "label": "КОРИДОР · HALLWAY",
+        "background": "hallway_day",
+        "css_class": "hallway",
+        "character": {
+          "pose": "standing",
+          "slot": "center"
+        },
+        "props": []
+      }
     },
     "laboratory.workstation": {
-      "label": "Лаборатория · рабочее место"
+      "label": "Лаборатория · рабочее место",
+      "affordances": [
+        "talk",
+        "request_lab_work",
+        "request_leave_lab",
+        "request_rest",
+        "request_sleep"
+      ],
+      "presentation": {
+        "label": "ЛАБОРАТОРИЯ · WORKSTATION",
+        "background": "laboratory_day",
+        "css_class": "laboratory",
+        "character": {
+          "pose": "seated_working",
+          "slot": "center"
+        },
+        "props": [
+          "desk",
+          "laptop"
+        ]
+      }
     }
   },
   "transitions": [

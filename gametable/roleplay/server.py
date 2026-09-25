@@ -20,6 +20,7 @@ from .engine import load_rules
 from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
 from .store import Store
+from .view import available_intent_ids, project_view
 
 TABLE = Path(__file__).resolve().parents[1]
 DEFAULT_SAVE = TABLE / "runtime/yuki-vn"
@@ -41,7 +42,7 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def normalize_turn_body(body, rules):
+def normalize_turn_body(body, rules, allowed_intents=None):
     """Compatibility ends here: runtime/store only see DirectorIntent."""
     if not isinstance(body, dict):
         raise ValueError("Неверный формат хода")
@@ -60,6 +61,8 @@ def normalize_turn_body(body, rules):
         raise ValueError("Сообщение должно содержать от 1 до 4000 символов")
     if not isinstance(intent_id, str) or intent_id not in rules["intents"]:
         raise ValueError("Неизвестное намерение Директора")
+    if allowed_intents is not None and intent_id not in set(allowed_intents):
+        raise ValueError("Это действие недоступно в текущей сцене")
     return {"id": body["id"], "text": body["text"].strip(), "intent_id": intent_id}
 
 
@@ -72,15 +75,12 @@ class Application:
     def snapshot(self):
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
-        # Patch 2 compatibility only: the current prototype renderer still expects
-        # hallway/laboratory. The authoritative save contains scene_id, not location.
-        browser_state = dict(state)
-        browser_state["location"] = ("laboratory"
-                                     if state["scene_id"] == "laboratory.workstation"
-                                     else "hallway")
-        return {"state": browser_state, "history": history, "character": self.rules["character"],
-                "busy": any(t["status"] == "running" for t in history), "model": self.backend.model,
-                "token": self.token, "initial_prompt": self.prompt}
+        running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
+        view = project_view(state, self.rules, busy=running is not None,
+                            stage=running["stage"] if running else None)
+        return {"view": view, "history": history, "character": self.rules["character"],
+                "model": self.backend.model, "token": self.token,
+                "initial_prompt": self.prompt}
 
 
 def handler_for(app):
@@ -140,7 +140,8 @@ def handler_for(app):
                 if not 0 < length <= 20000:
                     raise ValueError("Сообщение слишком большое")
                 body = json.loads(self.rfile.read(length))
-                event = normalize_turn_body(body, app.rules)
+                allowed = available_intent_ids(app.store.state(), app.rules)
+                event = normalize_turn_body(body, app.rules, allowed)
                 turn = app.runtime.submit(event)
                 self.send(202, public_turn(turn))
             except (ValueError, TypeError) as exc:

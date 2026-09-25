@@ -1,28 +1,28 @@
 const $ = (id) => document.getElementById(id);
 const labels = {health:'Здоровье',fatigue:'Усталость',mood:'Настроение',affection:'Симпатия',trust:'Доверие'};
-const locations = {hallway:'КОРИДОР · HALLWAY',laboratory:'ЛАБОРАТОРИЯ · LABORATORY'};
 const colors = {health:'#709988',fatigue:'#b39970',mood:'#8c9dc0',affection:'#bf8796',trust:'#668f9d'};
-let token='', busy=false, lastHistory='', initialized=false, posting=false, pending=null, lastError='';
+let token='', busy=false, lastHistory='', initialized=false, posting=false, pending=null, lastError='', affordances=new Map();
 function node(tag, text, className) { const el=document.createElement(tag); if(text!==undefined)el.textContent=text; if(className)el.className=className; return el; }
 async function request(path, options) { const r=await fetch(path,options); const value=await r.json(); if(!r.ok)throw Error(value.error||'Ошибка соединения'); return value; }
-function renderStats(s) {
+function renderView(view) {
   $('stats').replaceChildren();
   for (const [key,label] of Object.entries(labels)) {
     const el=node('div',undefined,'stat'); el.style.setProperty('--color',colors[key]);
-    const caption=node('div',undefined,'label'); caption.append(node('span',label),node('span',`${Math.round(s.stats[key])} / 100`,'value'));
-    const bar=node('div',undefined,'bar'); const fill=node('div',undefined,'fill'); fill.style.width=s.stats[key]+'%';bar.append(fill);el.append(caption,bar);$('stats').append(el);
+    const caption=node('div',undefined,'label'); caption.append(node('span',label),node('span',`${Math.round(view.stats[key])} / 100`,'value'));
+    const bar=node('div',undefined,'bar'); const fill=node('div',undefined,'fill'); fill.style.width=view.stats[key]+'%';bar.append(fill);el.append(caption,bar);$('stats').append(el);
   }
-  const day=1+Math.floor(s.minutes/1440), hour=Math.floor(s.minutes%1440/60), minute=s.minutes%60;
-  $('clock').textContent=`День ${day} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-  $('location-label').textContent=locations[s.location]||s.location||'НЕИЗВЕСТНАЯ ЛОКАЦИЯ';
-  document.querySelector('.stage').classList.toggle('laboratory',s.location==='laboratory');
-  document.querySelector('.stage').classList.toggle('hallway',s.location!=='laboratory');
-  // Display labels only: no extra hidden relationship-stage mechanics.
-  $('relation').textContent=s.stats.affection>=65&&s.stats.trust>=60?'Близость и доверие':s.stats.affection>=65?'Тянется к тебе, но сомневается':s.stats.trust>=60?'Полагается на тебя':s.stats.trust<20?'Осторожность':'Узнаёте друг друга';
-  $('scene-label').textContent=s.stats.fatigue>=70?'Нужна передышка':s.stats.mood<35?'Непростой разговор':s.stats.affection>60?'Знакомый голос':'Тихий день';
-  document.querySelector('.stage').classList.toggle('tired',s.stats.fatigue>=70);
-  document.querySelector('.stage').classList.toggle('night',hour>=20||hour<7);
-  $('mouth').setAttribute('d',s.stats.mood<35?'M189 268Q200 262 211 268':'M188 263Q200 272 212 262');
+  $('clock').textContent=`День ${view.time.day} · ${String(view.time.hour).padStart(2,'0')}:${String(view.time.minute).padStart(2,'0')}`;
+  $('location-label').textContent=view.scene.label;
+  $('relation').textContent=view.relationship_label;
+  $('scene-label').textContent=view.scene_label;
+  const stage=document.querySelector('.stage');
+  stage.className=['stage',view.scene.css_class,view.scene.character.tired?'tired':'',view.time.night?'night':''].filter(Boolean).join(' ');
+  $('mouth').setAttribute('d',view.scene.character.expression==='downcast'?'M189 268Q200 262 211 268':'M188 263Q200 272 212 262');
+  affordances=new Map(view.affordances.map(item=>[item.intent_id,item]));
+  const select=$('intent'); const previous=select.value; select.replaceChildren();
+  for(const item of view.affordances){const option=node('option',item.label);option.value=item.intent_id;select.append(option);}
+  if(affordances.has(previous))select.value=previous;
+  busy=view.busy;
 }
 async function showAudit(id) {
   $('audit-content').replaceChildren(node('p','Загрузка…')); $('audit').showModal();
@@ -53,17 +53,15 @@ function renderHistory(history) {
   if(nearBottom||!initialized)container.scrollTop=container.scrollHeight;
 }
 async function refresh(){
-  try{const value=await request('/api/state');token=value.token;busy=value.busy;renderStats(value.state);renderHistory(value.history);$('model').textContent=value.model||'';
+  try{const value=await request('/api/state');token=value.token;renderView(value.view);renderHistory(value.history);$('model').textContent=value.model||'';
     if(!initialized&&value.initial_prompt&&!value.history.length)$('message').value=value.initial_prompt;
-    initialized=true;$('send').disabled=busy||posting;$('activity').disabled=busy||posting;$('status').className=lastError?'status error':'status';$('status').textContent=lastError||(busy?'Юки обдумывает ответ. Черновики остаются за сценой.':pending?'Отправка не подтверждена. Повтор использует тот же ход.':'');
+    initialized=true;$('send').disabled=busy||posting;$('intent').disabled=busy||posting;$('status').className=lastError?'status error':'status';$('status').textContent=lastError||(busy?(value.view.stage||'Юки обдумывает ответ')+'…':pending?'Отправка не подтверждена. Повтор использует тот же ход.':'');
   }catch(e){$('status').className='status error';$('status').textContent='Нет связи с GameTable. '+e.message;}
 }
 $('composer').onsubmit=async(e)=>{e.preventDefault();if(busy||posting)return;
-  let text=$('message').value.trim();const activity=$('activity').value;
-  if(!text&&activity==='rest')text='Давай сделаем перерыв на полчаса.';
-  if(!text&&activity==='sleep')text='На сегодня всё. Пора выспаться.';
-  if(!text)return;
-  if(!pending||pending.text!==text||pending.activity!==activity)pending={id:crypto.randomUUID(),text,activity};
+  const intent_id=$('intent').value; const affordance=affordances.get(intent_id); if(!affordance)return;
+  let text=$('message').value.trim();if(!text)text=affordance.default_text||'';if(!text)return;
+  if(!pending||pending.text!==text||pending.intent_id!==intent_id)pending={id:crypto.randomUUID(),text,intent_id};
   posting=true;lastError='';$('send').disabled=true;
   try{await request('/api/turn',{method:'POST',headers:{'Content-Type':'application/json','X-GameTable-Token':token},body:JSON.stringify(pending)});pending=null;lastError='';$('message').value='';}
   catch(error){lastError=error.message;$('status').className='status error';$('status').textContent=lastError;}
