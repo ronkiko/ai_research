@@ -44,5 +44,6 @@ Return only a compact internal report:
 
 POSITION: <Heart's position>
 DIRECTION: <strengthen|weaken>
+Write exactly one direction value, with no parentheses or synonyms.
 INTENSITY: <faint|meaningful|strong|decisive>
 EVIDENCE: <which supplied facts support this appraisal>

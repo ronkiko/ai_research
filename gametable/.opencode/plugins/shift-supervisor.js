@@ -152,7 +152,54 @@ function toolIs(name, suffix) {
   return name === suffix || String(name || "").endsWith("_" + suffix)
 }
 
+function outputText(value, seen = new Set()) {
+  if (typeof value === "string") return value
+  if (!value || typeof value !== "object" || seen.has(value)) return ""
+  seen.add(value)
+  if (Array.isArray(value)) return value.map((item) => outputText(item, seen)).filter(Boolean).join("\n")
+
+  for (const key of [
+    "output",
+    "value",
+    "result",
+    "data",
+    "text",
+    "parts",
+    "content",
+    "task_result",
+    "taskResult",
+  ]) {
+    if (key in value) {
+      const text = outputText(value[key], seen)
+      if (text) return text
+    }
+  }
+  return ""
+}
+
 function parseJSONOutput(value) {
+  if (value && typeof value === "object") {
+    if (value.active_cycle) return value
+    for (const key of [
+      "output",
+      "value",
+      "result",
+      "data",
+      "parts",
+      "content",
+      "task_result",
+      "taskResult",
+    ]) {
+      const nested = value[key]
+      if (nested && nested !== value) {
+        const parsed = parseJSONOutput(nested)
+        if (parsed) return parsed
+      }
+    }
+    const parsed = parseJSONOutput(outputText(value))
+    if (parsed) return parsed
+    return undefined
+  }
   if (typeof value !== "string") return undefined
   try {
     return JSON.parse(value)
@@ -170,11 +217,13 @@ function parseJSONOutput(value) {
 
 function toolResultText(result) {
   if (typeof result?.output === "string") return result.output
-  if (!Array.isArray(result?.content)) return ""
-  return result.content
-    .filter((item) => item?.type === "text" && typeof item.text === "string")
-    .map((item) => item.text)
-    .join("\n\n")
+  if (Array.isArray(result?.content)) {
+    return result.content
+      .filter((item) => item?.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\n\n")
+  }
+  return outputText(result)
 }
 
 function parseToolResultJSON(result) {
@@ -182,14 +231,24 @@ function parseToolResultJSON(result) {
       !Array.isArray(result.structuredContent)) {
     return result.structuredContent
   }
-  return parseJSONOutput(toolResultText(result))
+  return parseJSONOutput(result) || parseJSONOutput(toolResultText(result))
 }
 
 function parseReport(value) {
   const result = {}
-  for (const line of String(value || "").split(/\r?\n/)) {
+  for (const line of outputText(value).split(/\r?\n/)) {
     const match = /^([A-Z_]+):\s*(.*)$/.exec(line.trim())
     if (match) result[match[1]] = match[2].trim()
+  }
+
+  // Keep equivalent parenthetical direction labels from blocking the MCP write.
+  if (result.DIRECTION) {
+    const direction = result.DIRECTION.toLowerCase()
+    if (direction === "toward" || direction.startsWith("strengthen")) {
+      result.DIRECTION = "strengthen"
+    } else if (direction === "away" || direction.startsWith("weaken")) {
+      result.DIRECTION = "weaken"
+    }
   }
   return result
 }
@@ -412,7 +471,11 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
         }
         const report = args.side === "heart" ? gate.heart : args.side === "brain" ? gate.head : undefined
         if (!report?.POSITION || !report?.DIRECTION || !report?.INTENSITY || !report?.EVIDENCE) {
-          throw new Error("duality_appraise requires a completed matching Heart/Head task report")
+          const missing = ["POSITION", "DIRECTION", "INTENSITY", "EVIDENCE"]
+            .filter((key) => !report?.[key])
+          throw new Error(
+            `duality_appraise requires a completed matching Heart/Head task report; missing ${missing.join(", ")}`,
+          )
         }
         args.position = report.POSITION
         args.direction = report.DIRECTION
@@ -538,3 +601,5 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     },
   }
 }
+
+export { outputText, parseJSONOutput, parseReport }

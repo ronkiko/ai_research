@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -56,6 +57,24 @@ class GameTableTests(unittest.TestCase):
             "characterSystemPrompt",
         ):
             self.assertIn(expected, plugin)
+
+    def test_shift_supervisor_parses_wrapped_task_reports(self):
+        script = f"""
+import {{ parseReport }} from {json.dumps(PLUGIN.as_uri())}
+const report = parseReport({{
+  task_result: "POSITION: test position\\nDIRECTION: toward\\nINTENSITY: meaningful\\nEVIDENCE: test evidence",
+}})
+if (report.DIRECTION !== "strengthen" || report.POSITION !== "test position" || report.EVIDENCE !== "test evidence") {{
+  process.exit(1)
+}}
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_internal_agents_are_toolless_subagents(self):
         for name in ("yuki-heart", "yuki-head", "yuki-will", "yuki-audience"):
