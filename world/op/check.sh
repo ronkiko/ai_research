@@ -8,4 +8,6 @@ for file in world/maps/*.json; do
 done
 echo "CHECK embodied world contracts"
 python3 -m unittest discover -s world/tests -p 'test_*.py' -v
+echo "CHECK legacy GameTable remains valid before cutover"
+./gametable/op/check.sh
 echo "PASS embodied world contracts"
