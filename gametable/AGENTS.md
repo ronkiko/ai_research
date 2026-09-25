@@ -64,9 +64,13 @@ Use the game and laboratory only through the connected `game_v1` and
 GameServer source trees and never run their shell/operator scripts from this
 workstation. Infrastructure development is outside the Yuki2 experiment.
 
-All training exposed by `gamelab_v1` is realtime training through the selected
-GameClient Host and authoritative GameServer. Treat realtime as the complete
-training interface available on this workstation.
+All training exposed by `gamelab_v1` is realtime Spine training through the
+selected GameClient Host and authoritative GameServer. Treat realtime as the
+complete training interface available on this workstation. Motor construction,
+Motor School and Motor certification are Operator-side preparation and are not
+agent tools. A prepared workstation is expected to expose at least one
+compatible certified Motor through `model_info.motors`; do not invent a Motor
+or treat a missing certified Motor as evidence about the game task.
 
 Alpha conversational visibility:
 
