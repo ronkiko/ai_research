@@ -30,7 +30,8 @@ def binding():
 
 def authority(kind="navigate", target="laboratory"):
     return ActionAuthority(
-        SCHEMA_VERSION, "authority.1", "character.yuki", kind, target, 2_000_000_000_000
+        SCHEMA_VERSION, "authority.1", "character.yuki", 12, kind, target,
+        2_000_000_000_000
     )
 
 
@@ -81,7 +82,7 @@ class ContractTests(unittest.TestCase):
             "status": "applied", "reason_code": "ok", "source_zone": "hallway",
             "target_zone": "laboratory", "entity_id": "entity.yuki",
             "world_epoch": "epoch.1", "tick": 1, "world_revision": 1,
-            "observed_outcome": {"x": math.inf},
+            "job_revision": 3, "observed_outcome": {"x": math.inf},
         }
         with self.assertRaises(ValueError):
             ActionReceipt.from_dict(receipt)
@@ -147,6 +148,26 @@ class ContractTests(unittest.TestCase):
                 authority=authority("approach", "laboratory"),
             )
         self.assertEqual(caught.exception.code, "capability_denied")
+
+    def test_character_world_and_job_revisions_are_distinct_contract_fields(self):
+        auth = authority()
+        request = ActionRequest.create(
+            request_id="request.revisions",
+            embodiment_id="embodiment.yuki.primary",
+            kind="navigate",
+            target=ActionTarget("location", "laboratory"),
+            expected_world_epoch="epoch.1",
+            expected_world_revision=44,
+            authority=auth,
+        )
+        receipt = ActionReceipt(
+            SCHEMA_VERSION, "action.revisions", request.request_id, "accepted", "ok",
+            "hallway", "laboratory", "entity.yuki", "epoch.1", 120, 45, 7, {},
+        )
+        self.assertEqual(auth.character_revision, 12)
+        self.assertEqual(request.expected_world_revision, 44)
+        self.assertEqual(receipt.world_revision, 45)
+        self.assertEqual(receipt.job_revision, 7)
 
     def test_skill_binding_is_path_free_and_roundtrips(self):
         skill = SkillBinding(
