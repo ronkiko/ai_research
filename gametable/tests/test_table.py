@@ -50,7 +50,6 @@ class GameTableTests(unittest.TestCase):
             "volition_will_appraise",
             "volition_commit",
             "Direct volition_decide is disabled",
-            "relationship_action",
             "relationship_consent",
         ):
             self.assertIn(expected, plugin)

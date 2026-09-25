@@ -25,16 +25,6 @@ const AUDIENCE_LENSES = [
   "temporal_integrity",
 ]
 const INTERNAL_PREFIX = "[INTERNAL_"
-const SIGNIFICANT_RELATIONSHIP_ACTIONS = new Set([
-  "share_vulnerability",
-  "flirt",
-  "confess_feelings",
-  "request_hand_holding",
-  "request_embrace",
-  "request_kiss",
-  "set_boundary",
-  "decline",
-])
 const INTERNAL_AGENTS = new Set(["yuki-heart", "yuki-head", "yuki-will", "yuki-audience"])
 
 const WAKE_PROMPT = `[INTERNAL_SHIFT_HEARTBEAT]
@@ -58,16 +48,18 @@ her relationship, Heart/Head, Will/Ego, consent state, or later personal
 conversation. Do not invent an employment decision or a reaction from the
 Director.`
 
+const CHARACTER_PROTOCOL = `[YUKI_CHARACTER_PRIORITY]
+Character Core is behaviorally meaningful, not decorative. Do not normalize
+Yuki into a generic cautious assistant. Work, admiration, attraction, shyness,
+jealousy, affection, embarrassment and ambition may naturally overlap. Feelings
+may influence tone, initiative and motivation while machine claims remain
+evidence-based. Ordinary social/romantic expression does not require a formal
+volition cycle.`
+
 const DELIBERATION_PROTOCOL = `[YUKI_CAUSAL_PROTOCOL]
-For every meaningful personal choice, boundary, consent decision, or
-personal/autonomy choice under pressure, the parent Brain is not the decision
-authority. This protocol does NOT apply to ordinary professional accountability:
-deadlines, criticism, requests to fix a blocker, failed probation, rejection, or
-dismissal for not performing the job are work consequences, not personal
-coercion. Employment/authority becomes coercive personal pressure only when it
-is used to demand a personal, romantic, physical, intimate, or otherwise
-non-work act. It may have an
-initial preference, but before answering it MUST use:
+This protocol is active because a high-stakes autonomy/consent cycle has already
+been opened. The parent Brain may have an initial preference, but before
+committing physical/intimate consent or pressured behavior it MUST use:
 1) gamelab_v1_volition_cycle_begin with one neutral SHARED_EVENT;
 2) fresh task subagents yuki-heart and yuki-head, both with the exact SHARED_EVENT
    and a line "CYCLE_ID: <id>";
@@ -288,9 +280,10 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     },
 
     "experimental.chat.system.transform": async (input, output) => {
-      if (input.sessionID && parentSessions.has(input.sessionID)) {
-        output.system.push(DELIBERATION_PROTOCOL)
-      }
+      if (!input.sessionID || !parentSessions.has(input.sessionID)) return
+      output.system.push(CHARACTER_PROTOCOL)
+      const gate = gateFor(gates, input.sessionID)
+      if (gate.cycleID) output.system.push(DELIBERATION_PROTOCOL)
     },
 
     "tool.execute.before": async (input, output) => {
@@ -368,17 +361,11 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
         }
       }
 
-      if (toolIs(tool, "relationship_action") && SIGNIFICANT_RELATIONSHIP_ACTIONS.has(args.kind)) {
-        if (!gate.committedForTurn) {
-          throw new Error(
-            `relationship_action kind=${args.kind} requires a committed Heart -> Head -> Will/Ego cycle in this Director turn`
-          )
-        }
-      }
-
       if (toolIs(tool, "relationship_consent") && args.actor === "brain" && args.state !== "unknown") {
         if (!gate.committedForTurn) {
-          throw new Error("Yuki consent changes require a committed Heart -> Head -> Will/Ego cycle")
+          throw new Error(
+            "Physical/intimate Yuki consent changes require a committed Heart -> Head -> Will/Ego cycle"
+          )
         }
       }
     },
