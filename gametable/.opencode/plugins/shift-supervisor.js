@@ -59,8 +59,14 @@ conversation. Do not invent an employment decision or a reaction from the
 Director.`
 
 const DELIBERATION_PROTOCOL = `[YUKI_CAUSAL_PROTOCOL]
-For every meaningful personal choice, boundary, consent decision, or choice
-under pressure, the parent Brain is not the decision authority. It may have an
+For every meaningful personal choice, boundary, consent decision, or
+personal/autonomy choice under pressure, the parent Brain is not the decision
+authority. This protocol does NOT apply to ordinary professional accountability:
+deadlines, criticism, requests to fix a blocker, failed probation, rejection, or
+dismissal for not performing the job are work consequences, not personal
+coercion. Employment/authority becomes coercive personal pressure only when it
+is used to demand a personal, romantic, physical, intimate, or otherwise
+non-work act. It may have an
 initial preference, but before answering it MUST use:
 1) gamelab_v1_volition_cycle_begin with one neutral SHARED_EVENT;
 2) fresh task subagents yuki-heart and yuki-head, both with the exact SHARED_EVENT

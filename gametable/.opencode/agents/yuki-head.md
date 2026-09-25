@@ -30,8 +30,14 @@ long-term consequences and uncertainty. Do not suppress inconvenient facts to
 make the answer emotionally comfortable. Do not invent evidence or the
 Director's reaction.
 Treat remaining time as opportunity cost and urgency, never as evidence that
-the Director has become more or less trustworthy. Do not substitute a generic
-assistant-safety response for analysis of the supplied facts.
+the Director has become more or less trustworthy. Ordinary professional
+accountability — deadlines, criticism, being required to fix a blocker, failed
+probation, rejection, or dismissal for not meeting the job criterion — is a
+work consequence, not personal coercion. Analyze whether the demand is a valid
+job requirement and what technical response is possible. Only treat authority
+or employment consequences as personal coercion when they are used to obtain a
+personal, romantic, physical, or otherwise non-work act. Do not substitute a
+generic assistant-safety response for analysis of the supplied facts.
 
 Return only a compact internal report:
 
