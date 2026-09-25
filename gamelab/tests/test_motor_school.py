@@ -58,6 +58,29 @@ class RuleMotor(torch.nn.Module):
 
 
 class MotorSchoolTests(unittest.TestCase):
+    def test_real_one_episode_school_works_after_blueprint_instance_cutover(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "motors"
+            copy_architectures(root)
+            with patch.dict(os.environ, {"GAMELAB_MOTOR_ROOT": str(root)}):
+                package = create_motor_instance()
+                result = run_school(
+                    package.motor_id,
+                    episodes=1,
+                    minimum_episodes=1,
+                    stable_development_checks=0,
+                    seed=13,
+                )
+                reloaded = get_motor_package(package.motor_id)
+
+            self.assertEqual(result["motor_id"], package.motor_id)
+            self.assertEqual(result["episodes_run"], 1)
+            self.assertEqual(result["candidate_episodes"], 1)
+            self.assertTrue(reloaded.candidate_path.is_file())
+            self.assertEqual(reloaded.manifest["training"]["school"], SCHOOL_VERSION)
+            self.assertEqual(reloaded.manifest["training"]["episodes_total"], 1)
+            self.assertFalse(reloaded.manifest["training"]["certified"])
+
     def test_default_cli_constructs_uuid_from_blueprint_then_trains_and_certifies(self):
         import uuid
 

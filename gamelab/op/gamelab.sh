@@ -10,6 +10,7 @@ GameLab — one operator command
 Usage:
   ./gamelab/op/gamelab.sh check [--existing-server]
   ./gamelab/op/gamelab.sh check --mcp-startup
+  ./gamelab/op/gamelab.sh check --ready-for-yuki
   ./gamelab/op/gamelab.sh check --full [--seeds 1,2,3]
 
   ./gamelab/op/gamelab.sh train motor [options]
@@ -23,6 +24,7 @@ Actions:
   check
       Fast compile/unit/integration gate.
       --mcp-startup verifies the exact stdio MCP startup used by OpenCode.
+      --ready-for-yuki verifies that MCP sees a compatible certified Motor.
       --full runs the complete multi-seed learned research gate.
 
   train motor
@@ -191,6 +193,12 @@ case "$command" in
       [[ $# -eq 0 ]] || die "check --mcp-startup accepts no additional arguments"
       load_env
       exec "$GAMELAB_PY" -m gamelab.tests.smoke_mcp_startup
+    fi
+    if [[ "${1:-}" == "--ready-for-yuki" ]]; then
+      shift
+      [[ $# -eq 0 ]] || die "check --ready-for-yuki accepts no additional arguments"
+      load_env
+      exec "$GAMELAB_PY" -m gamelab.tests.smoke_yuki_ready
     fi
     load_env
     quick_check "$@"
