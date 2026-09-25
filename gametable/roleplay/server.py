@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from datetime import datetime
 import json
 import os
@@ -25,6 +26,20 @@ from .view import available_intent_ids, project_view
 TABLE = Path(__file__).resolve().parents[1]
 DEFAULT_SAVE = TABLE / "runtime/yuki-vn"
 
+STATIC_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/css/shell.css": ("css/shell.css", "text/css; charset=utf-8"),
+    "/css/scene.css": ("css/scene.css", "text/css; charset=utf-8"),
+    "/css/dialogue.css": ("css/dialogue.css", "text/css; charset=utf-8"),
+    "/js/api.js": ("js/api.js", "text/javascript; charset=utf-8"),
+    "/js/events.js": ("js/events.js", "text/javascript; charset=utf-8"),
+    "/js/scene-renderer.js": ("js/scene-renderer.js", "text/javascript; charset=utf-8"),
+    "/js/dialogue.js": ("js/dialogue.js", "text/javascript; charset=utf-8"),
+    "/js/controls.js": ("js/controls.js", "text/javascript; charset=utf-8"),
+    "/js/shell.js": ("js/shell.js", "text/javascript; charset=utf-8"),
+    "/assets/characters/yuki-standing.svg": ("assets/characters/yuki-standing.svg", "image/svg+xml"),
+}
+
 
 class ConsoleLog:
     def __init__(self):
@@ -34,6 +49,41 @@ class ConsoleLog:
         with self.lock:
             stamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{stamp}] [{level}] {message}", flush=True)
+
+
+class EventHub:
+    """Small in-process SSE journal. Events are hints; SQLite remains authoritative."""
+    def __init__(self, limit=128):
+        self.condition = threading.Condition()
+        self.events = deque(maxlen=limit)
+        self.next_id = 1
+
+    def publish(self, name, payload):
+        if not isinstance(name, str) or not name:
+            raise ValueError("SSE event name required")
+        with self.condition:
+            item = {"id": self.next_id, "event": name, "data": dict(payload)}
+            self.next_id += 1
+            self.events.append(item)
+            self.condition.notify_all()
+            return dict(item)
+
+    def since(self, last_id):
+        with self.condition:
+            return [dict(item) for item in self.events if item["id"] > last_id]
+
+    def wait(self, last_id, timeout=10):
+        with self.condition:
+            ready = [dict(item) for item in self.events if item["id"] > last_id]
+            if ready:
+                return ready
+            self.condition.wait(timeout)
+            return [dict(item) for item in self.events if item["id"] > last_id]
+
+
+def sse_frame(item):
+    payload = json.dumps(item["data"], ensure_ascii=False, separators=(",", ":"))
+    return f'id: {item["id"]}\nevent: {item["event"]}\ndata: {payload}\n\n'.encode()
 
 
 def free_port():
@@ -67,10 +117,11 @@ def normalize_turn_body(body, rules, allowed_intents=None):
 
 
 class Application:
-    def __init__(self, store, runtime, backend, rules, prompt=None):
+    def __init__(self, store, runtime, backend, rules, prompt=None, events=None):
         self.store, self.runtime, self.backend, self.rules = store, runtime, backend, rules
         self.token = secrets.token_urlsafe(32)
         self.prompt = prompt or ""
+        self.events = events or EventHub()
 
     def snapshot(self):
         history = [public_turn(t) for t in self.store.history()]
@@ -88,21 +139,57 @@ def handler_for(app):
         def log_message(self, *_):
             pass
 
+        def security_headers(self):
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+                "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+            )
+
         def send(self, status, value, content_type="application/json; charset=utf-8"):
-            raw = json.dumps(value, ensure_ascii=False).encode() if content_type.startswith("application/json") else value
+            raw = (json.dumps(value, ensure_ascii=False).encode()
+                   if content_type.startswith("application/json") else value)
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(raw)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+            self.security_headers()
             self.end_headers()
             self.wfile.write(raw)
 
         def local_request(self):
             host = self.headers.get("Host", "")
-            allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+            allowed = {f"127.0.0.1:{self.server.server_port}",
+                       f"localhost:{self.server.server_port}"}
             return host in allowed
+
+        def stream_events(self):
+            raw_last = self.headers.get("Last-Event-ID", "0")
+            try:
+                last_id = max(0, int(raw_last))
+            except (TypeError, ValueError):
+                last_id = 0
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Connection", "keep-alive")
+            self.security_headers()
+            self.end_headers()
+            try:
+                self.wfile.write(b"retry: 1500\n\n")
+                self.wfile.flush()
+                while True:
+                    items = app.events.wait(last_id, timeout=10)
+                    if not items:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                        continue
+                    for item in items:
+                        self.wfile.write(sse_frame(item))
+                        last_id = item["id"]
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def do_GET(self):
             if not self.local_request():
@@ -110,6 +197,8 @@ def handler_for(app):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self.send(200, app.snapshot())
+            if path == "/api/events":
+                return self.stream_events()
             if path.startswith("/api/audit/"):
                 event_id = path.rsplit("/", 1)[1]
                 turn = app.store.get(event_id)
@@ -117,16 +206,15 @@ def handler_for(app):
                     return self.send(404, {"error": "Аудит ещё недоступен"})
                 result = turn["result"]
                 return self.send(200, {"status": turn["status"], "error": turn["error"],
-                    "assessments": result.get("assessments"), "calculations": result.get("calculations"),
-                    "contract": result.get("contract"), "before": result.get("before"), "after": result.get("after"),
-                    "laboratory": result.get("laboratory"),
+                    "assessments": result.get("assessments"),
+                    "calculations": result.get("calculations"),
+                    "contract": result.get("contract"), "before": result.get("before"),
+                    "after": result.get("after"), "laboratory": result.get("laboratory"),
                     "checks": [{"review": a.get("review"), "rejected": a.get("rejected")}
                                for a in result.get("draft_attempts", [])]})
-            files = {"/": ("index.html", "text/html; charset=utf-8"),
-                     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-                     "/style.css": ("style.css", "text/css; charset=utf-8")}
-            if path in files:
-                filename, mime = files[path]
+            static = STATIC_FILES.get(path)
+            if static:
+                filename, mime = static
                 return self.send(200, (TABLE / "web" / filename).read_bytes(), mime)
             self.send(404, {"error": "Not found"})
 
@@ -163,7 +251,6 @@ def main():
     rules = load_rules()
     root = DEFAULT_SAVE
     root.mkdir(parents=True, exist_ok=True)
-    # One owner of this save, including launches outside the shell wrapper.
     import fcntl
     lock_file = (root / "owner.lock").open("w")
     try:
@@ -173,24 +260,24 @@ def main():
     store = Store(root / "save.sqlite3", rules)
     port, password = free_port(), secrets.token_urlsafe(32)
     env = dict(os.environ, OPENCODE_SERVER_PASSWORD=password, OPENCODE_SERVER_USERNAME="opencode")
-    # No inherited timers/provenance plugins: this process owns all roleplay transitions.
     backend = OpenCode(f"http://127.0.0.1:{port}", TABLE, args.model, args.variant, password,
                        log=logger.write)
     logfile = (root / "opencode.log").open("ab")
-    process = subprocess.Popen(["opencode", "serve", "--pure", "--hostname", "127.0.0.1", "--port", str(port)],
+    process = subprocess.Popen(
+        ["opencode", "serve", "--pure", "--hostname", "127.0.0.1", "--port", str(port)],
         cwd=TABLE, env=env, stdout=logfile, stderr=subprocess.STDOUT, start_new_session=True)
     server = None
     stopped = threading.Event()
+
     def stop(*_):
         stopped.set()
-        # Also interrupts startup/model requests; don't strand the worker when
-        # the process-manager's bounded TERM grace period ends.
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         if server:
             threading.Thread(target=server.shutdown, daemon=True).start()
+
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
@@ -214,9 +301,12 @@ def main():
                 logger.write(f"MCP {name}: {status}", level)
         except BackendError as exc:
             logger.write(f"MCP status unavailable: {exc}", "WARN")
-        manuals = "\n\n".join(p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
-        runtime = Runtime(store, backend, rules, manuals, log=logger.write)
-        app = Application(store, runtime, backend, rules, args.prompt)
+        manuals = "\n\n".join(
+            p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
+        events = EventHub()
+        runtime = Runtime(store, backend, rules, manuals, log=logger.write,
+                          events=events.publish)
+        app = Application(store, runtime, backend, rules, args.prompt, events=events)
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
         logger.write(f"Модель: {backend.model}")
@@ -237,7 +327,6 @@ def main():
         except ProcessLookupError:
             pass
         logfile.close()
-        # OS closes SQLite after worker shutdown. An unfinished turn is marked failed at next boot.
         lock_file.close()
 
 

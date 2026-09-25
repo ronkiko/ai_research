@@ -1,40 +1,22 @@
 <!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Юки · GameTable</title><link rel="stylesheet" href="/style.css"><style>
-.laboratory-scene{display:none;position:absolute;inset:0;z-index:2;pointer-events:none}.stage.laboratory .portrait{display:none}.stage.laboratory .laboratory-scene{display:block}.stage:not(.laboratory) .desk{display:none}.stage.laboratory .desk{z-index:3;bottom:20%;left:18%;width:65%;height:24px;transform:none;border-top:8px solid #e1d2b3;background:#8d7058cc;box-shadow:0 12px 20px #08151c88}
-.stage.laboratory{background:linear-gradient(145deg,#263d45,#182a35 58%,#101d28)}.stage.laboratory .window{top:75px;left:8%;width:54%;height:42%;background:linear-gradient(135deg,#7897a0,#314f5d);border-color:#b9d3d2;box-shadow:0 14px 35px #08151c99}.stage.laboratory .window i{border-color:#c4dddd}.stage.laboratory .scene-caption{color:#b5cfcb}.stage.laboratory .character-name{color:#e9f2ed;text-shadow:0 1px 14px #08151c}
-.lab-figure{position:absolute;left:43%;bottom:14%;width:220px;height:360px}.lab-head{position:absolute;top:18px;left:78px;width:70px;height:78px;border-radius:48% 48% 45% 45%;background:#f3cec0;box-shadow:inset 15px -4px #d99f9a}.lab-hair{position:absolute;top:0;left:64px;width:94px;height:100px;border-radius:55% 55% 35% 35%;background:#252b45;transform:rotate(-5deg)}.lab-hair:after{content:"";position:absolute;right:-12px;top:55px;width:28px;height:115px;border-radius:0 0 45% 50%;background:#252b45}.lab-body{position:absolute;top:105px;left:35px;width:150px;height:190px;border-radius:45px 45px 12px 12px;background:linear-gradient(135deg,#f7fbf5,#b8ced0);box-shadow:inset 42px 0 #d8e5e2}.lab-arm{position:absolute;top:150px;left:120px;width:130px;height:28px;border-radius:18px;background:#f3cec0;transform:rotate(20deg);transform-origin:left center;box-shadow:0 22px #d99f9a}.lab-chair{position:absolute;left:39%;bottom:9%;width:270px;height:135px;border-radius:50% 50% 18px 18px;background:#405d6a66;border:2px solid #8eabb055}.lab-laptop{position:absolute;left:55%;bottom:30%;z-index:3;width:185px;height:105px;border:7px solid #adcac7;border-radius:7px 7px 3px 3px;background:linear-gradient(135deg,#153f50,#0b202e);box-shadow:0 0 24px #61c5cf66;transform:perspective(280px) rotateY(-12deg)}.lab-laptop:after{content:"";position:absolute;left:-28px;bottom:-18px;width:225px;height:15px;border-radius:3px;background:#a7c3bf;box-shadow:0 5px 12px #07151c}.lab-laptop:before{content:"";position:absolute;inset:15px;background:repeating-linear-gradient(0deg,#6fd0d033 0 2px,transparent 2px 13px)}
-@media(max-width:850px){.lab-figure{left:37%;transform:scale(.72);transform-origin:bottom left}.lab-laptop{left:54%;bottom:31%;transform:scale(.72) perspective(280px) rotateY(-12deg);transform-origin:bottom left}.lab-chair{left:27%;transform:scale(.72);transform-origin:bottom left}}
-</style></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Юки · GameTable</title>
+<link rel="stylesheet" href="/css/shell.css">
+<link rel="stylesheet" href="/css/scene.css">
+<link rel="stylesheet" href="/css/dialogue.css">
+</head>
 <body>
 <header><a class="brand" href="/">GAME<span>TABLE</span><small>YUKI / A LABORATORY STORY</small></a><div class="clock" id="clock">День 1 · 09:00</div><span class="save">● Автосохранение</span></header>
 <main>
-<section class="stage" aria-label="Сцена с Юки">
+<section class="stage" id="stage" aria-label="Сцена с Юки" data-background="hallway_day" data-expression="soft" data-slot="center">
  <div class="scene-tag"><span id="location-label">КОРИДОР · HALLWAY</span><span id="scene-label">Первый день</span></div>
- <div class="window"><i></i><i></i><i></i></div><div class="sun"></div><div class="shelf"></div><div class="desk"></div>
- <svg class="portrait" id="portrait" viewBox="0 0 400 600" role="img" aria-label="Стилизованный портрет Юки">
- <defs><linearGradient id="hair" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#30334c"/><stop offset="1" stop-color="#111d30"/></linearGradient><linearGradient id="coat" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fffcf5"/><stop offset="1" stop-color="#c5d5db"/></linearGradient></defs>
- <path d="M115 274Q70 120 157 81Q254 38 300 144L319 414 77 414Z" fill="url(#hair)"/>
- <path d="M179 269L175 320 225 320 218 264" fill="#eec7ba"/>
- <path d="M99 349Q120 316 174 309L199 336 225 310Q280 314 306 356L342 600 59 600Z" fill="url(#coat)"/>
- <path d="M174 316L199 338 225 316 239 600 159 600Z" fill="#263549"/>
- <path d="M174 316L154 329 174 391 199 341ZM225 316L245 329 226 391 199 341Z" fill="#eff6f5"/>
- <path d="M192 354L207 354 218 377 200 414 183 377Z" fill="#b75f70"/>
- <path d="M132 153Q122 221 145 265Q198 316 246 263Q275 222 261 152Q199 112 132 153" fill="#f7dace"/>
- <path d="M117 184Q106 110 165 88Q236 58 279 126L277 210 244 166 224 123 222 180 194 149 169 180 170 141 131 194Z" fill="url(#hair)"/>
- <path d="M130 180Q126 271 149 308L124 295 113 225ZM264 174Q272 271 248 311L285 289 288 198Z" fill="url(#hair)"/>
- <path d="M147 207Q160 199 177 207M221 207Q237 198 251 207" stroke="#374253" stroke-width="3" fill="none"/>
- <g class="eyes"><ellipse cx="163" cy="223" rx="11" ry="15" fill="#6c8896"/><ellipse cx="236" cy="223" rx="11" ry="15" fill="#6c8896"/><ellipse cx="163" cy="225" rx="5" ry="10" fill="#25344a"/><ellipse cx="236" cy="225" rx="5" ry="10" fill="#25344a"/><circle cx="159" cy="216" r="4" fill="white"/><circle cx="232" cy="216" r="4" fill="white"/></g>
- <path d="M146 212Q164 202 180 213M219 212Q238 202 253 213" fill="none" stroke="#25344a" stroke-width="4"/>
- <ellipse class="blush" cx="146" cy="245" rx="15" ry="6" fill="#df9c9d" opacity=".55"/><ellipse class="blush" cx="251" cy="245" rx="15" ry="6" fill="#df9c9d" opacity=".55"/>
- <path d="M198 238L195 246 201 246" stroke="#daa89c" fill="none"/><path id="mouth" d="M188 263Q200 272 212 262" fill="none" stroke="#b67579" stroke-width="2.5" stroke-linecap="round"/>
- <path d="M263 149L275 174" stroke="#bda276" stroke-width="5"/>
- <rect x="255" y="390" width="37" height="48" rx="3" fill="#e6ece9" stroke="#98b3bb"/><rect x="260" y="399" width="27" height="7" rx="2" fill="#a9c5ca"/>
- <path d="M120 387L100 557M284 387L304 557" stroke="#a6b9c3" stroke-width="2" fill="none"/>
- </svg>
- <div class="laboratory-scene" aria-label="Юки работает за ноутбуком">
-  <div class="lab-chair"></div><div class="lab-figure"><div class="lab-hair"></div><div class="lab-head"></div><div class="lab-body"></div><div class="lab-arm"></div></div><div class="lab-laptop"></div>
- </div>
+ <div class="window"><i></i><i></i><i></i></div><div class="sun"></div><div class="shelf"></div><div class="background-desk"></div>
+ <img class="character-pose standing-figure" data-pose="standing" src="/assets/characters/yuki-standing.svg" alt="Юки">
+ <div class="character-pose seated-figure" data-pose="seated_working" hidden aria-label="Юки работает за ноутбуком"><div class="lab-chair"></div><div class="lab-figure"><div class="lab-hair"></div><div class="lab-head"></div><div class="lab-body"></div><div class="lab-arm"></div></div></div>
+ <div class="scene-prop lab-desk" data-prop="desk" hidden></div><div class="scene-prop lab-laptop" data-prop="laptop" hidden></div>
  <div class="character-name"><span>結希</span><b>Юки</b><small>Младшая исследовательница</small></div>
  <div class="scene-caption">У каждой общей истории — свой первый день.</div>
 </section>
@@ -45,10 +27,10 @@
  <div id="history" class="history" role="log" aria-live="polite"><div class="empty">Лаборатория ещё тиха.<br>Поздоровайся — ваша история начинается здесь.</div></div>
  <div class="status" id="status" role="status"></div>
  <form id="composer"><label class="sr-only" for="message">Сообщение Директора</label><textarea id="message" rows="3" maxlength="4000" placeholder="Скажи что-нибудь Юки…"></textarea>
-  <div class="controls"><label class="sr-only" for="intent">Действие</label><select id="intent" aria-label="Доступное действие"></select><button id="send" type="submit">Сказать <span>↗</span></button></div>
- </form><small class="footnote">Игровое время идёт только со сценами. Enter — отправить, Shift+Enter — новая строка.</small>
+ <div class="controls"><label class="sr-only" for="intent">Действие</label><select id="intent" aria-label="Доступное действие"></select><button id="send" type="submit">Сказать <span>↗</span></button></div></form>
+ <small class="footnote">Игровое время идёт только со сценами. Enter — отправить, Shift+Enter — новая строка.</small>
 </aside>
 </main>
 <dialog id="audit"><button id="close-audit" class="close">Закрыть ×</button><span class="eyebrow">DIRECTOR’S NOTEBOOK</span><h2>Почему такая реакция</h2><div id="audit-content"></div></dialog>
-<script src="/app.js"></script>
+<script type="module" src="/js/shell.js"></script>
 </body></html>

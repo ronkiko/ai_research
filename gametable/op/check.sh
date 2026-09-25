@@ -4,7 +4,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 echo "CHECK GameTable syntax"
 bash -n gametable/op/start.sh gametable/op/start-go.sh
-node --check gametable/web/app.js
+for file in gametable/web/js/*.js; do
+  node --check "$file"
+done
 python3 -m json.tool gametable/opencode.json >/dev/null
 python3 -m json.tool gametable/roleplay/rules.json >/dev/null
 echo "CHECK GameTable runtime"

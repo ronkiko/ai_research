@@ -16,7 +16,8 @@ from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_stat
 from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
-from gametable.roleplay.server import Application, handler_for, normalize_turn_body
+from gametable.roleplay.server import (Application, EventHub, handler_for,
+                                       normalize_turn_body, sse_frame)
 from gametable.roleplay.view import available_intent_ids, project_view
 
 
@@ -444,6 +445,26 @@ class WebBoundaryTests(unittest.TestCase):
         h.send = Mock()
         return h
 
+    def test_sse_journal_reconnects_after_last_event_without_replaying_turn(self):
+        hub = EventHub()
+        first = hub.publish("turn.started", {"event_id": "turn-0001", "revision": 0})
+        second = hub.publish("turn.stage", {"event_id": "turn-0001", "revision": 0,
+                                            "stage": "Проверка"})
+        self.assertEqual([item["id"] for item in hub.since(0)], [first["id"], second["id"]])
+        self.assertEqual(hub.since(second["id"]), [])
+        third = hub.publish("state.changed", {"event_id": "turn-0001", "revision": 1})
+        self.assertEqual(hub.since(second["id"]), [third])
+        frame = sse_frame(third).decode()
+        self.assertIn("event: state.changed", frame)
+        self.assertIn('"revision":1', frame)
+        self.app.runtime.submit.assert_not_called()
+
+    def test_sse_endpoint_is_local_only_and_never_uses_token_query(self):
+        h = self.handler("/api/events?token=forged", host="attacker.example:17880")
+        h.do_GET()
+        self.assertEqual(h.send.call_args.args[0], 403)
+        self.app.runtime.submit.assert_not_called()
+
     def test_cross_origin_cannot_submit_or_read_token(self):
         h = self.handler("/api/turn", event())
         h.do_POST(); self.assertEqual(h.send.call_args.args[0], 403)
@@ -529,6 +550,31 @@ class WebBoundaryTests(unittest.TestCase):
         )
         native = {"id": "turn-0002", "text": "Привет", "intent_id": "talk"}
         self.assertEqual(normalize_turn_body(native, self.rules), native)
+
+    def test_browser_shell_is_module_driven_csp_safe_and_has_no_polling(self):
+        web = Path(__file__).parents[1] / "web"
+        index = (web / "index.html").read_text()
+        scripts = "\n".join(path.read_text() for path in sorted((web / "js").glob("*.js")))
+        renderer = (web / "js" / "scene-renderer.js").read_text()
+        controls = (web / "js" / "controls.js").read_text()
+        self.assertNotIn("<style", index.lower())
+        self.assertNotIn(" style=", index.lower())
+        self.assertIn('type="module" src="/js/shell.js"', index)
+        self.assertNotIn("setInterval(", scripts)
+        self.assertNotIn("request_lab_work", renderer)
+        self.assertNotIn("laboratory.workstation", renderer)
+        self.assertIn("view.scene", renderer)
+        self.assertIn("items.map", controls)
+        self.assertFalse((web / "app.js").exists())
+        self.assertFalse((web / "style.css").exists())
+
+    def test_csp_does_not_allow_inline_script_or_style(self):
+        source = Path(__file__).parents[1] / "roleplay" / "server.py"
+        text = source.read_text()
+        self.assertIn("script-src 'self'", text)
+        self.assertIn("style-src 'self'", text)
+        self.assertNotIn("'unsafe-inline'", text)
+        self.assertIn("connect-src 'self'", text)
 
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)

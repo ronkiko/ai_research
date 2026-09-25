@@ -8,17 +8,27 @@ from .opencode import BackendError, parse_json
 
 
 class Runtime:
-    def __init__(self, store, backend, rules, manuals="", log=None):
+    def __init__(self, store, backend, rules, manuals="", log=None, events=None):
         self.store, self.backend, self.rules, self.manuals = store, backend, rules, manuals
         self.log = log or (lambda _message, _level="INFO": None)
+        self.events = events or (lambda _name, _payload: None)
         self.lock = threading.Lock()
         self.thread = None
+
+    def emit(self, name, event_id, revision, **payload):
+        self.events(name, {"event_id": event_id, "revision": revision, **payload})
+
+    def progress(self, event_id, stage, payload, revision):
+        self.store.progress(event_id, stage, payload)
+        self.emit("turn.stage", event_id, revision, stage=stage)
 
     def submit(self, event):
         with self.lock:
             if self.thread and self.thread.is_alive() and not self.store.get(event["id"]):
                 raise ValueError("Дождись завершения текущего хода")
             if self.store.begin(event):
+                self.emit("turn.started", event["id"], self.store.state()["revision"],
+                          stage="Оценки сердца и головы")
                 self.thread = threading.Thread(target=self.run, args=(event,), daemon=True)
                 self.thread.start()
         return self.store.get(event["id"])
@@ -58,10 +68,15 @@ class Runtime:
             self.log(f"ход {event['id']}: disposition={disposition}; tone={contract['decision']['tone']}; "
                      f"scene={before['scene_id']}->{after['scene_id']}"
                      + ("; MCP разрешён EffectPlan" if laboratory_effect else "; MCP отключён"))
-            self.store.progress(event["id"], "Решение и эффекты приняты", audit)
+            self.progress(event["id"], "Решение и эффекты приняты", audit, before["revision"])
+            if before["scene_id"] != after["scene_id"]:
+                self.emit("scene.transition", event["id"], before["revision"],
+                          from_scene=before["scene_id"], to_scene=after["scene_id"],
+                          next_revision=after["revision"])
 
             if laboratory_effect:
-                self.store.progress(event["id"], "Лаборатория: проверка через MCP", audit)
+                self.progress(event["id"], "Лаборатория: проверка через MCP",
+                              audit, before["revision"])
                 try:
                     audit["laboratory"] = self.backend.complete(
                         parent, "yuki", prompts.laboratory_task(data, self.manuals), lab=True)
@@ -72,15 +87,17 @@ class Runtime:
                         "tools": [],
                         "uncertain": True,
                     }
-                self.store.progress(event["id"], "Лабораторный шаг завершён", audit)
+                self.progress(event["id"], "Лабораторный шаг завершён",
+                              audit, before["revision"])
 
             text = None
             correction = ""
             for attempt in range(2):
-                self.store.progress(
+                self.progress(
                     event["id"],
                     "Юки подбирает слова" if not attempt else "Проверка формулировки",
                     audit,
+                    before["revision"],
                 )
                 record = {}
                 try:
@@ -133,10 +150,15 @@ class Runtime:
                               for item in audit["laboratory"].get("tools", [])[-6:]],
                 }
             self.store.finish(event["id"], before, after, audit)
+            self.emit("state.changed", event["id"], after["revision"],
+                      scene_id=after["scene_id"])
+            self.emit("turn.completed", event["id"], after["revision"])
         except Exception as exc:
             self.log(f"ход {event['id']}: {exc}", "ERROR")
-            self.store.progress(event["id"], "Ход остановлен", audit)
+            self.progress(event["id"], "Ход остановлен", audit, before["revision"])
             self.store.fail(event["id"], str(exc))
+            self.emit("turn.failed", event["id"], self.store.state()["revision"],
+                      error=str(exc))
         finally:
             self.backend.close_sessions()
 
