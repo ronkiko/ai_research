@@ -13,6 +13,9 @@ from .motors.package import DEFAULT_MOTOR_ID
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
     DEFAULT_HOST_ID,
+    MOTOR_HZ,
+    PHYSICS_HZ,
+    SPINE_HZ,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
@@ -348,6 +351,11 @@ def describe() -> dict[str, Any]:
             "type": "numeric_target_x",
             "run_accepts_tolerance": True,
             "verify_accepts_tolerance": True,
+        },
+        "controller_cadence_hz": {
+            "physics": PHYSICS_HZ,
+            "motor": MOTOR_HZ,
+            "spine": SPINE_HZ,
         },
         "evidence": "experiment_id and policy_id identify persisted experiment evidence",
     }
