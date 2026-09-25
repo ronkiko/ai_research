@@ -35,31 +35,12 @@ The Director starts GameServer and then launches a fresh Yuki2 trial:
 
 ```bash
 ./gameserver/v1/op/server.sh
-./gametable/op/start-go.sh
+./gametable/op/start.sh --fresh
 ```
 
-`start-go.sh` is the normal alpha-test entry point. It clears only Yuki2's
-personal/Executive runtime and starts the ordinary OpenCode TUI with its
-official `--prompt` flag. OpenCode auto-submits that prompt as the first turn;
-GameTable does not inject TUI events, start a second OpenCode process, or use
-`opencode run` as a bootstrap.
-
-The default first message is intentionally written directly inside
-`gametable/op/start-go.sh`, so the Operator can edit one obvious place before
-an experiment. For a one-off launch, pass replacement text directly:
-
-```bash
-./gametable/op/start-go.sh "Ты молодая девушка-лаборант... твой начальник Директор..."
-```
-
-or use a file:
-
-```bash
-./gametable/op/start-go.sh --prompt-file ./my-first-message.txt
-```
-
-For a plain workstation start without automatically sending a Director message,
-use `./gametable/op/start.sh`.
+GameTable does not send any automatic Director message. OpenCode opens on an
+empty conversation and the Operator writes the first message manually. That
+first real message is what starts Yuki2's relationship/shift lifecycle.
 
 The `game_v1` MCP ensures its default Host `game-v1-default:17700` is
 running. Starting `./gameclient/v1/op/host.sh` manually is still supported,

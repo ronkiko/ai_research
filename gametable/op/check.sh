@@ -5,7 +5,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 echo "CHECK GameTable shell"
-bash -n gametable/op/start.sh gametable/op/start-go.sh
+bash -n gametable/op/start.sh
 
 echo "CHECK GameTable config"
 python3 -m json.tool gametable/opencode.json >/dev/null
