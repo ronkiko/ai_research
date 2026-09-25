@@ -1,119 +1,195 @@
-# GameTable VN v1 — архитектура
+# GameTable VN Shell v2 — архитектура
 
-Статус: реализован минимальный контур. Это игровая модель, а не валидированная
-модель человеческой психологии. Естественность поведения требует дальнейшей
-настройки коэффициентов и оценки на сериях диалогов.
+Статус: реализованный браузерный контур. Это игровая модель персонажа, а не
+валидированная модель человеческой психологии.
 
-## Владелец и границы
+## Владение состоянием
 
-`roleplay/runtime.py` организует ход; `engine.py` — чистый reducer/selector;
-`store.py` — SQLite-журнал, состояние и опубликованные сообщения; `opencode.py`
-— транспорт. В `server.py` находятся локальный HTTP-интерфейс и жизненный цикл
-приватного OpenCode. UI не получает URL/пароль OpenCode и не имеет set_stats API.
+SQLite в roleplay/store.py — единственный authoritative save и turn journal.
+OpenCode не владеет состоянием персонажа. Browser не владеет правилами мира.
 
-OpenCode запускается с `--pure`, случайным локальным портом и паролем. Внешние
-плагины и старый supervisor не управляют игрой. Session-level permissions
-запрещают все инструменты; только лабораторный шаг имеет явный allowlist.
-Оператор контролирует локальную машину, поэтому это граница полномочий LLM,
-а не защита сохранений от самого Оператора.
+Модули:
+
+- roleplay/engine.py — DecisionEngine, EffectPlanner и чистый WorldReducer.
+- roleplay/external.py — ExternalExecutor, единственная MCP-enabled граница.
+- roleplay/prompts.py — bounded packets для APPRAISAL/NARRATION/REVIEW/LABORATORY.
+- roleplay/runtime.py — явная последовательность одного хода.
+- roleplay/view.py — чистый ViewProjector.
+- roleplay/store.py — idempotency, journal и atomic publish.
+- roleplay/opencode.py — транспорт и session permissions.
+- roleplay/server.py — localhost HTTP/SSE и жизненный цикл приватного OpenCode.
+- web/ — server-driven visual-novel shell.
+
+## Контракты
+
+DirectorIntent:
+
+~~~text
+id
+text
+intent_id
+~~~
+
+CharacterDecision:
+
+~~~text
+disposition = respond | accept | decline | clarify
+tone
+~~~
+
+Tone не меняет disposition и не является физическим действием.
+
+EffectPlan:
+
+~~~text
+world_effects[]
+external_effects[]
+duration
+~~~
+
+GameState:
+
+~~~text
+revision
+minutes
+scene_id
+stats
+memories
+recent_events
+last_decision
+~~~
+
+ViewState — отдельная browser-facing проекция: scene descriptor, character pose,
+props, stats, labels, affordances, busy/stage.
 
 ## Ход
 
-1. Принять event_id, текст и activity; проверить уникальность, сохранить running.
-2. Снять одну версию состояния и создать пустую родительскую OpenCode-сессию.
-3. Одновременно создать свежие child sessions Heart/Head. Оба получают одинаковые
-   исходные факты, профиль, статы и ограниченную память, различаются инструкцией
-   оценки. Родительская LLM не составляет и не пересказывает эти пакеты.
-4. Проверить JSON, role/event/revision, диапазоны и реальные цитаты сообщения.
-5. Вычислить новое состояние и контракт, записать расчёты и provenance в журнал.
-6. Если выбран work и activity=lab, выполнить один ограниченный MCP-шаг.
-7. Свежая сессия Юки формулирует JSON {event_id, action, text} без инструментов.
-8. Свежая Head REVIEW проверяет противоречия, не меняя контракт. Максимум две
-   формулировки, затем фиксированный текст решения с уведомлением о fallback.
-9. Одной SQLite-транзакцией записать состояние и готовую реплику. Только после
-   этого `/api/state` разрешает публикацию. Сессии хода удаляются из OpenCode;
-   значимые отчёты и факты остаются в игровом журнале.
+1. Store.begin фиксирует event_id и running turn.
+2. Runtime снимает один frozen GameState.
+3. Heart и Head запускаются параллельно в разных fresh child sessions.
+4. validate_report проверяет role/event/revision, диапазоны и evidence.
+5. decide_turn вычисляет CharacterDecision.
+6. build_effect_plan создаёт typed EffectPlan.
+7. apply_effect_plan чисто строит provisional after-state.
+8. approved external intent записывается в journal до внешнего вызова.
+9. ExternalExecutor выполняет только external_effects.
+10. narration_facts фиксирует before, decision, EffectPlan, applied effects, after
+    и observed external results.
+11. Narrator только вербализует эти факты.
+12. Fresh Head REVIEW проверяет draft, но не может менять решение или эффекты.
+13. Store.finish одной SQLite-транзакцией публикует after-state и reply.
+14. SSE сообщает browser о стадиях; browser resync-ит authoritative ViewState.
 
-Повтор HTTP-запроса с тем же ID возвращает тот же ход. Другой текст с тем же ID
-отвергается. В один момент считается один ход. revision контролируется при commit.
-Ошибка одной стороны останавливает ход без подмены её мнения и без изменения статов.
+До шага 13 provisional after-state не является сохранённым состоянием.
 
-## Статы и формулы
+## Решение
 
-Состояние также содержит локацию. Новая игра начинается в `hallway`; лабораторное
-занятие переводит сцену в `laboratory`, где находится рабочий стол Юки и разрешён
-режим `work`. Обычный разговор не перемещает Юки и не открывает лабораторные
-инструменты.
+Heart и Head оценивают четыре disposition. Они получают один и тот же исходный
+packet, но разные инструкции. Ни одна сторона не видит отчёт другой.
 
-C — фиксированные shyness, warmth, attachment, independence, curiosity.
-S — health, fatigue, mood, affection, trust, каждый в диапазоне 0..100.
-Health/fatigue принадлежат физическим правилам сцен; LLM не может присылать их
-изменения. Mood/affection/trust получают воздействия h_i,d_i в [-2,2].
+Вес Heart:
 
-    impact_i = w_i * h_i + (1-w_i) * d_i
-    delta_i = step_i * impact_i / (1 + 2 * repeats)
-    S'_i = clamp(S_i + delta_i, 0, 100)
+~~~text
+wH = clamp(0.35 + attachment/500 + (affection-50)/500 - independence/1000,
+           0.25, 0.75)
+~~~
 
-Для affection есть множитель 0.5 + attachment/100. Коэффициенты и длительности
-хранятся в `rules.json`. repeats — число повторов текста либо той же социальной
-категории в последних восьми ходах. Это простое насыщение MVP, не совершенная
-защита от семантического перефразирования. Нейтральные/исследовательские категории
-не насыщаются как общий класс. При расхождении классификаций действует проверка
-повтора текста. Нет автоматического прироста отношений за число ходов или время.
+Utility:
 
-Выбор намерения из respond/warm/playful/boundary/clarify/rest/work:
+~~~text
+U(d) = wH * Heart(d) + (1-wH) * Head(d) + bias(d, intent, state)
+~~~
 
-    wH = clamp(0.35 + attachment/500 + (affection-50)/500 - independence/1000,
-               0.25, 0.75)
-    U(a) = wH * H(a) + (1-wH) * D(a) + bias(a,C,S')
-    action = argmax U(a)
+Social impacts для mood/affection/trust вычисляются отдельно. Health/fatigue
+меняются только world effects. Все коэффициенты находятся в rules.json.
 
-Все bias реализованы явно в `engine.py`; ничья разрешается порядком ACTIONS.
-Сначала социальная оценка, затем выбор, затем стоимость/восстановление занятия.
-Work исключён без явного lab. Сон/перерыв и ресурсный предел принудительно
-выбирают rest. Нет случайного повторного броска или родительского override.
-Конфликт — среднее абсолютное расхождение оценок действий; он сохраняется
-отдельно, а не исчезает при усреднении. Его эмоциональное выражение поручено
-вербализатору, но он не меняет выбранное действие.
+## Scene graph и WorldReducer
 
-## Контракт ответа и честные ограничения
+Начальная сцена — hallway. Рабочая лабораторная сцена —
+laboratory.workstation. Переходы задаются rules.transitions.
 
-Контракт содержит action, неизменяемую anchor-строку, activity, длительность,
-вычисленные статы, тон и конфликт. Интерфейс всегда показывает anchor отдельно.
-Вербализатор отвечает за свободный текст. JSON-валидация запрещает менять action;
-semantic checker проверяет смысл до публикации. Не прошедшие черновики доступны
-только внутри SQLite-аудита, обычные HTTP-endpoints их не показывают.
+DirectorIntent не мутирует мир. request_lab_work + decline/clarify не создаёт
+move. Только валидный move effect меняет scene_id.
 
-Код гарантирует арифметику, транзакцию и соблюдение порядка. Семантический checker
-может ошибиться; абсолютная гарантия смысла относится только к фиксированной
-строке решения. Это ограничение нельзя устранить ещё одним сильным промптом.
-Проверяющий не является третьим арбитром и не назначает персонажу свои нормы.
+WorldReducer — единственный код, который меняет scene_id, minutes и stats.
+Он pure/replayable и не выполняет I/O.
 
-Числа не создают действия или согласие Директора. Реплики персонажа остаются
-его репликами, не машинными доказательствами или разрешением произвольных
-внешних операций. Health — исключительно игровая величина.
+## ExternalExecutor
 
-## Память и сбои
+ExternalExecutor получает только уже утверждённые external_effects. Для
+laboratory_step он создаёт отдельную OpenCode session с deny-all + allowlist.
 
-Правила и отчёты каждого хода сохранены для replay. В контекст попадают последние
-24 события с исходными словами Директора, действиями движка и опубликованными
-репликами Юки. Полный журнал хранится в SQLite. Поиск давних воспоминаний пока
-не реализован: это явный предел MVP, а не обещание бесконечной памяти.
+Обычные Heart/Head/Narrator/Review sessions имеют deny-all и не получают MCP.
 
-После аварии незавершённые ходы помечаются failed без повторного применения и
-без повторного запуска MCP. Лабораторные эффекты не могут быть частью SQLite
-транзакции: при сетевой ошибке они могут остаться неизвестными. Это отмечается
-в журнале и отчёте. Сначала проверяется статус внешней операции.
+До MCP-вызова план внешнего эффекта уже сохранён в turn payload. При transport
+ambiguity результат становится uncertain. Runtime не делает автоматический retry.
 
-Старые Character Core/relationship/duality/Volition не являются вторым владельцем
-состояния. Их runtime-память удалена по запросу Директора. GameLab служит только
-лабораторным инструментом; Motor/Spine и физический мир не изменялись.
+Tool call с именем *_start доказывает только запуск async operation. Завершение
+должно быть наблюдено status-вызовом.
 
-## Критерии проверки
+Live smoke использует отдельный read-only allowlist health/describe и поэтому не
+может начать training/run, двигать player или менять reward.
 
-Тесты доказывают независимую отправку, отказ без второй стороны, проверку
-происхождения/версии/чисел, влияние каждой стороны на выбор, влияние характера,
-лимиты усталости, насыщение, запрет work из чата, отсутствие утечки черновиков,
-fallback после отрицательных проверок, idempotency и crash recovery.
-Качество естественного диалога и надёжность semantic checker оцениваются отдельно
-на реальных моделях; прохождение unit-тестов не доказывает человекоподобность.
+## Narration и review
+
+Narrator получает только:
+
+- event/intent;
+- before scene/state;
+- фиксированный CharacterDecision;
+- EffectPlan;
+- applied_world_effects;
+- after scene/state;
+- observed external_results;
+- delivery hints.
+
+Он не может объявить действие, которого нет в applied_world_effects, или успех MCP,
+которого нет в external_results.
+
+Review получает тот же frozen facts packet и draft. Это semantic checker,
+а не третий арбитр. После двух неудачных draft остаётся fixed anchor + техническое
+уведомление. Абсолютная семантическая гарантия относится только к структурному
+контракту и anchor, а не к любому естественному тексту.
+
+## Persistency и recovery
+
+Store обеспечивает:
+
+- уникальность event_id;
+- запрет другого request под тем же event_id;
+- один running turn;
+- revision check при finish;
+- atomic state + published reply;
+- failed status для interrupted running turns;
+- отсутствие автоматического replay потенциального external side effect.
+
+Unreviewed draft хранится только во внутреннем payload и не публикуется обычными
+browser endpoints.
+
+## Browser shell
+
+Browser получает ViewState от server и не знает world rules. Affordances также
+приходят от ViewProjector; forged unavailable intent отвергается server до Runtime.
+
+SceneRenderer рендерит scene.background, pose/expression/slot и props. Он не знает
+идентификаторов лабораторных intents или scene transitions.
+
+Обновления приходят через SSE: turn.started, turn.stage, scene.transition,
+state.changed, turn.completed, turn.failed. SSE — notification journal, не save.
+При reconnect/resync клиент читает GET /api/state. Polling нет.
+
+CSP: script-src 'self', style-src 'self', connect-src 'self', без unsafe-inline.
+
+## Acceptance boundary
+
+Новая архитектура считается целостной только пока выполняются следующие
+инварианты:
+
+- Browser renders; Engine decides; WorldReducer moves; ExternalExecutor executes.
+- Intent не является фактом мира.
+- Decision/tone/effects разделены.
+- MCP отсутствует вне ExternalExecutor.
+- SQLite остаётся authoritative.
+- SSE не повторяет POST.
+- Narrator/Review не меняют state/effects.
+- crash не приводит к blind replay внешнего эффекта.

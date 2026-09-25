@@ -13,7 +13,8 @@ import unittest
 from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_state, load_rules,
                                      plan_effects, reduce_turn, reduce_world,
                                      validate_draft, validate_report)
-from gametable.roleplay.opencode import LAB_TOOLS, BackendError, OpenCode
+from gametable.roleplay.opencode import (LAB_TOOLS, READ_ONLY_LAB_TOOLS,
+                                         BackendError, OpenCode)
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
 from gametable.roleplay.server import (Application, EventHub, handler_for,
@@ -424,6 +425,18 @@ class TransportTests(unittest.TestCase):
         self.assertNotIn("task", {r["permission"] for r in rules})
 
 
+    def test_read_only_lab_scope_cannot_gain_write_tools(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        backend.request = Mock(return_value={"id": "ses_readonly"})
+        backend.create("Safe lab", parent="ses_parent", lab_tools=READ_ONLY_LAB_TOOLS)
+        body = backend.request.call_args.args[2]
+        rules = body["permission"]
+        self.assertEqual(rules[0], {"permission": "*", "pattern": "*", "action": "deny"})
+        self.assertEqual({r["permission"] for r in rules[1:]}, set(READ_ONLY_LAB_TOOLS))
+        self.assertTrue(set(READ_ONLY_LAB_TOOLS) < set(LAB_TOOLS))
+        self.assertFalse(any(name.endswith(("_start", "_cancel", "_set", "_move"))
+                             for name in READ_ONLY_LAB_TOOLS))
+
 class WebBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -542,14 +555,15 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertEqual(h.send.call_args.args[0], 400)
         self.app.runtime.submit.assert_not_called()
 
-    def test_http_compat_activity_is_normalized_to_director_intent(self):
-        body = {"id": "turn-0001", "text": "Проверь стенд", "activity": "lab"}
-        self.assertEqual(
-            normalize_turn_body(body, self.rules),
-            {"id": "turn-0001", "text": "Проверь стенд", "intent_id": "request_lab_work"},
-        )
+    def test_legacy_activity_request_is_rejected(self):
+        with self.assertRaises(ValueError):
+            normalize_turn_body(
+                {"id": "turn-0001", "text": "Проверь стенд", "activity": "lab"},
+                self.rules,
+            )
         native = {"id": "turn-0002", "text": "Привет", "intent_id": "talk"}
         self.assertEqual(normalize_turn_body(native, self.rules), native)
+        self.assertNotIn("ui_activity_compat", self.rules)
 
     def test_browser_shell_is_module_driven_csp_safe_and_has_no_polling(self):
         web = Path(__file__).parents[1] / "web"
@@ -575,6 +589,19 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn("style-src 'self'", text)
         self.assertNotIn("'unsafe-inline'", text)
         self.assertIn("connect-src 'self'", text)
+
+    def test_cutover_has_no_legacy_activity_contract_or_temp_plan(self):
+        root = Path(__file__).parents[1]
+        server = (root / "roleplay" / "server.py").read_text()
+        rules = json.loads((root / "roleplay" / "rules.json").read_text())
+        self.assertNotIn("ui_activity_compat", rules)
+        self.assertNotIn('{"id", "text", "activity"}', server)
+        self.assertFalse((root / "refactor-plan-v2").exists())
+
+    def test_ci_watches_both_mcp_surfaces(self):
+        workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "gametable.yml").read_text()
+        self.assertIn('"gameclient/v1/clients/mcp.py"', workflow)
+        self.assertIn('"gamelab/mcp.py"', workflow)
 
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)

@@ -1,5 +1,5 @@
 {
-  "version": "vn-5",
+  "version": "vn-6",
   "character": {
     "id": "yuki-vn-1",
     "name": "Юки",
@@ -66,12 +66,6 @@
       "ui_kind": "movement",
       "default_text": "Давай вернёмся в коридор."
     }
-  },
-  "ui_activity_compat": {
-    "chat": "talk",
-    "lab": "request_lab_work",
-    "rest": "request_rest",
-    "sleep": "request_sleep"
   },
   "initial_scene": "hallway",
   "scenes": {

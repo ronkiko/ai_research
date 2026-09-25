@@ -93,18 +93,10 @@ def free_port():
 
 
 def normalize_turn_body(body, rules, allowed_intents=None):
-    """Compatibility ends here: runtime/store only see DirectorIntent."""
-    if not isinstance(body, dict):
+    """Validate the only public DirectorIntent request contract."""
+    if not isinstance(body, dict) or set(body) != {"id", "text", "intent_id"}:
         raise ValueError("Неверный формат хода")
-    fields = set(body)
-    if fields == {"id", "text", "intent_id"}:
-        intent_id = body["intent_id"]
-    elif fields == {"id", "text", "activity"}:
-        intent_id = rules.get("ui_activity_compat", {}).get(body["activity"])
-        if not intent_id:
-            raise ValueError("Неизвестное занятие")
-    else:
-        raise ValueError("Неверный формат хода")
+    intent_id = body["intent_id"]
     if not isinstance(body["id"], str) or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}", body["id"]):
         raise ValueError("Неверный идентификатор")
     if not isinstance(body["text"], str) or not 1 <= len(body["text"].strip()) <= 4000:

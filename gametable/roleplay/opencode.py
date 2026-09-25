@@ -18,6 +18,11 @@ LAB_TOOLS = tuple("game_v1_" + x for x in (
         "verify_cancel", "run_start", "run_status", "run_cancel", "run_update_goal"))
 
 
+READ_ONLY_LAB_TOOLS = (
+    "game_v1_health", "game_v1_describe",
+    "gamelab_v1_health", "gamelab_v1_describe",
+)
+
 class BackendError(RuntimeError):
     pass
 
@@ -72,22 +77,22 @@ class OpenCode:
             return {"providerID": provider, "modelID": model}
         raise BackendError("Модель не задана. Укажи --model provider/model; автоматическая замена провайдера запрещена.")
 
-    def create(self, title, agent="yuki", parent=None, lab=False):
+    def create(self, title, agent="yuki", parent=None, lab=False, lab_tools=None):
         permissions = [{"permission": "*", "pattern": "*", "action": "deny"}]
-        if lab:
-            permissions.extend({"permission": tool, "pattern": "*", "action": "allow"} for tool in LAB_TOOLS)
+        allowed = tuple(lab_tools) if lab_tools is not None else (LAB_TOOLS if lab else ())
+        permissions.extend({"permission": tool, "pattern": "*", "action": "allow"} for tool in allowed)
         body = {"title": title, "agent": agent, "permission": permissions}
         if parent:
             body["parentID"] = parent
         result = self.request("POST", "/session", body)
         sid = result["id"]
-        self.log(f"контекст {agent}: tools={'allowlist' if lab else 'disabled'}")
+        self.log(f"контекст {agent}: tools={'allowlist' if allowed else 'disabled'}")
         with self.lock:
             self.sessions.add(sid)
         return sid
 
-    def complete(self, parent, agent, prompt, lab=False):
-        sid = self.create("GameTable " + agent, agent, parent, lab)
+    def complete(self, parent, agent, prompt, lab=False, lab_tools=None):
+        sid = self.create("GameTable " + agent, agent, parent, lab, lab_tools)
         model = self.model.split("/", 1)
         body = {"agent": agent, "model": {"providerID": model[0], "modelID": model[1]},
                 "parts": [{"type": "text", "text": prompt}]}
@@ -112,7 +117,7 @@ class OpenCode:
         if not text.strip():
             raise BackendError("OpenCode вернул пустой ответ")
         trace = []
-        if lab:
+        if lab or lab_tools is not None:
             messages = self.request("GET", f"/session/{sid}/message")
             for msg in messages:
                 for part in msg.get("parts", []):
