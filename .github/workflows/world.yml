@@ -4,14 +4,18 @@ on:
   push:
     paths:
       - "world/**"
+      - "organism/**"
       - "docs/refactor/embodied-vn/02-contracts.md"
+      - "docs/refactor/embodied-vn/05-navigation.md"
       - "ARCHITECTURE.md"
       - "README.md"
       - ".github/workflows/world.yml"
   pull_request:
     paths:
       - "world/**"
+      - "organism/**"
       - "docs/refactor/embodied-vn/02-contracts.md"
+      - "docs/refactor/embodied-vn/05-navigation.md"
       - "ARCHITECTURE.md"
       - "README.md"
       - ".github/workflows/world.yml"

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "service": "navigation_v1",
+  "actor_binding": "server_side",
+  "tools": [
+    {
+      "name": "describe",
+      "read_only": true,
+      "arguments": []
+    },
+    {
+      "name": "observe",
+      "read_only": true,
+      "arguments": []
+    },
+    {
+      "name": "locations",
+      "read_only": true,
+      "arguments": []
+    },
+    {
+      "name": "navigate",
+      "read_only": false,
+      "arguments": [
+        "location_id",
+        "request_id"
+      ]
+    },
+    {
+      "name": "approach",
+      "read_only": false,
+      "arguments": [
+        "object_id",
+        "request_id"
+      ]
+    },
+    {
+      "name": "interact",
+      "read_only": false,
+      "arguments": [
+        "object_id",
+        "interaction_id",
+        "request_id"
+      ]
+    },
+    {
+      "name": "action_status",
+      "read_only": true,
+      "arguments": [
+        "action_id"
+      ]
+    },
+    {
+      "name": "action_cancel",
+      "read_only": false,
+      "arguments": [
+        "action_id",
+        "request_id"
+      ]
+    }
+  ],
+  "forbidden_arguments": [
+    "entity_id",
+    "motor_x",
+    "x",
+    "vx",
+    "controller_id"
+  ],
+  "forbidden_tools": [
+    "move",
+    "motor",
+    "reset",
+    "set_position",
+    "transfer"
+  ]
+}

@@ -26,6 +26,7 @@ from organism.control import GoalMailbox
 from organism.journal import Journal
 from organism.reward import RewardConfig, RewardStore
 from organism.runtime import GoalRunner, checkpoint_path, ensure_player, reset_player_state
+from organism.lease import BodyLease, BodyLeaseBusy, BodyLeaseHandle
 from organism.training import _prepare_reward_config
 from organism.spine_school import ALGORITHM, train_school
 
@@ -46,6 +47,8 @@ class Laboratory:
         self._cancel = threading.Event()
         self._goals: GoalMailbox | None = None
         self._journal: Journal | None = None
+        self._body_lease = BodyLease()
+        self._body_lease_handle: BodyLeaseHandle | None = None
         self._records: dict[str, dict[str, Any]] = {
             "training": {"status": "idle"},
             "verify": {"status": "idle"},
@@ -156,22 +159,37 @@ class Laboratory:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise LaboratoryBusyError(f"laboratory is busy with {self._active_kind}")
-            self._cancel = threading.Event()
-            self._active_kind = kind
-            record = {"status": "starting", **initial}
-            self._journal = Journal(checkpoint_path(), kind, initial)
-            record["experiment_id"] = self._journal.experiment_id
-            self._goals = GoalMailbox(initial["target_x"]) if kind == "run" else None
-            self._records[kind] = record
-            thread = threading.Thread(
-                target=self._guarded_worker,
-                args=(kind, worker, args),
-                daemon=True,
-                name=f"gamelab-{kind}",
-            )
-            self._thread = thread
-            thread.start()
-            return dict(record)
+            try:
+                lease_handle = self._body_lease.acquire(
+                    f"gamelab:{kind}",
+                    kind,
+                )
+            except BodyLeaseBusy as exc:
+                raise LaboratoryBusyError(str(exc)) from exc
+            try:
+                self._cancel = threading.Event()
+                self._active_kind = kind
+                record = {"status": "starting", **initial}
+                self._journal = Journal(checkpoint_path(), kind, initial)
+                record["experiment_id"] = self._journal.experiment_id
+                self._goals = GoalMailbox(initial["target_x"]) if kind == "run" else None
+                self._records[kind] = record
+                thread = threading.Thread(
+                    target=self._guarded_worker,
+                    args=(kind, worker, args),
+                    daemon=True,
+                    name=f"gamelab-{kind}",
+                )
+                self._thread = thread
+                self._body_lease_handle = lease_handle
+                thread.start()
+                return dict(record)
+            except Exception:
+                lease_handle.release()
+                self._body_lease_handle = None
+                self._active_kind = None
+                self._thread = None
+                raise
 
     def _guarded_worker(self, kind: str, worker, args: tuple[Any, ...]) -> None:
         try:
@@ -192,6 +210,10 @@ class Laboratory:
                 if self._thread is current:
                     self._active_kind = None
                     self._thread = None
+                lease_handle = self._body_lease_handle
+                self._body_lease_handle = None
+            if lease_handle is not None:
+                lease_handle.release()
 
     def update_goal(self, target_x: float) -> dict[str, Any]:
         target = self._target(target_x)

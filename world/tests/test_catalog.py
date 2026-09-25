@@ -40,6 +40,31 @@ class CatalogTests(unittest.TestCase):
         self.assertLessEqual(portal["trigger"]["x_min"], 500.0)
         self.assertGreaterEqual(portal["trigger"]["x_max"], 500.0)
 
+    def test_reciprocal_arrival_spawns_land_on_room_interior_side(self):
+        hallway = self.catalog.physics("hallway")
+        laboratory = self.catalog.physics("laboratory")
+        training = self.catalog.physics("training/flat_run")
+
+        hallway_spawns = {item["spawn_id"]: item["x"] for item in hallway["spawns"]}
+        laboratory_spawns = {item["spawn_id"]: item["x"] for item in laboratory["spawns"]}
+        training_spawns = {item["spawn_id"]: item["x"] for item in training["spawns"]}
+
+        hallway_portal = hallway["portals"][0]["trigger"]
+        lab_hallway = next(
+            item["trigger"] for item in laboratory["portals"]
+            if item["portal_id"] == "portal.laboratory.hallway"
+        )
+        lab_training = next(
+            item["trigger"] for item in laboratory["portals"]
+            if item["portal_id"] == "portal.laboratory.training"
+        )
+        training_portal = training["portals"][0]["trigger"]
+
+        self.assertLess(hallway_spawns["from_laboratory"], hallway_portal["x_min"])
+        self.assertGreater(laboratory_spawns["from_hallway"], lab_hallway["x_max"])
+        self.assertLess(laboratory_spawns["from_training"], lab_training["x_min"])
+        self.assertGreater(training_spawns["from_laboratory"], training_portal["x_max"])
+
     def test_flat_maps_publish_explicit_blocked_intervals(self):
         for map_id in self.catalog.map_ids():
             physics = self.catalog.physics(map_id)

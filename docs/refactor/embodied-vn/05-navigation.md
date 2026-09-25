@@ -3,6 +3,10 @@
 Зависимости: [02](02-contracts.md)–[04](04-organism.md).
 Коммит: `Add semantic navigation MCP over learned body control`. Цель: A1–A4, A6, A8.
 
+Статус: **реализовано аддитивно**. `navigation_v1` и durable action lifecycle
+готовы, но текущая GameTable VN ещё не переключена на этот MCP; cutover остаётся
+этапом 09.
+
 ## Новый сервис
 
 Создать `world/navigation.py`, job storage и `world/mcp.py` с сервером
@@ -71,3 +75,45 @@ Controller fencing отвергает старый writer. Принятый canc
 Повтор request/обрыв после transfer не удваивает перенос. Cancel/new goal имеют
 определённый порядок. MCP не содержит actuator, arbitrary reset или set_position.
 Научный rollout, затронутый ручным операторским override, помечается contaminated.
+
+## Реализованный результат этапа 05
+
+Добавлены `world/navigation.py`, SQLite journal `world/navigation_store.py`,
+runtime adapter и MCP server `world/mcp.py`. Публичная schema зафиксирована в
+`world/navigation_v1.schema.json` и содержит ровно восемь tools из таблицы
+выше. Ни один tool не принимает `entity_id`, actuator, velocity, reset,
+set-position или transfer command: actor/entity берутся из server-side Host
+session.
+
+Route planner знает только граф MapCatalog. Внутри зоны он передаёт
+BodyController единственный semantic local target — центр portal/object region.
+Скорость, торможение и effort остаются Spine/Motor. Portal transfer считается
+доказанным только при одновременном authoritative membership target zone и
+physics transfer receipt; простого текста/смены presentation недостаточно.
+
+Action journal сохраняет request hash и job revision. Точный повтор request_id
+возвращает прежний action даже после изменения текущей зоны; другой semantic
+request под тем же id даёт `request_conflict`. Перед каждым controller goal и
+cancel сначала сохраняется command record. Неизвестный outcome не отправляется
+повторно вслепую.
+
+Lifecycle: `queued → approaching → transfer_pending → continuing → arrived`,
+с terminal `cancelled/blocked/failed` и `uncertain/reconciling`. Status
+всегда добавляет свежую world observation и age в world ticks. Restart не
+восстанавливает writer из догадки: durable transfer receipt может завершить
+reconcile, иначе action становится interrupted/uncertain.
+
+`organism.lease.BodyLease` задаёт один cross-process physical writer.
+BodyController и прежние GameLab TRAIN/VERIFY/RUN используют один lock, поэтому
+navigation и научный rollout не могут одновременно писать Motor. Уже
+существующий EventGuard по-прежнему помечает rollout `contaminated`, если в
+него вмешался другой Host client.
+
+Проверки проходят полный semantic round-trip
+`hallway → laboratory → training/flat_run → laboratory → hallway` на одном
+entity, blocked/missing-skill/stale-epoch/foreign-entity, durable retry после
+transfer, cancel-before-new-goal, interaction proximity и точный MCP surface.
+
+Сквозной round-trip дополнительно проверяет ориентацию reciprocal arrival anchors:
+после transfer тело появляется на внутренней стороне комнаты, поэтому следующий
+semantic goal не обязан сначала пересекать только что пройденный portal обратно.

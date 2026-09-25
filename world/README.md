@@ -54,3 +54,24 @@ Stage 03 implements a versioned `embodied_world_v1` GameServer mode in
 fixed-step physics, including blocked intervals and on-touch portal volumes.
 The legacy one-zone supervisor is intentionally still the default launcher until
 the later cutover stage.
+
+## Semantic navigation status
+
+Stage 05 adds `navigation_v1`: a durable semantic action service over the
+catalog, authoritative observations and the learned Organism controller.
+
+Its MCP surface is intentionally small: `describe`, `observe`, `locations`,
+`navigate`, `approach`, `interact`, `action_status`, `action_cancel`.
+Actor/entity binding is server-side. There is no public actuator, teleport,
+reset, arbitrary entity or set-position tool.
+
+Navigation chooses only the next semantic portal/object region. Spine/Motor own
+motion inside the room and GameServer physics owns transfer. Cross-zone arrival
+requires an observed target membership plus a physical transfer receipt.
+
+Navigation jobs and outbound controller commands are journaled in SQLite before
+execution. Exact request IDs are idempotent; restart reconciles durable evidence
+and never blind-replays an uncertain command.
+
+A shared `organism.lease.BodyLease` prevents navigation and GameLab
+TRAIN/VERIFY/RUN from concurrently owning the physical actuator.

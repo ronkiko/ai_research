@@ -151,6 +151,7 @@ def control_loop(
     on_status: Callable | None = None,
     on_transition: Callable | None = None,
     on_motor_transition: Callable | None = None,
+    stop_on_zone_change: bool = False,
 ) -> dict[str, Any]:
     model.eval()
     guard = EventGuard(client, state)
@@ -255,6 +256,22 @@ def control_loop(
             if current_zone != zone_id:
                 if not isinstance(current_zone, str) or not current_zone:
                     raise EvidenceError("Host zone identity changed to an invalid value")
+                if stop_on_zone_change:
+                    if active_decision is not None:
+                        _finish_decision(
+                            active_decision,
+                            tick=tick,
+                            hz=hz,
+                            done=False,
+                            on_transition=on_transition,
+                        )
+                    result.update(
+                        status="transferred",
+                        source_zone=zone_id,
+                        target_zone=current_zone,
+                        world_tick=tick,
+                    )
+                    break
                 # A portal transfer changes the coordinate frame. Measured
                 # history from the previous zone must not be interpreted in
                 # the new one. Goal changes within one zone keep history.

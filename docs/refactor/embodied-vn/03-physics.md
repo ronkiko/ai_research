@@ -104,3 +104,12 @@ swept portal, отсутствие повторного transfer, stale fence, w
 training setup, restart/idempotency, incompatible physics hash и scheduler без
 наблюдателей. `./world/op/check.sh` дополнительно прогоняет эти tests и старый
 GameTable gate.
+
+### Уточнение arrival anchors после сквозного navigation-теста
+
+Полный маршрут этапа 05 выявил важную геометрическую деталь: reciprocal arrival
+spawn должен находиться не просто вне trigger, а **на внутренней стороне целевой
+комнаты**. Иначе движение от двери вглубь комнаты немедленно пересекает тот же
+portal обратно. Поэтому `from_laboratory` в hallway закреплён на x=499, а
+`from_training` в laboratory — на x=899. Оба значения находятся вне trigger
+и позволяют двигаться от входа в интерьер без bounce-back.

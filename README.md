@@ -1,11 +1,11 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–04 уже добавили identity/action/world contracts, multi-zone physics и
-вынесли learned-body core в `organism/`. GameLab пока остаётся совместимым
-service/operator facade, а legacy GameServer supervisor — публичным runtime до
-cutover. Следующий этап — semantic navigation lifecycle из
-[05-navigation.md](docs/refactor/embodied-vn/05-navigation.md).
+Этапы 02–05 уже добавили identity/action/world contracts, multi-zone physics,
+канонический learned-body core и semantic `navigation_v1` с durable action
+lifecycle. GameLab пока остаётся compatibility facade, а GameTable ещё не
+переключён на новый MCP. Следующий этап — world-driven graphics из
+[06-graphics.md](docs/refactor/embodied-vn/06-graphics.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом

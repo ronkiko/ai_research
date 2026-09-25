@@ -128,7 +128,8 @@ class GoalRunner:
             max_seconds: float = DEFAULT_GOAL_TIMEOUT,
             cancel: threading.Event | None = None,
             on_status: Callable | None = None,
-            goals: GoalMailbox | None = None) -> dict[str, Any]:
+            goals: GoalMailbox | None = None,
+            stop_on_zone_change: bool = False) -> dict[str, Any]:
         target_x, tolerance, max_seconds = map(float, (target_x, tolerance, max_seconds))
         if not WORLD_MIN_X <= target_x <= WORLD_MAX_X:
             raise ValueError("target_x must be within [0,1000]")
@@ -140,6 +141,7 @@ class GoalRunner:
         return control_loop(
             self.model, self.client, state, target_x=target_x, tolerance=tolerance,
             max_seconds=max_seconds, cancel=cancel, on_status=on_status, goals=goals,
+            stop_on_zone_change=stop_on_zone_change,
         )
 
 

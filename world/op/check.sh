@@ -2,6 +2,9 @@
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+echo "CHECK embodied world Python"
+python3 -m compileall -q world
+
 echo "CHECK embodied world manifests"
 for file in world/maps/*.json; do
   python3 -m json.tool "$file" >/dev/null
