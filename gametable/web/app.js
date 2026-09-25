@@ -15,6 +15,8 @@ function renderStats(s) {
   const day=1+Math.floor(s.minutes/1440), hour=Math.floor(s.minutes%1440/60), minute=s.minutes%60;
   $('clock').textContent=`День ${day} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
   $('location-label').textContent=locations[s.location]||s.location||'НЕИЗВЕСТНАЯ ЛОКАЦИЯ';
+  document.querySelector('.stage').classList.toggle('laboratory',s.location==='laboratory');
+  document.querySelector('.stage').classList.toggle('hallway',s.location!=='laboratory');
   // Display labels only: no extra hidden relationship-stage mechanics.
   $('relation').textContent=s.stats.affection>=65&&s.stats.trust>=60?'Близость и доверие':s.stats.affection>=65?'Тянется к тебе, но сомневается':s.stats.trust>=60?'Полагается на тебя':s.stats.trust<20?'Осторожность':'Узнаёте друг друга';
   $('scene-label').textContent=s.stats.fatigue>=70?'Нужна передышка':s.stats.mood<35?'Непростой разговор':s.stats.affection>60?'Знакомый голос':'Тихий день';

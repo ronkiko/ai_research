@@ -1,6 +1,11 @@
 <!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Юки · GameTable</title><link rel="stylesheet" href="/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Юки · GameTable</title><link rel="stylesheet" href="/style.css"><style>
+.laboratory-scene{display:none;position:absolute;inset:0;z-index:2;pointer-events:none}.stage.laboratory .portrait{display:none}.stage.laboratory .laboratory-scene{display:block}.stage:not(.laboratory) .desk{display:none}.stage.laboratory .desk{z-index:3;bottom:20%;left:18%;width:65%;height:24px;transform:none;border-top:8px solid #e1d2b3;background:#8d7058cc;box-shadow:0 12px 20px #08151c88}
+.stage.laboratory{background:linear-gradient(145deg,#263d45,#182a35 58%,#101d28)}.stage.laboratory .window{top:75px;left:8%;width:54%;height:42%;background:linear-gradient(135deg,#7897a0,#314f5d);border-color:#b9d3d2;box-shadow:0 14px 35px #08151c99}.stage.laboratory .window i{border-color:#c4dddd}.stage.laboratory .scene-caption{color:#b5cfcb}.stage.laboratory .character-name{color:#e9f2ed;text-shadow:0 1px 14px #08151c}
+.lab-figure{position:absolute;left:43%;bottom:14%;width:220px;height:360px}.lab-head{position:absolute;top:18px;left:78px;width:70px;height:78px;border-radius:48% 48% 45% 45%;background:#f3cec0;box-shadow:inset 15px -4px #d99f9a}.lab-hair{position:absolute;top:0;left:64px;width:94px;height:100px;border-radius:55% 55% 35% 35%;background:#252b45;transform:rotate(-5deg)}.lab-hair:after{content:"";position:absolute;right:-12px;top:55px;width:28px;height:115px;border-radius:0 0 45% 50%;background:#252b45}.lab-body{position:absolute;top:105px;left:35px;width:150px;height:190px;border-radius:45px 45px 12px 12px;background:linear-gradient(135deg,#f7fbf5,#b8ced0);box-shadow:inset 42px 0 #d8e5e2}.lab-arm{position:absolute;top:150px;left:120px;width:130px;height:28px;border-radius:18px;background:#f3cec0;transform:rotate(20deg);transform-origin:left center;box-shadow:0 22px #d99f9a}.lab-chair{position:absolute;left:39%;bottom:9%;width:270px;height:135px;border-radius:50% 50% 18px 18px;background:#405d6a66;border:2px solid #8eabb055}.lab-laptop{position:absolute;left:55%;bottom:30%;z-index:3;width:185px;height:105px;border:7px solid #adcac7;border-radius:7px 7px 3px 3px;background:linear-gradient(135deg,#153f50,#0b202e);box-shadow:0 0 24px #61c5cf66;transform:perspective(280px) rotateY(-12deg)}.lab-laptop:after{content:"";position:absolute;left:-28px;bottom:-18px;width:225px;height:15px;border-radius:3px;background:#a7c3bf;box-shadow:0 5px 12px #07151c}.lab-laptop:before{content:"";position:absolute;inset:15px;background:repeating-linear-gradient(0deg,#6fd0d033 0 2px,transparent 2px 13px)}
+@media(max-width:850px){.lab-figure{left:37%;transform:scale(.72);transform-origin:bottom left}.lab-laptop{left:54%;bottom:31%;transform:scale(.72) perspective(280px) rotateY(-12deg);transform-origin:bottom left}.lab-chair{left:27%;transform:scale(.72);transform-origin:bottom left}}
+</style></head>
 <body>
 <header><a class="brand" href="/">GAME<span>TABLE</span><small>YUKI / A LABORATORY STORY</small></a><div class="clock" id="clock">День 1 · 09:00</div><span class="save">● Автосохранение</span></header>
 <main>
@@ -27,6 +32,9 @@
  <rect x="255" y="390" width="37" height="48" rx="3" fill="#e6ece9" stroke="#98b3bb"/><rect x="260" y="399" width="27" height="7" rx="2" fill="#a9c5ca"/>
  <path d="M120 387L100 557M284 387L304 557" stroke="#a6b9c3" stroke-width="2" fill="none"/>
  </svg>
+ <div class="laboratory-scene" aria-label="Юки работает за ноутбуком">
+  <div class="lab-chair"></div><div class="lab-figure"><div class="lab-hair"></div><div class="lab-head"></div><div class="lab-body"></div><div class="lab-arm"></div></div><div class="lab-laptop"></div>
+ </div>
  <div class="character-name"><span>結希</span><b>Юки</b><small>Младшая исследовательница</small></div>
  <div class="scene-caption">У каждой общей истории — свой первый день.</div>
 </section>
