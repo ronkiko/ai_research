@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+GAMETABLE_BRAIN_ID="yuki-02"
+GAMETABLE_STATE_ROOT="$ROOT/gametable/runtime/$GAMETABLE_BRAIN_ID"
+export GAMELAB_BRAIN_STATE_ROOT="$GAMETABLE_STATE_ROOT"
+export GAMETABLE_RELATIONSHIP_STATE="$GAMETABLE_STATE_ROOT/relationship-current.json"
 
 # Operator-owned first Director message for a fresh Yuki2 trial.
 # Edit this block for the default experiment, pass replacement text directly,
@@ -48,137 +52,66 @@ esac
   exit 2
 }
 
-PORT="${GAMETABLE_OPENCODE_PORT:-}"
-if [[ -z "$PORT" ]]; then
-  PORT="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
-fi
-
-[[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1024 && PORT <= 65535 )) || {
-  echo "ERROR GAMETABLE_OPENCODE_PORT must be an unused TCP port in [1024,65535]" >&2
+command -v opencode >/dev/null 2>&1 || {
+  echo "ERROR opencode is not installed or not on PATH" >&2
   exit 2
 }
 
-export GAMETABLE_START_GO_PROMPT="$PROMPT"
+# A fresh alpha trial intentionally discards only Yuki2 personal/Executive state.
+"$ROOT/gametable/op/start.sh" --stop >/dev/null 2>&1 || true
+rm -rf -- "$GAMETABLE_STATE_ROOT"
 mkdir -p "$ROOT/gametable/runtime"
-INJECT_LOG="$ROOT/gametable/runtime/start-go-injector.log"
-: > "$INJECT_LOG"
 
-# OpenCode documents /tui/append-prompt + /tui/submit-prompt as the supported
-# programmatic way to drive an already-running TUI.  Waiting for both MCP
-# servers avoids the startup race seen with the CLI --prompt option.
+FIRST_TURN_LOG="$ROOT/gametable/runtime/start-go-first-turn.jsonl"
+FIRST_TURN_ERR="$ROOT/gametable/runtime/start-go-first-turn.stderr.log"
+: > "$FIRST_TURN_LOG"
+: > "$FIRST_TURN_ERR"
+
+echo "GameTable Yuki2: starting first Director turn"
+
+# Use OpenCode's persisted non-interactive run path for the first message.
+# Unlike TUI append/submit events, this creates a real session turn in storage.
 (
-  python3 - "$PORT" "$$" <<'PY'
+  cd "$ROOT/gametable"
+  opencode run --format json "$PROMPT"
+) >"$FIRST_TURN_LOG" 2>"$FIRST_TURN_ERR"
+
+SESSION_ID="$(
+  python3 - "$FIRST_TURN_LOG" <<'PY'
 from __future__ import annotations
 
 import json
-import os
-import signal
 import sys
-import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-
-port = int(sys.argv[1])
-tui_pid = int(sys.argv[2])
-base = f"http://127.0.0.1:{port}"
-prompt = os.environ["GAMETABLE_START_GO_PROMPT"]
-expected_mcp = ("game_v1", "gamelab_v1")
-deadline = time.monotonic() + 180.0
-
-
-def alive() -> bool:
-    try:
-        os.kill(tui_pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def request(path: str, *, method: str = "GET", body=None):
-    data = None
-    headers = {}
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        base + path,
-        data=data,
-        headers=headers,
-        method=method,
-    )
-    with urllib.request.urlopen(req, timeout=1.0) as response:
-        raw = response.read()
+path = Path(sys.argv[1])
+session_id = None
+for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    raw = raw.strip()
     if not raw:
-        return None
-    return json.loads(raw.decode("utf-8"))
-
-
-appended = False
-last_mcp = None
-
-while time.monotonic() < deadline and alive():
+        continue
     try:
-        health = request("/global/health")
-        if not isinstance(health, dict) or health.get("healthy") is not True:
-            time.sleep(0.2)
-            continue
+        event = json.loads(raw)
+    except json.JSONDecodeError:
+        continue
+    value = event.get("sessionID")
+    if isinstance(value, str) and value.startswith("ses_"):
+        session_id = value
+        break
 
-        mcp = request("/mcp")
-        last_mcp = mcp
-        if not isinstance(mcp, dict):
-            time.sleep(0.2)
-            continue
-        if any(
-            not isinstance(mcp.get(name), dict)
-            or mcp[name].get("status") != "connected"
-            for name in expected_mcp
-        ):
-            time.sleep(0.2)
-            continue
-
-        if not appended:
-            appended = request(
-                "/tui/append-prompt",
-                method="POST",
-                body={"text": prompt},
-            ) is True
-            if not appended:
-                time.sleep(0.2)
-                continue
-
-        if request("/tui/submit-prompt", method="POST") is True:
-            print("PASS initial Director prompt submitted after MCP readiness")
-            raise SystemExit(0)
-    except (
-        ConnectionError,
-        json.JSONDecodeError,
-        TimeoutError,
-        urllib.error.URLError,
-        urllib.error.HTTPError,
-    ):
-        pass
-    time.sleep(0.2)
-
-print(
-    "ERROR initial Director prompt was not submitted; "
-    f"last_mcp={last_mcp!r}",
-    file=sys.stderr,
-)
-raise SystemExit(1)
+if session_id:
+    print(session_id)
 PY
-) >>"$INJECT_LOG" 2>&1 &
+)"
 
-# No --prompt here: the injector sends the first turn only after the TUI and
-# both MCP servers are ready.
-exec "$ROOT/gametable/op/start.sh" \
-  --fresh \
-  --hostname 127.0.0.1 \
-  --port "$PORT"
+if [[ -z "$SESSION_ID" ]]; then
+  echo "ERROR first Yuki2 turn completed without a sessionID" >&2
+  echo "See: $FIRST_TURN_LOG" >&2
+  echo "See: $FIRST_TURN_ERR" >&2
+  exit 1
+fi
+
+echo "GameTable Yuki2: opening session $SESSION_ID"
+
+# Open the ordinary interactive TUI on the exact persisted session.
+exec "$ROOT/gametable/op/start.sh" --session "$SESSION_ID"
