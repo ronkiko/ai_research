@@ -8,8 +8,9 @@ from .opencode import BackendError, parse_json
 
 
 class Runtime:
-    def __init__(self, store, backend, rules, manuals=""):
+    def __init__(self, store, backend, rules, manuals="", log=None):
         self.store, self.backend, self.rules, self.manuals = store, backend, rules, manuals
+        self.log = log or (lambda _message, _level="INFO": None)
         self.lock = threading.Lock()
         self.thread = None
 
@@ -24,6 +25,7 @@ class Runtime:
 
     def run(self, event):
         before = self.store.state()
+        self.log(f"ход {event['id']}: activity={event['activity']}")
         audit = {"before": before, "model": self.backend.model, "rules": self.rules,
                  "assessments": {}, "draft_attempts": [], "laboratory": {"text": "", "tools": []}}
         try:
@@ -43,6 +45,9 @@ class Runtime:
             after, contract, calculations = reduce_turn(before, event,
                 audit["assessments"]["heart"]["report"], audit["assessments"]["head"]["report"], self.rules)
             audit.update(after=after, contract=contract, calculations=calculations)
+            self.log(f"ход {event['id']}: action={contract['action']}"
+                     + ("; MCP разрешён для лабораторного шага" if contract["action"] == "work"
+                        else "; MCP отключён"))
             self.store.progress(event["id"], "Решение принято", audit)
             if contract["action"] == "work":
                 # Persist intent before any external effect. No automatic tool retries.
@@ -104,6 +109,7 @@ class Runtime:
                 }
             self.store.finish(event["id"], before, after, audit)
         except Exception as exc:
+            self.log(f"ход {event['id']}: {exc}", "ERROR")
             self.store.progress(event["id"], "Ход остановлен", audit)
             self.store.fail(event["id"], str(exc))
         finally:

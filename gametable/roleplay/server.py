@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,16 @@ from .store import Store
 
 TABLE = Path(__file__).resolve().parents[1]
 DEFAULT_SAVE = TABLE / "runtime/yuki-vn"
+
+
+class ConsoleLog:
+    def __init__(self):
+        self.lock = threading.Lock()
+
+    def write(self, message, level="INFO"):
+        with self.lock:
+            stamp = datetime.now().strftime("%H:%M:%S")
+            print(f"[{stamp}] [{level}] {message}", flush=True)
 
 
 def free_port():
@@ -124,6 +135,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be 1..65535")
+    logger = ConsoleLog()
+    logger.write("GameTable Юки: starting")
     rules = load_rules()
     root = DEFAULT_SAVE
     root.mkdir(parents=True, exist_ok=True)
@@ -138,7 +151,8 @@ def main():
     port, password = free_port(), secrets.token_urlsafe(32)
     env = dict(os.environ, OPENCODE_SERVER_PASSWORD=password, OPENCODE_SERVER_USERNAME="opencode")
     # No inherited timers/provenance plugins: this process owns all roleplay transitions.
-    backend = OpenCode(f"http://127.0.0.1:{port}", TABLE, args.model, args.variant, password)
+    backend = OpenCode(f"http://127.0.0.1:{port}", TABLE, args.model, args.variant, password,
+                       log=logger.write)
     logfile = (root / "opencode.log").open("ab")
     process = subprocess.Popen(["opencode", "serve", "--pure", "--hostname", "127.0.0.1", "--port", str(port)],
         cwd=TABLE, env=env, stdout=logfile, stderr=subprocess.STDOUT, start_new_session=True)
@@ -168,11 +182,22 @@ def main():
         else:
             raise BackendError("OpenCode не запустился за 30 секунд")
         backend.select_model()
+        logger.write(f"OpenCode: healthy; model={backend.model}")
+        try:
+            mcps = backend.request("GET", "/mcp") or {}
+            for name in ("game_v1", "gamelab_v1"):
+                status = (mcps.get(name) or {}).get("status", "missing")
+                level = "INFO" if status == "connected" else "WARN"
+                logger.write(f"MCP {name}: {status}", level)
+        except BackendError as exc:
+            logger.write(f"MCP status unavailable: {exc}", "WARN")
         manuals = "\n\n".join(p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
-        runtime = Runtime(store, backend, rules, manuals)
+        runtime = Runtime(store, backend, rules, manuals, log=logger.write)
         app = Application(store, runtime, backend, rules, args.prompt)
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
-        print(f"GameTable · Юки: http://127.0.0.1:{args.port}\nМодель: {backend.model}\nCtrl+C — сохранить и выйти.", flush=True)
+        logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
+        logger.write(f"Модель: {backend.model}")
+        logger.write("Ctrl+C — сохранить и выйти.")
         if not stopped.is_set():
             server.serve_forever(poll_interval=0.25)
     except (BackendError, OSError, ValueError) as exc:

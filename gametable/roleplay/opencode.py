@@ -7,6 +7,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Callable
 
 # A session permission allowlist, not a model instruction. Social state tools are absent.
 LAB_TOOLS = tuple("game_v1_" + x for x in (
@@ -34,7 +35,8 @@ def parse_json(text):
 
 
 class OpenCode:
-    def __init__(self, url, directory, model=None, variant=None, password=None):
+    def __init__(self, url, directory, model=None, variant=None, password=None,
+                 log: Callable[[str], None] | None = None):
         self.url = url.rstrip("/")
         self.directory = str(directory)
         self.model = model
@@ -42,6 +44,7 @@ class OpenCode:
         self.password = password
         self.sessions = set()
         self.lock = threading.Lock()
+        self.log = log or (lambda _message: None)
 
     def request(self, method, path, body=None, timeout=240):
         path += ("&" if "?" in path else "?") + urllib.parse.urlencode({"directory": self.directory})
@@ -78,6 +81,7 @@ class OpenCode:
             body["parentID"] = parent
         result = self.request("POST", "/session", body)
         sid = result["id"]
+        self.log(f"контекст {agent}: tools={'allowlist' if lab else 'disabled'}")
         with self.lock:
             self.sessions.add(sid)
         return sid
@@ -92,6 +96,7 @@ class OpenCode:
         try:
             result = self.request("POST", f"/session/{sid}/message", body)
         except BackendError:
+            self.log(f"ошибка ответа {agent}: OpenCode message")
             try:
                 self.request("POST", f"/session/{sid}/abort", {}, timeout=5)
             except BackendError:
@@ -113,6 +118,12 @@ class OpenCode:
                 for part in msg.get("parts", []):
                     if part.get("type") == "tool":
                         trace.append({"tool": part.get("tool"), "state": part.get("state")})
+            if trace:
+                for item in trace:
+                    state = item.get("state") or {}
+                    self.log(f"MCP {item.get('tool', '?')}: {state.get('status', 'unknown')}")
+            else:
+                self.log("MCP: лабораторный контекст не вызвал инструментов")
         return {"session_id": sid, "text": text, "tools": trace}
 
     def close_sessions(self):
