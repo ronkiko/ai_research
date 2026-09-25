@@ -209,7 +209,8 @@ def handler_for(app):
                     "assessments": result.get("assessments"),
                     "calculations": result.get("calculations"),
                     "contract": result.get("contract"), "before": result.get("before"),
-                    "after": result.get("after"), "laboratory": result.get("laboratory"),
+                    "after": result.get("after"), "external": result.get("external"),
+                    "narration_facts": result.get("narration_facts"),
                     "checks": [{"review": a.get("review"), "rejected": a.get("rejected")}
                                for a in result.get("draft_attempts", [])]})
             static = STATIC_FILES.get(path)

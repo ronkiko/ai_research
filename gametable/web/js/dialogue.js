@@ -29,9 +29,9 @@ export function createDialogue(fetchAudit) {
       content.append(node('h3', 'Расчёт движка'),
         node('pre', JSON.stringify({calculations: audit.calculations,
           contract: audit.contract, checks: audit.checks}, null, 2)));
-      if (audit.laboratory?.tools?.length || audit.laboratory?.uncertain) {
-        content.append(node('h3', 'Лабораторные факты'),
-          node('pre', JSON.stringify(audit.laboratory, null, 2)));
+      if (audit.external?.results?.length) {
+        content.append(node('h3', 'Внешние эффекты'),
+          node('pre', JSON.stringify(audit.external, null, 2)));
       }
       if (audit.error) content.append(node('p', audit.error));
     } catch (error) {

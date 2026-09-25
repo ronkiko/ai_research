@@ -298,8 +298,8 @@ def reduce_world(state, event, decision, effect_plan, rules, fingerprint, catego
                    "scene_before": state["scene_id"], "scene_after": after["scene_id"]}
 
 
-def reduce_turn(state, event, heart, head, rules):
-    """Pure orchestration: appraisal -> decision -> EffectPlan -> WorldReducer."""
+def decide_turn(state, event, heart, head, rules):
+    """Pure DecisionEngine: validated appraisals -> CharacterDecision."""
     if state["rules_hash"] != rules["hash"]:
         raise ValueError("Правила изменились: продолжение требует отдельного нового сохранения")
     if state.get("scene_id") not in rules["scenes"]:
@@ -308,47 +308,56 @@ def reduce_turn(state, event, heart, head, rules):
         raise ValueError("Неизвестное намерение Директора")
     heart = validate_report(heart, event, state, "heart")
     head = validate_report(head, event, state, "head")
-
-    social_delta, projected_stats, fingerprint, category, novelty = _social_assessment(
+    social_delta, projected, fingerprint, category, novelty = _social_assessment(
         state, event, heart, head, rules)
-    decision, decision_audit = _select_decision(projected_stats, event, heart, head, rules)
-    effect_plan = plan_effects(
-        state, event, decision, social_delta, rules, decision_audit["forced_effect"])
-    after, world_audit = reduce_world(
-        state, event, decision, effect_plan, rules, fingerprint, category)
+    decision, selected = _select_decision(projected, event, heart, head, rules)
+    return decision, {**selected, "social_delta": social_delta, "fingerprint": fingerprint,
+                      "category": category, "novelty": novelty}
 
-    contract = {
-        "event_id": event["id"],
-        "revision": after["revision"],
-        "intent_id": event["intent_id"],
-        "decision": decision,
-        "anchor": ANCHORS[decision["disposition"]],
-        "effect_plan": copy.deepcopy(effect_plan),
-        "minutes": effect_plan["duration"],
-        "scene_id": after["scene_id"],
-        "stats": copy.deepcopy(after["stats"]),
-        "conflict": decision_audit["conflict"],
-        "delivery": {
-            "tone": decision["tone"],
-            "warmth": round((after["stats"]["affection"] + after["stats"]["mood"]) / 2),
-            "shyness": rules["character"]["traits"]["shyness"],
-            "tiredness": after["stats"]["fatigue"],
-        },
-        "forced_reason": decision_audit["forced_reason"],
-    }
-    audit = {
-        "heart_weight": decision_audit["heart_weight"],
-        "novelty": novelty,
-        "social_delta": social_delta,
-        "utilities": decision_audit["utilities"],
-        "decision": copy.deepcopy(decision),
-        "effect_plan": copy.deepcopy(effect_plan),
-        "world": world_audit,
-        "forced_reason": decision_audit["forced_reason"],
-        "conflict": decision_audit["conflict"],
-    }
-    return after, contract, audit
 
+def build_effect_plan(state, event, decision, context, rules):
+    """Pure EffectPlanner."""
+    return plan_effects(state, event, decision, context["social_delta"], rules,
+                        context["forced_effect"])
+
+
+def apply_effect_plan(state, event, decision, effect_plan, context, rules):
+    """Pure WorldReducer entrypoint."""
+    return reduce_world(state, event, decision, effect_plan, rules,
+                        context["fingerprint"], context["category"])
+
+
+def build_contract(event, after, decision, effect_plan, context, rules):
+    return {
+        "event_id": event["id"], "revision": after["revision"], "intent_id": event["intent_id"],
+        "decision": copy.deepcopy(decision), "anchor": ANCHORS[decision["disposition"]],
+        "effect_plan": copy.deepcopy(effect_plan), "minutes": effect_plan["duration"],
+        "scene_id": after["scene_id"], "stats": copy.deepcopy(after["stats"]),
+        "conflict": context["conflict"],
+        "delivery": {"tone": decision["tone"],
+                     "warmth": round((after["stats"]["affection"] + after["stats"]["mood"]) / 2),
+                     "shyness": rules["character"]["traits"]["shyness"],
+                     "tiredness": after["stats"]["fatigue"]},
+        "forced_reason": context["forced_reason"],
+    }
+
+
+def calculation_audit(decision, effect_plan, context, world_audit):
+    return {"heart_weight": context["heart_weight"], "novelty": context["novelty"],
+            "social_delta": copy.deepcopy(context["social_delta"]),
+            "utilities": copy.deepcopy(context["utilities"]),
+            "decision": copy.deepcopy(decision), "effect_plan": copy.deepcopy(effect_plan),
+            "world": copy.deepcopy(world_audit), "forced_reason": context["forced_reason"],
+            "conflict": context["conflict"]}
+
+
+def reduce_turn(state, event, heart, head, rules):
+    """Compatibility pure orchestration; Runtime executes these stages explicitly."""
+    decision, context = decide_turn(state, event, heart, head, rules)
+    effect_plan = build_effect_plan(state, event, decision, context, rules)
+    after, world_audit = apply_effect_plan(state, event, decision, effect_plan, context, rules)
+    contract = build_contract(event, after, decision, effect_plan, context, rules)
+    return after, contract, calculation_audit(decision, effect_plan, context, world_audit)
 
 def validate_draft(value, contract):
     required = {"event_id", "disposition", "text"}
