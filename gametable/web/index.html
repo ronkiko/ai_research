@@ -1,11 +1,6 @@
 <!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Юки · GameTable</title><link rel="stylesheet" href="/style.css"><style>
-.hud-stats{position:absolute;z-index:4;top:28px;right:28px;width:250px;padding:14px 16px 15px;border:1px solid #dce9e5;border-radius:8px;background:linear-gradient(145deg,#172733e8,#243a42df);box-shadow:0 10px 28px #1a303844;color:#edf5f1;backdrop-filter:blur(8px)}
-.hud-title{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:13px;padding-bottom:9px;border-bottom:1px solid #d8eee622;font-size:11px;letter-spacing:2px;font-weight:800}.hud-title small{font-size:8px;letter-spacing:1.5px;color:#a8c4bc;font-weight:600}
-.hud-stats .stats{display:grid;grid-template-columns:1fr;gap:9px}.hud-stats .stat:last-child{grid-column:auto}.hud-stats .stat .label{margin-bottom:4px;color:#d8e6e1;font-size:10px}.hud-stats .stat .value{color:#fff;font-size:10px}.hud-stats .stat .bar{height:6px;border:1px solid #ffffff1c;border-radius:2px;background:#0b171d99;box-shadow:inset 0 1px 2px #071016}.hud-stats .stat .fill{box-shadow:0 0 7px color-mix(in srgb,var(--color),transparent 25%)}
-@media(max-width:850px){.hud-stats{top:14px;right:14px;width:205px;padding:11px 12px}.hud-stats .stats{gap:6px}.hud-stats .stat .label{font-size:9px}.hud-stats .stat .bar{height:5px}}
-</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Юки · GameTable</title><link rel="stylesheet" href="/style.css"></head>
 <body>
 <header><a class="brand" href="/">GAME<span>TABLE</span><small>YUKI / A LABORATORY STORY</small></a><div class="clock" id="clock">День 1 · 09:00</div><span class="save">● Автосохранение</span></header>
 <main>
@@ -34,12 +29,9 @@
  </svg>
  <div class="character-name"><span>結希</span><b>Юки</b><small>Младшая исследовательница</small></div>
  <div class="scene-caption">У каждой общей истории — свой первый день.</div>
- <div class="hud-stats" aria-label="Статы Юки">
-  <div class="hud-title"><span>ЮКИ</span><small>STATUS</small></div>
-  <div id="stats" class="stats"></div>
- </div>
 </section>
 <aside class="panel">
+ <div id="stats" class="stats"></div>
  <div class="relation"><span>Ваши отношения</span><b id="relation">Знакомство</b><small>Симпатия — близость. Доверие — уверенность в человеке.</small></div>
  <div class="section-label">ИСТОРИЯ ДИАЛОГА <span id="model" title="Модель OpenCode"></span></div>
  <div id="history" class="history" role="log" aria-live="polite"><div class="empty">Лаборатория ещё тиха.<br>Поздоровайся — ваша история начинается здесь.</div></div>
