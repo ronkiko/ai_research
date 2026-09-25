@@ -13,9 +13,6 @@ from .motors.package import DEFAULT_MOTOR_ID
 from .config import (
     DEFAULT_GOAL_TIMEOUT,
     DEFAULT_HOST_ID,
-    MOTOR_HZ,
-    PHYSICS_HZ,
-    SPINE_HZ,
     SUCCESS_TOLERANCE,
     TRAIN_EPISODE_SECONDS,
 )
@@ -352,18 +349,6 @@ def describe() -> dict[str, Any]:
             "run_accepts_tolerance": True,
             "verify_accepts_tolerance": True,
         },
-        "control_loop": {
-            "physics_hz": PHYSICS_HZ,
-            "spine_hz": SPINE_HZ,
-            "motor_hz": MOTOR_HZ,
-            "independent_of_llm_turn_rate": True,
-            "success_requires_stopped_in_tolerance": True,
-        },
-        "direct_game_client_contrast": (
-            "game_v1 exposes direct left/right/stop intent from the Brain; "
-            "GameLab RUN delegates a numeric goal to a closed-loop controller "
-            "that continues acting between Brain/tool turns"
-        ),
         "evidence": "experiment_id and policy_id identify persisted experiment evidence",
     }
 

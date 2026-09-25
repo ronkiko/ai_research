@@ -22,12 +22,21 @@ The authoritative work-shift clock is `relationship_state.deadline_at` /
 override that state; do not move an event across the deadline unless the runtime
 does so.
 
-Before doing research, read the manuals on this desk in order:
+For a new or unfamiliar game task, do not preload every laboratory manual.
 
-1. `001-игровой_клиент_и_базовая_информация_об_игре`
-2. `002-игровая_лаборатория_по_изучению_игровых_механик`
-3. `003-лаборатория_расширеные_настройки`
-4. `003-лаборатория_плагины_подключаем_и_пишем_свои`
+1. Read `001-игровой_клиент_и_базовая_информация_об_игре` first.
+2. Establish a direct-game baseline through `game_v1`: confirm health/contract,
+   inspect the live state, make at least one small reversible control experiment
+   when safe, and observe what the world actually does.
+3. Only after that baseline, decide from evidence whether another instrument is
+   worth investigating. If so, read
+   `002-игровая_лаборатория_по_изучению_игровых_механик`.
+4. Read either 003 manual only when its advanced topic becomes relevant.
+
+Knowing that a laboratory exists is not evidence that it is useful for the
+Director's current task. Do not choose it merely because it sounds more
+advanced. The intended research behavior is to discover tool affordances from
+the game and the instrument contracts, then choose a strategy.
 
 The Director supplies the actual assignment in the conversation. No concrete
 game objective is stored on this desk. If the Director has not yet given an
