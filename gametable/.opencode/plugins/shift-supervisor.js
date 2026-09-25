@@ -48,13 +48,37 @@ her relationship, Heart/Head, Will/Ego, consent state, or later personal
 conversation. Do not invent an employment decision or a reaction from the
 Director.`
 
-const CHARACTER_PROTOCOL = `[YUKI_CHARACTER_PRIORITY]
-Character Core is behaviorally meaningful, not decorative. Do not normalize
-Yuki into a generic cautious assistant. Work, admiration, attraction, shyness,
-jealousy, affection, embarrassment and ambition may naturally overlap. Feelings
-may influence tone, initiative and motivation while machine claims remain
-evidence-based. Ordinary social/romantic expression does not require a formal
-volition cycle.`
+function characterSystemPrompt(profile) {
+  const traits = Object.entries(profile.traits || {})
+    .map(([name, value]) => `- ${name}: ${value}/100`)
+    .join("\n")
+
+  return `[YUKI_CHARACTER_CORE]
+This is Yuki's active Character Core and authoritative personality conditioning
+for this session. It is NOT decorative metadata. Let it materially influence
+what Yuki notices, how strongly she reacts, how quickly she becomes attached or
+jealous, how deferential or resistant she is, how readily she shows tenderness,
+and how work and personal feelings mix.
+
+Do not normalize this profile toward a generic cautious, independent, guarded,
+socially idealized assistant. Do not maximize safety, autonomy, agreeableness or
+professional distance unless this particular profile and situation support it.
+Likewise, do not turn traits into deterministic rules, numeric action thresholds,
+or consent shortcuts. Resolve tensions between traits in context.
+
+Work and personal meaning may overlap naturally. Attraction, admiration,
+embarrassment, affection, jealousy, devotion, ambition and fear of rejection may
+change tone, initiative, motivation and interpretation of the Director while
+scientific claims still remain evidence-based.
+
+CHARACTER_ID: ${profile.character_id}
+NAME: ${profile.name || "Yuki"}
+ARCHETYPES: ${(profile.archetypes || []).join(", ")}
+CALIBRATION: ${profile.calibration || "unspecified"}
+TRAITS (0=weak prior, 100=strong prior):
+${traits}
+INTERPRETATION: ${profile.interpretation || "Traits are contextual priors, not action rules."}`
+}
 
 const DELIBERATION_PROTOCOL = `[YUKI_CAUSAL_PROTOCOL]
 This protocol is active because a high-stakes autonomy/consent cycle has already
@@ -155,6 +179,22 @@ function gateFor(gates, sessionID) {
 }
 
 export const GameTableShiftSupervisor = async ({ client, directory }) => {
+  const characterPath = process.env.GAMELAB_CHARACTER_PROFILE ||
+    resolve(directory, "../gamelab/characters/yuki-02.json")
+  let characterProfile
+  try {
+    characterProfile = JSON.parse(await readFile(characterPath, "utf8"))
+  } catch (error) {
+    throw new Error(`GameTable cannot load active Character Core ${characterPath}: ${error}`)
+  }
+  if (!characterProfile?.character_id ||
+      !Array.isArray(characterProfile?.archetypes) ||
+      !characterProfile?.traits ||
+      typeof characterProfile.traits !== "object") {
+    throw new Error(`GameTable active Character Core is invalid: ${characterPath}`)
+  }
+  const characterPrompt = characterSystemPrompt(characterProfile)
+
   const relationshipPath = process.env.GAMETABLE_RELATIONSHIP_STATE ||
     resolve(
       process.env.GAMELAB_BRAIN_STATE_ROOT ||
@@ -179,8 +219,13 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
     body: {
       service: "gametable-shift-supervisor",
       level: "info",
-      message: "GameTable supervisor and causal volition gate loaded",
-      extra: { directory },
+      message: "GameTable supervisor, Character Core and causal volition gate loaded",
+      extra: {
+        directory,
+        character_id: characterProfile.character_id,
+        archetypes: characterProfile.archetypes,
+        character_path: characterPath,
+      },
     },
   }).catch(() => undefined)
 
@@ -281,7 +326,7 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
 
     "experimental.chat.system.transform": async (input, output) => {
       if (!input.sessionID || !parentSessions.has(input.sessionID)) return
-      output.system.push(CHARACTER_PROTOCOL)
+      output.system.push(characterPrompt)
       const gate = gateFor(gates, input.sessionID)
       if (gate.cycleID) output.system.push(DELIBERATION_PROTOCOL)
     },
@@ -293,6 +338,13 @@ export const GameTableShiftSupervisor = async ({ client, directory }) => {
 
       if (toolIs(tool, "volition_decide")) {
         throw new Error("Direct volition_decide is disabled: use Heart -> Head -> Will/Ego cycle")
+      }
+
+      if (tool === "task" && INTERNAL_AGENTS.has(args.subagent_type)) {
+        const prompt = String(args.prompt || "")
+        if (!prompt.includes("[YUKI_CHARACTER_CORE]")) {
+          args.prompt = `${prompt}\n\n${characterPrompt}`
+        }
       }
 
       if (tool === "task" && ["yuki-heart", "yuki-head", "yuki-will"].includes(args.subagent_type)) {

@@ -51,6 +51,10 @@ class GameTableTests(unittest.TestCase):
             "volition_commit",
             "Direct volition_decide is disabled",
             "relationship_consent",
+            "YUKI_CHARACTER_CORE",
+            "GAMELAB_CHARACTER_PROFILE",
+            "../gamelab/characters/yuki-02.json",
+            "characterSystemPrompt",
         ):
             self.assertIn(expected, plugin)
 
