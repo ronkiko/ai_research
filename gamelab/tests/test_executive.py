@@ -105,7 +105,9 @@ class BrainExecutiveTests(unittest.TestCase):
             kind="information",
             text="Director reported a GameLab system error.",
         )
-        self.assertEqual(state["director_signals"][-1]["kind"], "information")
+        self.assertEqual(state["status"], "active")
+        self.assertIn(state["phase"], {"orientation", "exploration", "exploitation", "verification_report"})
+        self.assertEqual(self.executive._state["director_signals"][-1]["kind"], "information")
 
     def test_plateau_and_help_are_surface_signals_not_actions(self):
         self.begin(plateau_minutes=1)
