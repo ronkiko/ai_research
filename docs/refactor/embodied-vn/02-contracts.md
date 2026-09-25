@@ -1,7 +1,11 @@
 # 02 / 11 — Контракты, идентичность и границы состояния
 
 Зависимость: [01](01-concept.md). Коммит: `Define embodied world contracts and identity`.
-Цель: A1, A4, A8, A9. Изменения пока аддитивные, без переключения старой VN.
+Цель: A1, A4, A8, A9.
+
+Статус: **реализовано аддитивно**. Активная VN и GameServer ещё не переключены
+на новые контракты; это произойдёт в последующих этапах. Старый GameTable check
+остаётся частью проверки этого этапа.
 
 ## Что переделать
 
@@ -73,3 +77,29 @@ map ID, неизвестная версия, NaN/Infinity, несовмести�
 
 Проверять runtime-схемы и валидацию, а не текст Markdown. Старый launch/check
 работает до явного cutover. Сохранения и артефакты оператора не мигрируются здесь.
+
+## Реализованный результат этапа 02
+
+Добавлен `world/` как stdlib-only контрактный слой без PyTorch, OpenCode и
+browser imports. В нём определены runtime-валидаторы для `EmbodimentBinding`,
+`WorldObservation`, `ActionRequest`, `ActionReceipt`, `SkillBinding`,
+message sequence и tutorial flow. Character revision, world revision и job
+revision являются разными полями и не объединяются одним счётчиком.
+
+`ActionRequest.content_hash` проверяется по каноническому payload.
+`ActionLedger` возвращает прежний action для точного повтора request и
+отклоняет повтор того же request_id с другим содержимым. `IdentityRegistry`
+не позволяет сменой transport/session создать другую entity для того же
+character binding.
+
+Каталог карт содержит ровно `hallway`, `laboratory`,
+`training/flat_run`. `workstation` — semantic object внутри laboratory.
+Каждый manifest разделён на `physics`, `semantics`, `presentation`;
+каталог валидирует portal → target map → target spawn ссылки. Hallway фиксирует
+X∈[0,1000], P/day-start x=0, Director first-day x=1, on-touch portal около x=500
+и 1001-cell presentation projection.
+
+Проверка этапа: `./world/op/check.sh`. Она валидирует manifests, contract
+round-trips, unknown schema/profile, NaN/Infinity, identity substitution,
+request idempotency и затем запускает существующий `./gametable/op/check.sh`.
+Никакие operator saves/checkpoints в этом этапе не мигрируются.
