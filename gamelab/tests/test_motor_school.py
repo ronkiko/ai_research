@@ -30,6 +30,7 @@ from gamelab.motor_school import (
 from gamelab.motors.package import (
     create_motor_instance,
     CURRENT_MOTOR_CERTIFICATION_GENERATION,
+    CURRENT_MOTOR_SCHOOL_VERSION,
     get_motor_package,
     list_motor_packages,
 )
@@ -78,7 +79,7 @@ class MotorSchoolTests(unittest.TestCase):
             self.assertEqual(result["episodes_run"], 1)
             self.assertEqual(result["candidate_episodes"], 1)
             self.assertTrue(reloaded.candidate_path.is_file())
-            self.assertEqual(reloaded.manifest["training"]["school"], SCHOOL_VERSION)
+            self.assertEqual(reloaded.manifest["training"]["school"], CURRENT_MOTOR_SCHOOL_VERSION)
             self.assertEqual(reloaded.manifest["training"]["episodes_total"], 1)
             self.assertFalse(reloaded.manifest["training"]["certified"])
 
