@@ -35,9 +35,7 @@ class GameGui:
             self.client.login(self.player_id)
             self.status.set(f"Host: ready | player={self.player_id}")
         except HostClientError as exc:
-            self.status.set(f"Host: waiting | {exc}")
-            self.root.after(500, self.login)
-            return
+            self.status.set(f"Host error: {exc}")
         self.root.after(50, self.poll)
 
     def move(self, move_x: int) -> None:
@@ -61,10 +59,9 @@ class GameGui:
                     f"move={event.get('move_x', '-')}"
                 )
         except HostClientError as exc:
-            self.status.set(f"Host: reconnecting | {exc}")
-            self.root.after(500, self.login)
-            return
-        self.root.after(100, self.poll)
+            self.status.set(f"Host error: {exc}")
+        finally:
+            self.root.after(100, self.poll)
 
     def draw(self, snapshot: dict) -> None:
         self.canvas.delete("all")

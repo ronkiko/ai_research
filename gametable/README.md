@@ -31,19 +31,21 @@ configuration, verification, and model runs are available through
 
 ## Operator launch
 
-The Director starts GameServer and then launches a fresh Yuki2 trial:
+The Operator prepares GameServer, GameClient/GUI as desired, and the laboratory
+before handing the workstation to Yuki. GameTable launchers do not bootstrap
+that infrastructure.
+
+A fresh Yuki2 trial starts with:
 
 ```bash
-./gameserver/v1/op/server.sh
 ./gametable/op/start-go.sh
 ```
 
-`start-go.sh` is the normal alpha-test entry point. It also starts/reuses the
-GameClient GUI, then clears only Yuki2's personal/Executive runtime and starts
-the ordinary OpenCode TUI with its official `--prompt` flag. The GUI retries
-its login until the default Host provided by `game_v1` is ready. OpenCode auto-submits that prompt as the first turn;
-GameTable does not inject TUI events, start a second OpenCode process, or use
-`opencode run` as a bootstrap.
+`start-go.sh` only clears Yuki2's personal/Executive runtime and starts the
+ordinary OpenCode TUI with its official `--prompt` flag. It does not start,
+restart, repair, or preflight GameServer, GameClient Host, GUI, or GameLab.
+Those are assumed to be ready already. OpenCode auto-submits the prompt as the
+first turn.
 
 The default first message is intentionally written directly inside
 `gametable/op/start-go.sh`, so the Operator can edit one obvious place before

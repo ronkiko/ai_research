@@ -40,36 +40,5 @@ esac
   exit 2
 }
 
-# The GUI is part of the normal alpha workstation.  It may start before the
-# default Host exists; the GUI client retries login until game_v1 brings the
-# Host online.
-mkdir -p "$ROOT/gametable/runtime"
-GUI_LOG="$ROOT/gametable/runtime/gameclient-gui.log"
-if "$ROOT/gameclient/v1/op/gui.sh" --status >/dev/null 2>&1; then
-  echo "GameClient GUI v1: already running"
-else
-  : > "$GUI_LOG"
-  "$ROOT/gameclient/v1/op/gui.sh" >"$GUI_LOG" 2>&1 &
-  GUI_LAUNCH_PID=$!
-
-  gui_ready=0
-  for _ in {1..40}; do
-    if "$ROOT/gameclient/v1/op/gui.sh" --status >/dev/null 2>&1; then
-      gui_ready=1
-      break
-    fi
-    if ! kill -0 "$GUI_LAUNCH_PID" 2>/dev/null; then
-      break
-    fi
-    sleep 0.05
-  done
-
-  if [[ "$gui_ready" -ne 1 ]]; then
-    echo "ERROR GameClient GUI v1 did not start" >&2
-    cat "$GUI_LOG" >&2 || true
-    exit 2
-  fi
-fi
-
 # OpenCode officially auto-submits TUI --prompt.
 exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"

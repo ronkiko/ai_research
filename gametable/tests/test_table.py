@@ -59,8 +59,9 @@ class GameTableTests(unittest.TestCase):
 
     def test_start_go_uses_official_opencode_prompt_flag(self):
         launcher = (TABLE / "op/start-go.sh").read_text(encoding="utf-8")
-        self.assertIn('gameclient/v1/op/gui.sh', launcher)
-        self.assertIn('gameclient-gui.log', launcher)
+        self.assertNotIn('gameclient/v1/op/gui.sh', launcher)
+        self.assertNotIn('gameserver/v1/op/server.sh', launcher)
+        self.assertNotIn('gameclient/v1/op/host.sh', launcher)
         self.assertIn('exec "$ROOT/gametable/op/start.sh" --fresh --prompt "$PROMPT"', launcher)
         self.assertNotIn("opencode run", launcher)
         self.assertNotIn("/tui/", launcher)
@@ -73,10 +74,12 @@ class GameTableTests(unittest.TestCase):
         self.assertIn('rm -rf -- "$GAMETABLE_STATE_ROOT"', launcher)
         self.assertNotIn('rm -rf -- "$ROOT/gamelab/runtime"', launcher)
 
-    def test_gametable_preflights_gamelab_mcp_before_opencode(self):
+    def test_gametable_start_does_not_bootstrap_infrastructure(self):
         launcher = (TABLE / "op/start.sh").read_text(encoding="utf-8")
-        self.assertIn('gamelab/op/gamelab.sh" check --mcp-startup', launcher)
-        self.assertIn('mkdir -p "$GAMETABLE_STATE_ROOT"', launcher)
+        self.assertNotIn("check --mcp-startup", launcher)
+        self.assertNotIn("gameserver/v1/op/server.sh", launcher)
+        self.assertNotIn("gameclient/v1/op/host.sh", launcher)
+        self.assertNotIn("gameclient/v1/op/gui.sh", launcher)
 
     def test_gameclient_mcp_launcher_self_bootstraps(self):
         launcher = (ROOT / "gameclient/v1/op/mcp.sh").read_text(encoding="utf-8")

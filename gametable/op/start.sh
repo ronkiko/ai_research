@@ -43,12 +43,6 @@ if [[ "$FRESH" -eq 1 ]]; then
   echo "GameTable Yuki2 state: fresh"
 fi
 
-if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
-  mkdir -p "$GAMETABLE_STATE_ROOT"
-  echo "GameTable: checking gamelab_v1 MCP"
-  "$ROOT/gamelab/op/gamelab.sh" check --mcp-startup
-fi
-
 op_managed_process \
   "$ACTION" \
   "gametable-opencode" \
