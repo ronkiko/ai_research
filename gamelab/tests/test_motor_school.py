@@ -471,6 +471,16 @@ class MotorSchoolTests(unittest.TestCase):
         self.assertEqual(result["progress_fraction"], 1.0)
         self.assertEqual(result["rest_fraction"], 1.0)
 
+    def test_full_range_steady_exam_has_physical_settling_margin(self):
+        from gamelab.motor_school import _verify_program
+
+        result = _verify_program(RuleMotor(), (1.0, 0.0, -1.0, 0.0))
+        self.assertTrue(result["passed"], result)
+        # The full-range steady exam must not place the first scored sample
+        # directly on the physical max-acceleration boundary. Rapid response is
+        # tested separately by the 10 Hz stress suite.
+        self.assertLess(result["max_abs_velocity_error"], 20.0, result)
+
     def test_certification_issues_uuid4_certificate_id(self):
         import uuid
 
