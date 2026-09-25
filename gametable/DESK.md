@@ -27,8 +27,10 @@ Legacy game_v1/gamelab_v1 остаются подключёнными до эт�
 совместимости и safe live smoke. Новые physical actions GameTable направляет в
 канонический world/navigation слой, а не через direct game_v1_move.
 
-Learning permission не выводится из navigation permission. Обучение, verify,
-skill selection и workstation session вводятся отдельно в патче 08.
+Learning permission не выводится из navigation permission. Патч 08 добавил
+отдельный `learning_v1`: Motor/Spine train, frozen verify, status/cancel и
+явный skill_select. Он ещё не заменяет legacy GameLab в конфиге GameTable —
+это делает cutover 09.
 
 ## Recovery
 
@@ -39,3 +41,15 @@ effect не повторяется автоматически. Диалогов�
 
 `./gametable/op/check.sh --live` пока остаётся недеструктивным: normal chat +
 pure action contract + read-only legacy health/describe.
+
+## learning_v1 и курс
+
+Физическая практика проходит в `training/flat_run`, а не «в ноутбуке».
+Если тело ещё не на курсе, `training_prepare` требует заранее выданное
+server-side разрешение Директора и выполняет только assisted setup. Оно не
+считается learned navigation.
+
+Training/VERIFY захватывают общий body lease. Пока job владеет телом,
+обычная navigation должна видеть busy. Read-only `describe/skills/status`
+не требуют сидеть за workstation. Candidate Spine не становится production
+skill до отдельного VERIFY PASS и `skill_select`.

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "service": "learning_v1",
+  "curricula": {
+    "motor.continuous_1d.v1": {
+      "kind": "motor_train",
+      "architecture": "continuous_1d/v1",
+      "min_budget": 1,
+      "max_budget": 500,
+      "mode": "realtime",
+      "required_location": "training/flat_run",
+      "same_embodiment": true
+    },
+    "spine.flat_run.v1": {
+      "kind": "spine_train",
+      "min_budget": 1,
+      "max_budget": 500,
+      "mode": "realtime",
+      "required_location": "training/flat_run",
+      "requires_certified_motor": true,
+      "same_embodiment": true
+    }
+  },
+  "verification_suites": {
+    "motor.certification.v2": {
+      "kind": "motor",
+      "one_shot": true,
+      "required_location": "training/flat_run"
+    },
+    "spine.flat_run.verify.v1": {
+      "kind": "spine",
+      "one_shot": false,
+      "required_location": "training/flat_run"
+    }
+  },
+  "preparation": {
+    "target_location": "training/flat_run",
+    "spawn_id": "training_prepare",
+    "capability": "training_setup",
+    "requires_director_authorization": true,
+    "learned_success": false
+  },
+  "public_contract": {
+    "accepts_paths": false,
+    "accepts_python": false,
+    "max_status_items": 20
+  }
+}

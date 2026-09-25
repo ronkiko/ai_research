@@ -1,12 +1,13 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–07 уже добавили identity/action/world contracts, multi-zone physics,
-канонический learned-body core, semantic `navigation_v1`, graphics RenderFrame
-и GameTable CharacterActionProposal → durable ActionExecutor. VN reducer больше
-не двигает тело. Полный launcher/data cutover ещё впереди. Следующий этап —
-learning MCP и workstation contract из
-[08-learning.md](docs/refactor/embodied-vn/08-learning.md).
+Этапы 02–08 уже добавили identity/action/world contracts, multi-zone physics,
+канонический learned-body core, semantic `navigation_v1`, graphics RenderFrame,
+GameTable CharacterActionProposal → durable ActionExecutor и отдельный
+`learning_v1` для Motor/Spine train/verify/select. VN reducer больше не двигает
+тело. Следующий этап — единый запуск, migration и вывод GameLab из активного
+персонажного контура:
+[09-cutover.md](docs/refactor/embodied-vn/09-cutover.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом

@@ -508,9 +508,14 @@ def verify_spine_policy(
     reward_config: RewardConfig | None = None,
     target_override: float | None = None,
     max_seconds: float = TRAIN_EPISODE_SECONDS,
+    cancel: threading.Event | None = None,
 ) -> dict:
     cases: list[dict] = []
+    cancelled = False
     for spawn_x, target_x in _verification_cases(target_override):
+        if cancel is not None and cancel.is_set():
+            cancelled = True
+            break
         result = collect_episode(
             model,
             client,
@@ -520,6 +525,7 @@ def verify_spine_policy(
             max_seconds=max_seconds,
             reward_config=reward_config,
             sampled=False,
+            cancel=cancel,
         )
         vx = float(result.evidence.get("vx", 0.0))
         wall_contacts = int(result.evidence.get("wall_contacts", 0))
@@ -541,8 +547,14 @@ def verify_spine_policy(
                 "wall_contacts": wall_contacts,
             }
         )
+    cancelled = cancelled or (
+        cancel is not None and cancel.is_set()
+    )
     return {
-        "passed": bool(cases) and all(case["passed"] for case in cases),
+        "passed": (not cancelled) and bool(cases) and all(
+            case["passed"] for case in cases
+        ),
+        "cancelled": cancelled,
         "cases": cases,
     }
 
@@ -554,17 +566,23 @@ def _prepare_reward_config(store: RewardStore, *, fresh: bool) -> RewardConfig:
     return store.load()
 
 
-def verify_recovery_policy(model, client, *, player_id: str) -> dict:
+def verify_recovery_policy(
+    model, client, *, player_id: str, cancel: threading.Event | None = None
+) -> dict:
     """Frozen correction tests; the apparatus changes goals, never actions."""
     cases = []
     for offset in (-4., -1.5, 1.5, 4.):
+        if cancel is not None and cancel.is_set():
+            return {"passed": False, "cancelled": True, "cases": cases}
         result = collect_episode(model, client, player_id=player_id,
                                  spawn_x=500 + offset, target_x=500,
-                                 max_seconds=4., sampled=False)
+                                 max_seconds=4., sampled=False, cancel=cancel)
         cases.append({"kind": "small_overshoot", "initial_error": -offset,
                       "passed": result.result == "success" and result.evidence["wall_contacts"] == 0,
                       "error": result.final_error, "vx": result.evidence["vx"]})
     for direction in (-1., 1.):
+        if cancel is not None and cancel.is_set():
+            return {"passed": False, "cancelled": True, "cases": cases}
         initial_target = 500 + direction * 300
         state = reset_player_state(client, player_id, spawn_x=500)
         goals = GoalMailbox(initial_target)
@@ -587,13 +605,18 @@ def verify_recovery_policy(model, client, *, player_id: str) -> dict:
 
         result = control_loop(model, client, state, target_x=initial_target,
                               tolerance=SUCCESS_TOLERANCE, max_seconds=8.,
-                              sampled=False, goals=goals, on_status=observe)
+                              sampled=False, goals=goals, on_status=observe,
+                              cancel=cancel)
         cases.append({"kind": "moving_overshoot", "direction": direction,
                       "passed": changed and reversed_motion and result["status"] == "reached"
                                 and result["wall_contacts"] == 0,
                       "reversed": reversed_motion, "peak_overshoot": peak_overshoot,
                       "error": target - result["x"], "vx": result["vx"]})
-    return {"passed": all(case["passed"] for case in cases), "cases": cases}
+    return {
+        "passed": all(case["passed"] for case in cases),
+        "cancelled": False,
+        "cases": cases,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

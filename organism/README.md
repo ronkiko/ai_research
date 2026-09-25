@@ -38,8 +38,8 @@ A pre-refactor Spine checkpoint can be imported only after loading it against
 the certified Motor identity/hash; the checkpoint bytes are copied unchanged.
 No import retrains a model.
 
-The final operator launcher and public `learning_v1` MCP are intentionally
-deferred to stages 09 and 08 respectively.
+The public `learning_v1` MCP is implemented in stage 08. The final operator
+launcher and GameTable/config migration remain stage 09.
 
 ## Check
 
@@ -48,3 +48,17 @@ The current compatibility gate runs both organism and GameLab tests:
 ~~~bash
 ./gamelab/op/gamelab.sh check
 ~~~
+
+## learning_v1
+
+`organism/mcp.py` exposes named Motor/Spine curricula, preparation, asynchronous
+training/status/cancel, frozen verification and explicit skill selection.
+
+The interface is ID-only. Storage paths and arbitrary code are private. Physical
+learning holds the same `BodyLease` used by navigation. Motor certification is
+one-shot. Spine candidates never replace the mounted production binding merely
+because training changed weights.
+
+`training_prepare` is the only setup bootstrap and requires a server-issued
+Director authorization when the body is not already in `training/flat_run`.
+Its receipt is assisted setup, not learned locomotion evidence.

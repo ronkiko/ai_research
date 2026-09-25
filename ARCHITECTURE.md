@@ -2,9 +2,10 @@
 
 Уточнение цели: [план из 11 коммитов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
-навигации и обучения через MCP. Этапы 02–07 уже зафиксировали identity/action/world
+навигации и обучения через MCP. Этапы 02–08 уже зафиксировали identity/action/world
 contracts, multi-zone physics, learned-body core, `navigation_v1`, graphics
-RenderFrame и semantic CharacterActionProposal/ActionExecutor в GameTable.
+RenderFrame, semantic CharacterActionProposal/ActionExecutor в GameTable и
+ID-based `learning_v1` для Motor/Spine.
 Physical location больше не меняется VN reducer-ом; до cutover 09 graphics
 default source всё ещё явно non-authoritative legacy compatibility adapter.
 
@@ -165,3 +166,16 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 обслуживают этот отдельный контур; активная VN пока читает `gametable/roleplay/rules.json`.
 Не объединять их состояния автоматически и не удалять исследовательские архивы
 под видом выравнивания. Описание прежнего контура: [GameLab compatibility](gamelab/COMPATIBILITY.md).
+
+## Learning authority после этапа 08
+
+`learning_v1` находится в `organism/` и не является вторым GameLab. Он
+публикует только named curricula/suites и ID-based job/artifact contracts.
+Физические TRAIN/VERIFY делят single-writer BodyLease с navigation. Motor
+certification one-shot, Spine candidate требует отдельного frozen VERIFY и
+явного mount.
+
+Setup в `training/flat_run` является privileged assisted apparatus action с
+Director authorization и `learned_success=false`. Это не teleport tool модели
+и не доказательство навыка. Полный process/config/data cutover на
+`navigation_v1 + learning_v1` выполняется в этапе 09.

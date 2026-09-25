@@ -143,7 +143,9 @@ def _player(runtime: ZoneRuntime) -> dict:
     )
 
 
-def _new_world() -> tuple[ZoneRuntime, int]:
+def _new_world(world_factory=None) -> tuple[ZoneRuntime, int]:
+    if world_factory is not None:
+        return world_factory(), 0
     runtime = ZoneRuntime()
     runtime.enqueue_spawn(
         entity_id="motor-school-player",
@@ -493,9 +495,11 @@ def _rollout(
 def _verify_program(
     motor: nn.Module,
     levels: tuple[float, ...],
+    *,
+    world_factory=None,
 ) -> dict[str, float | bool]:
     """Frozen deterministic Motor exam for one velocity-command program."""
-    runtime, sequence = _new_world()
+    runtime, sequence = _new_world(world_factory)
     _reset_world(runtime)
     _require_physics_contract(motor, runtime)
     motor.eval()
@@ -583,9 +587,11 @@ def _verify_program(
 def _verify_rapid_program(
     motor: nn.Module,
     levels: tuple[float, ...],
+    *,
+    world_factory=None,
 ) -> dict[str, float | bool]:
     """10 Hz MotorGoal stress: each command must reduce local velocity error."""
-    runtime, sequence = _new_world()
+    runtime, sequence = _new_world(world_factory)
     _reset_world(runtime)
     motor.eval()
     motor_stride = PHYSICS_HZ // MOTOR_HZ
@@ -657,8 +663,8 @@ def _verify_rapid_program(
     }
 
 
-def _verify(motor: nn.Module) -> dict[str, float | bool]:
-    result = _verify_program(motor, VERIFY_LEVELS)
+def _verify(motor: nn.Module, *, world_factory=None) -> dict[str, float | bool]:
+    result = _verify_program(motor, VERIFY_LEVELS, world_factory=world_factory)
     result["evidence"] = "standard"
     return result
 
@@ -666,8 +672,13 @@ def _verify(motor: nn.Module) -> dict[str, float | bool]:
 def _verify_suite(
     motor: nn.Module,
     programs: tuple[tuple[float, ...], ...],
+    *,
+    world_factory=None,
 ) -> dict:
-    cases = [_verify_program(motor, levels) for levels in programs]
+    cases = [
+        _verify_program(motor, levels, world_factory=world_factory)
+        for levels in programs
+    ]
     pass_count = sum(1 for case in cases if case["passed"])
     return {
         "passed": pass_count == len(cases),
@@ -715,10 +726,12 @@ def _verify_suite(
     }
 
 
-def _development_verify(motor: nn.Module) -> dict:
-    result = _verify_suite(motor, DEVELOPMENT_PROGRAMS)
+def _development_verify(motor: nn.Module, *, world_factory=None) -> dict:
+    result = _verify_suite(
+        motor, DEVELOPMENT_PROGRAMS, world_factory=world_factory
+    )
     rapid_cases = [
-        _verify_rapid_program(motor, levels)
+        _verify_rapid_program(motor, levels, world_factory=world_factory)
         for levels in DEVELOPMENT_RAPID_PROGRAMS
     ]
     rapid_pass_count = sum(1 for case in rapid_cases if case["passed"])
@@ -1031,6 +1044,9 @@ def run_school(
     stop_on_pass: bool = False,
     minimum_episodes: int | None = None,
     stable_development_checks: int = 0,
+    cancel=None,
+    on_episode=None,
+    world_factory=None,
 ) -> dict:
     package = get_motor_package(motor_id)
     package.validate_source_snapshot()
@@ -1067,7 +1083,7 @@ def run_school(
     )
 
     best_verification, best_episode = _existing_best(package)
-    runtime, sequence = _new_world()
+    runtime, sequence = _new_world(world_factory)
     episodes_run = 0
     final_verification: dict | None = None
     improved_this_run = False
@@ -1082,6 +1098,8 @@ def run_school(
 
     try:
         for _ in range(episodes):
+            if cancel is not None and cancel.is_set():
+                break
             # Keep the proven basic reflex curriculum intact, then widen the
             # requested-velocity envelope smoothly to the generation-2 socket
             # boundary. The full development suite still gates BEST promotion.
@@ -1117,12 +1135,19 @@ def run_school(
                 f"policy_loss={metrics['policy_loss']:+.5f}",
                 flush=True,
             )
+            if on_episode is not None:
+                on_episode({
+                    "episode": candidate_episodes,
+                    "velocity_mae": rollout["mean_abs_velocity_error"],
+                    "target_limit": target_limit,
+                    "policy_loss": metrics["policy_loss"],
+                })
 
             if candidate_episodes % VERIFY_EVERY_EPISODES == 0:
                 final_verification = (
-                    _verify(motor)
+                    _verify(motor, world_factory=world_factory)
                     if stop_on_pass
-                    else _development_verify(motor)
+                    else _development_verify(motor, world_factory=world_factory)
                 )
                 (
                     best_verification,
@@ -1206,14 +1231,24 @@ def run_school(
         )
         raise
 
+    cancelled = cancel is not None and cancel.is_set()
+    if cancelled:
+        final_verification = final_verification or {
+            "passed": False,
+            "reason": "cancelled",
+        }
+
     if (
-        final_verification is None
-        or candidate_episodes % VERIFY_EVERY_EPISODES != 0
+        not cancelled
+        and (
+            final_verification is None
+            or candidate_episodes % VERIFY_EVERY_EPISODES != 0
+        )
     ):
         final_verification = (
-            _verify(motor)
+            _verify(motor, world_factory=world_factory)
             if stop_on_pass
-            else _development_verify(motor)
+            else _development_verify(motor, world_factory=world_factory)
         )
         (
             best_verification,
@@ -1248,6 +1283,7 @@ def run_school(
         improved_this_run=improved_this_run,
         seed=seed,
         stop_on_pass=stop_on_pass,
+        interrupted=cancelled,
     )
     current_training = package.manifest.get("training") or {}
     return {
@@ -1263,11 +1299,12 @@ def run_school(
         "best_episode": best_episode,
         "best_verification": best_verification,
         "final_verification": final_verification,
+        "cancelled": cancelled,
         "brain": str(package.brain_path) if trained else None,
     }
 
 
-def certify_motor(motor_id: str) -> dict:
+def certify_motor(motor_id: str, *, cancel=None, world_factory=None) -> dict:
     """Certify the frozen BEST brain on ten distinct held-out programs."""
     package = get_motor_package(motor_id)
     package.validate_source_snapshot()
@@ -1335,12 +1372,20 @@ def certify_motor(motor_id: str) -> dict:
     )
 
     programs = []
+    cancelled = False
     for index, (levels, rapid_levels) in enumerate(
         zip(CERTIFICATION_PROGRAMS, CERTIFICATION_RAPID_PROGRAMS),
         start=1,
     ):
-        verification = _verify_program(motor, levels)
-        rapid = _verify_rapid_program(motor, rapid_levels)
+        if cancel is not None and cancel.is_set():
+            cancelled = True
+            break
+        verification = _verify_program(
+            motor, levels, world_factory=world_factory
+        )
+        rapid = _verify_rapid_program(
+            motor, rapid_levels, world_factory=world_factory
+        )
         program_passed = bool(verification["passed"]) and bool(rapid["passed"])
         programs.append(
             {
@@ -1363,7 +1408,10 @@ def certify_motor(motor_id: str) -> dict:
         )
 
     pass_count = sum(1 for item in programs if item["passed"])
-    passed = pass_count == CERTIFICATION_REQUIRED_PASSES
+    passed = (
+        not cancelled
+        and pass_count == CERTIFICATION_REQUIRED_PASSES
+    )
     certification = {
         "attempt_id": attempt_id,
         "certificate_id": str(uuid.uuid4()) if passed else None,
@@ -1375,13 +1423,18 @@ def certify_motor(motor_id: str) -> dict:
         "model_sha256": package.manifest["model_sha256"],
         "quality": quality,
         "passed": passed,
+        "cancelled": cancelled,
         "pass_count": pass_count,
         "required_passes": CERTIFICATION_REQUIRED_PASSES,
         "programs": programs,
     }
     training["certification"] = certification
     training["certified"] = passed
-    training["qualification"] = "certified" if passed else "certification_failed"
+    training["qualification"] = (
+        "certified" if passed
+        else "certification_cancelled" if cancelled
+        else "certification_failed"
+    )
     training["status"] = "trained"
     training["verified"] = True
     package.manifest["training"] = training
@@ -1392,6 +1445,7 @@ def certify_motor(motor_id: str) -> dict:
     return {
         "motor_id": package.motor_id,
         "certified": passed,
+        "cancelled": cancelled,
         "qualification": training["qualification"],
         "generation": CURRENT_MOTOR_CERTIFICATION_GENERATION,
         "certificate_id": certification["certificate_id"],

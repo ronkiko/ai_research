@@ -90,8 +90,8 @@ quick_check() {
   echo "CHECK Organism + World navigation + GameLab compile"
   "$GAMELAB_PY" -m compileall -q -x '/\.venv/' organism world gamelab
 
-  echo "CHECK navigation_v1 MCP module"
-  "$GAMELAB_PY" -c 'import world.mcp'
+  echo "CHECK navigation_v1 + learning_v1 MCP modules"
+  "$GAMELAB_PY" -c 'import world.mcp, organism.mcp'
 
   echo "CHECK Organism extraction boundaries"
   "$GAMELAB_PY" -m unittest discover -s organism/tests -p 'test_*.py' -v

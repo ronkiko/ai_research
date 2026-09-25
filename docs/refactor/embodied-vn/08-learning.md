@@ -3,6 +3,10 @@
 Зависимости: [04](04-organism.md)–[07](07-character-actions.md).
 Коммит: `Expose embodied Motor and Spine learning through MCP`. Цель: A5–A8.
 
+Статус: **реализовано**. `learning_v1` добавлен поверх канонического
+`organism/`; подключение его вместо legacy GameLab в GameTable выполняется
+отдельным cutover-патчем 09.
+
 ## Новый интерфейс обучения
 
 Создать `organism/mcp.py` (`learning_v1`) поверх перенесённых школ/jobs.
@@ -85,3 +89,35 @@ select без доступа к shell/файлам. Проверить запр�
 на курсе не требует ноутбука. Пройти bootstrap и реальный learned return.
 Использовать отдельные тестовые saves/artifacts; сертифицированный экземпляр
 оператора не расходовать повторным one-shot экзаменом.
+
+## Реализованный результат этапа 08
+
+Добавлены `organism/mcp.py` и schema `learning_v1.schema.json`. Public surface
+использует только curriculum/suite/artifact/job/request IDs и bounded budget;
+filesystem paths, Python expressions, actor IDs, координаты и actuator commands
+не принимаются.
+
+`ExperimentJobs` получил durable request/job identity. После рестарта active
+job становится `interrupted`; повтор training start с тем же request_id
+возобновляет тот же job/artifact, а one-shot VERIFY автоматически не
+перезапускается. Cancel/select request IDs также идемпотентны.
+
+Motor training теперь может исполнять существующий Motor School curriculum через
+`HostMotorWorld` на Host-owned видимом embodiment. Spine training использует
+тот же Host и сертифицированный Motor. Оба физического job держат общий
+`BodyLease`, поэтому navigation не получает второго writer.
+
+`training_prepare` принимает только ссылку на заранее выданное server-side
+разрешение Директора. Сам MCP не умеет mint/grant authority. Setup идёт через
+privileged embodied-world `setup_reset` в `training/flat_run`, сохраняет
+receipt и явно возвращает `learned_success=false`.
+
+Motor certification остаётся one-shot на UUID/generation; cancel во время
+экзамена запечатывает попытку как cancelled. Spine candidate хранится отдельно
+от mounted production skill, проходит frozen VERIFY и только затем может быть
+выбран `skill_select`. Проверенный binding содержит hashes Motor/Spine,
+sensor/socket/body/physics contracts.
+
+Полная замена GameTable `gamelab_v1` на `learning_v1`, launcher migration и
+перевод compatibility Host reset на новый embodied setup transport остаются
+этапом 09; этап 08 не выдаёт этот незавершённый cutover за готовый runtime.

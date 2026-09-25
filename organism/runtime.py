@@ -29,7 +29,16 @@ DEFAULT_CHECKPOINT = Path(__file__).resolve().parent / "runtime" / "spine_motor.
 
 def checkpoint_path() -> Path:
     value = os.environ.get("ORGANISM_CHECKPOINT") or os.environ.get("GAMELAB_CHECKPOINT")
-    return Path(value) if value else DEFAULT_CHECKPOINT
+    if value:
+        return Path(value)
+    # A verified explicit learning_v1 selection is the production binding.
+    # Import lazily so legacy operator flows remain independent of the registry.
+    try:
+        from .skill_registry import mounted_checkpoint_path
+        selected = mounted_checkpoint_path()
+    except (OSError, ValueError, KeyError):
+        selected = None
+    return selected or DEFAULT_CHECKPOINT
 
 
 def wait_player(client: HostClient, timeout: float = 2.0) -> dict[str, Any]:
