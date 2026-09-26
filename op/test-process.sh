@@ -74,7 +74,7 @@ fi
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
 
-TAG="process-smoke-$"
+TAG="process-smoke-${BASHPID}"
 LABEL="Managed process smoke"
 STARTER=""
 PORT_SERVER=""
