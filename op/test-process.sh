@@ -7,18 +7,22 @@ cd "$ROOT"
 bash -n \
   op/process.sh \
   gameserver/v1/op/server.sh \
+  gameserver/v1/op/embodied.sh \
   gameclient/v1/op/host.sh \
   gameclient/v1/op/director-host.sh \
   gameclient/v1/op/gui.sh \
+  gameclient/v1/op/director-gui.sh \
   gametable/op/args.sh \
   gametable/op/start.sh \
   player-gateway/op/gateway.sh
 
 for script in \
   gameserver/v1/op/server.sh \
+  gameserver/v1/op/embodied.sh \
   gameclient/v1/op/host.sh \
   gameclient/v1/op/director-host.sh \
   gameclient/v1/op/gui.sh \
+  gameclient/v1/op/director-gui.sh \
   player-gateway/op/gateway.sh
 do
   grep -q -- '--start' "$script"
