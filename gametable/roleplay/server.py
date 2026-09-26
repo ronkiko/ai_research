@@ -93,6 +93,7 @@ class WorldObservationPump:
         self.period = 1.0 / float(hz)
         self.stop_event = threading.Event()
         self.thread = None
+        self.last_signature = None
 
     @staticmethod
     def public_observation(observation):
@@ -116,12 +117,21 @@ class WorldObservationPump:
     def observe_once(self):
         state = self.client.state()
         observed = self.public_observation(state.get("observation"))
-        event_key = (
-            f"world.live.{observed.get('world_epoch')}:"
-            f"{observed.get('world_revision')}:"
-            f"{observed.get('observed_tick')}"
+        physical = observed.get("physical") or {}
+        x = physical.get("x")
+        signature = (
+            observed.get("world_epoch"),
+            observed.get("location_id"),
+            None if not isinstance(x, (int, float)) else int(float(x)),
         )
-        self.store.record_world_event(event_key, "world_observation", observed)
+        if signature != self.last_signature:
+            event_key = (
+                f"world.live.{observed.get('world_epoch')}:"
+                f"{observed.get('world_revision')}:"
+                f"{observed.get('observed_tick')}"
+            )
+            self.store.record_world_event(event_key, "world_observation", observed)
+            self.last_signature = signature
         return observed
 
     def _loop(self):
