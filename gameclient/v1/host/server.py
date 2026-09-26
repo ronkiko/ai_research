@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 from collections import deque
+import hmac
 import json
 import math
 import os
@@ -48,6 +49,8 @@ class HostService:
         gateway_timeout: float = DEFAULT_TIMEOUT,
         manual_gate_path: str | None = None,
         state_observer_hz: float = HOST_STATE_OBSERVER_HZ,
+        role: str = "generic",
+        management_token: str | None = None,
     ) -> None:
         if host not in HOST_ALLOWED_BINDS:
             raise ValueError("GameClient Host v1 must bind to loopback only")
@@ -57,6 +60,14 @@ class HostService:
             raise ValueError("state_observer_hz must be numeric")
         if float(state_observer_hz) < 0.0:
             raise ValueError("state_observer_hz must be non-negative")
+        if role not in {"generic", "yuki", "director"}:
+            raise ValueError("Host role must be generic, yuki, or director")
+        if management_token is not None and (
+            not isinstance(management_token, str) or len(management_token) < 16
+        ):
+            raise ValueError("management_token must contain at least 16 characters")
+        self.role = role
+        self.management_token = management_token
         self.gateway_host = gateway_host
         self.gateway_port = gateway_port
         self.gateway = GatewayConnection(gateway_host, gateway_port, gateway_timeout)
@@ -90,6 +101,8 @@ class HostService:
         self._latest_upstream_freshness: dict[str, Any] | None = None
         self._observer_stop = threading.Event()
         self._observer_thread: threading.Thread | None = None
+        self._shutdown_requested = threading.Event()
+        self._shutdown_started = threading.Event()
 
     @property
     def address(self) -> tuple[str, int]:
@@ -140,6 +153,7 @@ class HostService:
                 component="gameclient_host",
                 status="ready",
                 gameplay_ready=True,
+                role=self.role,
                 logged_in=player_id is not None,
                 player_id=player_id,
                 manual_control=(
@@ -158,9 +172,11 @@ class HostService:
                 role_to_clients="server",
                 host_protocol_version=HOST_PROTOCOL_VERSION,
                 gameplay_ready=True,
+                role=self.role,
                 capabilities=[
                     "players", "login", "session", "state", "input", "motor",
                     "training_reset", "events", "logout",
+                    *(["shutdown"] if self.management_token is not None else []),
                     *(
                         ["control_acquire", "control_release"]
                         if self.manual_gate is not None else []
@@ -204,7 +220,34 @@ class HostService:
             return self._events_since(request)
         if kind == "logout":
             return self._logout(request)
+        if kind == "shutdown":
+            return self._management_shutdown(request)
         raise HostProtocolError(f"unknown Host request: {kind}")
+
+    @property
+    def shutdown_requested(self) -> bool:
+        return self._shutdown_requested.is_set()
+
+    def _management_shutdown(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.management_token is None:
+            raise HostProtocolError("Host management shutdown is disabled")
+        token = request.get("management_token")
+        if not isinstance(token, str) or not hmac.compare_digest(
+            token, self.management_token
+        ):
+            raise HostProtocolError("invalid Host management token")
+        self._shutdown_requested.set()
+        return message("shutdown", accepted=True, role=self.role)
+
+    def begin_shutdown(self) -> None:
+        if self._shutdown_started.is_set():
+            return
+        self._shutdown_started.set()
+        threading.Thread(
+            target=self.shutdown,
+            daemon=True,
+            name=f"gameclient-host-{self.role}-shutdown",
+        ).start()
 
     def _login(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)
@@ -802,12 +845,35 @@ class HostService:
             self._stop_observer()
 
     def shutdown(self) -> None:
-        self._stop_observer()
-        self.server.shutdown()
-        self.server.server_close()
-        self.gateway.close()
-        if self.manual_recorder is not None:
-            self.manual_recorder.close()
+        self._shutdown_started.set()
+        # Release the logical Gateway session while the server is still
+        # reachable. A Host endpoint is deployment state, not player identity.
+        try:
+            with self._operation_lock:
+                with self._state_lock:
+                    session = dict(self._session) if self._session is not None else None
+                if session is not None:
+                    try:
+                        self.gateway.request(
+                            "logout", session_id=session["session_id"]
+                        )
+                    except GatewayConnectionError:
+                        pass
+                    with self._state_lock:
+                        self._session = None
+                        self._session_generation += 1
+                        self._sequence = 0
+                        self._latest_state = None
+                        self._latest_state_at = None
+                        self._latest_upstream_freshness = None
+        finally:
+            self._stop_observer()
+            self.server.shutdown()
+            self.server.server_close()
+            self.gateway.close()
+            self.observer_gateway.close()
+            if self.manual_recorder is not None:
+                self.manual_recorder.close()
 
 
 class _HostRequestHandler(socketserver.BaseRequestHandler):
@@ -833,6 +899,9 @@ class _HostRequestHandler(socketserver.BaseRequestHandler):
                 try:
                     self.request.sendall(encode_line(response))
                 except OSError:
+                    return
+                if request.get("type") == "shutdown" and service.shutdown_requested:
+                    service.begin_shutdown()
                     return
         finally:
             service.disconnect_client(last_client_id)
@@ -884,6 +953,16 @@ def main() -> int:
     parser.add_argument("--gateway-port", type=int, default=GATEWAY_PORT)
     parser.add_argument("--gateway-timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument(
+        "--role",
+        choices=("generic", "yuki", "director"),
+        default="generic",
+        help="stable deployment role exposed by Host Protocol health",
+    )
+    parser.add_argument(
+        "--management-token",
+        help="localhost-only capability required for graceful Host shutdown",
+    )
+    parser.add_argument(
         "--manual-gate",
         help="JSON gate file enabling fenced human control for this Host",
     )
@@ -896,6 +975,8 @@ def main() -> int:
         gateway_port=args.gateway_port,
         gateway_timeout=args.gateway_timeout,
         manual_gate_path=args.manual_gate,
+        role=args.role,
+        management_token=args.management_token,
     )
     stopped = threading.Event()
 
@@ -913,6 +994,7 @@ def main() -> int:
         "host": service.address[0],
         "port": service.address[1],
         "gameplay_ready": True,
+        "role": args.role,
     }, sort_keys=True), flush=True)
     try:
         service.serve_forever()
