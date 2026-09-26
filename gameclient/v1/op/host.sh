@@ -14,11 +14,43 @@ if [[ "$ACTION" == "stop" || "$ACTION" == "status" ]] && [[ $# -ne 0 ]]; then
 fi
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
+TAG="gameclient-host-v1"
+MARKER="gameclient.v1.host.server --port 17700"
+LABEL="GameClient Host v1"
+PORT=17700
+
+port_open() {
+  "${PYTHON:-python3}" - "$PORT" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+port = int(sys.argv[1])
+try:
+    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+        pass
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+if [[ "$ACTION" == "restart" ]]; then
+  op_managed_process stop "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL"
+  ACTION="start"
+fi
+
+if [[ "$ACTION" == "start" ]]; then
+  if ! op_locate_process "$TAG" "$ROOT" "$MARKER" "$ROOT" >/dev/null 2>&1 && port_open; then
+    echo "ERROR $LABEL port $PORT is occupied by an unmanaged or foreign process" >&2
+    echo "Refusing to start over it; inspect the port owner instead of reusing stale Host state." >&2
+    exit 2
+  fi
+fi
+
 op_managed_process \
   "$ACTION" \
-  "gameclient-host-v1" \
+  "$TAG" \
   "$ROOT" \
-  "gameclient.v1.host.server --port 17700" \
+  "$MARKER" \
   "$ROOT" \
-  "GameClient Host v1" \
+  "$LABEL" \
   "${PYTHON:-python3}" -m gameclient.v1.host.server --port 17700 "$@"
