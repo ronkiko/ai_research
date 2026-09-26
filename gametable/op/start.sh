@@ -57,6 +57,7 @@ python3 -m gametable.migration dry-run
 echo "CUTOVER migrate"
 python3 -m gametable.migration migrate >/dev/null
 eval "$(python3 -m gametable.migration env)"
+export DIRECTOR_MANUAL_GATE="${DIRECTOR_MANUAL_GATE:-$ROOT/gametable/runtime/director-manual.json}"
 
 if [[ "$FRESH" -eq 1 ]]; then
   # A fresh story must really satisfy the first-day contract P@0 / D@1.

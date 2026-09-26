@@ -109,6 +109,19 @@ class StoryFlowTests(unittest.TestCase):
             story, expected_revision=story["story_revision"]
         )
 
+    def test_default_manual_gate_is_inside_gametable_runtime(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("DIRECTOR_MANUAL_GATE", None)
+            flow = StoryFlow(
+                self.store,
+                intro_seconds=0.05,
+                body_lease=FakeLease(),
+                escort=FakeEscort(),
+            )
+        expected = Path(__file__).resolve().parents[1] / "runtime" / "director-manual.json"
+        self.assertEqual(flow.gate_path, expected)
+
     def test_intro_timer_counts_presence_once_and_pauses_without_ui(self):
         clock = {"now": 100.0}
         with patch(
