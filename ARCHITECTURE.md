@@ -378,33 +378,32 @@ has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
 
 
-## Training telemetry resource boundary
+## Teacher/demo resource boundary
 
-Training-grade server telemetry — отдельный bounded resource, не обычный world
-observation.
+Teacher-assisted learning — отдельный bounded server resource.
 
-Нормативно на один GameServer/World одновременно допускается максимум **один
-active student actor** с training telemetry session:
+Нормативно на один GameServer/World одновременно допускается максимум **одна
+active teacher↔student pair**:
 
 ```text
 World
- └─ TrainingTelemetrySlot
-      └─ student_entity_id = one actor only
+ └─ TeacherStudentSession
+      ├─ teacher_entity_id
+      └─ student_entity_id
 ```
 
-Teacher, human players, NPC и другие actors продолжают обычный gameplay и не
-занимают slot, пока сами не являются student.
+Ограничение действует на demonstration/teacher telemetry, а не на число actors
+или обычные self-learning процессы.
 
-Admission проверяется server-side до создания telemetry producer/buffer.
-Конкурирующая training session получает typed busy/rejected response без
-дополнительного telemetry workload. Несколько connections/sessions одного
-клиента не могут обходить singleton rule.
+Конкурирующая teacher↔student session отклоняется server-side **до** создания
+demonstration capability, telemetry producer/buffer или P2P channel. Несколько
+connections/sessions не могут обходить singleton rule.
 
-Один active student должен иметь один canonical telemetry producer; downstream
-fan-out не должен умножать сбор telemetry на GameServer.
+Одна active pair имеет один canonical demonstration telemetry producer;
+downstream fan-out не должен умножать server workload.
 
-Это защитный resource invariant для будущего learning, а не ограничение
-multiplayer и не доказательство learned success.
+Поэтому ни 100 teachers, ни 100 teacher/student pairs не могут одновременно
+запустить teacher telemetry на одном World.
 
 ## Future roadmap 0.main.3: social embodiment and escort
 
