@@ -18,21 +18,27 @@ export function proxyGameTable(request, response, {
   port = 17880,
   timeoutMs = 5000,
 } = {}) {
+  const headers = {
+    "Host": `${host}:${port}`,
+    "Accept": request.headers.accept || "*/*",
+    "Cache-Control": "no-cache",
+    "Connection": "close",
+  };
+  for (const [source, target] of [
+    ["content-type", "Content-Type"],
+    ["content-length", "Content-Length"],
+    ["x-gametable-token", "X-GameTable-Token"],
+    ["last-event-id", "Last-Event-ID"],
+  ]) {
+    const value = request.headers[source];
+    if (typeof value === "string" && value) headers[target] = value;
+  }
   const upstream = http.request({
     host,
     port,
     method: request.method,
     path: request.url,
-    headers: {
-      "Host": `${host}:${port}`,
-      "Accept": request.headers.accept || "*/*",
-      "Content-Type": request.headers["content-type"] || undefined,
-      "Content-Length": request.headers["content-length"] || undefined,
-      "X-GameTable-Token": request.headers["x-gametable-token"] || undefined,
-      "Last-Event-ID": request.headers["last-event-id"] || undefined,
-      "Cache-Control": "no-cache",
-      "Connection": "close",
-    },
+    headers,
   }, (upstreamResponse) => {
     const headers = {
       "Content-Type": upstreamResponse.headers["content-type"] || "application/json; charset=utf-8",
