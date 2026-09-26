@@ -153,3 +153,8 @@ Gateway, proves P@100/B@900, shared Host sequencing, bounded Host memory, and
 multi-request Host TCP connections. It also runs real Server -> Host -> CLI and
 real Server -> Host -> stdio MCP verticals. GUI runtime remains an Operator
 check and is not part of the machine gate.
+
+
+Stage 15 note: Host observation connections fan out from one Gateway
+WorldStateHub. Host[yuki] and Host[human] remain separate sessions but no longer
+cause separate World state polling loops.
