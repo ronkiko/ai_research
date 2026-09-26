@@ -36,6 +36,26 @@ stop_stack() {
   "$ROOT/gameserver/v1/op/embodied.sh" --stop
 }
 
+STACK_SUPERVISING=0
+STACK_CLEANED=0
+
+cleanup_stack_on_exit() {
+  local rc=$?
+  trap - EXIT INT TERM
+  if [[ "$STACK_SUPERVISING" -eq 1 && "$STACK_CLEANED" -eq 0 ]]; then
+    STACK_CLEANED=1
+    echo "GameTable stack: stopping"
+    set +e
+    stop_stack
+    set -e
+  fi
+  exit "$rc"
+}
+
+trap cleanup_stack_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 require_runtime_port_free() {
   local port="$1"
   local label="$2"
@@ -110,6 +130,7 @@ command -v npm >/dev/null || { echo "ERROR npm is not installed" >&2; exit 2; }
 # Restart and fresh are orthogonal flags but share one lifecycle boundary:
 # stop once, resolve endpoint conflicts once, then start once.
 if [[ "$ACTION" == "restart" || "$FRESH" -eq 1 ]]; then
+  STACK_SUPERVISING=1
   stop_stack
   require_stack_ports_free
 fi
@@ -121,6 +142,9 @@ if op_managed_process status "gametable-vn" "$ROOT" \
   echo "GameTable Юки is already running; use --status or --restart"
   exit 0
 fi
+
+# From here this foreground launcher owns the lifecycle of the whole stack.
+STACK_SUPERVISING=1
 
 echo "CUTOVER inventory"
 python3 -m gametable.migration dry-run
@@ -280,7 +304,20 @@ player_gateway_ready || {
 
 echo "WEB UI · Player Gateway: http://127.0.0.1:$PLAYER_GATEWAY_PORT_VALUE"
 require_runtime_port_free "$GAMETABLE_PORT" "GameTable backend"
+
+# Keep this launcher alive as the foreground stack supervisor. The managed
+# backend runs as a child, so Ctrl+C/TERM can unwind every component we started.
 op_managed_process start "gametable-vn" "$ROOT" \
   "$ROOT/gametable" "GameTable Юки backend" \
   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 -m roleplay.server "$@"
+      GAMETABLE_STACK_SUPERVISED=1 \
+  python3 -m roleplay.server "$@" &
+BACKEND_RUNNER_PID=$!
+
+echo "Ctrl+C — сохранить и остановить весь GameTable stack."
+
+BACKEND_STATUS=0
+if ! wait "$BACKEND_RUNNER_PID"; then
+  BACKEND_STATUS=$?
+fi
+exit "$BACKEND_STATUS"
