@@ -47,6 +47,8 @@ class EmbodiedWorldService:
             )
         if kind == "snapshot":
             return message("snapshot", snapshot=self.runtime.latest_snapshot())
+        if kind == "state_frame":
+            return message("state_frame", frame=self.runtime.state_frame())
         if kind == "observation":
             entity_id = request.get("entity_id")
             if not isinstance(entity_id, str):
