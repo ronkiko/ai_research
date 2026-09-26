@@ -142,3 +142,14 @@ Python; shell-скрипты предоставляют операторские
 После explicit accept Director управляется человеком через отдельный Host,
 а Yuki временно следует `scripted_escort` controller через обычную физику и
 portal receipts. Этот controller не является обученным навыком.
+
+### Embodied VN acceptance
+
+Stage 11 adds a deterministic cross-component acceptance gate:
+
+`./gametable/op/acceptance.sh --automated`
+
+The detailed matrix is in
+`docs/reports/embodied-vn-acceptance.md`. Automated contracts are not treated as
+proof of fresh learning convergence or manual visual behavior; those gates remain
+explicitly BLOCKED until run on isolated operator artifacts.

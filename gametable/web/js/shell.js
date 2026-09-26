@@ -141,7 +141,19 @@ window.addEventListener('keydown',(event)=>{
 });
 window.addEventListener('keyup',(event)=>{
   if(event.key==='ArrowLeft'||event.key==='ArrowRight'){
-    if(!typingTarget(event.target)){event.preventDefault();sendDirection(0);}
+    if(typingTarget(event.target)){
+      // Focus may have moved into the composer while an arrow was held.
+      // Release the old manual lease without stealing cursor navigation.
+      if(heldDirection!==0||directorLease)releaseDirector();
+      return;
+    }
+    event.preventDefault();
+    sendDirection(0);
+  }
+});
+document.addEventListener('focusin',(event)=>{
+  if(typingTarget(event.target)&&(heldDirection!==0||directorLease)){
+    releaseDirector();
   }
 });
 window.addEventListener('blur',()=>{releaseDirector();});

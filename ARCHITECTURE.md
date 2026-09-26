@@ -197,3 +197,16 @@ Day boundaries are explicit story actions. Accepted sleep creates one durable
 `day_start_id`; after writers reconcile, world `day_start` places only Yuki
 at the EXIT spawn with released drive and `learned_success=false`. World epoch,
 Director position, character memories and learned artifacts are preserved.
+
+## Stage 11 acceptance boundary
+
+The final audit has an explicit deterministic gate
+`./gametable/op/acceptance.sh --automated`, but software-contract PASS is not
+scientific or human-observation PASS. The acceptance report keeps A7 fresh
+training, live LLM/tool behavior and manual escort/render evidence separate and
+BLOCKED until they are actually executed on isolated saves/artifacts.
+
+Fresh story semantics were tightened during this audit: `--fresh` preserves
+learned Organism artifacts but replaces the launcher-owned physical checkpoint,
+so the new first day cannot inherit an old zone/pose and must start from the
+declared EXIT bindings. Unmanaged Gateway processes are never killed/reset.

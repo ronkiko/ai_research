@@ -8,6 +8,18 @@ from tkinter import ttk
 from .base import HostClient, HostClientError
 
 
+def marker_for_entity(entity: dict) -> str:
+    entity_id = entity.get("entity_id")
+    owner_id = entity.get("owner_id")
+    if entity_id == "entity.yuki" or owner_id == "character.yuki":
+        return "P"
+    if entity_id == "entity.director" or owner_id == "character.director":
+        return "D"
+    if entity_id == "mob1":
+        return "B"
+    return "?"
+
+
 class GameGui:
     def __init__(self, root: tk.Tk, client: HostClient, player_id: str) -> None:
         self.root = root
@@ -78,7 +90,7 @@ class GameGui:
         for entity in snapshot.get("entities", []):
             x = float(entity.get("x", 0.0))
             sx = left + (right - left) * max(0.0, min(1.0, x / length))
-            marker = "P" if entity.get("kind") == "player" else "B" if entity.get("entity_id") == "mob1" else "?"
+            marker = marker_for_entity(entity)
             self.canvas.create_oval(sx - 12, y - 12, sx + 12, y + 12)
             self.canvas.create_text(sx, y, text=marker)
             self.canvas.create_text(sx, y - 24, text=f"x={x:.1f}")

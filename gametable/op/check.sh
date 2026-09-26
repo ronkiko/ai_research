@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 echo "CHECK GameTable syntax"
-bash -n gametable/op/start.sh gametable/op/start-go.sh \
+bash -n gametable/op/start.sh gametable/op/start-go.sh gametable/op/acceptance.sh \
   organism/op/organism.sh organism/op/_env.sh gameserver/v1/op/embodied.sh \
   gameclient/v1/op/director-host.sh gameclient/v1/op/director-gui.sh
 for file in gametable/web/js/*.js; do

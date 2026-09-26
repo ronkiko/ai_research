@@ -1,0 +1,40 @@
+name: Embodied VN acceptance
+
+on:
+  push:
+    paths:
+      - "gametable/**"
+      - "graphics/**"
+      - "organism/**"
+      - "world/**"
+      - "gameserver/v1/**"
+      - "gameclient/v1/**"
+      - "docs/refactor/embodied-vn/**"
+      - "docs/reports/embodied-vn-acceptance.md"
+      - "ARCHITECTURE.md"
+      - "README.md"
+      - ".github/workflows/embodied-vn-acceptance.yml"
+  pull_request:
+    paths:
+      - "gametable/**"
+      - "graphics/**"
+      - "organism/**"
+      - "world/**"
+      - "gameserver/v1/**"
+      - "gameclient/v1/**"
+      - "docs/refactor/embodied-vn/**"
+      - "docs/reports/embodied-vn-acceptance.md"
+      - "ARCHITECTURE.md"
+      - "README.md"
+      - ".github/workflows/embodied-vn-acceptance.yml"
+
+jobs:
+  deterministic-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Deterministic A1-A11 acceptance gate
+        run: ./gametable/op/acceptance.sh --automated

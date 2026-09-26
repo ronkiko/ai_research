@@ -59,13 +59,32 @@ python3 -m gametable.migration migrate >/dev/null
 eval "$(python3 -m gametable.migration env)"
 
 if [[ "$FRESH" -eq 1 ]]; then
-  op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
+  # A fresh story must really satisfy the first-day contract P@0 / D@1.
+  # Keep learned artifacts, but stop only launcher-owned runtime processes and
+  # discard the active physical checkpoint before the new Hosts log in.
+  stop_stack
+  if python3 - <<'PY' >/dev/null 2>&1
+import socket
+from gameserver.v1.common.config import GATEWAY_PORT, HOST
+with socket.create_connection((HOST, GATEWAY_PORT), timeout=.2):
+    pass
+PY
+  then
+    echo "ERROR --fresh cannot reset an unmanaged service on the embodied Gateway port" >&2
+    exit 2
+  fi
   python3 - <<'PY'
-from gametable.migration import active_save_root
+from gametable.migration import WORLD_STATE, active_save_root
 root = active_save_root()
 for name in ("save.sqlite3", "save.sqlite3-wal", "save.sqlite3-shm"):
     (root / name).unlink(missing_ok=True)
-print("GameTable Юки: новое знакомство; физическое тело и навыки сохранены")
+for path in (
+    WORLD_STATE,
+    WORLD_STATE.with_name(WORLD_STATE.name + "-wal"),
+    WORLD_STATE.with_name(WORLD_STATE.name + "-shm"),
+):
+    path.unlink(missing_ok=True)
+print("GameTable Юки: новое знакомство; навыки сохранены; тело начнёт день у EXIT")
 PY
 fi
 

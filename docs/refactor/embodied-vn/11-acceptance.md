@@ -2,7 +2,9 @@
 
 Зависимость: выполненные 02–10. Коммит: `Audit and accept the unified embodied VN`.
 Этот этап включает исправление обнаруженных отклонений, а не только написание
-«готово». Сейчас все критерии ниже **не проверены**: это план будущей приёмки.
+«готово». Статус после аудита: **автоматическая контрактная часть реализована;
+полная серия ещё не объявлена принятой без live LLM, ручной визуальной и свежей
+исследовательской проверки обучения**. Это намеренно BLOCKED, а не фиктивный PASS.
 
 ## Обязательное начало
 
@@ -102,3 +104,32 @@
 наблюдаемое подтверждение. Невыполненный gate отмечается BLOCKED/FAIL с причиной.
 Результат не объявляет готовыми гравитацию, 3D-гуманоида, зрение, обученную
 суставную посадку, обучение следованию за Директором или долговременную пластичность личности: они вне этой серии.
+
+## Результат аудита этапа 11
+
+Повторный аудит выявил два конкретных отклонения и исправил их.
+
+1. `--fresh` раньше удалял только VN SQLite, поэтому уже живой physical world
+   мог оставить Юки/Директора в старой зоне и нарушить обязательное P@0/D@1
+   первого дня. Теперь fresh останавливает только launcher-owned stack, запрещает
+   сброс при занятом unmanaged Gateway, удаляет active world checkpoint вместе с
+   новым VN save и сохраняет Organism learning artifacts. После нового Host login
+   мир создаёт те же bindings у EXIT: Yuki x=0, Director x=1.
+2. Browser мог получить key-up уже после перевода фокуса в textarea и оставить
+   старый manual command до watchdog. Focus переход в поле ввода теперь сразу
+   освобождает Director lease; key-up в поле также освобождает старое движение,
+   не перехватывая cursor navigation. GUI placeholders для embodied entities
+   исправлены на P/D вместо '?'.
+
+Добавлен `./gametable/op/acceptance.sh --automated` и отдельный CI workflow
+`Embodied VN acceptance`. Gate повторно проверяет A1–A11 на детерминированном
+уровне: реальный physics portal round-trip одной entity, independent scheduler,
+отсутствие procedural fallback, MCP surface/scope, assisted-setup honesty,
+crash/uncertain recovery, graphics layers/stale fence, cutover и fresh/manual
+story fences.
+
+`./gametable/op/acceptance.sh --live` запускает существующий live OpenCode smoke,
+но после него намеренно возвращает BLOCKED до отдельного fresh Motor+Spine
+research run и ручных visual/escort сценариев. Unit/CI не маскируются под
+сходимость обучения или человеческое наблюдение. Полная матрица и команды
+зафиксированы в `docs/reports/embodied-vn-acceptance.md`.
