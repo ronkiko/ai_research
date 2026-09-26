@@ -62,7 +62,7 @@ source "$ROOT/op/process.sh"
 
 stop_stack() {
   "$ROOT/player-gateway/op/gateway.sh" --stop
-  op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server" \
+  op_managed_process stop "gametable-vn" "$ROOT" \
     "$ROOT/gametable" "GameTable Юки"
   "$ROOT/gameclient/v1/op/director-host.sh" --stop
   "$ROOT/gameclient/v1/op/host.sh" --stop
@@ -116,7 +116,8 @@ require_stack_ports_free() {
 
 status_stack() {
   "$ROOT/player-gateway/op/gateway.sh" --status || true
-  op_managed_process status "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
+  op_managed_process status "gametable-vn" "$ROOT" \
+    "$ROOT/gametable" "GameTable Юки" || true
   "$ROOT/gameclient/v1/op/host.sh" --status || true
   "$ROOT/gameclient/v1/op/director-host.sh" --status || true
   "$ROOT/gameserver/v1/op/embodied.sh" --status || true
@@ -148,7 +149,7 @@ fi
 
 cd "$ROOT"
 
-if op_managed_process status "gametable-vn" "$ROOT" "roleplay.server" \
+if op_managed_process status "gametable-vn" "$ROOT" \
   "$ROOT/gametable" "GameTable Юки" >/dev/null 2>&1; then
   echo "GameTable Юки is already running; use --status or --restart"
   exit 0
@@ -312,7 +313,7 @@ player_gateway_ready || {
 
 echo "WEB UI · Player Gateway: http://127.0.0.1:$PLAYER_GATEWAY_PORT_VALUE"
 require_runtime_port_free "$GAMETABLE_PORT" "GameTable backend"
-op_managed_process start "gametable-vn" "$ROOT" "roleplay.server" \
+op_managed_process start "gametable-vn" "$ROOT" \
   "$ROOT/gametable" "GameTable Юки backend" \
   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
   python3 -m roleplay.server "$@"
