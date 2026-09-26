@@ -4,9 +4,13 @@
 [лоре игры](docs/lore/README.md). Раздел содержит только художественные смыслы
 и их версии; устройство системы описывается в архитектуре и roadmap.
 
-Завершённая embodied-VN refactor series 01–15:
-[единое тело Юки в мире новеллы](docs/refactor/embodied-vn/01-concept.md).
-Она закрепила identity/action/world contracts, multi-zone
+Текущая серия **0.main.2**, патчи 01–15:
+[единое тело Юки в мире новеллы](docs/roadmap/0/main/2/README.md).
+Приёмка не завершена: [аудит соответствия лору и замыслу](docs/reports/series-2-lore-audit.md)
+выявил разрывы между VN-действиями, инициативой и обучением. В рабочем дереве
+добавлен путь их исправления; [ручная и научная приёмка](docs/reports/series-2-gameplay-acceptance.md)
+ещё предстоит.
+Серия ввела identity/action/world contracts, multi-zone
 `embodied_world_v1`, canonical `organism/`, Player Gateway,
 distributed GameServer↔GameClient boundary и shared WorldStateHub.
 
@@ -15,10 +19,11 @@ distributed GameServer↔GameClient boundary и shared WorldStateHub.
 demonstration](docs/roadmap/0/main/3/README.md). Правила нумерации:
 [docs/versioning.md](docs/versioning.md).
 
-Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
-накапливает совместный опыт и учится управлять аватаром в непрерывном физическом
-мире. Визуальная новелла с характером и возможной love story — часть целевого
-опыта. Научная задача — обучаемое управление телом и исследование согласованного
+Целевой игровой опыт репозитория — визуальная новелла: человек в роли Директора
+взаимодействует с Юки, девушкой-лаборантом и составным ИИ-организмом.
+В ходе их общей истории она накапливает опыт и учится управлять собственным
+телом в непрерывном физическом мире. Отношения могут развиться в love story.
+Научная задача — обучаемое управление телом и исследование согласованного
 поведения такого организма.
 
 Начни с [общего архитектурного контракта](ARCHITECTURE.md): там границы компонентов,
@@ -59,7 +64,8 @@ Brain LLM остаётся основным смысловым «неокорт�
 ## Roadmap/version coordinate
 
 Текущая долгоживущая линия работы: release `0`, branch `main`.
-Следующая series: `3`; её patches имеют coordinates `0.main.3.01`,
+Текущая series: `2` (`0.main.2`, исторические патчи 01–15).
+После её приёмки — series `3`; её patches имеют coordinates `0.main.3.01`,
 `0.main.3.02` и далее. Git feature branches не меняют branch coordinate.
 
 ## Структура

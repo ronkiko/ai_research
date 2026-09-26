@@ -11,7 +11,7 @@ from .engine import initial_state
 
 
 TERMINAL_ACTION_STATUSES = (
-    "arrived", "cancelled", "blocked", "failed", "uncertain",
+    "arrived", "cancelled", "blocked", "failed", "uncertain", "completed", "interrupted",
 )
 
 
@@ -67,6 +67,10 @@ class Store:
         self.lock = threading.RLock()
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
+        CREATE TABLE IF NOT EXISTS runtime_values (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS experiences (
+          id TEXT PRIMARY KEY, payload TEXT NOT NULL, created REAL NOT NULL, narrated INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS save (
           id INTEGER PRIMARY KEY CHECK(id=1),
           value TEXT NOT NULL
@@ -180,6 +184,12 @@ class Store:
             )
         self._backfill_dialogue()
         self._recover_story_flow()
+        previous = self.state()
+        if previous['rules_hash'] in rules.get('compatible_previous_hashes', []):
+            # Additive VN-7 actions/profile: preserve all stats, memory, identities and artifacts.
+            previous.update(rules_version=rules['version'], rules_hash=rules['hash'])
+            with self.lock, self.db:
+                self.db.execute('UPDATE save SET value=? WHERE id=1', (encode(previous),))
         if self.state()["rules_hash"] != rules["hash"]:
             raise ValueError(
                 "Сохранение создано с другой версией правил. Запусти --fresh."
@@ -284,7 +294,7 @@ class Store:
             for turn_id, request_raw, status, payload_raw, created in rows:
                 request = json.loads(request_raw)
                 text = str(request.get("text") or "").strip()
-                if text:
+                if text and request.get("source", "director") == "director":
                     self.db.execute(
                         "INSERT OR IGNORE INTO dialogue"
                         "(message_id,turn_id,speaker_id,text,published) "
@@ -567,17 +577,18 @@ class Store:
                     created,
                 ),
             )
-            self.db.execute(
-                "INSERT INTO dialogue"
-                "(message_id,turn_id,speaker_id,text,published) VALUES(?,?,?,?,?)",
-                (
-                    f"dialogue.{event['id']}.director",
-                    event["id"],
-                    "director",
-                    event["text"],
-                    created,
-                ),
-            )
+            if event.get("source", "director") == "director":
+                self.db.execute(
+                    "INSERT INTO dialogue"
+                    "(message_id,turn_id,speaker_id,text,published) VALUES(?,?,?,?,?)",
+                    (
+                        f"dialogue.{event['id']}.director",
+                        event["id"],
+                        "director",
+                        event["text"],
+                        created,
+                    ),
+                )
             return True
 
     def progress(self, event_id, stage, payload):
@@ -647,3 +658,39 @@ class Store:
     def close(self):
         with self.lock:
             self.db.close()
+
+    def runtime_value(self, key, default=None):
+        with self.lock:
+            row = self.db.execute('SELECT value FROM runtime_values WHERE key=?', (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def set_runtime_value(self, key, value):
+        with self.lock, self.db:
+            self.db.execute('INSERT OR REPLACE INTO runtime_values VALUES (?,?)', (key, encode(value)))
+
+    def remember_result(self, record):
+        if record['status'] not in TERMINAL_ACTION_STATUSES:
+            return False
+        # One terminal fact per proposal, independent of dialogue success and bounded position inbox.
+        fact = {key: record.get(key) for key in ('proposal_id', 'action_id', 'proposal', 'status', 'result')}
+        key = 'outcome.' + record['proposal_id']
+        with self.lock, self.db:
+            cursor = self.db.execute('INSERT OR IGNORE INTO experiences(id,payload,created) VALUES (?,?,?)',
+                                     (key, encode(fact), time.time()))
+            return cursor.rowcount == 1
+
+    def experiences(self, limit=12, pending=False):
+        where = 'WHERE narrated=0' if pending else ''
+        with self.lock:
+            rows = self.db.execute(f'SELECT id,payload FROM experiences {where} ORDER BY created DESC LIMIT ?',
+                                   (limit,)).fetchall()
+        return [{'experience_id': row[0], **json.loads(row[1])} for row in reversed(rows)]
+
+    def mark_experience_narrated(self, key):
+        with self.lock, self.db:
+            self.db.execute('UPDATE experiences SET narrated=1 WHERE id=?', (key,))
+
+    def recent_actions(self, limit=24):
+        with self.lock:
+            rows = self.db.execute('SELECT proposal_id FROM action_outbox ORDER BY created DESC LIMIT ?', (limit,)).fetchall()
+        return [self.action(row[0]) for row in rows]

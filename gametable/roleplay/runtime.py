@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import threading
 import uuid
+import time
 
 from . import prompts
 from .engine import (
@@ -28,10 +29,12 @@ class Runtime:
         self.log = log or (lambda _message, _level="INFO": None)
         self.events = events or (lambda _name, _payload: None)
         # external is retained as an injection alias for older tests/callers.
-        self.actions = actions or external or ActionExecutor()
+        self.actions = actions or external or ActionExecutor(store=store)
         self.lock = threading.Lock()
         self.thread = None
         self.story = None
+        self.stop_event = threading.Event()
+        self.observer_thread = None
 
     def emit(self, name, event_id, revision, **payload):
         self.events(name, {"event_id": event_id, "revision": revision, **payload})
@@ -52,8 +55,10 @@ class Runtime:
             if self.thread and self.thread.is_alive() and not self.store.get(event["id"]):
                 raise ValueError("Дождись завершения текущего хода")
             if self.store.begin(event):
-                if self.story is not None:
-                    self.story.note_director_message(event)
+                if event.get('source', 'director') == 'director':
+                    self.store.set_runtime_value('initiative', {'last': time.time(), 'count': 0})
+                    if self.story is not None:
+                        self.story.note_director_message(event)
                 self.emit(
                     "turn.started", event["id"], self.store.state()["revision"],
                     stage="Оценки сердца и головы",
@@ -229,6 +234,7 @@ class Runtime:
                 "action_id": persisted.get("action_id"),
                 "result": copy.deepcopy(persisted.get("result")),
             }
+            self.store.remember_result(persisted)
             results.append(item)
         audit["actions"]["results"] = copy.deepcopy(results)
         self.progress(
@@ -253,6 +259,7 @@ class Runtime:
             updated = self.store.record_action_result(
                 record["proposal_id"], observed
             )
+            self.store.remember_result(updated)
             changed.append(updated)
             if updated["status"] != previous_status:
                 self.events("action.updated", {
@@ -289,16 +296,94 @@ class Runtime:
         return results
 
     def start_self_action(self, proposal, event_id=None):
-        """Internal event/idle hook; proposal is validated before any side effect."""
-        proposal = validate_action_proposal(
-            proposal, allowed_source="self_initiated"
-        )
-        event_id = event_id or "initiative." + uuid.uuid4().hex
-        record = self.store.reserve_action(event_id, proposal)
-        if not record["created"]:
-            return record
-        result = self.actions.start(proposal, record["request_id"])
-        return self.store.record_action_result(proposal["proposal_id"], result)
+        """Submit an initiative for independent appraisal; never dispatch unreviewed hooks."""
+        proposal = validate_action_proposal(proposal, allowed_source='self_initiated')
+        if proposal['action_type'] not in {'navigate', 'approach', 'interact'}:
+            raise ValueError('Learning requires a separate Director request')
+        event = {'id': event_id or 'initiative.' + uuid.uuid4().hex,
+                 'text': 'Я рассматриваю действие: ' + proposal['rationale'],
+                 'intent_id': 'consider_action', 'source': 'self_initiated',
+                 'proposal': proposal}
+        return self.submit(event)
+
+    def start_observer(self):
+        self.stop_event.clear()
+        self.observer_thread = threading.Thread(target=self._observe_loop, daemon=True,
+                                               name='yuki-experience')
+        self.observer_thread.start()
+
+    def close(self):
+        self.stop_event.set()
+        if self.observer_thread:
+            self.observer_thread.join(timeout=3)
+        self.actions.close()
+
+    def _observe_loop(self):
+        while not self.stop_event.wait(1):
+            try:
+                self.background_step()
+            except Exception as exc:
+                self.log('Наблюдение результата: ' + type(exc).__name__, 'WARN')
+                self.stop_event.wait(5)
+
+    def background_step(self):
+        self.poll_actions()
+        # Recovered terminal records may not have reached the experience journal before crash.
+        for record in self.store.recent_actions():
+            self.store.remember_result(record)
+        if self.busy():
+            return
+        pending = self.store.experiences(limit=1, pending=True)
+        if pending:
+            fact = pending[0]
+            event_id = fact['experience_id']
+            if not self.store.get(event_id):
+                event = {'id': event_id, 'intent_id': 'talk', 'source': 'world',
+                         'text': 'Наблюдаемый итог действия: ' + __import__('json').dumps(fact, ensure_ascii=False)}
+                self.submit(event)
+            # Persistent fact remains available even if narration fails. No endless retry dialogue.
+            self.store.mark_experience_narrated(event_id)
+            return
+        if self.store.active_actions() or self.story is None:
+            return
+        story = self.story.snapshot()
+        if not story.get('ui_sessions') or story.get('day_phase') != 'awake':
+            return
+        if (story.get('escort') or {}).get('status') in {'escort_active', 'reconciling'}:
+            return
+        # Preserve the first-day tutorial. General initiative starts after its resolution.
+        if (story.get('intro') or {}).get('phase') not in {'arrived', 'escort_declined'}:
+            return
+        schedule = self.store.runtime_value('initiative', {'last': time.time(), 'count': 0})
+        if time.time() - schedule['last'] < 90 or schedule['count'] >= 3:
+            return
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return
+            self.store.set_runtime_value('initiative', {'last': time.time(), 'count': schedule['count'] + 1})
+            self.thread = threading.Thread(target=self._initiative_turn, daemon=True)
+            self.thread.start()
+
+    def _initiative_turn(self):
+        try:
+            before = self.store.state()
+            event = {'id': 'initiative.' + uuid.uuid4().hex, 'intent_id': 'consider_action',
+                     'source': 'self_initiated', 'text': 'Есть ли сейчас осмысленное собственное действие?'}
+            data = prompts.packet(event, before, self.rules, self.store.latest_world_observation())
+            data['experiences'] = self.store.experiences()
+            parent = self.backend.create('Yuki initiative')
+            proposal = self.propose_self_action(parent, data)
+            if proposal is None:
+                return
+            if proposal['action_type'] not in {'navigate', 'approach', 'interact'}:
+                raise InvalidReport('Самостоятельное обучение требует отдельного согласования')
+            event.update(text='Я рассматриваю действие: ' + proposal['rationale'], proposal=proposal)
+            if self.store.begin(event):
+                self.run(event)
+        except Exception as exc:
+            self.log('Инициатива: ' + type(exc).__name__, 'WARN')
+        finally:
+            self.backend.close_sessions()
 
     def verbalize(self, parent, event, contract, facts, audit, revision):
         text = None
@@ -364,6 +449,8 @@ class Runtime:
                 event, before, self.rules, world_observation=world_observation
             )
 
+            data["experiences"] = self.store.experiences()
+            data["proposed_action"] = copy.deepcopy(event.get("proposal"))
             audit["assessments"] = self.appraise(parent, event, before, data)
 
             decision, context = decide_turn(
@@ -375,7 +462,7 @@ class Runtime:
 
             effect_plan = build_effect_plan(
                 before, event, decision, context, self.rules,
-                observation=world_observation,
+                observation=world_observation, self_proposal=event.get("proposal"),
             )
 
             after, state_audit = apply_effect_plan(

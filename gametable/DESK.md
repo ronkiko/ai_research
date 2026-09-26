@@ -11,8 +11,8 @@
 2. CharacterDecision accept/decline/clarify;
 3. если принято — navigation proposal к `laboratory`;
 4. после observed arrival — отдельный `approach(workstation)`;
-5. только подтверждённое workstation interaction может открыть learning/work scope
-   этапа 08.
+5. отдельное подтверждённое `interact(workstation, work)` завершает действие
+   за столом. Оно не запускает обучение автоматически.
 
 Принятое решение не означает ни прибытие, ни посадку, ни обучение.
 
@@ -49,3 +49,10 @@ Training/VERIFY захватывают общий body lease. Пока job вл�
 обычная navigation должна видеть busy. Read-only `describe/skills/status`
 не требуют сидеть за workstation. Candidate Spine не становится production
 skill до отдельного VERIFY PASS и `skill_select`.
+
+Учебные намерения проходят собственное решение и server-side approval, отдельно
+от workstation. В GameTable рабочий контекст вызывает только
+`execute_approved(approval_id)` соответствующего MCP; actor, curriculum, artifact
+и budget зафиксированы сервером. Read-only discovery не даёт разрешения на запись.
+Motor и Spine сейчас получают по 100 эпизодов на отдельную просьбу TRAIN.
+Завершение job не равно VERIFY PASS; после неудачи нельзя обещать выбранный навык.

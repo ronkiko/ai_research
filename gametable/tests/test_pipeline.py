@@ -197,13 +197,14 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(facts, frozen)
 
-    def test_runtime_and_action_executor_have_no_mcp_enabled_voice_call(self):
+    def test_ordinary_voices_deny_tools_and_executor_uses_approval_scope(self):
         roleplay = Path(__file__).parents[1] / "roleplay"
         runtime = (roleplay / "runtime.py").read_text()
         external = (roleplay / "external.py").read_text()
         self.assertNotIn("lab=True", runtime)
         self.assertNotIn("lab=True", external)
-        self.assertNotIn(".complete(", external)
+        self.assertIn("allowed_tools=(tool,)", external)
+        self.assertIn("execute_approved", external)
         self.assertIn("service.navigate", external)
         self.assertIn("service.approach", external)
 

@@ -17,6 +17,51 @@
       "targets": [
         "workstation"
       ]
+    },
+    "interact": {
+      "targets": [
+        "workstation"
+      ]
+    },
+    "prepare_training": {
+      "targets": [
+        "course"
+      ]
+    },
+    "train_motor": {
+      "targets": [
+        "current_motor"
+      ]
+    },
+    "verify_motor": {
+      "targets": [
+        "current_motor"
+      ]
+    },
+    "train_spine": {
+      "targets": [
+        "current_spine"
+      ]
+    },
+    "verify_spine": {
+      "targets": [
+        "current_spine"
+      ]
+    },
+    "select_skill": {
+      "targets": [
+        "current_spine"
+      ]
+    },
+    "learning_status": {
+      "targets": [
+        "body"
+      ]
+    },
+    "cancel_action": {
+      "targets": [
+        "body"
+      ]
     }
   },
   "director_intents": {
@@ -35,11 +80,65 @@
         "action_type": "navigate",
         "target_id": "hallway"
       }
+    },
+    "request_workstation": {
+      "default": {
+        "action_type": "interact",
+        "target_id": "workstation"
+      }
+    },
+    "request_training_prepare": {
+      "default": {
+        "action_type": "prepare_training",
+        "target_id": "course"
+      }
+    },
+    "request_motor_train": {
+      "default": {
+        "action_type": "train_motor",
+        "target_id": "current_motor"
+      }
+    },
+    "request_motor_verify": {
+      "default": {
+        "action_type": "verify_motor",
+        "target_id": "current_motor"
+      }
+    },
+    "request_spine_train": {
+      "default": {
+        "action_type": "train_spine",
+        "target_id": "current_spine"
+      }
+    },
+    "request_spine_verify": {
+      "default": {
+        "action_type": "verify_spine",
+        "target_id": "current_spine"
+      }
+    },
+    "request_skill_select": {
+      "default": {
+        "action_type": "select_skill",
+        "target_id": "current_spine"
+      }
+    },
+    "request_training_status": {
+      "default": {
+        "action_type": "learning_status",
+        "target_id": "body"
+      }
+    },
+    "request_action_cancel": {
+      "default": {
+        "action_type": "cancel_action",
+        "target_id": "body"
+      }
     }
   },
   "notes": {
     "physical_authority": "world/navigation",
-    "legacy_scene_id": "presentation compatibility only until cutover 09",
+    "legacy_scene_id": "historical hint only",
     "learning_scope": "not granted by navigation proposals"
   }
 }

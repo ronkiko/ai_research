@@ -23,8 +23,11 @@ GameTable/OpenCode.
 ./gametable/op/start.sh --stop
 ~~~
 
-`--fresh` создаёт новое знакомство только для VN save. Физический world,
-Motor/Spine artifacts и mounted skill этим флагом не удаляются.
+`--fresh` создаёт новый VN save и заменяет physical checkpoint, которым владеет
+launcher: первый день снова начинается у EXIT. Motor/Spine artifacts сохраняются;
+это не чистый научный эксперимент. Неуправляемый Gateway флаг не сбрасывает.
+
+Браузерный вход: `http://127.0.0.1:17881` (Player Gateway).
 
 ## Один ход
 
@@ -84,14 +87,12 @@ Navigation worker и learning jobs живут независимо от LLM turn
 
 ## Graphics
 
-Production source — `EmbodiedWorldGraphics`. Каждый RenderFrame ссылается на
-один authoritative world epoch/tick/revision и zone. Browser не вычисляет
-порталы и не решает, произошёл ли переход комнаты.
+Production RenderFrame доставляет Player Gateway через Socket.IO из
+authoritative Host observation. Python graphics служит parity oracle. Browser
+не вычисляет порталы и не решает, произошёл ли переход комнаты.
 
-Потоки:
-- `/api/events` — dialogue/turn/action lifecycle;
-- `/api/frames` — bounded latest RenderFrame;
-- `/api/state` — bootstrap/resync.
+GameTable `/api/events` и `/api/state` передаются через ограниченный VN proxy
+для диалога и resync; старый `/api/frames` не является production endpoint.
 
 ## Проверки
 
@@ -134,3 +135,14 @@ Heart/Head invariants.
 Accepted sleep создаёт durable next-day placement: только Yuki возвращается к
 EXIT через idempotent story world action. Director сохраняет своё физическое
 место.
+
+## Учебный игровой цикл
+
+В текущем рабочем дереве добавлены отдельные намерения подготовки, Motor TRAIN/VERIFY,
+Spine TRAIN/VERIFY, выбора навыка, статуса и отмены. Каждое проходит решение Юки;
+рабочий MCP-контекст получает только server-approved действие. Обычные голоса
+остаются без tools. Подход и interaction за столом — отдельное действие; практика
+проходит на курсе и не требует фиктивного сидения за столом.
+
+Порядок ручной проверки и ограничения: [приёмка игрового цикла](../docs/reports/series-2-gameplay-acceptance.md).
+Ручная и научная приёмка ещё не выполнены.

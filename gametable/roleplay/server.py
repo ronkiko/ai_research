@@ -209,7 +209,7 @@ class Application:
         self.story = story or _StaticStory()
 
     def snapshot(self):
-        self.runtime.poll_actions()
+        # Observation/reconciliation is independent of browser polling.
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
         running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
@@ -426,8 +426,14 @@ def main():
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    from .external import ActionExecutor
+    from .mcp_bridge import MCPBridge
+    actions = ActionExecutor(store=store)
+    bridge = MCPBridge(actions)
+    bridge.start()
     port, password = free_port(), secrets.token_urlsafe(32)
     env = dict(os.environ, OPENCODE_SERVER_PASSWORD=password, OPENCODE_SERVER_USERNAME="opencode")
+    env.update(GAMETABLE_MCP_BRIDGE_URL=bridge.url, GAMETABLE_MCP_BRIDGE_SECRET=bridge.secret)
     backend = OpenCode(f"http://127.0.0.1:{port}", TABLE, args.model, args.variant, password,
                        log=logger.write)
     logfile = (root / "opencode.log").open("ab")
@@ -472,15 +478,17 @@ def main():
         manuals = "\n\n".join(
             p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
         events = EventHub()
+        actions.backend = backend
         runtime = Runtime(
             store, backend, rules, manuals,
-            log=logger.write, events=events.publish,
+            log=logger.write, events=events.publish, actions=actions,
         )
         story = StoryFlow(store, events=events.publish)
         story.attach_runtime(runtime)
         story.start()
         world_observer = WorldObservationPump(store)
         world_observer.start()
+        runtime.start_observer()
         app = Application(
             store, runtime, backend, rules, args.prompt,
             events=events, story=story,
@@ -514,6 +522,9 @@ def main():
             process.wait()
         except ProcessLookupError:
             pass
+        if 'runtime' in locals():
+            runtime.close()
+        bridge.close()
         logfile.close()
         lock_file.close()
 

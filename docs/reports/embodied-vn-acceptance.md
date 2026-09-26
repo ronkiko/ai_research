@@ -2,8 +2,14 @@
 
 ## Scope
 
-Acceptance target: the 14-stage embodied VN series defined by
+Acceptance target: **Series 0.main.2, patches 01–15**, defined by
 `docs/refactor/embodied-vn/01-concept.md`.
+
+2026-09-27 follow-up: [lore/product audit](series-2-lore-audit.md) found
+production VN integration gaps in learning, self-initiative and action-result
+memory (F1–F3). Overall remains BLOCKED for **implementation and evidence**.
+Earlier statements below that only execution evidence remains are historical
+conclusions superseded by this audit. Contract PASS rows do not close F1–F3.
 
 Implementation range audited:
 
@@ -20,6 +26,7 @@ Implementation range audited:
 - 12: `86e41eb` — realtime Host/World boundary
 - 13: `9012645` — Node.js Player Gateway
 - 14: this commit — production browser cutover and final deterministic gate
+- 15: `bef6445` — shared authoritative World State Hub
 
 Baseline before stage 11: exact HEAD `ae8e89c20166098c97ce6b7e5e54f81a51f3e57a`
 had successful GitHub Actions for Graphics, GameTable, Embodied world, Game v1

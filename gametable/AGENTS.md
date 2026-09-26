@@ -55,8 +55,9 @@ Run: `./gametable/op/check.sh`.
 ## Cutover 09
 
 - Active OpenCode MCPs: only `navigation_v1` and `learning_v1`.
-- Production graphics source: `EmbodiedWorldGraphics`; LegacyVNGraphics is
-  test/history only.
+- Production browser: Player Gateway on port 17881, Socket.IO RenderFrame
+  from authoritative Host observation. Python graphics is the parity oracle;
+  legacy `/api/frames` is not a production backend route.
 - Public VN launcher: `./gametable/op/start.sh`; public body launcher:
   `./organism/op/organism.sh`.
 - Do not reintroduce `game_v1` or `gamelab_v1` into the active character
@@ -77,3 +78,13 @@ Run: `./gametable/op/check.sh`.
   learned_success=false; never move Director as a side effect.
 - Restart must release effort and reconcile; never auto-resume an escort from a
   stale leader/manual-control observation.
+
+## Approved work contexts
+
+GameTable MCP exposes `execute_approved(approval_id)` plus read-only discovery.
+The server binds action, target, identity and learning parameters; models do not
+choose artifacts, budgets or setup authorization. Ordinary voices stay deny-all.
+Workstation interaction and physical training are separate semantic actions.
+Current Motor/Spine practice budgets are 100 episodes each, not a promise of
+certification. Manual/scientific acceptance remains pending; see
+`../docs/reports/series-2-gameplay-acceptance.md`.

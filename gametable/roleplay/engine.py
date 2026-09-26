@@ -220,7 +220,7 @@ def validate_action_proposal(value, *, allowed_source=None):
         raise ValueError("Неизвестный источник CharacterActionProposal")
     if allowed_source and value["source"] != allowed_source:
         raise ValueError("Источник CharacterActionProposal не разрешён")
-    if value["action_type"] not in {"navigate", "approach"}:
+    if value["action_type"] not in ACTION_RULES["actions"]:
         raise ValueError("Неизвестный тип CharacterActionProposal")
     if not isinstance(value["target_id"], str) or not value["target_id"]:
         raise ValueError("Semantic target обязателен")
@@ -315,8 +315,11 @@ def plan_effects(
         )
         if director_proposal is not None:
             raise ValueError("Один ход не может запускать две physical action")
-        actions.append(proposal)
+        if decision["disposition"] == "accept":
+            actions.append(proposal)
 
+    if event.get("source") in {"world", "self_initiated"}:
+        effects = []  # Observing or considering an action is not fictitious exercise/rest.
     duration = sum(effect.get("minutes", 0) for effect in effects)
     return {"state_effects": effects, "actions": actions, "duration": duration}
 
@@ -381,7 +384,9 @@ def reduce_character_state(
     )[-8:]
     after["memories"] = (state["memories"] + [{
         "event_id": event["id"],
-        "director": event["text"],
+        "director": event["text"] if event.get("source", "director") == "director" else None,
+        "source": event.get("source", "director"),
+        "event_text": event["text"],
         "intent_id": event["intent_id"],
         "decision": copy.deepcopy(decision),
         "state_effects": copy.deepcopy(effect_plan["state_effects"]),

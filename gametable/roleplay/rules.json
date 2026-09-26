@@ -1,10 +1,10 @@
 {
-  "version": "vn-6",
+  "version": "vn-7",
   "character": {
     "id": "yuki-vn-1",
     "name": "Юки",
     "adult": true,
-    "description": "Совершеннолетняя молодая исследовательница. Застенчивая, любопытная, тёплая, эмоциональная; хочет быть полезной и дорожит вниманием Директора. Может привязываться, ревновать, обижаться, шутить, возражать и менять мнение. У неё есть собственные предпочтения и пределы сил. Не всезнающая и не безусловно послушная. Отношения развиваются из общего опыта, а не по расписанию.",
+    "description": "Совершеннолетняя девушка-лаборант, ИИ-организм; учится управлять собственным телом в общей истории с Директором. Совершеннолетняя молодая исследовательница. Застенчивая, любопытная, тёплая, эмоциональная; хочет быть полезной и дорожит вниманием Директора. Может привязываться, ревновать, обижаться, шутить, возражать и менять мнение. У неё есть собственные предпочтения и пределы сил. Не всезнающая и не безусловно послушная. Отношения развиваются из общего опыта, а не по расписанию.",
     "traits": {
       "shyness": 70,
       "warmth": 75,
@@ -41,9 +41,9 @@
     "request_lab_work": {
       "kind": "request",
       "accepted_effect": "lab_work",
-      "label": "Лаборатория · MCP",
+      "label": "Пойти в лабораторию / подойти к столу",
       "ui_kind": "request",
-      "default_text": ""
+      "default_text": "Давай пойдём поработать в лабораторию."
     },
     "request_rest": {
       "kind": "request",
@@ -65,6 +65,76 @@
       "label": "Выйти в коридор · 2 мин",
       "ui_kind": "movement",
       "default_text": "Давай вернёмся в коридор."
+    },
+    "request_workstation": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Сесть за рабочий стол",
+      "ui_kind": "request",
+      "default_text": "Давай сядем за стол и обсудим занятия."
+    },
+    "request_training_prepare": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Подготовить тренировку",
+      "ui_kind": "request",
+      "default_text": "Разрешаю подготовку и перенос на тренировочную площадку. Начинать обучение пока не нужно."
+    },
+    "request_motor_train": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Тренировать движения",
+      "ui_kind": "request",
+      "default_text": "Предлагаю потренировать базовые движения тела."
+    },
+    "request_motor_verify": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Проверить базовые движения",
+      "ui_kind": "request",
+      "default_text": "Предлагаю пройти независимую проверку базовых движений. Это отдельный экзамен."
+    },
+    "request_spine_train": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Тренировать координацию",
+      "ui_kind": "request",
+      "default_text": "Предлагаю потренировать координацию с проверенными базовыми движениями."
+    },
+    "request_spine_verify": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Проверить координацию",
+      "ui_kind": "request",
+      "default_text": "Предлагаю независимо проверить освоенную координацию."
+    },
+    "request_skill_select": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Применить проверенный навык",
+      "ui_kind": "request",
+      "default_text": "Давай начнём пользоваться последним проверенным навыком."
+    },
+    "request_training_status": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Обсудить результаты",
+      "ui_kind": "request",
+      "default_text": "Расскажи, как идут занятия и что уже подтверждено."
+    },
+    "request_action_cancel": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Остановить занятие",
+      "ui_kind": "request",
+      "default_text": "Прошу остановить текущее движение или занятие."
+    },
+    "consider_action": {
+      "kind": "request",
+      "accepted_effect": "converse",
+      "label": "Собственная инициатива",
+      "ui_kind": "request",
+      "default_text": ""
     }
   },
   "initial_scene": "hallway",
@@ -146,5 +216,8 @@
       "health": 0,
       "required_scene": "laboratory.workstation"
     }
-  }
+  },
+  "compatible_previous_hashes": [
+    "0fcbdfb078ce26bec52cd29cc08a869b8bec131063b9a46216ebb76f9fdefbc0"
+  ]
 }

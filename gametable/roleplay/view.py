@@ -19,16 +19,22 @@ def relationship_label(stats):
         return "Осторожность"
     return "Узнаёте друг друга"
 
+EXTRA_INTENTS = (
+    "request_workstation", "request_training_prepare", "request_motor_train",
+    "request_motor_verify", "request_spine_train", "request_spine_verify",
+    "request_skill_select", "request_training_status", "request_action_cancel",
+)
+
 def available_intent_ids(state, rules, world_observation=None):
     if isinstance(world_observation, dict):
         location = world_observation.get("location_id")
         if location in WORLD_AFFORDANCES:
-            return WORLD_AFFORDANCES[location]
+            return WORLD_AFFORDANCES[location] + tuple(x for x in EXTRA_INTENTS if x in rules["intents"])
     scene_id = state.get("scene_id")
     scene = rules["scenes"].get(scene_id)
     if not scene:
         raise ValueError("Неизвестная legacy VN scene")
-    return tuple(scene["affordances"])
+    return tuple(scene["affordances"]) + tuple(x for x in EXTRA_INTENTS if x in rules["intents"])
 
 def project_view(
     state, rules, busy=False, stage=None, *,

@@ -70,6 +70,10 @@ case "$command" in
     service="${1:-learning}"
     [[ $# -le 1 ]] || { usage >&2; exit 2; }
     export PYTHONUNBUFFERED=1
+    if [[ -n "${GAMETABLE_MCP_BRIDGE_URL:-}" ]]; then
+      case "$service" in learning|navigation) ;; *) exit 2 ;; esac
+      exec "$ORGANISM_PY" -m gametable.roleplay.scoped_mcp "$service"
+    fi
     case "$service" in
       learning) exec "$ORGANISM_PY" -m organism.mcp ;;
       navigation) exec "$ORGANISM_PY" -m world.mcp ;;
