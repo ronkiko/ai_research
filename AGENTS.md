@@ -24,3 +24,9 @@
   `docs/roadmap/0/main/3/`, patches именуются
   `01-...`, `02-...` и имеют coordinates `0.main.3.01`, `0.main.3.02` и т.д.
   Перед добавлением новой patch-series прочитай `docs/versioning.md`.
+
+- **Training telemetry safety:** server-side training telemetry is singleton per
+  GameServer/World: at most one active student actor. Admission/capability/fence
+  checks happen before allocating telemetry producers/buffers; competing
+  training starts must be rejected without creating additional telemetry load.
+  Normal multiplayer and ordinary observations are not subject to this slot.
