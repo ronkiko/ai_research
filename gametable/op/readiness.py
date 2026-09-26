@@ -103,6 +103,11 @@ def main() -> int:
             "mounted_skill_id": mounted,
             "active_job": active_job,
             "mcp": ["navigation_v1", "learning_v1"],
+            "state_hub": gateway.get("state_hub"),
+            "host_freshness": {
+                "yuki": yuki_state.get("freshness"),
+                "director": director_state.get("freshness"),
+            },
             "story": {
                 "first_day_spawn": {"yuki_x": 0.0, "director_x": 1.0},
                 "director_manual_host_port": 17701,
