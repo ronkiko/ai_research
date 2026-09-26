@@ -378,6 +378,34 @@ has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
 
 
+## Training telemetry resource boundary
+
+Training-grade server telemetry — отдельный bounded resource, не обычный world
+observation.
+
+Нормативно на один GameServer/World одновременно допускается максимум **один
+active student actor** с training telemetry session:
+
+```text
+World
+ └─ TrainingTelemetrySlot
+      └─ student_entity_id = one actor only
+```
+
+Teacher, human players, NPC и другие actors продолжают обычный gameplay и не
+занимают slot, пока сами не являются student.
+
+Admission проверяется server-side до создания telemetry producer/buffer.
+Конкурирующая training session получает typed busy/rejected response без
+дополнительного telemetry workload. Несколько connections/sessions одного
+клиента не могут обходить singleton rule.
+
+Один active student должен иметь один canonical telemetry producer; downstream
+fan-out не должен умножать сбор telemetry на GameServer.
+
+Это защитный resource invariant для будущего learning, а не ограничение
+multiplayer и не доказательство learned success.
+
 ## Future roadmap 0.main.3: social embodiment and escort
 
 Новая roadmap-нумерация фиксируется как
