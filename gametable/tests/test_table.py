@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 
+from gameclient.v1.clients.base import HostClientError
 from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_state, load_rules,
                                      plan_effects, reduce_turn, reduce_world,
                                      validate_action_proposal, validate_draft, validate_report)
@@ -606,6 +607,19 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn("event: state.changed", frame)
         self.assertIn('"revision":1', frame)
         self.app.runtime.submit.assert_not_called()
+
+    def test_transient_graphics_host_failure_returns_503(self):
+        class FailingGraphics:
+            def snapshot(self, _state):
+                raise HostClientError("temporary snapshot timeout")
+        self.app.graphics = FailingGraphics()
+        h = self.handler("/api/state")
+        h.do_GET()
+        self.assertEqual(h.send.call_args.args[0], 503)
+        self.assertIn(
+            "temporary snapshot timeout",
+            h.send.call_args.args[1]["error"],
+        )
 
     def test_graphics_snapshot_and_dialogue_stream_are_stable(self):
         first = self.app.snapshot()
