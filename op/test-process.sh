@@ -19,8 +19,6 @@ done
 # be mistaken for the other during status/restart.
 grep -q -- 'gameclient.v1.host.server --port 17700' gameclient/v1/op/host.sh
 grep -q -- 'gameclient.v1.host.server --port 17701' gameclient/v1/op/director-host.sh
-grep -q -- 'occupied by an unmanaged or foreign process' gameclient/v1/op/host.sh
-grep -q -- 'occupied by an unmanaged or foreign process' gameclient/v1/op/director-host.sh
 grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
 
 # shellcheck source=/dev/null
@@ -30,12 +28,19 @@ TAG="process-smoke-$$"
 MARKER="ai-research-process-smoke"
 LABEL="Managed process smoke"
 STARTER=""
+PORT_SERVER=""
+PORT_FILE=""
 
 cleanup() {
   op_stop_process "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL" >/dev/null 2>&1 || true
   if [[ -n "$STARTER" ]]; then
     wait "$STARTER" 2>/dev/null || true
   fi
+  if [[ -n "$PORT_SERVER" ]]; then
+    kill "$PORT_SERVER" 2>/dev/null || true
+    wait "$PORT_SERVER" 2>/dev/null || true
+  fi
+  [[ -z "$PORT_FILE" ]] || rm -f "$PORT_FILE"
 }
 trap cleanup EXIT
 
@@ -72,42 +77,42 @@ if op_status_process "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL" >/dev/null 2>&1; 
   exit 1
 fi
 
+PORT_FILE="$(mktemp)"
+python3 - "$PORT_FILE" <<'PY' &
+import socket
+import sys
+import time
+from pathlib import Path
 
-# Legacy launchers could leave the same managed module running with cwd inside a
-# checkout subdirectory. The current manager must reclaim that process instead
-# of claiming it is stopped and then colliding on the fixed Host port.
-LEGACY_TAG="process-legacy-$"
-LEGACY_MARKER="ai-research-process-legacy-$"
-LEGACY_LABEL="Legacy managed process smoke"
-LEGACY_DIR="$(mktemp -d "$ROOT/.process-smoke.XXXXXX")"
-LEGACY_PID=""
-
-cleanup_legacy() {
-  if [[ -n "$LEGACY_PID" ]]; then
-    kill -KILL "$LEGACY_PID" 2>/dev/null || true
-    wait "$LEGACY_PID" 2>/dev/null || true
-  fi
-  rm -rf "$LEGACY_DIR"
-}
-trap 'cleanup_legacy; cleanup' EXIT
-
-(
-  cd "$LEGACY_DIR"
-  exec -a "$LEGACY_MARKER" sleep 30
-) &
-LEGACY_PID=$!
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+sock.listen()
+Path(sys.argv[1]).write_text(str(sock.getsockname()[1]))
+try:
+    time.sleep(30)
+finally:
+    sock.close()
+PY
+PORT_SERVER=$!
 
 for ((i=0; i<100; i++)); do
-  if op_status_process "$LEGACY_TAG" "$ROOT" "$LEGACY_MARKER" "$ROOT" "$LEGACY_LABEL" >/dev/null 2>&1; then
-    break
-  fi
+  [[ -s "$PORT_FILE" ]] && break
   sleep 0.02
 done
+[[ -s "$PORT_FILE" ]] || {
+  echo "ERROR port preflight smoke did not start listener" >&2
+  exit 1
+}
+TEST_PORT="$(cat "$PORT_FILE")"
 
-op_status_process "$LEGACY_TAG" "$ROOT" "$LEGACY_MARKER" "$ROOT" "$LEGACY_LABEL" >/dev/null
-op_stop_process "$LEGACY_TAG" "$ROOT" "$LEGACY_MARKER" "$ROOT" "$LEGACY_LABEL" >/dev/null
-wait "$LEGACY_PID" 2>/dev/null || true
-LEGACY_PID=""
-rm -rf "$LEGACY_DIR"
+if op_require_tcp_port_free "127.0.0.1" "$TEST_PORT" "Port smoke" >/dev/null 2>&1; then
+  echo "ERROR occupied TCP endpoint passed strict preflight" >&2
+  exit 1
+fi
+
+kill "$PORT_SERVER"
+wait "$PORT_SERVER" 2>/dev/null || true
+PORT_SERVER=""
+op_require_tcp_port_free "127.0.0.1" "$TEST_PORT" "Port smoke" >/dev/null
 
 echo "PASS managed operator process smoke"
