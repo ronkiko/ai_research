@@ -2,32 +2,44 @@
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="start"
+ACTION_EXPLICIT=0
 FRESH=0
 FREE_PORTS=0
+BACKEND_ARGS=()
 
-case "${1:-}" in
-  --start) shift ;;
-  --fresh) FRESH=1; shift ;;
-  --stop) ACTION="stop"; shift ;;
-  --restart) ACTION="restart"; shift ;;
-  --status) ACTION="status"; shift ;;
-esac
-
-# --free-ports is an explicit destructive operator choice. Keep it out of the
-# GameTable backend argv; all other arguments pass through unchanged.
-filtered=()
-for arg in "$@"; do
-  if [[ "$arg" == "--free-ports" ]]; then
-    FREE_PORTS=1
-  else
-    filtered+=("$arg")
+set_action() {
+  local requested="$1"
+  if [[ "$ACTION_EXPLICIT" -eq 1 && "$ACTION" != "$requested" ]]; then
+    echo "ERROR conflicting lifecycle actions: --$ACTION and --$requested" >&2
+    exit 2
   fi
-done
-set -- "${filtered[@]}"
+  ACTION="$requested"
+  ACTION_EXPLICIT=1
+}
 
-if [[ "$FREE_PORTS" -eq 1 && ( "$ACTION" == "stop" || "$ACTION" == "status" ) ]]; then
-  echo "ERROR --free-ports is only valid with start, --restart, or --fresh" >&2
-  exit 2
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --start) set_action start ;;
+    --restart) set_action restart ;;
+    --stop) set_action stop ;;
+    --status) set_action status ;;
+    --fresh) FRESH=1 ;;
+    --free-ports) FREE_PORTS=1 ;;
+    *) BACKEND_ARGS+=("$1") ;;
+  esac
+  shift
+done
+set -- "${BACKEND_ARGS[@]}"
+
+if [[ "$ACTION" == "stop" || "$ACTION" == "status" ]]; then
+  [[ "$FRESH" -eq 0 ]] || {
+    echo "ERROR --fresh cannot be combined with --$ACTION" >&2
+    exit 2
+  }
+  [[ "$FREE_PORTS" -eq 0 ]] || {
+    echo "ERROR --free-ports cannot be combined with --$ACTION" >&2
+    exit 2
+  }
 fi
 
 GAMETABLE_PORT=17880
@@ -111,25 +123,26 @@ status_stack() {
 }
 
 if [[ "$ACTION" == "stop" ]]; then
-  [[ $# -eq 0 ]] || { echo "ERROR stop does not accept arguments" >&2; exit 2; }
+  [[ $# -eq 0 ]] || { echo "ERROR --stop does not accept backend arguments" >&2; exit 2; }
   stop_stack
   exit 0
 fi
 if [[ "$ACTION" == "status" ]]; then
-  [[ $# -eq 0 ]] || { echo "ERROR status does not accept arguments" >&2; exit 2; }
+  [[ $# -eq 0 ]] || { echo "ERROR --status does not accept backend arguments" >&2; exit 2; }
   status_stack
   exit 0
 fi
-if [[ "$ACTION" == "restart" ]]; then
-  stop_stack
-fi
 
+# Validate prerequisites before a destructive restart/fresh stop.
 command -v opencode >/dev/null || { echo "ERROR opencode is not installed" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "ERROR python3 is not installed" >&2; exit 2; }
 command -v node >/dev/null || { echo "ERROR node is not installed" >&2; exit 2; }
 command -v npm >/dev/null || { echo "ERROR npm is not installed" >&2; exit 2; }
 
-if [[ "$ACTION" == "restart" ]]; then
+# Restart and fresh are orthogonal flags but share one lifecycle boundary:
+# stop once, resolve endpoint conflicts once, then start once.
+if [[ "$ACTION" == "restart" || "$FRESH" -eq 1 ]]; then
+  stop_stack
   require_stack_ports_free
 fi
 
@@ -150,10 +163,8 @@ export DIRECTOR_MANUAL_GATE="${DIRECTOR_MANUAL_GATE:-$ROOT/gametable/runtime/dir
 
 if [[ "$FRESH" -eq 1 ]]; then
   # A fresh story must really satisfy the first-day contract P@0 / D@1.
-  # Keep learned artifacts, but stop only launcher-owned runtime processes and
-  # discard the active physical checkpoint before the new Hosts log in.
-  stop_stack
-  require_stack_ports_free
+  # Managed runtime was already stopped and all fixed endpoints were resolved
+  # before migration/reset, so destructive state reset happens exactly once.
   python3 - <<'PY'
 from gametable.migration import WORLD_STATE, active_save_root
 root = active_save_root()
