@@ -5,6 +5,7 @@ on:
     paths:
       - "player-gateway/**"
       - "graphics/**"
+      - "gametable/web/**"
       - "world/maps/**"
       - "gameclient/v1/host/**"
       - "docs/refactor/embodied-vn/13-player-gateway.md"
@@ -13,6 +14,7 @@ on:
     paths:
       - "player-gateway/**"
       - "graphics/**"
+      - "gametable/web/**"
       - "world/maps/**"
       - "gameclient/v1/host/**"
       - "docs/refactor/embodied-vn/13-player-gateway.md"
