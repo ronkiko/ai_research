@@ -86,6 +86,9 @@ for path in (
     path.unlink(missing_ok=True)
 print("GameTable Юки: новое знакомство; навыки сохранены; тело начнёт день у EXIT")
 PY
+  # --fresh is a new first day, not the migrated legacy placement.
+  export EMBODIED_INITIAL_ZONE="hallway"
+  export EMBODIED_INITIAL_SPAWN="yuki_day_start"
 fi
 
 LOGDIR="$ROOT/gametable/runtime/stack-logs"
@@ -147,7 +150,8 @@ fi
 
 readiness() {
   PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m gametable.op.readiness >"$LOGDIR/readiness.json" 2>/dev/null
+    python3 -m gametable.op.readiness \
+      >"$LOGDIR/readiness.json" 2>"$LOGDIR/readiness.err"
 }
 
 READY=0
@@ -171,6 +175,16 @@ fi
 
 [[ "$READY" -eq 1 ]] || {
   echo "ERROR embodied stack is not ready; see $LOGDIR" >&2
+  if [[ -s "$LOGDIR/readiness.err" ]]; then
+    echo "Readiness failure:" >&2
+    tail -n 20 "$LOGDIR/readiness.err" >&2 || true
+  fi
+  for log in gameserver.log host.log director-host.log; do
+    if [[ -s "$LOGDIR/$log" ]]; then
+      echo "--- $log (tail) ---" >&2
+      tail -n 20 "$LOGDIR/$log" >&2 || true
+    fi
+  done
   exit 2
 }
 cat "$LOGDIR/readiness.json"
