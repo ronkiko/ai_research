@@ -43,7 +43,7 @@ class StoryFlow:
             gate_path
             or os.environ.get(
                 "DIRECTOR_MANUAL_GATE",
-                Path(__file__).resolve().parents[1] / "runtime" / "director-manual.json",
+                Path(__file__).resolve().parent / "runtime" / "director-manual.json",
             )
         )
         configured = os.environ.get("GAMETABLE_INTRO_SECONDS")
