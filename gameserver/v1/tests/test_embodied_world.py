@@ -111,7 +111,44 @@ class PhysicsKernelTests(unittest.TestCase):
         self.assertEqual(again.state.vx, 0.0)
 
 
+class _CountingCheckpointStore:
+    def __init__(self):
+        self.saves = []
+    def load(self):
+        return None
+    def save(self, payload):
+        self.saves.append(copy.deepcopy(payload))
+    def close(self):
+        pass
+
+
 class EmbodiedWorldTests(unittest.TestCase):
+    def test_continuous_input_does_not_force_sqlite_checkpoint(self):
+        store = _CountingCheckpointStore()
+        runtime = EmbodiedWorldRuntime(
+            store=store,
+            checkpoint_interval_ticks=1000,
+            controller_watchdog_ticks=5000,
+        )
+        spawn_yuki(runtime)
+        baseline = len(store.saves)
+        current = yuki(runtime)
+        queued = runtime.submit_input(
+            request_id="input.no-force-checkpoint",
+            entity_id="entity.yuki",
+            expected_zone_id=current["zone_id"],
+            expected_world_epoch=runtime.epoch,
+            controller_id=current["controller_id"],
+            controller_generation=current["controller_generation"],
+            sequence=current["last_sequence"] + 1,
+            motor_x=1.0,
+        )
+        runtime.tick()
+        self.assertEqual(
+            runtime.receipt(queued["action_id"])["status"], "applied"
+        )
+        self.assertEqual(len(store.saves), baseline)
+
     def test_world_starts_without_demo_mob_and_ticks_without_clients(self):
         runtime = EmbodiedWorldRuntime()
         self.assertEqual(runtime.latest_snapshot()["entities"], [])
