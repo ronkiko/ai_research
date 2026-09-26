@@ -23,6 +23,22 @@ GameTable/OpenCode.
 ./gametable/op/start.sh --stop
 ~~~
 
+Lifecycle flags разбираются отдельно от аргументов backend и могут комбинироваться
+в любом порядке. Например, эти команды эквивалентны:
+
+~~~bash
+./gametable/op/start.sh --fresh --restart --free-ports
+./gametable/op/start.sh --free-ports --restart --fresh
+~~~
+
+`--fresh` — modifier нового save/world checkpoint, а не отдельный процессный
+action. Поэтому он не может случайно попасть в `roleplay.server` argv.
+
+Managed lifecycle основан только на собственных pidfile launcher'а. Launcher не
+сканирует `/proc`, не ищет процессы по cmdline/cwd и не пытается угадывать
+владельца занятого порта. После stop-фазы фиксированные runtime endpoints
+проверяются отдельно.
+
 Если после остановки managed-процессов один из фиксированных runtime-портов
 остался занят, launcher останавливается и печатает безопасный вариант по
 умолчанию. Для явного операторского освобождения всех конфликтующих
