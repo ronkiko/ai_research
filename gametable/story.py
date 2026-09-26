@@ -368,44 +368,90 @@ class StoryFlow:
             if os.path.exists(name):
                 os.unlink(name)
 
+    @staticmethod
+    def _escort_tick(value: dict[str, Any]) -> int | None:
+        tick = value.get("last_tick")
+        return tick if type(tick) is int else None
+
+    def _sync_gate_for_story(self, story: dict[str, Any]) -> None:
+        escort = story.get("escort") or {}
+        status = escort.get("status")
+        self._write_gate(
+            status == "escort_active",
+            escort.get("job_id"),
+            int(story.get("day_id", 1)) if status == "escort_active" else None,
+        )
+
     def _on_escort_update(self, record: dict[str, Any], force=False):
         key = (record.get("status"), record.get("phase"), record.get("reason"))
         now = time.monotonic()
-        if (
-            not force
-            and key == self._last_escort_key
-            and now - self._last_escort_persist < 0.5
-        ):
-            return
-        self._last_escort_key = key
-        self._last_escort_persist = now
-        story = self.store.story_state()
-        story["escort"] = {
-            **(story.get("escort") or {}),
-            **copy.deepcopy(record),
-        }
-        status = record.get("status")
-        if status == "escort_active":
-            story["intro"]["phase"] = "escort_active"
-            self._write_gate(
-                True, record.get("job_id"), int(story.get("day_id", 1))
-            )
-        elif status == "scripted_arrival":
-            story["intro"]["phase"] = "arrived"
-            self._write_gate(False, record.get("job_id"))
-        elif status in ESCORT_TERMINAL:
-            self._write_gate(False, record.get("job_id"))
-        try:
-            self.store.set_story_state(
-                story, expected_revision=story.get("story_revision")
-            )
-        except ValueError:
-            return
-        self.events("story.escort_updated", {
-            "job_id": record.get("job_id"),
-            "status": status,
-            "phase": record.get("phase"),
-        })
+        with self._lock:
+            if (
+                not force
+                and key == self._last_escort_key
+                and now - self._last_escort_persist < 0.5
+            ):
+                return
+
+            # Escort callbacks can race the HTTP accept path and each other.
+            # Persist the authoritative story first and only then change the
+            # Director gate. Otherwise an optimistic-revision conflict can
+            # leave story=escort_active while the Host gate is locked.
+            for _ in range(5):
+                story = self.store.story_state()
+                current = story.get("escort") or {}
+                same_job = (
+                    current.get("job_id") is not None
+                    and current.get("job_id") == record.get("job_id")
+                )
+                current_status = current.get("status")
+                incoming_status = record.get("status")
+                current_tick = self._escort_tick(current)
+                incoming_tick = self._escort_tick(record)
+
+                # Never let a late/stale active callback resurrect a terminal
+                # escort, and ignore observations older than what is durable.
+                if same_job and current_status in ESCORT_TERMINAL:
+                    if incoming_status not in ESCORT_TERMINAL:
+                        self._sync_gate_for_story(story)
+                        return
+                if (
+                    same_job
+                    and current_tick is not None
+                    and incoming_tick is not None
+                    and incoming_tick < current_tick
+                ):
+                    self._sync_gate_for_story(story)
+                    return
+
+                story["escort"] = {
+                    **current,
+                    **copy.deepcopy(record),
+                }
+                status = record.get("status")
+                if status == "escort_active":
+                    story["intro"]["phase"] = "escort_active"
+                elif status == "scripted_arrival":
+                    story["intro"]["phase"] = "arrived"
+                elif status in {"blocked", "failed", "cancelled"}:
+                    story["intro"]["phase"] = "escort_interrupted"
+
+                try:
+                    persisted = self.store.set_story_state(
+                        story, expected_revision=story.get("story_revision")
+                    )
+                except ValueError:
+                    continue
+
+                self._last_escort_key = key
+                self._last_escort_persist = now
+                self._sync_gate_for_story(persisted)
+                self.events("story.escort_updated", {
+                    "job_id": record.get("job_id"),
+                    "status": status,
+                    "phase": record.get("phase"),
+                })
+                return
 
     def _director_client(self, source_id: str) -> HostClient:
         if not isinstance(source_id, str) or not source_id:
@@ -422,19 +468,28 @@ class StoryFlow:
             return client
 
     def director_acquire(self, source_id: str, *, transfer=False) -> dict:
-        return self._director_client(source_id).control_acquire(
-            transfer=transfer
-        )
+        try:
+            return self._director_client(source_id).control_acquire(
+                transfer=transfer
+            )
+        except HostClientError as exc:
+            raise StoryFlowError(str(exc)) from exc
 
     def director_input(self, source_id: str, lease_id: str, move_x: int) -> dict:
-        return self._director_client(source_id).input(
-            move_x, lease_id=lease_id
-        )
+        try:
+            return self._director_client(source_id).input(
+                move_x, lease_id=lease_id
+            )
+        except HostClientError as exc:
+            raise StoryFlowError(str(exc)) from exc
 
     def director_release(self, source_id: str, lease_id: str) -> dict:
         client = self._director_client(source_id)
         try:
-            return client.control_release(lease_id)
+            try:
+                return client.control_release(lease_id)
+            except HostClientError as exc:
+                raise StoryFlowError(str(exc)) from exc
         finally:
             self.director_disconnect(source_id, release=False)
 
