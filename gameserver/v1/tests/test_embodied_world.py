@@ -465,7 +465,7 @@ class EmbodiedGatewayTests(unittest.TestCase):
             again = gateway.dispatch(message("login", player_id="player1"))
             self.assertEqual(again["zone_id"], "training/flat_run")
         finally:
-            gateway.server.server_close()
+            gateway.close()
             world.shutdown()
 
 
