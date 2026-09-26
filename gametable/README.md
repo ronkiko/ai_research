@@ -14,8 +14,15 @@ GameTable — локальная browser visual novel с Юки. После cuto
 
 Launcher делает migration/readiness, поднимает embodied GameServer + Gateway,
 Yuki Host и отдельный Director Host, готовит Organism runtime и запускает
-GameTable/OpenCode.
+GameTable/OpenCode. Сам `start.sh` остаётся foreground supervisor всего стека
+до завершения сессии.
 Активные MCP персонажа — только `navigation_v1` и `learning_v1`.
+
+При обычном запуске `Ctrl+C` означает завершение **всей** этой runtime-сессии:
+launcher останавливает GameTable backend, Player Gateway, оба Host и embodied
+GameServer. Поэтому после штатного `Ctrl+C` фиксированные порты не должны
+требовать ручного освобождения. `--free-ports` — только аварийное восстановление
+после чужого/остаточного listener или ранее оборванного legacy runtime.
 
 ~~~bash
 ./gametable/op/start.sh --status
