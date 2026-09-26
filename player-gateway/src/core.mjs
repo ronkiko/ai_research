@@ -98,10 +98,12 @@ export class PlayerGatewayCore {
       }
       this.latestFrame = frame;
       this.latestTerrain = terrainFor(this.catalog, frame.zone_id);
+      const recovered = this.lastError !== null;
       this.lastError = null;
       this.metricsState.frames_published += 1;
       this.metricsState.last_frame_at_ms = this.clock();
       this.onFrame(frame, verdict.reset);
+      if (recovered) this.onStatus(this.status());
       return frame;
     } catch (error) {
       this.metricsState.state_errors += 1;

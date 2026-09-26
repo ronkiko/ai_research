@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import {fileURLToPath} from "node:url";
@@ -20,6 +21,41 @@ class FakeClient {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const catalog = loadMapCatalog(path.resolve(here, "../../world/maps"));
+
+test("transient Host stale publishes a matching recovery status", async () => {
+  const fixture = JSON.parse(
+    fs.readFileSync(
+      path.resolve(here, "../../graphics/tests/fixtures/player_gateway_parity.json"),
+      "utf8",
+    ),
+  );
+  let call = 0;
+  const state = new FakeClient(() => {
+    call += 1;
+    return {
+      session: {entity_id: fixture.focus_entity_id},
+      snapshot: fixture.snapshot,
+      freshness: {
+        source: "world_state_hub",
+        stale: call === 1,
+        state: call === 1 ? "stale" : "current",
+        age_seconds: call === 1 ? 1.1 : 0.01,
+      },
+    };
+  });
+  const control = new FakeClient(() => { throw new Error("unused"); });
+  const core = new PlayerGatewayCore({stateClient: state, controlClient: control, catalog});
+  const statuses = [];
+  core.onStatus = (value) => statuses.push(value);
+  assert.equal(await core.pollFrame(), null);
+  assert.equal(statuses.at(-1).status, "degraded");
+  assert.equal(statuses.at(-1).error, "authoritative Host state is stale");
+  const frame = await core.pollFrame();
+  assert.ok(frame);
+  assert.equal(statuses.at(-1).status, "ready");
+  assert.equal(statuses.at(-1).error, null);
+  assert.equal(statuses.at(-1).host_freshness.stale, false);
+});
 
 test("only one browser session can own the Host manual lease", async () => {
   const state = new FakeClient(() => { throw new Error("unused"); });

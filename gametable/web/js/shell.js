@@ -19,7 +19,7 @@ const sourceId=sessionStorage.getItem('director-source')||crypto.randomUUID();
 sessionStorage.setItem('director-source',sourceId);
 let posting=false,pending=null,lastError='',currentRevision=-1,currentView=null,currentStory=null;
 let syncQueued=false,assetsReady=false,directorControl=false,heldDirection=0,directorBusy=false;
-let currentTerrainRevision=null;
+let currentTerrainRevision=null,gatewayError='';
 
 function showStatus(text,error=false){$('status').className=error?'status error':'status';$('status').textContent=text||'';}
 
@@ -203,7 +203,16 @@ async function start(){
     onError:()=>{directorControl=false;markFrameStale(true);},
     onStatus:(value)=>{
       if(value?.control?.owned_by_you===false)directorControl=false;
-      if(value?.error)showStatus('Player Gateway: '+value.error,true);
+      if(value?.error){
+        gatewayError=value.error;
+        if(value?.host_freshness?.stale)markFrameStale(true);
+        showStatus('Player Gateway: '+gatewayError,true);
+      }else if(gatewayError){
+        const previous='Player Gateway: '+gatewayError;
+        gatewayError='';
+        if(value?.host_freshness?.stale===false)markFrameStale(false);
+        if($('status').textContent===previous)queueSync();
+      }
     },
   });
 }
