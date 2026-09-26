@@ -52,7 +52,10 @@ op_find_legacy_process() {
     cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
     [[ "$cmdline" == *"$marker"* ]] || continue
     cwd="$(readlink -f "$proc/cwd" 2>/dev/null || true)"
-    [[ "$cwd" == "$expected_cwd" ]] || continue
+    # Older launchers sometimes started the same managed module from a
+    # subdirectory of this checkout. Treat that as the same ownership domain,
+    # but never cross into another checkout or arbitrary cwd.
+    [[ "$cwd" == "$expected_cwd" || "$cwd" == "$expected_cwd/"* ]] || continue
     printf '%s %s\n' "$pid" "$(op_proc_starttime "$pid")"
     return 0
   done
