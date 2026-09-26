@@ -40,16 +40,33 @@ release = 0
 Сейчас:
 
 ```text
-branch = 0
+branch = main
 Git branch = main
 ```
 
-Обычные короткоживущие Git feature/fix/doc branches **не меняют** эту цифру.
-Они являются способом реализации patch и после merge исчезают из архитектурной
-версии.
+Branch coordinate записывается словом из строчных ASCII-букв и обязан
+соответствовать формату:
+
+```text
+[a-z]+
+```
+
+Нормативная проверка:
+
+```text
+^[a-z]+$
+```
+
+Допустимо: `main`, `dev`, `research`.  
+Недопустимо: `0`, `main2`, `release-candidate`, `feature_x`, `Main`.
+
+Обычные короткоживущие Git feature/fix/doc branches **не меняют** этот
+компонент. Они являются способом реализации patch и после merge исчезают из
+архитектурной версии.
 
 Если в будущем появится отдельная долгоживущая продуктовая ветка с собственным
-roadmap, Operator назначает ей отдельный branch coordinate.
+roadmap, Operator назначает ей отдельный словесный branch coordinate формата
+`[a-z]+`.
 
 ### Series
 
