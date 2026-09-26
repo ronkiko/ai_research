@@ -128,12 +128,16 @@ revocation id
 Capability только read-only demonstration. Она **не** разрешает
 `Host[human]` отправлять actuator commands за Yuki.
 
-## Global TeacherStudentSession slot
+## TeacherStudentSession registry
 
-Хотя teacher actions идут по scoped Host↔Host demonstration link, GameServer
-выдаёт capability и формирует authoritative demonstration telemetry/provenance.
-Чтобы один World нельзя было нагрузить сотнями одновременных teachers и
-telemetry producers, действует **глобальный singleton teacher↔student slot**.
+GameServer выдаёт capability и формирует authoritative demonstration
+telemetry/provenance. Ограничение здесь **не глобальное на весь World**.
+
+Нормативная cardinality:
+
+```text
+student_entity_id → 0 or 1 active teacher
+```
 
 Рабочая сущность:
 
@@ -153,107 +157,99 @@ TeacherStudentSession
   state = active
 ```
 
-На одном World одновременно может существовать максимум **одна** такая session.
+GameServer хранит registry активных teaching sessions с уникальностью по
+`student_entity_id`.
 
 ### Admission
 
-Открытие teacher/demo session выполняется атомарно на GameServer:
+Открытие teacher/demo session выполняется атомарно:
 
 1. проверить authentication/capability;
 2. проверить teacher identity/session/controller fences;
 3. проверить student identity/session/controller fences;
-4. проверить active HandholdSession/consent, если они обязательны для режима;
-5. проверить global singleton `TeacherStudentSession`;
+4. проверить HandholdSession/consent, если они обязательны для режима;
+5. проверить, что у данного `student_entity_id` нет другого active teacher;
 6. только после этого создать demonstration capability и telemetry producer;
-7. вернуть scoped session capability.
+7. зарегистрировать session и вернуть scoped capability.
 
-Если уже активна другая teacher↔student pair:
+Если student уже занят другим teacher:
 
 ```text
-TEACHER_SESSION_BUSY
+STUDENT_ALREADY_HAS_TEACHER
+student_entity_id = ...
 active_teacher_entity_id = ...
-active_student_entity_id = ...
 retryable = true
 ```
 
-Отказ происходит **до** создания нового telemetry producer, observer loop,
-buffer, P2P capability или dataset writer.
+Отказ происходит до создания второго telemetry producer, observer loop,
+buffer, P2P capability или dataset writer для этого student.
 
-Повтор одного и того же idempotent acquire для той же пары/session может вернуть
-существующую session, но не создавать вторую.
+Повтор idempotent acquire для той же пары/session может вернуть уже существующую
+session, но не создавать дубль.
 
-Failed/rejected acquire attempts имеют отдельный bounded rate limit, чтобы
-admission endpoint сам не стал DoS surface.
+Rejected acquire attempts имеют bounded rate limit, чтобы сам admission endpoint
+не был DoS surface.
 
-### Что именно ограничивается
+### Допустимая параллельность
 
-Singleton относится к паре:
-
-```text
-teacher ↔ student
-```
-
-а не просто к student.
-
-При first-day handhold:
+Разные students могут обучаться одновременно:
 
 ```text
-teacher = Director
-student = Yuki
+Teacher A ↔ Student 1
+Teacher B ↔ Student 2
+Teacher C ↔ Student 3
 ```
 
-Пока эта pair активна, нельзя открыть:
+Также один teacher может иметь несколько students, если отдельная policy этого
+не запрещает:
 
 ```text
-Director  ↔ AI-2
-Teacher-2 ↔ AI-2
-Teacher-3 ↔ AI-3
+Teacher A ↔ Student 1
+Teacher A ↔ Student 2
 ```
 
-То есть на одном World одновременно не может быть ни 100 teachers, ни 100
-teacher-student demonstration sessions.
+Series 3 не вводит `max_students_per_teacher`.
 
-### Что не блокируется
-
-Singleton teacher session **не запрещает** другим actors:
-
-- обычный multiplayer;
-- LocalActorsObservation;
-- RenderFrame/Host state;
-- самостоятельное navigation;
-- self-learning / reinforcement learning без teacher/demo telemetry;
-- обычные server receipts.
-
-Например Yuki может быть student в active teacher session, а AI-2 в это же
-время может проходить своё самостоятельное RL-обучение, если его training path
-не создаёт teacher/demo telemetry session.
-
-### Один canonical telemetry producer
-
-Active `TeacherStudentSession` имеет один canonical demonstration telemetry
-producer с bounded cadence/schema.
-
-Несколько authorized readers не заставляют GameServer повторно собирать те же
-teacher/student telemetry frames. Fan-out, если понадобится, строится поверх
-одного producer/latest/ring buffer.
-
-Не допускается:
+Главный инвариант только один:
 
 ```text
-Teacher A ↔ Student A → producer A
-Teacher B ↔ Student B → producer B
-Teacher C ↔ Student C → producer C
+max_active_teachers_per_student = 1
 ```
 
-на одном World одновременно.
+### Один canonical producer на student
+
+Для каждого active student существует максимум один canonical demonstration
+telemetry producer, соответствующий его единственной active teacher relation.
+
+Несколько authorized readers не должны заставлять GameServer повторно собирать
+одинаковую telemetry для того же student. Fan-out строится поверх одного
+producer/latest/ring buffer.
+
+Запрещено:
+
+```text
+Teacher A → Student 1 → producer A
+Teacher B → Student 1 → producer B
+```
+
+Разрешено:
+
+```text
+Teacher A → Student 1 → producer 1
+Teacher B → Student 2 → producer 2
+```
+
+Общая нагрузка многих одновременно обучаемых students должна отдельно
+ограничиваться server capacity/rate/resource policy. Это отдельная защита и не
+меняет relation cardinality.
 
 ### Lifecycle
 
-TeacherStudentSession освобождается при:
+TeacherStudentSession для конкретного student освобождается при:
 
 - явном завершении demonstration/teaching session;
 - revoke demonstration consent/capability;
-- завершении HandholdSession, если link к нему привязан;
+- завершении связанного HandholdSession;
 - teacher или student disconnect по policy;
 - expiry/lease timeout;
 - world epoch change;
@@ -261,8 +257,7 @@ TeacherStudentSession освобождается при:
 - terminal failure;
 - server restart, если runtime session не была безопасно восстановлена.
 
-Освобождение закрывает associated demonstration telemetry/P2P capability и
-разрешает открыть следующую teacher↔student pair.
+После освобождения student может принять нового teacher.
 
 Persisted DemonstrationEpisode не даёт права автоматически восстановить active
 TeacherStudentSession после restart.
