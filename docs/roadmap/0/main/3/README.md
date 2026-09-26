@@ -142,50 +142,59 @@ Host[human] / web VPS B  ═══ P2P demo ═══► Host[yuki] / GPU VPS C
 Host↔Host P2P — **узкое исключение только для authorized demonstration data**.
 Оно не заменяет GameServer Gateway и не переносит physical authority на clients.
 
-## Один active training actor на GameServer
+## Одна active teacher↔student связь на GameServer
 
-GameServer training-grade telemetry — ограниченный server-side ресурс.
-Нормативный инвариант для Series 3 и всех будущих learning-серий:
+Teacher/demo telemetry — ограниченный server-side ресурс.
+
+Нормативный инвариант для Series 3 и будущих learning-серий:
 
 ```text
 one GameServer / one World
         │
-        └─ max 1 active student actor
-           with training telemetry
+        └─ max 1 active TeacherStudentSession
+              teacher ↔ student
 ```
 
-Одновременно **обучаемым student** может быть только один actor.
+Одновременно на одном World может существовать только **одна активная
+teacher↔student обучающая связь**.
 
-Это не означает, что в мире может находиться только один игрок. Director, NPC и
-другие actors продолжают нормально играть, двигаться и попадать в обычные
-authoritative observations. Ограничивается только специальный training path,
-который включает server-side telemetry/provenance для обучения.
+Это ограничение относится именно к assisted/demonstration learning. Другие
+actors могут одновременно:
 
-При handhold:
+- находиться в мире;
+- двигаться;
+- получать обычные observations;
+- выполнять свои policy;
+- проходить self-learning / reinforcement learning, если он не использует
+  teacher/demo channel.
+
+Но второй teacher↔student канал открыть нельзя, пока первый не завершён.
+
+Например, если активно:
 
 ```text
-teacher = Director
-student = Yuki
+Director ↔ Yuki
 ```
 
-Director не считается вторым обучаемым actor: он источник demonstration events.
-Training slot принадлежит только Yuki как student.
+то одновременно запрещено:
 
-Server обязан проверять singleton-slot **до** создания telemetry producer,
-subscription, buffer или dataset stream. Если slot уже занят, второй запрос
-получает typed `TRAINING_BUSY`/эквивалентный отказ без дополнительного
-telemetry workload.
+```text
+Director ↔ AI-2
+Teacher-2 ↔ AI-2
+Teacher-3 ↔ AI-3
+```
 
-Запрещено:
+GameServer должен проверять singleton `TeacherStudentSession` **до** создания
+demonstration capability, telemetry producer, subscription, buffer или dataset
+stream. Конкурирующий запрос получает typed `TEACHER_SESSION_BUSY` /
+эквивалентный отказ без дополнительной telemetry нагрузки.
 
-- запускать отдельный server telemetry stream на каждого actor;
-- создавать очередь ожидающих training sessions, которая сама расходует telemetry/memory;
-- умножать telemetry producer по числу Hosts/consumers;
-- разрешать клиенту обходить slot через несколько sessions/connections;
-- считать обычный LocalActorsObservation training telemetry.
+Teacher и student образуют одну пару; нельзя обойти ограничение несколькими
+Hosts, connections или sessions.
 
-Подробный admission/lifecycle contract зафиксирован в
+Подробный admission/lifecycle contract:
 [0.main.3.05](05-demonstration-link.md).
+
 ## Не реализуем в Series 3
 
 - imitation optimizer;
