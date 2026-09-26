@@ -25,9 +25,9 @@
   `01-...`, `02-...` и имеют coordinates `0.main.3.01`, `0.main.3.02` и т.д.
   Перед добавлением новой patch-series прочитай `docs/versioning.md`.
 
-- **Teacher/demo telemetry safety:** per GameServer/World there may be at most
-  one active teacher↔student demonstration session. Admission/capability/fence
-  checks happen before allocating P2P capability or telemetry producers/buffers;
-  competing teacher/student pairs are rejected without additional telemetry
-  load. Ordinary multiplayer and self-learning without teacher/demo telemetry
-  are not subject to this singleton.
+- **Teacher/demo relation safety:** each student may have at most one active
+  teacher at a time. Different students may have concurrent teaching sessions.
+  GameServer enforces uniqueness by student identity before allocating a second
+  demonstration capability/telemetry producer for that student. Overall
+  capacity/rate limits for many concurrent students are a separate resource
+  policy.
