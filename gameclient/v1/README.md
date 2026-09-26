@@ -19,8 +19,9 @@ The project remains independent from GameServer implementation code and does
 ## Current runtime
 
 GameClient Host is the only gameplay-facing client. It owns the shared
-GameServer session, one persistent TCP connection to Gateway, the monotonic
-GameServer input sequence, and the shared Host event stream.
+GameServer session, a command connection plus an independent bounded state
+observer connection to Gateway, the monotonic GameServer input sequence, the
+latest authoritative state cache, and the shared Host event stream.
 
 Three first-class Host-facing Clients are implemented:
 

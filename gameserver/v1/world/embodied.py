@@ -217,7 +217,12 @@ class EmbodiedWorldRuntime:
             "receipt": receipt,
         }
         self._commands.put(WorldCommand(request_id, action_id, kind, copy.deepcopy(payload)))
-        self._checkpoint(force=True)
+        if kind != "input":
+            # Structural requests are durable before execution so restart can
+            # reconcile an uncertain outcome. Continuous actuator packets are
+            # intentionally epoch-local and follow the periodic checkpoint
+            # cadence instead of turning controller frequency into SQLite I/O.
+            self._checkpoint(force=True)
         return copy.deepcopy(receipt)
 
     def submit_spawn(
@@ -569,6 +574,7 @@ class EmbodiedWorldRuntime:
             self.world_tick += 1
             self.world_revision += 1
             applied: list[dict[str, Any]] = []
+            durable_boundary = False
             while True:
                 try:
                     command = self._commands.get_nowait()
@@ -576,6 +582,8 @@ class EmbodiedWorldRuntime:
                     break
                 receipt = self._apply_command(command)
                 applied.append(copy.deepcopy(receipt))
+                if command.kind != "input":
+                    durable_boundary = True
 
             transfers = []
             for entity_id in sorted(self.entities):
@@ -593,7 +601,7 @@ class EmbodiedWorldRuntime:
                 if portal is not None:
                     transfers.append(self._transfer(entity, portal))
 
-            force = bool(applied or transfers)
+            force = durable_boundary or bool(transfers)
             self._latest_snapshot = self._snapshot(tuple(applied))
             self._checkpoint(force=force)
             return self.latest_snapshot()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from collections import deque
 import json
 import math
@@ -23,6 +24,8 @@ from .config import (
     HOST_MAX_ID_CHARS,
     HOST_PORT,
     HOST_PROTOCOL_VERSION,
+    HOST_STATE_OBSERVER_HZ,
+    HOST_STATE_STALE_SECONDS,
 )
 from .protocol import HostProtocolError, LineReader, encode_line, message
 from .manual import ManualControlError, ManualControlGate
@@ -44,12 +47,23 @@ class HostService:
         gateway_port: int = GATEWAY_PORT,
         gateway_timeout: float = DEFAULT_TIMEOUT,
         manual_gate_path: str | None = None,
+        state_observer_hz: float = HOST_STATE_OBSERVER_HZ,
     ) -> None:
         if host not in HOST_ALLOWED_BINDS:
             raise ValueError("GameClient Host v1 must bind to loopback only")
+        if isinstance(state_observer_hz, bool) or not isinstance(
+            state_observer_hz, (int, float)
+        ):
+            raise ValueError("state_observer_hz must be numeric")
+        if float(state_observer_hz) < 0.0:
+            raise ValueError("state_observer_hz must be non-negative")
         self.gateway_host = gateway_host
         self.gateway_port = gateway_port
         self.gateway = GatewayConnection(gateway_host, gateway_port, gateway_timeout)
+        self.observer_gateway = GatewayConnection(
+            gateway_host, gateway_port, gateway_timeout
+        )
+        self.state_observer_hz = float(state_observer_hz)
         self.manual_gate = (
             ManualControlGate(manual_gate_path) if manual_gate_path else None
         )
@@ -67,9 +81,14 @@ class HostService:
         self._state_lock = threading.RLock()
         self._operation_lock = threading.Lock()
         self._session: dict[str, Any] | None = None
+        self._session_generation = 0
         self._sequence = 0
         self._event_id = 0
         self._events: deque[dict[str, Any]] = deque(maxlen=HOST_EVENT_LIMIT)
+        self._latest_state: dict[str, Any] | None = None
+        self._latest_state_at: float | None = None
+        self._observer_stop = threading.Event()
+        self._observer_thread: threading.Thread | None = None
 
     @property
     def address(self) -> tuple[str, int]:
@@ -234,70 +253,236 @@ class HostService:
 
             with self._state_lock:
                 self._session = session
+                self._session_generation += 1
+                generation = self._session_generation
                 self._sequence = 0
+                self._latest_state = None
+                self._latest_state_at = None
+            self._accept_observed_state(
+                snapshot_response,
+                expected_session_id=session["session_id"],
+                expected_generation=generation,
+            )
             event = self._append_event("login", client_id=client_id, player_id=player_id)
-            return message("login", session={**session, "sequence": 0}, reused=False, event=event)
+            return message("login", session=self._session_copy(), reused=False, event=event)
 
-    def _state(self) -> dict[str, Any]:
-        with self._operation_lock:
-            return self._state_locked()
-
-    def _state_locked(self) -> dict[str, Any]:
-        session = self._session_copy()
-        response = self.gateway.request("snapshot", session_id=session["session_id"])
+    def _validate_observed_state(
+        self, response: dict[str, Any], session: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None, list]:
         snapshot = response.get("snapshot")
         if not isinstance(snapshot, dict):
-            raise GatewayConnectionError("GameServer Gateway returned an invalid snapshot")
-
+            raise GatewayConnectionError(
+                "GameServer Gateway returned an invalid snapshot"
+            )
         observation = response.get("observation")
         controller = response.get("controller")
         receipts = response.get("receipts", [])
         if observation is not None:
             if not isinstance(observation, dict):
-                raise GatewayConnectionError("GameServer Gateway returned an invalid observation")
-            if observation.get("entity_id") != session["entity_id"]:
-                raise GatewayConnectionError("GameServer observation identity mismatch")
-
-        observed_zone = (
-            observation.get("zone_id") if isinstance(observation, dict)
-            else response.get("zone_id", snapshot.get("zone_id"))
-        )
-        previous_zone = session.get("zone_id")
-        if isinstance(observed_zone, str) and observed_zone:
-            with self._state_lock:
-                if self._session is not None:
-                    self._session["zone_id"] = observed_zone
-                    for key, source in (
-                        ("world_epoch", observation if isinstance(observation, dict) else response),
-                        ("world_revision", observation if isinstance(observation, dict) else response),
-                    ):
-                        value = source.get(key)
-                        if value is not None:
-                            self._session[key] = value
-                    if isinstance(controller, dict) and type(controller.get("generation")) is int:
-                        self._session["controller_generation"] = controller["generation"]
-            if observed_zone != previous_zone:
-                self._append_event(
-                    "zone_transfer",
-                    client_id="gameserver",
-                    player_id=session["player_id"],
-                    entity_id=session["entity_id"],
-                    source_zone=previous_zone,
-                    target_zone=observed_zone,
+                raise GatewayConnectionError(
+                    "GameServer Gateway returned an invalid observation"
                 )
-            session = self._session_copy()
-
+            if observation.get("entity_id") != session["entity_id"]:
+                raise GatewayConnectionError(
+                    "GameServer observation identity mismatch"
+                )
+        if controller is not None and not isinstance(controller, dict):
+            raise GatewayConnectionError(
+                "GameServer Gateway returned an invalid controller"
+            )
         if not isinstance(receipts, list):
-            raise GatewayConnectionError("GameServer Gateway returned invalid receipts")
-        return message(
-            "state",
-            session=session,
-            snapshot=snapshot,
-            observation=observation,
-            controller=controller,
-            receipts=receipts,
-            last_event=self._last_event(),
+            raise GatewayConnectionError(
+                "GameServer Gateway returned invalid receipts"
+            )
+        return snapshot, observation, controller, receipts
+
+    @staticmethod
+    def _observation_order(
+        snapshot: dict[str, Any], observation: dict[str, Any] | None
+    ) -> tuple[object, int, int]:
+        source = observation if isinstance(observation, dict) else snapshot
+        epoch = source.get("world_epoch")
+        revision = source.get("world_revision", snapshot.get("world_revision", -1))
+        tick = source.get("tick", snapshot.get("world_tick", -1))
+        return (
+            epoch,
+            int(revision) if type(revision) is int else -1,
+            int(tick) if type(tick) is int else -1,
         )
+
+    def _accept_observed_state(
+        self,
+        response: dict[str, Any],
+        *,
+        expected_session_id: str,
+        expected_generation: int,
+    ) -> bool:
+        with self._state_lock:
+            current = self._session
+            if (
+                current is None
+                or current.get("session_id") != expected_session_id
+                or self._session_generation != expected_generation
+            ):
+                return False
+            session = {**current, "sequence": self._sequence}
+
+        snapshot, observation, controller, receipts = self._validate_observed_state(
+            response, session
+        )
+        incoming_order = self._observation_order(snapshot, observation)
+
+        transfer = None
+        with self._state_lock:
+            current = self._session
+            if (
+                current is None
+                or current.get("session_id") != expected_session_id
+                or self._session_generation != expected_generation
+            ):
+                return False
+
+            if self._latest_state is not None:
+                cached_snapshot = self._latest_state.get("snapshot")
+                cached_observation = self._latest_state.get("observation")
+                if isinstance(cached_snapshot, dict):
+                    cached_order = self._observation_order(
+                        cached_snapshot,
+                        cached_observation
+                        if isinstance(cached_observation, dict) else None,
+                    )
+                    if incoming_order[0] == cached_order[0] and (
+                        incoming_order[1], incoming_order[2]
+                    ) < (cached_order[1], cached_order[2]):
+                        return False
+
+            observed_zone = (
+                observation.get("zone_id")
+                if isinstance(observation, dict)
+                else response.get("zone_id", snapshot.get("zone_id"))
+            )
+            previous_zone = current.get("zone_id")
+            if isinstance(observed_zone, str) and observed_zone:
+                current["zone_id"] = observed_zone
+                source = (
+                    observation if isinstance(observation, dict) else response
+                )
+                for key in ("world_epoch", "world_revision"):
+                    value = source.get(key)
+                    if value is not None:
+                        current[key] = value
+                if (
+                    isinstance(controller, dict)
+                    and type(controller.get("generation")) is int
+                ):
+                    current["controller_generation"] = controller["generation"]
+                if observed_zone != previous_zone:
+                    transfer = (
+                        current["player_id"],
+                        current["entity_id"],
+                        previous_zone,
+                        observed_zone,
+                    )
+
+            state = message(
+                "state",
+                session={**current, "sequence": self._sequence},
+                snapshot=copy.deepcopy(snapshot),
+                observation=copy.deepcopy(observation),
+                controller=copy.deepcopy(controller),
+                receipts=copy.deepcopy(receipts),
+                last_event=None,
+            )
+            self._latest_state = state
+            self._latest_state_at = time.monotonic()
+
+        if transfer is not None:
+            player_id, entity_id, source_zone, target_zone = transfer
+            self._append_event(
+                "zone_transfer",
+                client_id="gameserver",
+                player_id=player_id,
+                entity_id=entity_id,
+                source_zone=source_zone,
+                target_zone=target_zone,
+            )
+        return True
+
+    def _observe_once(self) -> bool:
+        with self._state_lock:
+            if self._session is None:
+                return False
+            session_id = str(self._session["session_id"])
+            generation = self._session_generation
+        response = self.observer_gateway.request(
+            "snapshot", session_id=session_id
+        )
+        return self._accept_observed_state(
+            response,
+            expected_session_id=session_id,
+            expected_generation=generation,
+        )
+
+    def _observer_loop(self) -> None:
+        period = (
+            1.0 / self.state_observer_hz
+            if self.state_observer_hz > 0.0 else 0.1
+        )
+        while not self._observer_stop.is_set():
+            started = time.monotonic()
+            try:
+                self._observe_once()
+            except (GatewayConnectionError, HostStateError):
+                pass
+            elapsed = time.monotonic() - started
+            self._observer_stop.wait(max(0.0, period - elapsed))
+
+    def _start_observer(self) -> None:
+        if self.state_observer_hz <= 0.0:
+            return
+        if self._observer_thread is not None and self._observer_thread.is_alive():
+            return
+        self._observer_stop.clear()
+        self._observer_thread = threading.Thread(
+            target=self._observer_loop,
+            name="gameclient-host-state-observer",
+            daemon=True,
+        )
+        self._observer_thread.start()
+
+    def _stop_observer(self) -> None:
+        self._observer_stop.set()
+        self.observer_gateway.close()
+        thread = self._observer_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
+    def _state(self) -> dict[str, Any]:
+        self._session_copy()
+        with self._state_lock:
+            if self._latest_state is None or self._latest_state_at is None:
+                raise HostStateError("authoritative Host state is not ready")
+            state = copy.deepcopy(self._latest_state)
+            age = max(0.0, time.monotonic() - self._latest_state_at)
+            state["session"] = self._session_copy()
+        state["last_event"] = self._last_event()
+        state["freshness"] = {
+            "source": "authoritative_observer_cache",
+            "age_seconds": age,
+            "stale": age > HOST_STATE_STALE_SECONDS,
+            "observer_hz": self.state_observer_hz,
+        }
+        return state
+
+    def _cached_observation(self) -> dict[str, Any] | None:
+        with self._state_lock:
+            if self._latest_state is None:
+                return None
+            observation = self._latest_state.get("observation")
+            return (
+                copy.deepcopy(observation)
+                if isinstance(observation, dict) else None
+            )
 
     def _input(self, request: dict[str, Any]) -> dict[str, Any]:
         """Compatibility/manual input: -1/0/+1 becomes full motor effort."""
@@ -334,14 +519,14 @@ class HostService:
         manual_scope = None
         if self.manual_gate is not None and not bypass_manual_gate:
             manual_scope = self.manual_gate.validate(client_id, lease_id)
+
+        before_observation = (
+            self._cached_observation()
+            if self.manual_recorder is not None and self.manual_recorder.enabled
+            else None
+        )
         with self._operation_lock:
             session = self._session_copy()
-            before_observation = None
-            if self.manual_recorder is not None and self.manual_recorder.enabled:
-                try:
-                    before_observation = self._state_locked().get("observation")
-                except Exception:
-                    before_observation = None
             with self._state_lock:
                 self._sequence += 1
                 sequence = self._sequence
@@ -367,31 +552,28 @@ class HostService:
             if move_x is not None:
                 fields["move_x"] = move_x
             event = self._append_event("input", **fields)
-            if self.manual_recorder is not None and self.manual_recorder.enabled:
-                try:
-                    after_observation = self._state_locked().get("observation")
-                except Exception:
-                    after_observation = None
-                self.manual_recorder.record(
-                    scope=manual_scope,
-                    client_id=client_id,
-                    source="manual_host",
-                    command={
-                        "move_x": move_x,
-                        "motor_x": motor_x,
-                    },
-                    sequence=sequence,
-                    receipt=response.get("receipt"),
-                    before=before_observation,
-                    after=after_observation,
-                )
-            return message(
-                "motor" if move_x is None else "input",
+
+        if self.manual_recorder is not None and self.manual_recorder.enabled:
+            self.manual_recorder.record(
+                scope=manual_scope,
+                client_id=client_id,
+                source="manual_host",
+                command={
+                    "move_x": move_x,
+                    "motor_x": motor_x,
+                },
                 sequence=sequence,
-                motor_x=motor_x,
-                **({"move_x": move_x} if move_x is not None else {}),
-                event=event,
+                receipt=response.get("receipt"),
+                before=before_observation,
+                after=self._cached_observation(),
             )
+        return message(
+            "motor" if move_x is None else "input",
+            sequence=sequence,
+            motor_x=motor_x,
+            **({"move_x": move_x} if move_x is not None else {}),
+            event=event,
+        )
 
     def _control_acquire(self, request: dict[str, Any]) -> dict[str, Any]:
         if self.manual_gate is None:
@@ -552,19 +734,31 @@ class HostService:
         with self._operation_lock:
             session = self._session_copy()
             response = self.gateway.request("logout", session_id=session["session_id"])
-            event = self._append_event("logout", client_id=client_id, player_id=session["player_id"])
+            event = self._append_event(
+                "logout", client_id=client_id, player_id=session["player_id"]
+            )
             with self._state_lock:
                 self._session = None
+                self._session_generation += 1
                 self._sequence = 0
+                self._latest_state = None
+                self._latest_state_at = None
             return message("logout", response=response, event=event)
 
     def serve_forever(self) -> None:
-        self.server.serve_forever()
+        self._start_observer()
+        try:
+            self.server.serve_forever()
+        finally:
+            self._stop_observer()
 
     def shutdown(self) -> None:
+        self._stop_observer()
         self.server.shutdown()
         self.server.server_close()
         self.gateway.close()
+        if self.manual_recorder is not None:
+            self.manual_recorder.close()
 
 
 class _HostRequestHandler(socketserver.BaseRequestHandler):

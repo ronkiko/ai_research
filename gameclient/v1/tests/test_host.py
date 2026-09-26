@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import socketserver
+import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 
 from gameclient.v1.host.protocol import LineReader as HostLineReader, encode_line as host_encode, message as host_message
 from gameclient.v1.host.config import HOST_EVENT_LIMIT, HOST_MAX_ID_CHARS
@@ -32,6 +37,10 @@ class _FakeGatewayHandler(socketserver.BaseRequestHandler):
                     zone_id=self.server.zone_id,
                 )
             elif kind == "snapshot":
+                self.server.snapshot_requests += 1
+                self.server.snapshot_started.set()
+                if self.server.snapshot_delay:
+                    time.sleep(self.server.snapshot_delay)
                 response = gateway_message(
                     "snapshot",
                     session_id="session-1",
@@ -107,6 +116,9 @@ class _FakeGateway(socketserver.ThreadingTCPServer):
         self.world_revision = None
         self.receipts = []
         self.input_fences = []
+        self.snapshot_requests = 0
+        self.snapshot_delay = 0.0
+        self.snapshot_started = threading.Event()
 
 
 class HostVerticalTests(unittest.TestCase):
@@ -195,12 +207,21 @@ class HostVerticalTests(unittest.TestCase):
             self.gateway.world_revision = 9
             self.gateway.receipts = [{"action_id": "transfer.1", "status": "applied"}]
 
-            state = client.state()
-            self.assertEqual(state["session"]["zone_id"], "laboratory")
+            deadline = time.monotonic() + 1.0
+            while True:
+                state = client.state()
+                if state["session"]["zone_id"] == "laboratory":
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail(f"observer did not publish updated state: {state}")
+                time.sleep(0.01)
             self.assertEqual(state["session"]["controller_generation"], 4)
             self.assertEqual(state["observation"]["world_epoch"], "epoch-new")
             self.assertEqual(state["controller"]["generation"], 4)
             self.assertEqual(state["receipts"][0]["action_id"], "transfer.1")
+            self.assertEqual(
+                state["freshness"]["source"], "authoritative_observer_cache"
+            )
 
             client.motor(0.25)
             self.assertEqual(
@@ -213,6 +234,80 @@ class HostVerticalTests(unittest.TestCase):
             self.assertEqual(transfers[0]["target_zone"], "laboratory")
         finally:
             client.close()
+
+    def test_state_reads_use_cache_without_new_gateway_snapshot(self):
+        client = self.client("cache-reader")
+        try:
+            client.login("player1")
+            self.host._stop_observer()
+            baseline = self.gateway.snapshot_requests
+            first = client.state()
+            second = client.state()
+            self.assertEqual(self.gateway.snapshot_requests, baseline)
+            self.assertEqual(
+                first["snapshot"]["world_tick"], second["snapshot"]["world_tick"]
+            )
+            self.assertIn("freshness", first)
+        finally:
+            client.close()
+
+    def test_slow_observer_does_not_block_input_command_lane(self):
+        client = self.client("realtime")
+        try:
+            client.login("player1")
+            self.gateway.snapshot_started.clear()
+            self.gateway.snapshot_delay = 0.35
+            self.assertTrue(self.gateway.snapshot_started.wait(timeout=1.0))
+            started = time.monotonic()
+            response = client.input(1)
+            elapsed = time.monotonic() - started
+            self.assertEqual(response["sequence"], 1)
+            self.assertLess(elapsed, 0.2)
+        finally:
+            self.gateway.snapshot_delay = 0.0
+            client.close()
+
+    def test_manual_recorder_does_not_add_snapshot_round_trips_to_input(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {"DIRECTOR_ESCORT_RECORD": "1"}, clear=False
+        ):
+            gate = Path(directory) / "director-manual.json"
+            gate.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "escort_id": "escort.test",
+                        "day_id": "day.1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            host = HostService(
+                host="127.0.0.1",
+                port=0,
+                gateway_host="127.0.0.1",
+                gateway_port=self.gateway.server_address[1],
+                manual_gate_path=str(gate),
+                state_observer_hz=0,
+            )
+            thread = threading.Thread(target=host.serve_forever, daemon=True)
+            thread.start()
+            client = HostClient(
+                "browser",
+                host=host.address[0],
+                port=host.address[1],
+                timeout=1.0,
+            )
+            try:
+                client.login("player1")
+                baseline = self.gateway.snapshot_requests
+                lease = client.control_acquire(transfer=True)["lease"]["lease_id"]
+                client.input(1, lease_id=lease)
+                self.assertEqual(self.gateway.snapshot_requests, baseline)
+            finally:
+                client.close()
+                host.shutdown()
+                thread.join(timeout=1)
 
     def test_event_history_is_memory_bounded_and_page_bounded(self):
         client = self.client("cli")

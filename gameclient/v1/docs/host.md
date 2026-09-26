@@ -24,19 +24,20 @@ Many local Clients may attach to that same Host simultaneously.
 The Host is the only GameClient component allowed to own GameServer-facing
 runtime state. As game functions move behind the Host, it owns:
 
-- the GameServer Gateway connection;
+- separate long-lived GameServer Gateway connections for commands and observation;
 - login/session lifecycle;
 - monotonic gameplay command sequencing;
-- reading current server state (v1 uses synchronous Gateway requests, not a cache);
+- a bounded latest authoritative state cache refreshed by an observer loop;
 - the ordered command/event stream;
 - state and paginated events available to all attached Clients;
 - serialization of simultaneous commands from different Clients.
 
 Clients do not allocate GameServer command sequence numbers.
 
-The upstream Gateway connection is long-lived and reused across requests.
-After an I/O failure Host discards the socket; it does not silently replay an
-ambiguous mutation. The next explicit request may reconnect.
+The command and observer Gateway connections are long-lived and independent.
+After an I/O failure Host discards the affected socket; it does not silently
+replay an ambiguous mutation. The next explicit command may reconnect, while
+observer failure only makes the cached state stale until observation recovers.
 
 ## Shared control
 
@@ -61,7 +62,20 @@ or disconnected Client must not stall the Host.
 ```text
 GameServer does not wait for GameClient Host.
 GameClient Host does not wait for Clients.
+Host command lane does not wait for the observer lane.
 ```
+
+## Authoritative state observation
+
+Host refreshes one **latest-state cache** from GameServer on a dedicated
+observer connection at a bounded cadence (25 Hz by default). Client `state`
+reads return this cache with freshness metadata; they do not synchronously issue
+a new Gateway snapshot request.
+
+The cache is observational only. Coordinates, velocity, zone, controller
+generation and world epoch remain GameServer-owned. A stale or not-yet-ready
+cache cannot invent state. Zone/controller fences are updated only from
+authoritative observations, and a new session clears the prior cache.
 
 ## Continuous actuator transport
 

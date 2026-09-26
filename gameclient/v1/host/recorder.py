@@ -3,10 +3,14 @@
 Recording is disabled unless DIRECTOR_ESCORT_RECORD=1. These records are evidence
 of human commands and observed application only; they are never fed to trainers,
 optimizers, BEST selection, or certification in this patch.
+
+Persistence is deliberately asynchronous: telemetry must never insert filesystem
+fsync latency into the realtime actuator command path.
 """
 from __future__ import annotations
 
 from collections import deque
+import copy
 import json
 import os
 from pathlib import Path
@@ -29,10 +33,19 @@ class ManualInputRecorder:
         self.recording_id = (
             "scripted_escort_demo." + uuid.uuid4().hex if self.enabled else None
         )
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
         self._rows = deque(maxlen=self.limit)
+        self._dirty = False
+        self._closed = False
+        self._worker: threading.Thread | None = None
         if self.enabled:
             self._load()
+            self._worker = threading.Thread(
+                target=self._persist_loop,
+                name="director-input-recorder",
+                daemon=True,
+            )
+            self._worker.start()
 
     def _load(self):
         if not self.path.is_file():
@@ -50,15 +63,17 @@ class ManualInputRecorder:
         if isinstance(prior, str) and prior:
             self.recording_id = prior
 
-    def _persist(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        value = {
+    def _payload_locked(self) -> dict[str, Any]:
+        return {
             "version": self.VERSION,
             "recording_id": self.recording_id,
             "kind": "scripted_escort_demo",
             "optimizer_enabled": False,
-            "events": list(self._rows),
+            "events": copy.deepcopy(list(self._rows)),
         }
+
+    def _persist_payload(self, value: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(
             prefix=self.path.name + ".", dir=self.path.parent
         )
@@ -71,6 +86,21 @@ class ManualInputRecorder:
         finally:
             if os.path.exists(name):
                 os.unlink(name)
+
+    def _persist_loop(self) -> None:
+        while True:
+            with self._condition:
+                while not self._dirty and not self._closed:
+                    self._condition.wait()
+                if not self._dirty and self._closed:
+                    return
+                value = self._payload_locked()
+                self._dirty = False
+            try:
+                self._persist_payload(value)
+            except OSError:
+                # Recorder evidence is optional and must not take down gameplay.
+                pass
 
     def record(
         self,
@@ -103,12 +133,15 @@ class ManualInputRecorder:
             "after_observation": after,
             "optimizer_enabled": False,
         }
-        with self._lock:
+        with self._condition:
+            if self._closed:
+                return
             self._rows.append(row)
-            self._persist()
+            self._dirty = True
+            self._condition.notify()
 
     def status(self) -> dict[str, Any]:
-        with self._lock:
+        with self._condition:
             return {
                 "enabled": self.enabled,
                 "recording_id": self.recording_id,
@@ -117,6 +150,17 @@ class ManualInputRecorder:
                 "limit": self.limit,
                 "optimizer_enabled": False,
             }
+
+    def close(self) -> None:
+        if not self.enabled:
+            return
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._condition.notify_all()
+        if self._worker is not None and self._worker.is_alive():
+            self._worker.join(timeout=2.0)
 
 
 __all__ = ["ManualInputRecorder"]

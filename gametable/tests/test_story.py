@@ -408,6 +408,7 @@ class ManualControlTests(unittest.TestCase):
                     before={"x": index},
                     after={"x": index + 1},
                 )
+            recorder.close()
             payload = json.loads(path.read_text())
             self.assertEqual(len(payload["events"]), 32)
             self.assertFalse(payload["optimizer_enabled"])
