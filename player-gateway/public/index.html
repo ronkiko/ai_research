@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Player Gateway</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <strong>Player Gateway</strong>
+        <span id="connection">connecting…</span>
+      </div>
+      <div id="world-meta">waiting for authoritative frame</div>
+    </header>
+    <canvas id="world" width="1200" height="360" aria-label="Authoritative game world"></canvas>
+    <section class="controls">
+      <span>Human control:</span>
+      <kbd>←</kbd><kbd>→</kbd>
+      <span id="control">not acquired</span>
+    </section>
+    <pre id="status"></pre>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
