@@ -120,6 +120,16 @@
    освобождает Director lease; key-up в поле также освобождает старое движение,
    не перехватывая cursor navigation. GUI placeholders для embodied entities
    исправлены на P/D вместо '?'.
+3. Повторный проход по A1 обнаружил, что migration manifest содержал канонический
+   binding Юки, Gateway его проверял, но сам GameTable save не закреплял эту
+   identity. Теперь SQLite сохраняет character/embodiment/entity/player/controller
+   binding и отказывается открывать save с другой identity. Координаты и zone в
+   GameTable по-прежнему не сохраняются как authority.
+4. Повторный проход по A7 обнаружил, что verified SkillBinding проверял hash
+   Spine и Motor package, но при повторном mount не сверял весь контракт.
+   Теперь mount повторно проверяет embodiment, Motor certificate/hash, Spine
+   checkpoint/hash, sensor/socket/body/physics hashes; stale/incompatible skill
+   не становится production controller.
 
 Добавлен `./gametable/op/acceptance.sh --automated` и отдельный CI workflow
 `Embodied VN acceptance`. Gate повторно проверяет A1–A11 на детерминированном
@@ -131,5 +141,7 @@ story fences.
 `./gametable/op/acceptance.sh --live` запускает существующий live OpenCode smoke,
 но после него намеренно возвращает BLOCKED до отдельного fresh Motor+Spine
 research run и ручных visual/escort сценариев. Unit/CI не маскируются под
-сходимость обучения или человеческое наблюдение. Полная матрица и команды
-зафиксированы в `docs/reports/embodied-vn-acceptance.md`.
+сходимость обучения или человеческое наблюдение. Финальный hardening также
+добавляет regressions для persistent identity и SkillBinding compatibility.
+Полная матрица и команды зафиксированы в
+`docs/reports/embodied-vn-acceptance.md`.
