@@ -86,6 +86,16 @@ class EmbodiedWorldService:
                 motor_x=request.get("motor_x"),
             )
             return message("action", receipt=receipt)
+        if kind == "day_start":
+            receipt = self.runtime.submit_day_start(
+                request_id=str(request.get("request_id", "")),
+                entity_id=str(request.get("entity_id", "")),
+                day_start_id=str(request.get("day_start_id", "")),
+                zone_id=str(request.get("zone_id", "hallway")),
+                spawn_id=str(request.get("spawn_id", "yuki_day_start")),
+                privileged=request.get("capability") == "story_day_start",
+            )
+            return message("action", receipt=receipt)
         if kind == "setup_reset":
             receipt = self.runtime.submit_setup_reset(
                 request_id=str(request.get("request_id", "")),

@@ -61,3 +61,19 @@ Run: `./gametable/op/check.sh`.
   `./organism/op/organism.sh`.
 - Do not reintroduce `game_v1` or `gamelab_v1` into the active character
   config, manuals or CI dependency path.
+
+## First-day story / Director escort
+
+- `story_flow` — durable explicit story state, separate from social stats.
+- 300-second intro uses connected VN presence, not world ticks or reducer minutes.
+- Escort consent must reference the published offer_id; silence/arrows/stats are
+  never consent.
+- Director is a separate actor/session/controller and may be driven only through
+  the fenced Director Host after manual gate opens.
+- `scripted_escort` is an explicit non-learned temporary controller. Never
+  report it as a Spine skill, TRAIN/VERIFY success, or certificate.
+- Escort, navigation and learning share Yuki's BodyLease.
+- Sleep/day-start placement is an idempotent story montage action with
+  learned_success=false; never move Director as a side effect.
+- Restart must release effort and reconcile; never auto-resume an escort from a
+  stale leader/manual-control observation.

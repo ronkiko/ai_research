@@ -8,3 +8,9 @@
 .vn-copy{min-width:0}.vn-speaker{font-size:10px;font-weight:800;letter-spacing:1.8px;color:var(--accent)}.vn-copy p{margin:8px 0 0;font:19px/1.55 Georgia,serif;white-space:pre-wrap;overflow-wrap:anywhere}
 .stage[data-frame-state="stale"] .world-canvas{filter:saturate(.45) brightness(.9)}
 @media(max-width:850px){.stage{min-height:380px;height:380px;border-right:0;border-bottom:1px solid var(--line)}.world-canvas{min-height:380px;height:380px}.world-head{top:16px;left:18px;right:18px}.world-head b{font-size:18px}.world-head small{font-size:8px}.vn-window{left:3%;right:3%;bottom:3%;min-height:110px;padding:12px 14px;gap:12px}.vn-portrait{width:54px;height:64px;flex-basis:54px;font-size:24px}.vn-copy p{font-size:15px;line-height:1.4}}
+
+.story-status{position:absolute;z-index:7;top:86px;left:50%;transform:translateX(-50%);font:600 11px system-ui;color:#fff;background:#253c43cc;border-radius:999px;padding:7px 12px;min-height:0}
+.story-status:empty{display:none}
+.escort-choices{display:flex;gap:7px;margin:9px 0}
+.escort-choices button{border:1px solid #b8c8c3;background:#f9fbf7;color:#294147;border-radius:7px;padding:8px 10px;font:600 11px system-ui;cursor:pointer}
+.escort-choices button:first-child{background:#3e6e70;color:white;border-color:#3e6e70}

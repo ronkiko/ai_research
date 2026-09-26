@@ -17,6 +17,7 @@ class GameGui:
         self.root.geometry("920x250")
         self.status = tk.StringVar(value="Host: connecting")
         self.info = tk.StringVar(value="")
+        self.lease_id: str | None = None
         self.canvas = tk.Canvas(root, height=90, background="white")
         self.canvas.pack(fill="x", padx=20, pady=(20, 8))
         ttk.Label(root, textvariable=self.status).pack()
@@ -40,7 +41,10 @@ class GameGui:
 
     def move(self, move_x: int) -> None:
         try:
-            response = self.client.input(move_x)
+            if self.player_id == "director1" and self.lease_id is None:
+                lease = self.client.control_acquire(transfer=True)["lease"]
+                self.lease_id = lease["lease_id"]
+            response = self.client.input(move_x, lease_id=self.lease_id)
             self.info.set(
                 f"command from GUI: move={move_x} sequence={response.get('sequence')}"
             )
@@ -80,6 +84,12 @@ class GameGui:
             self.canvas.create_text(sx, y - 24, text=f"x={x:.1f}")
 
     def close(self) -> None:
+        if self.lease_id is not None:
+            try:
+                self.client.control_release(self.lease_id)
+            except HostClientError:
+                pass
+            self.lease_id = None
         self.client.close()
         self.root.destroy()
 

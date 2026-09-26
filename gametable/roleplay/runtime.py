@@ -31,6 +31,7 @@ class Runtime:
         self.actions = actions or external or ActionExecutor()
         self.lock = threading.Lock()
         self.thread = None
+        self.story = None
 
     def emit(self, name, event_id, revision, **payload):
         self.events(name, {"event_id": event_id, "revision": revision, **payload})
@@ -39,11 +40,20 @@ class Runtime:
         self.store.progress(event_id, stage, payload)
         self.emit("turn.stage", event_id, revision, stage=stage)
 
+    def busy(self):
+        with self.lock:
+            return bool(self.thread and self.thread.is_alive())
+
+    def attach_story(self, story):
+        self.story = story
+
     def submit(self, event):
         with self.lock:
             if self.thread and self.thread.is_alive() and not self.store.get(event["id"]):
                 raise ValueError("Дождись завершения текущего хода")
             if self.store.begin(event):
+                if self.story is not None:
+                    self.story.note_director_message(event)
                 self.emit(
                     "turn.started", event["id"], self.store.state()["revision"],
                     stage="Оценки сердца и головы",
@@ -53,6 +63,115 @@ class Runtime:
                 )
                 self.thread.start()
         return self.store.get(event["id"])
+
+    def submit_story_offer(self, offer_id):
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return False
+            story = self.store.story_state()
+            intro = story.get("intro") or {}
+            if (
+                intro.get("offer_id") != offer_id
+                or intro.get("offer_due") is not True
+                or intro.get("offer_published") is True
+            ):
+                return False
+            self.thread = threading.Thread(
+                target=self._run_story_offer,
+                args=(offer_id,),
+                daemon=True,
+                name=f"story-offer-{offer_id}",
+            )
+            self.thread.start()
+            return True
+
+    def _run_story_offer(self, offer_id):
+        try:
+            story = self.store.story_state()
+            intro = story.get("intro") or {}
+            if (
+                intro.get("offer_id") != offer_id
+                or intro.get("offer_published") is True
+            ):
+                return
+            state = self.store.state()
+            world = self.store.latest_world_observation()
+            parent = self.backend.create("GameTable story offer " + offer_id)
+            response = self.backend.complete(
+                parent,
+                "yuki",
+                prompts.escort_offer(
+                    offer_id, state, world, self.store.dialogue()
+                ),
+            )
+            draft = parse_json(response["text"])
+            if (
+                not isinstance(draft, dict)
+                or set(draft) != {"offer_id", "text"}
+                or draft.get("offer_id") != offer_id
+                or not isinstance(draft.get("text"), str)
+                or not 1 <= len(draft["text"].strip()) <= 1600
+            ):
+                raise InvalidReport("Неверная сюжетная просьба Юки")
+            text = draft["text"].strip()
+            review_response = self.backend.complete(
+                parent,
+                "yuki-head",
+                prompts.escort_offer_review(offer_id, state, world, draft),
+            )
+            verdict = parse_json(review_response["text"])
+            if (
+                not isinstance(verdict, dict)
+                or set(verdict) != {"offer_id", "ok", "reason"}
+                or verdict.get("offer_id") != offer_id
+                or type(verdict.get("ok")) is not bool
+                or not isinstance(verdict.get("reason"), str)
+            ):
+                raise InvalidReport("Неверная проверка сюжетной просьбы")
+            if not verdict["ok"]:
+                raise InvalidReport(verdict["reason"][:700])
+
+            self.store.publish_story_message(
+                f"dialogue.{offer_id}.yuki",
+                "character.yuki",
+                text,
+                turn_id=f"story.{offer_id}",
+            )
+            current = self.store.story_state()
+            current_intro = current["intro"]
+            if current_intro.get("offer_id") != offer_id:
+                return
+            current_intro.update(
+                phase="escort_offer_published",
+                offer_published=True,
+                offer_text=text,
+            )
+            current["intro"] = current_intro
+            self.store.set_story_state(
+                current,
+                expected_revision=current.get("story_revision"),
+            )
+            self.events("story.offer_published", {
+                "offer_id": offer_id,
+                "day_id": current.get("day_id"),
+            })
+        except Exception as exc:
+            try:
+                current = self.store.story_state()
+                intro = current.get("intro") or {}
+                if intro.get("offer_id") == offer_id and not intro.get("offer_published"):
+                    intro["offer_attempts"] = int(intro.get("offer_attempts", 0)) + 1
+                    intro["last_error"] = f"{type(exc).__name__}: {exc}"[:500]
+                    current["intro"] = intro
+                    self.store.set_story_state(
+                        current,
+                        expected_revision=current.get("story_revision"),
+                    )
+            except Exception:
+                pass
+            self.log(f"story offer {offer_id}: {exc}", "ERROR")
+        finally:
+            self.backend.close_sessions()
 
     def appraise(self, parent, event, before, data):
         requests = {role: prompts.appraisal(role, data) for role in ("heart", "head")}
@@ -142,6 +261,32 @@ class Runtime:
                     "status": updated["status"],
                 })
         return changed
+
+    def cancel_active_actions(self, reason="story_boundary"):
+        results = []
+        for record in self.store.active_actions():
+            action_id = record.get("action_id")
+            if not action_id:
+                continue
+            request_id = (
+                f"cancel.{reason}.{record['proposal_id']}"
+            )[:120]
+            outcome = self.actions.cancel(action_id, request_id)
+            observed = {
+                "action_id": action_id,
+                "status": (
+                    "cancelled"
+                    if outcome.get("accepted") and not outcome.get("uncertain")
+                    else record.get("status", "uncertain")
+                ),
+                "uncertain": bool(outcome.get("uncertain")),
+                "result": copy.deepcopy(outcome),
+            }
+            updated = self.store.record_action_result(
+                record["proposal_id"], observed
+            )
+            results.append(updated)
+        return results
 
     def start_self_action(self, proposal, event_id=None):
         """Internal event/idle hook; proposal is validated before any side effect."""
@@ -292,6 +437,8 @@ class Runtime:
                 action_count=len(action_results),
             )
             self.emit("turn.completed", event["id"], after["revision"])
+            if self.story is not None:
+                self.story.on_turn_completed(event, audit)
         except Exception as exc:
             self.log(f"ход {event['id']}: {exc}", "ERROR")
             try:

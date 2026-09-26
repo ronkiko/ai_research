@@ -288,6 +288,33 @@ class EmbodiedWorldRuntime:
         with self._lock:
             return self._reserve(request_id, "input", payload)
 
+    def submit_day_start(
+        self,
+        *,
+        request_id: str,
+        entity_id: str,
+        day_start_id: str,
+        zone_id: str = "hallway",
+        spawn_id: str = "yuki_day_start",
+        privileged: bool = False,
+    ) -> dict[str, Any]:
+        if not privileged:
+            raise ContractError("capability_denied", "day start requires story authority")
+        if zone_id != "hallway" or spawn_id != "yuki_day_start":
+            raise ContractError("capability_denied", "day start is fixed to hallway EXIT")
+        if not isinstance(day_start_id, str) or not day_start_id:
+            raise ProtocolError("day_start_id is required")
+        x = self._spawn(zone_id, spawn_id)
+        payload = {
+            "entity_id": entity_id,
+            "day_start_id": day_start_id,
+            "zone_id": zone_id,
+            "spawn_id": spawn_id,
+            "x": x,
+        }
+        with self._lock:
+            return self._reserve(request_id, "day_start", payload)
+
     def submit_setup_reset(
         self,
         *,
@@ -438,6 +465,30 @@ class EmbodiedWorldRuntime:
                 source_zone=entity.zone_id, target_zone=entity.zone_id,
                 outcome={"sequence": entity.last_sequence, "motor_x": entity.motor_x,
                          "controller_generation": entity.controller_generation},
+            )
+
+        if command.kind == "day_start":
+            source_zone = entity.zone_id
+            x = float(payload["x"])
+            entity.zone_id = payload["zone_id"]
+            entity.x = x
+            entity.vx = 0.0
+            entity.motor_x = 0.0
+            entity.controller_generation += 1
+            entity.last_input_tick = self.world_tick
+            entity.control_state = "day_start"
+            return self._finish_request(
+                command, status="applied", reason_code="ok",
+                source_zone=source_zone, target_zone=entity.zone_id,
+                outcome={
+                    "day_start_id": payload["day_start_id"],
+                    "spawn_id": payload["spawn_id"],
+                    "x": x,
+                    "vx": 0.0,
+                    "motor_x": 0.0,
+                    "controller_generation": entity.controller_generation,
+                    "learned_success": False,
+                },
             )
 
         if command.kind == "setup_reset":

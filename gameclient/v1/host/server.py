@@ -5,6 +5,8 @@ import argparse
 from collections import deque
 import json
 import math
+import os
+from pathlib import Path
 import signal
 import socketserver
 import threading
@@ -23,6 +25,8 @@ from .config import (
     HOST_PROTOCOL_VERSION,
 )
 from .protocol import HostProtocolError, LineReader, encode_line, message
+from .manual import ManualControlError, ManualControlGate
+from .recorder import ManualInputRecorder
 from .upstream import GatewayConnection, GatewayConnectionError
 
 
@@ -39,12 +43,25 @@ class HostService:
         gateway_host: str = GATEWAY_HOST,
         gateway_port: int = GATEWAY_PORT,
         gateway_timeout: float = DEFAULT_TIMEOUT,
+        manual_gate_path: str | None = None,
     ) -> None:
         if host not in HOST_ALLOWED_BINDS:
             raise ValueError("GameClient Host v1 must bind to loopback only")
         self.gateway_host = gateway_host
         self.gateway_port = gateway_port
         self.gateway = GatewayConnection(gateway_host, gateway_port, gateway_timeout)
+        self.manual_gate = (
+            ManualControlGate(manual_gate_path) if manual_gate_path else None
+        )
+        self.manual_recorder = (
+            ManualInputRecorder(
+                os.environ.get(
+                    "DIRECTOR_ESCORT_RECORD_PATH",
+                    str(Path(manual_gate_path).with_name("director-input-recording.json")),
+                )
+            )
+            if manual_gate_path else None
+        )
         self.server = _HostTcpServer((host, port), _HostRequestHandler)
         self.server.service = self  # type: ignore[attr-defined]
         self._state_lock = threading.RLock()
@@ -105,6 +122,13 @@ class HostService:
                 gameplay_ready=True,
                 logged_in=player_id is not None,
                 player_id=player_id,
+                manual_control=(
+                    self.manual_gate.status() if self.manual_gate is not None else None
+                ),
+                manual_recording=(
+                    self.manual_recorder.status()
+                    if self.manual_recorder is not None else None
+                ),
             )
         if kind == "describe":
             return message(
@@ -114,7 +138,14 @@ class HostService:
                 role_to_clients="server",
                 host_protocol_version=HOST_PROTOCOL_VERSION,
                 gameplay_ready=True,
-                capabilities=["players", "login", "session", "state", "input", "motor", "training_reset", "events", "logout"],
+                capabilities=[
+                    "players", "login", "session", "state", "input", "motor",
+                    "training_reset", "events", "logout",
+                    *(
+                        ["control_acquire", "control_release"]
+                        if self.manual_gate is not None else []
+                    ),
+                ],
                 upstream={
                     "entity": "GameServer Gateway",
                     "host": self.gateway_host,
@@ -137,6 +168,10 @@ class HostService:
             return message("session", session=self._session_copy())
         if kind == "state":
             return self._state()
+        if kind == "control_acquire":
+            return self._control_acquire(request)
+        if kind == "control_release":
+            return self._control_release(request)
         if kind == "input":
             return self._input(request)
         if kind == "motor":
@@ -270,7 +305,10 @@ class HostService:
         move_x = request.get("move_x")
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise HostProtocolError("move_x must be -1, 0, or 1")
-        return self._submit_motor(client_id, float(move_x), move_x=move_x)
+        return self._submit_motor(
+            client_id, float(move_x), move_x=move_x,
+            lease_id=request.get("lease_id"),
+        )
 
     def _motor(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)
@@ -280,7 +318,9 @@ class HostService:
         motor_x = float(value)
         if not math.isfinite(motor_x) or not -1.0 <= motor_x <= 1.0:
             raise HostProtocolError("motor_x must be finite within [-1,1]")
-        return self._submit_motor(client_id, motor_x)
+        return self._submit_motor(
+            client_id, motor_x, lease_id=request.get("lease_id")
+        )
 
     def _submit_motor(
         self,
@@ -288,9 +328,20 @@ class HostService:
         motor_x: float,
         *,
         move_x: int | None = None,
+        lease_id: object = None,
+        bypass_manual_gate: bool = False,
     ) -> dict[str, Any]:
+        manual_scope = None
+        if self.manual_gate is not None and not bypass_manual_gate:
+            manual_scope = self.manual_gate.validate(client_id, lease_id)
         with self._operation_lock:
             session = self._session_copy()
+            before_observation = None
+            if self.manual_recorder is not None and self.manual_recorder.enabled:
+                try:
+                    before_observation = self._state_locked().get("observation")
+                except Exception:
+                    before_observation = None
             with self._state_lock:
                 self._sequence += 1
                 sequence = self._sequence
@@ -316,6 +367,24 @@ class HostService:
             if move_x is not None:
                 fields["move_x"] = move_x
             event = self._append_event("input", **fields)
+            if self.manual_recorder is not None and self.manual_recorder.enabled:
+                try:
+                    after_observation = self._state_locked().get("observation")
+                except Exception:
+                    after_observation = None
+                self.manual_recorder.record(
+                    scope=manual_scope,
+                    client_id=client_id,
+                    source="manual_host",
+                    command={
+                        "move_x": move_x,
+                        "motor_x": motor_x,
+                    },
+                    sequence=sequence,
+                    receipt=response.get("receipt"),
+                    before=before_observation,
+                    after=after_observation,
+                )
             return message(
                 "motor" if move_x is None else "input",
                 sequence=sequence,
@@ -323,6 +392,52 @@ class HostService:
                 **({"move_x": move_x} if move_x is not None else {}),
                 event=event,
             )
+
+    def _control_acquire(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.manual_gate is None:
+            raise HostStateError("this Host has no manual control gate")
+        client_id = self._client_id(request)
+        lease = self.manual_gate.acquire(
+            client_id, transfer=request.get("transfer") is True
+        )
+        event = self._append_event(
+            "control_acquire",
+            client_id=client_id,
+            lease_generation=lease["generation"],
+            escort_id=lease.get("escort_id"),
+        )
+        return message("control_acquire", lease=lease, event=event)
+
+    def _control_release(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.manual_gate is None:
+            raise HostStateError("this Host has no manual control gate")
+        client_id = self._client_id(request)
+        lease_id = request.get("lease_id")
+        self.manual_gate.validate(client_id, lease_id)
+        try:
+            self._submit_motor(
+                client_id, 0.0, lease_id=lease_id, bypass_manual_gate=True
+            )
+        finally:
+            released = self.manual_gate.release(client_id, lease_id)
+        event = self._append_event(
+            "control_release",
+            client_id=client_id,
+            lease_generation=released["generation"],
+        )
+        return message("control_release", lease=released, event=event)
+
+    def disconnect_client(self, client_id: str | None) -> None:
+        if self.manual_gate is None or not client_id:
+            return
+        if not self.manual_gate.disconnect(client_id):
+            return
+        try:
+            self._submit_motor(
+                client_id, 0.0, bypass_manual_gate=True
+            )
+        except Exception:
+            pass
 
     def _reset(self, request: dict[str, Any]) -> dict[str, Any]:
         client_id = self._client_id(request)
@@ -456,18 +571,28 @@ class _HostRequestHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         reader = LineReader()
         service: HostService = self.server.service  # type: ignore[attr-defined]
-        while True:
-            try:
-                request = reader.recv(self.request)
-                response = service.dispatch(request)
-            except EOFError:
-                return
-            except (HostProtocolError, HostStateError, GatewayConnectionError, ValueError, KeyError) as exc:
-                response = message("error", error=str(exc))
-            try:
-                self.request.sendall(encode_line(response))
-            except OSError:
-                return
+        last_client_id = None
+        try:
+            while True:
+                try:
+                    request = reader.recv(self.request)
+                    value = request.get("client_id")
+                    if isinstance(value, str):
+                        last_client_id = value
+                    response = service.dispatch(request)
+                except EOFError:
+                    return
+                except (
+                    HostProtocolError, HostStateError, ManualControlError,
+                    GatewayConnectionError, ValueError, KeyError,
+                ) as exc:
+                    response = message("error", error=str(exc))
+                try:
+                    self.request.sendall(encode_line(response))
+                except OSError:
+                    return
+        finally:
+            service.disconnect_client(last_client_id)
 
 
 class _HostTcpServer(socketserver.ThreadingTCPServer):
@@ -515,6 +640,10 @@ def main() -> int:
     parser.add_argument("--gateway-host", default=GATEWAY_HOST)
     parser.add_argument("--gateway-port", type=int, default=GATEWAY_PORT)
     parser.add_argument("--gateway-timeout", type=float, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--manual-gate",
+        help="JSON gate file enabling fenced human control for this Host",
+    )
     args = parser.parse_args()
 
     service = HostService(
@@ -523,6 +652,7 @@ def main() -> int:
         gateway_host=args.gateway_host,
         gateway_port=args.gateway_port,
         gateway_timeout=args.gateway_timeout,
+        manual_gate_path=args.manual_gate,
     )
     stopped = threading.Event()
 

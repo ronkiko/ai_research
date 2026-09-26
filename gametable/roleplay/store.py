@@ -19,6 +19,43 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
+def default_story_flow():
+    return {
+        "version": 1,
+        "story_revision": 0,
+        "day_id": 1,
+        "day_phase": "awake",
+        "day_start_id": "day-start.1.initial",
+        "day_start_placement": {
+            "status": "initial",
+            "zone_id": "hallway",
+            "spawn_id": "yuki_day_start",
+            "receipt": None,
+        },
+        "intro": {
+            "phase": "intro_dialogue",
+            "timer_started": False,
+            "elapsed_active_seconds": 0.0,
+            "offer_id": "escort-offer.day1",
+            "offer_due": False,
+            "offer_published": False,
+            "offer_text": None,
+            "offer_attempts": 0,
+            "response": None,
+        },
+        "escort": {
+            "status": "idle",
+            "job_id": None,
+            "controller_mode": None,
+            "phase": None,
+            "reason": None,
+            "offer_id": None,
+            "recording_id": None,
+        },
+        "updated_at": time.time(),
+    }
+
+
 class Store:
     def __init__(self, path, rules):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +104,10 @@ class Store:
           payload TEXT NOT NULL,
           observed REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS story_flow (
+          id INTEGER PRIMARY KEY CHECK(id=1),
+          value TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_action_outbox_status
           ON action_outbox(status, created);
         CREATE INDEX IF NOT EXISTS idx_world_inbox_kind
@@ -76,6 +117,10 @@ class Store:
             self.db.execute(
                 "INSERT OR IGNORE INTO save VALUES (1,?)",
                 (encode(initial_state(rules)),),
+            )
+            self.db.execute(
+                "INSERT OR IGNORE INTO story_flow VALUES (1,?)",
+                (encode(default_story_flow()),),
             )
             # Character/dialogue work is never auto-replayed after a crash.
             self.db.execute(
@@ -103,10 +148,102 @@ class Store:
                 ),
             )
         self._backfill_dialogue()
+        self._recover_story_flow()
         if self.state()["rules_hash"] != rules["hash"]:
             raise ValueError(
                 "Сохранение создано с другой версией правил. Запусти --fresh."
             )
+
+    def _recover_story_flow(self):
+        with self.lock, self.db:
+            story = self.story_state()
+            escort = story.get("escort") or {}
+            if escort.get("status") in {
+                "escort_starting", "escort_active", "following_leader",
+                "portal_completion",
+            }:
+                escort.update(
+                    status="reconciling",
+                    phase="reconciling",
+                    reason="server_restarted_manual_resume_required",
+                )
+                story["escort"] = escort
+                story["story_revision"] = int(story.get("story_revision", 0)) + 1
+                story["updated_at"] = time.time()
+                self.db.execute(
+                    "UPDATE story_flow SET value=? WHERE id=1",
+                    (encode(story),),
+                )
+
+    def story_state(self):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT value FROM story_flow WHERE id=1"
+            ).fetchone()
+            if not row:
+                raise ValueError("story_flow is missing")
+            return json.loads(row[0])
+
+    def set_story_state(self, value, *, expected_revision=None):
+        if not isinstance(value, dict) or value.get("version") != 1:
+            raise ValueError("invalid story flow")
+        with self.lock, self.db:
+            current = self.story_state()
+            if (
+                expected_revision is not None
+                and current.get("story_revision") != expected_revision
+            ):
+                raise ValueError("story flow changed concurrently")
+            value = json.loads(encode(value))
+            value["story_revision"] = int(current.get("story_revision", 0)) + 1
+            value["updated_at"] = time.time()
+            self.db.execute(
+                "UPDATE story_flow SET value=? WHERE id=1",
+                (encode(value),),
+            )
+            return json.loads(encode(value))
+
+    def publish_story_message(
+        self, message_id, speaker_id, text, *, turn_id=None
+    ):
+        if not all(
+            isinstance(item, str) and item.strip()
+            for item in (message_id, speaker_id, text)
+        ):
+            raise ValueError("story message fields are required")
+        turn_id = turn_id or message_id
+        with self.lock, self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO dialogue"
+                "(message_id,turn_id,speaker_id,text,published) VALUES(?,?,?,?,?)",
+                (message_id, turn_id, speaker_id, text.strip(), time.time()),
+            )
+
+    def append_story_memory(self, memory):
+        if not isinstance(memory, dict):
+            raise ValueError("story memory must be an object")
+        with self.lock, self.db:
+            if self.db.execute(
+                "SELECT 1 FROM turns WHERE status='running'"
+            ).fetchone():
+                raise ValueError("cannot publish story memory during a running turn")
+            state = self.state()
+            memory_id = memory.get("memory_id")
+            if memory_id and any(
+                item.get("memory_id") == memory_id
+                for item in state.get("memories", [])
+                if isinstance(item, dict)
+            ):
+                return state
+            state["memories"] = (
+                list(state.get("memories", [])) + [json.loads(encode(memory))]
+            )[-24:]
+            state["revision"] = int(state.get("revision", 0)) + 1
+            self.db.execute(
+                "UPDATE save SET value=? WHERE id=1",
+                (encode(state),),
+            )
+            return json.loads(encode(state))
 
     def _backfill_dialogue(self):
         with self.lock, self.db:

@@ -2,8 +2,8 @@
 
 Зависимость: выполненные 02–09. Коммит: `Add daily EXIT arrival and explicit scripted director escort`.
 Цель: A1, A3, A4, A6, A8, A9, A11; явное ограниченное исключение из A2.
-Статус: план. Основание — Директор разрешил временное алгоритмическое следование;
-обучение ходьбе за человеком откладывается до следующего плана после приёмки серии.
+Статус: **реализовано**. Основание — Директор разрешил временное алгоритмическое
+следование; обучение ходьбе за человеком остаётся вне этой серии.
 
 ## Игровой сценарий
 
@@ -235,3 +235,50 @@ labels для Юки: у тел разные состояния и задачи.
 проверки и локальные AGENTS затронутых компонентов, указав узкое разрешённое
 исключение для scripted_escort. Запрет процедурных контроллеров в исследовательском
 TRAIN/VERIFY/RUN остаётся. Патч не реализует обучение следованию за учителем.
+
+## Реализованный результат этапа 10
+
+Первый день имеет durable `story_flow`: Yuki появляется у EXIT (`x=0`),
+Director — отдельной persistent entity у `x=1`. Gateway обслуживает два
+server-side binding через разные Host sessions. Физическое состояние обоих actor
+остаётся в одном `embodied_world_v1`.
+
+Порог знакомства считается backend-ом только при хотя бы одной подключённой
+GameTable event-сессии и после первого принятого сообщения Директора. Две вкладки
+не умножают время; отсутствие UI и downtime между рестартами не считаются.
+Достижение порога создаёт один durable `offer_id`. Yuki формулирует просьбу
+отдельным Narrator turn, fresh Head проверяет явную просьбу и отсутствие
+выдуманного согласия/движения. Неуспешная проверка не отмечает offer published.
+
+Ответ на offer имеет отдельный local authenticated endpoint и exact
+`accept|decline|clarify`. Только accept запускает `scripted_escort` и после
+наблюдаемого старта включает server-side manual gate Директора. Стрелка сама по
+себе не является согласием.
+
+Director Host работает отдельно на port 17701. Browser и Director GUI используют
+тот же Host input protocol. Manual control имеет fencing lease/generation и
+explicit transfer; старый источник не может своим поздним key-up отменить нового
+владельца. До escort gate закрыт. Disconnect/blur/release посылают effort=0
+best-effort, а world watchdog остаётся последним safety fence. Browser не
+перехватывает arrows при вводе текста.
+
+Yuki во время escort управляется отдельным `controller_mode=scripted_escort`.
+Контроллер держит тот же BodyLease, что navigation/TRAIN/VERIFY, читает только
+leader/follower observations, выдаёт bounded effort, обрабатывает reversal и
+после leader portal transfer завершает ограниченный подход к тому же hallway
+portal. Он не присваивает x/vx/zone, не использует learned Spine и не пишет
+training evidence. Arrival фиксируется только когда обе entity физически
+оказались в laboratory. Restart active escort переводит story в reconciling и
+не возобновляет effort автоматически.
+
+После принятого sleep GameTable отменяет активную navigation, освобождает escort
+writer и сохраняет `day_start_id`. World action `day_start` идемпотентно
+размещает только Yuki в `hallway/yuki_day_start`, не меняет world epoch и
+возвращает `learned_success=false`. Director не переносится чужим сном.
+Повтор/restart сверяются по тому же request/receipt.
+
+Опциональный recorder Director Host включается только
+`DIRECTOR_ESCORT_RECORD=1`. Он хранит bounded `scripted_escort_demo` records
+для browser/GUI с command/sequence, applied receipt tick/epoch и before/after
+observation. `optimizer_enabled=false`; recorder не запускает trainer, reward,
+BEST selection или certification.

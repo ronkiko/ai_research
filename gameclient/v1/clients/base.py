@@ -124,27 +124,41 @@ class HostClient:
     def state(self) -> dict[str, Any]:
         return self.connection.request("state", client_id=self.client_id)
 
-    def motor(self, motor_x: float) -> dict[str, Any]:
+    def control_acquire(self, *, transfer: bool = False) -> dict[str, Any]:
+        return self.connection.request(
+            "control_acquire",
+            client_id=self.client_id,
+            transfer=bool(transfer),
+        )
+
+    def control_release(self, lease_id: str) -> dict[str, Any]:
+        if not isinstance(lease_id, str) or not lease_id:
+            raise ValueError("lease_id must be non-empty")
+        return self.connection.request(
+            "control_release",
+            client_id=self.client_id,
+            lease_id=lease_id,
+        )
+
+    def motor(self, motor_x: float, *, lease_id: str | None = None) -> dict[str, Any]:
         if isinstance(motor_x, bool) or not isinstance(motor_x, (int, float)):
             raise ValueError("motor_x must be numeric")
         motor_x = float(motor_x)
         if not math.isfinite(motor_x) or not -1.0 <= motor_x <= 1.0:
             raise ValueError("motor_x must be finite within [-1,1]")
-        return self.connection.request(
-            "motor",
-            client_id=self.client_id,
-            motor_x=motor_x,
-        )
+        fields = {"client_id": self.client_id, "motor_x": motor_x}
+        if lease_id is not None:
+            fields["lease_id"] = lease_id
+        return self.connection.request("motor", **fields)
 
-    def input(self, move_x: int) -> dict[str, Any]:
+    def input(self, move_x: int, *, lease_id: str | None = None) -> dict[str, Any]:
         """Compatibility/manual control: -1/0/+1 maps to full continuous effort."""
         if type(move_x) is not int or move_x not in {-1, 0, 1}:
             raise ValueError("move_x must be -1, 0, or 1")
-        return self.connection.request(
-            "input",
-            client_id=self.client_id,
-            move_x=move_x,
-        )
+        fields = {"client_id": self.client_id, "move_x": move_x}
+        if lease_id is not None:
+            fields["lease_id"] = lease_id
+        return self.connection.request("input", **fields)
 
     def reset(self, x: float = 100.0) -> dict[str, Any]:
         if isinstance(x, bool) or not isinstance(x, (int, float)):

@@ -13,7 +13,8 @@ GameTable — локальная browser visual novel с Юки. После cuto
 ~~~
 
 Launcher делает migration/readiness, поднимает embodied GameServer + Gateway,
-GameClient Host, готовит Organism runtime и запускает GameTable/OpenCode.
+Yuki Host и отдельный Director Host, готовит Organism runtime и запускает
+GameTable/OpenCode.
 Активные MCP персонажа — только `navigation_v1` и `learning_v1`.
 
 ~~~bash
@@ -110,3 +111,26 @@ Heart/Head invariants.
 
 Он не обучает и не двигает тело: проверяет normal chat, pure semantic proposal
 и read-only `learning_v1_describe/skills` boundary.
+
+## Первый день и сопровождение
+
+Новая игра начинается в hallway: Yuki у EXIT (`x=0`), Director рядом
+(`x=1`). После первого сообщения Директора backend считает 300 секунд
+активного подключённого VN-времени. Затем Yuki публикует одну проверенную просьбу
+проводить её в laboratory.
+
+После explicit accept UI переключается в `world_control`:
+- ←/→ двигают только Director;
+- browser и `./gameclient/v1/op/director-gui.sh` используют Director Host
+  на port 17701;
+- server-side manual gate до согласия закрыт;
+- Yuki следует временным `scripted_escort` через BodyLease и physics;
+- каждое тело самостоятельно касается portal и получает свой transfer;
+- escort не создаёт training/VERIFY evidence.
+
+Опциональная демонстрационная телеметрия включается
+`DIRECTOR_ESCORT_RECORD=1`; optimizer всегда выключен.
+
+Accepted sleep создаёт durable next-day placement: только Yuki возвращается к
+EXIT через idempotent story world action. Director сохраняет своё физическое
+место.

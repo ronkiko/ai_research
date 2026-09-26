@@ -1,4 +1,4 @@
-"""Embodied GameServer Gateway used by the post-cutover GameClient Host."""
+"""Embodied GameServer Gateway for Yuki plus the human Director actor."""
 from __future__ import annotations
 
 import argparse
@@ -16,11 +16,18 @@ from ..common.server import JsonRpcServer
 TERMINAL = {"applied", "arrived", "blocked", "failed", "cancelled", "uncertain"}
 
 
-class EmbodiedGatewayService:
-    """Stable Gateway protocol over the authoritative multi-zone world.
+def _binding(prefix: str, defaults: dict[str, str]) -> dict[str, str]:
+    return {
+        key: os.environ.get(f"{prefix}_{key.upper()}", value)
+        for key, value in defaults.items()
+    }
 
-    Logout closes only the transport session. The persistent embodied entity is
-    never despawned by closing a client or OpenCode session.
+
+class EmbodiedGatewayService:
+    """Stable Gateway protocol over one authoritative multi-entity world.
+
+    Each player has one fixed server-side identity binding. Closing a Host or
+    OpenCode session never despawns the persistent world entity.
     """
 
     def __init__(
@@ -32,29 +39,38 @@ class EmbodiedGatewayService:
     ):
         self.host = host
         self.world_port = world_port
-        self.player_id = os.environ.get("EMBODIED_PLAYER_ID", "player1")
-        self.entity_id = os.environ.get("EMBODIED_ENTITY_ID", "entity.yuki")
-        self.embodiment_id = os.environ.get(
-            "EMBODIED_EMBODIMENT_ID", "embodiment.yuki.primary"
-        )
-        self.owner_id = os.environ.get("EMBODIED_OWNER_ID", "character.yuki")
-        self.controller_id = os.environ.get(
-            "EMBODIED_CONTROLLER_ID", "controller.yuki"
-        )
-        self.initial_zone = os.environ.get("EMBODIED_INITIAL_ZONE", "hallway")
-        self.initial_spawn = os.environ.get(
-            "EMBODIED_INITIAL_SPAWN", "yuki_day_start"
-        )
+        yuki = _binding("EMBODIED", {
+            "player_id": "player1",
+            "entity_id": "entity.yuki",
+            "embodiment_id": "embodiment.yuki.primary",
+            "owner_id": "character.yuki",
+            "controller_id": "controller.yuki",
+            "initial_zone": "hallway",
+            "initial_spawn": "yuki_day_start",
+        })
+        director = _binding("DIRECTOR", {
+            "player_id": "director1",
+            "entity_id": "entity.director",
+            "embodiment_id": "embodiment.director.primary",
+            "owner_id": "character.director",
+            "controller_id": "controller.director",
+            "initial_zone": "hallway",
+            "initial_spawn": "director_first_day",
+        })
+        self.bindings = {
+            yuki["player_id"]: yuki,
+            director["player_id"]: director,
+        }
+        if len(self.bindings) != 2:
+            raise ValueError("Yuki and Director player IDs must differ")
+        self.yuki_player_id = yuki["player_id"]
         self.server = JsonRpcServer(host, port, self.dispatch)
         self._sessions: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
     def _world(self, kind: str, **fields: Any) -> dict[str, Any]:
         response = rpc(
-            self.host,
-            self.world_port,
-            message(kind, **fields),
-            timeout=1.0,
+            self.host, self.world_port, message(kind, **fields), timeout=1.0
         )
         if response.get("type") == "error":
             raise ProtocolError(
@@ -77,9 +93,10 @@ class EmbodiedGatewayService:
             raise ProtocolError("embodied world returned invalid snapshot")
         return value
 
-    def _entity(self, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    @staticmethod
+    def _entity(snapshot: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
         for item in snapshot.get("entities", []):
-            if isinstance(item, dict) and item.get("entity_id") == self.entity_id:
+            if isinstance(item, dict) and item.get("entity_id") == entity_id:
                 return item
         return None
 
@@ -95,21 +112,22 @@ class EmbodiedGatewayService:
         raise ProtocolError(f"action {action_id} did not reach terminal receipt")
 
     def _ensure_entity(
-        self,
+        self, binding: dict[str, str]
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         snapshot = self._snapshot()
-        entity = self._entity(snapshot)
+        entity_id = binding["entity_id"]
+        entity = self._entity(snapshot, entity_id)
         if entity is None:
             queued = self._world(
                 "spawn",
-                request_id=f"spawn.{self.entity_id}",
-                entity_id=self.entity_id,
-                embodiment_id=self.embodiment_id,
-                owner_id=self.owner_id,
+                request_id=f"spawn.{entity_id}",
+                entity_id=entity_id,
+                embodiment_id=binding["embodiment_id"],
+                owner_id=binding["owner_id"],
                 entity_kind="character",
-                zone_id=self.initial_zone,
-                spawn_id=self.initial_spawn,
-                controller_id=self.controller_id,
+                zone_id=binding["initial_zone"],
+                spawn_id=binding["initial_spawn"],
+                controller_id=binding["controller_id"],
                 controller_generation=1,
             ).get("receipt")
             if not isinstance(queued, dict):
@@ -120,16 +138,16 @@ class EmbodiedGatewayService:
                     f"embodied spawn failed: {receipt.get('reason_code')}"
                 )
             snapshot = self._snapshot()
-            entity = self._entity(snapshot)
+            entity = self._entity(snapshot, entity_id)
         if entity is None:
             raise ProtocolError("embodied entity is absent after spawn")
         if (
-            entity.get("embodiment_id") != self.embodiment_id
-            or entity.get("owner_id") != self.owner_id
-            or entity.get("controller_id") != self.controller_id
+            entity.get("embodiment_id") != binding["embodiment_id"]
+            or entity.get("owner_id") != binding["owner_id"]
+            or entity.get("controller_id") != binding["controller_id"]
         ):
             raise ProtocolError("persisted embodied identity does not match binding")
-        observation = self._world("observation", entity_id=self.entity_id)
+        observation = self._world("observation", entity_id=entity_id)
         canonical = observation.get("observation")
         controller = observation.get("controller")
         if not isinstance(canonical, dict) or not isinstance(controller, dict):
@@ -147,23 +165,25 @@ class EmbodiedGatewayService:
                 mode="embodied_world_v1",
                 world_id=health.get("world_id"),
                 world_epoch=health.get("world_epoch"),
+                players=sorted(self.bindings),
             )
         if kind == "list_players":
-            return message("players", players=[self.player_id])
+            return message("players", players=sorted(self.bindings))
         if kind == "login":
             player_id = request.get("player_id")
-            if player_id != self.player_id:
+            if not isinstance(player_id, str) or player_id not in self.bindings:
                 raise ProtocolError("unknown player_id")
             with self._lock:
                 for session in self._sessions.values():
                     if session["player_id"] == player_id:
                         raise ProtocolError("player is already logged in")
-            _snapshot, observation, controller = self._ensure_entity()
+            binding = self.bindings[player_id]
+            _snapshot, observation, controller = self._ensure_entity(binding)
             session_id = secrets.token_hex(12)
             session = {
                 "session_id": session_id,
-                "player_id": self.player_id,
-                "entity_id": self.entity_id,
+                "player_id": player_id,
+                "entity_id": binding["entity_id"],
                 "world_id": observation["world_id"],
                 "zone_id": observation["zone_id"],
                 "controller_generation": controller["generation"],
@@ -175,12 +195,14 @@ class EmbodiedGatewayService:
             return message("login_ok", **session)
         if kind == "snapshot":
             session = self._session(request.get("session_id"))
-            snapshot, observation, controller = self._ensure_entity()
+            binding = self.bindings[session["player_id"]]
+            snapshot, observation, controller = self._ensure_entity(binding)
             transfers = snapshot.get("transfers") or []
             receipts = [
                 item["receipt"]
                 for item in transfers[-32:]
-                if isinstance(item, dict) and isinstance(item.get("receipt"), dict)
+                if isinstance(item, dict)
+                and isinstance(item.get("receipt"), dict)
             ]
             with self._lock:
                 current = self._sessions.get(session["session_id"])
@@ -202,6 +224,7 @@ class EmbodiedGatewayService:
             )
         if kind == "input":
             session = self._session(request.get("session_id"))
+            binding = self.bindings[session["player_id"]]
             raw_motor = request.get("motor_x")
             if raw_motor is None:
                 raw_motor = float(request.get("move_x"))
@@ -211,14 +234,14 @@ class EmbodiedGatewayService:
                     f"host.{session['session_id']}."
                     f"input.{request.get('sequence')}"
                 ),
-                entity_id=self.entity_id,
+                entity_id=binding["entity_id"],
                 expected_zone_id=request.get(
                     "expected_zone_id", session["zone_id"]
                 ),
                 expected_world_epoch=request.get(
                     "expected_world_epoch", session["world_epoch"]
                 ),
-                controller_id=self.controller_id,
+                controller_id=binding["controller_id"],
                 controller_generation=request.get(
                     "controller_generation",
                     session["controller_generation"],
@@ -227,6 +250,8 @@ class EmbodiedGatewayService:
                 motor_x=raw_motor,
             )
             receipt = response.get("receipt") or {}
+            if session["player_id"] != self.yuki_player_id and receipt.get("action_id"):
+                receipt = self._wait_receipt(str(receipt["action_id"]))
             return message(
                 "input",
                 command_id=receipt.get("action_id"),
@@ -235,13 +260,16 @@ class EmbodiedGatewayService:
             )
         if kind == "training_reset":
             session = self._session(request.get("session_id"))
+            if session["player_id"] != self.yuki_player_id:
+                raise ProtocolError("training reset is reserved for Yuki's body")
+            binding = self.bindings[session["player_id"]]
             reset_id = secrets.token_hex(8)
             response = self._world(
                 "setup_reset",
                 request_id=(
                     f"host.{session['session_id']}.training-reset.{reset_id}"
                 ),
-                entity_id=self.entity_id,
+                entity_id=binding["entity_id"],
                 episode_id=f"training-reset.{reset_id}",
                 reason="Organism training episode reset",
                 zone_id="training/flat_run",
@@ -265,8 +293,7 @@ class EmbodiedGatewayService:
             )
         if kind == "reset":
             raise ProtocolError(
-                "direct reset is retired in embodied mode; "
-                "use training setup authority"
+                "direct reset is retired in embodied mode; use authorized setup"
             )
         if kind == "logout":
             session = self._session(request.get("session_id"))

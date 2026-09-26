@@ -21,9 +21,9 @@ function renderStats(stats) {
     row.append(caption, bar); container.append(row);
   }
 }
-export function renderView(view) {
+export function renderView(view, story = null) {
   renderStats(view.stats);
-  $('clock').textContent = 'День ' + view.time.day + ' · ' +
+  $('clock').textContent = 'День ' + (story?.day_id || view.time.day) + ' · ' +
     String(view.time.hour).padStart(2, '0') + ':' + String(view.time.minute).padStart(2, '0');
   $('relation').textContent = view.relationship_label;
   $('stage').dataset.presentationMode = view.presentation_mode;

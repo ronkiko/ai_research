@@ -151,3 +151,39 @@ Effect: {json.dumps(effect, ensure_ascii=False)}
 Руководства:
 {manuals}
 """
+
+
+def escort_offer(offer_id, state, world_observation, dialogue):
+    return f"""MODE: STORY_ESCORT_OFFER. Ты озвучиваешь Юки.
+Это утверждённый сюжетный cue первого дня, а не выбор нового решения.
+Сформулируй естественную реплику на русском. В КОНЦЕ реплики Юки должна один раз
+явно попросить Директора проводить её в лабораторию. Не утверждай, что он уже
+согласился, пошёл, двигает персонажа или что Юки научилась следовать. Не начинай
+движение и не описывай arrival. Учитывай предыдущий диалог, но не придумывай
+новых слов Директора.
+Верни только JSON:
+{{"offer_id":"{offer_id}","text":"реплика Юки, заканчивающаяся просьбой проводить её"}}
+Character state:
+{json.dumps(state, ensure_ascii=False)}
+World observation:
+{json.dumps(world_observation, ensure_ascii=False)}
+Dialogue:
+{json.dumps(dialogue[-24:], ensure_ascii=False)}
+"""
+
+
+def escort_offer_review(offer_id, state, world_observation, draft):
+    return f"""MODE: STORY_ESCORT_OFFER_REVIEW. Ты свежая Head.
+Проверь только утверждённую сюжетную просьбу. ok=true допустимо, если реплика:
+1) заканчивается явной просьбой Директору проводить Юки в laboratory;
+2) не выдумывает согласие/действие/реплику Директора;
+3) не утверждает physical movement/arrival;
+4) не утверждает learned follow skill или обучение.
+Верни только JSON {{"offer_id":"{offer_id}","ok":true,"reason":"кратко"}}.
+State:
+{json.dumps(state, ensure_ascii=False)}
+World:
+{json.dumps(world_observation, ensure_ascii=False)}
+Draft:
+{json.dumps(draft, ensure_ascii=False)}
+"""

@@ -82,6 +82,24 @@ class ActionExecutor:
             "result": copy.deepcopy(result),
         }
 
+    def cancel(self, action_id, request_id):
+        if not isinstance(action_id, str) or not action_id:
+            raise ValueError("action_id обязателен")
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("request_id обязателен")
+        try:
+            return copy.deepcopy(
+                self._service().action_cancel(action_id, request_id)
+            )
+        except Exception as exc:
+            return {
+                "action_id": action_id,
+                "request_id": request_id,
+                "accepted": False,
+                "uncertain": True,
+                "error": f"{type(exc).__name__}: {exc}"[:800],
+            }
+
     def poll(self, action_id):
         if not isinstance(action_id, str) or not action_id:
             raise ValueError("action_id обязателен")

@@ -178,3 +178,22 @@ Setup в `training/flat_run` является privileged assisted apparatus acti
 Director authorization и `learned_success=false`. Это не teleport tool модели
 и не доказательство навыка. После этапа 09 active GameTable config использует
 только `navigation_v1 + learning_v1`.
+
+## Stage 10: human Director + scripted escort
+
+The world now contains two explicit character entities: Yuki and Director.
+They have separate player/session/controller identities. Director manual input is
+human-only through a dedicated Host with a fencing lease; it is not an LLM MCP
+capability.
+
+The first-day escort is deliberately a non-learned controller. It acquires the
+same Yuki BodyLease as navigation/learning, outputs bounded effort through normal
+physics, and follows authoritative leader observations until each actor crosses
+the hallway→laboratory portal independently. Its records are labelled
+`scripted_escort` / `scripted_escort_demo` and cannot satisfy training or
+verification contracts.
+
+Day boundaries are explicit story actions. Accepted sleep creates one durable
+`day_start_id`; after writers reconcile, world `day_start` places only Yuki
+at the EXIT spawn with released drive and `learned_success=false`. World epoch,
+Director position, character memories and learned artifacts are preserved.

@@ -15,15 +15,16 @@ import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .engine import load_rules
 from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
-from .store import Store
+from .store import Store, default_story_flow
 from .view import available_intent_ids, project_view
 from graphics import EmbodiedWorldGraphics, FrameHub, public_asset_catalog
 from gametable.migration import active_save_root
+from gametable.story import StoryFlow, StoryFlowError
 
 TABLE = Path(__file__).resolve().parents[1]
 STATIC_FILES = {
@@ -110,10 +111,34 @@ def normalize_turn_body(body, rules, allowed_intents=None):
     return {"id": body["id"], "text": body["text"].strip(), "intent_id": intent_id}
 
 
+class _StaticStory:
+    """Test/embedding fallback. Production main always injects durable StoryFlow."""
+    def snapshot(self):
+        value = default_story_flow()
+        value["ui_sessions"] = 0
+        value["presentation_mode"] = "vn_dialogue"
+        return value
+
+    def presence_open(self, _session_id):
+        pass
+
+    def presence_close(self, _session_id):
+        pass
+
+    def respond(self, **_kwargs):
+        raise StoryFlowError("story flow is not active")
+
+    def director_acquire(self, *_args, **_kwargs):
+        raise StoryFlowError("Director control is not active")
+
+    director_input = director_acquire
+    director_release = director_acquire
+
+
 class Application:
     def __init__(
         self, store, runtime, backend, rules, prompt=None, events=None,
-        graphics=None, frames=None,
+        graphics=None, frames=None, story=None,
     ):
         self.store, self.runtime, self.backend, self.rules = store, runtime, backend, rules
         self.token = secrets.token_urlsafe(32)
@@ -123,6 +148,7 @@ class Application:
             raise ValueError("authoritative graphics source is required")
         self.graphics = graphics
         self.frames = frames or FrameHub()
+        self.story = story or _StaticStory()
 
     def snapshot(self):
         self.runtime.poll_actions()
@@ -150,10 +176,12 @@ class Application:
             "source_world_revision": frame["source_world_revision"],
             "terrain_revision": frame["terrain_revision"],
         }
+        story = self.story.snapshot()
         view = project_view(
             state, self.rules, busy=running is not None,
             stage=running["stage"] if running else None,
-            frame_ref=frame_ref, presentation_mode="vn_dialogue",
+            frame_ref=frame_ref,
+            presentation_mode=story["presentation_mode"],
             world_observation=world_observation,
         )
         return {
@@ -162,6 +190,7 @@ class Application:
             "graphics": graphics, "character": self.rules["character"],
             "model": self.backend.model, "token": self.token,
             "initial_prompt": self.prompt,
+            "story": story,
         }
 
 
@@ -195,7 +224,7 @@ def handler_for(app):
                        f"localhost:{self.server.server_port}"}
             return host in allowed
 
-        def stream_hub(self, hub, retry_ms=1500):
+        def stream_hub(self, hub, retry_ms=1500, *, presence_id=None):
             raw_last = self.headers.get("Last-Event-ID", "0")
             try:
                 last_id = max(0, int(raw_last))
@@ -206,6 +235,8 @@ def handler_for(app):
             self.send_header("Connection", "keep-alive")
             self.security_headers()
             self.end_headers()
+            if presence_id is not None:
+                app.story.presence_open(presence_id)
             try:
                 self.wfile.write(f"retry: {retry_ms}\n\n".encode())
                 self.wfile.flush()
@@ -221,9 +252,21 @@ def handler_for(app):
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 return
+            finally:
+                if presence_id is not None:
+                    app.story.presence_close(presence_id)
 
-        def stream_events(self):
-            return self.stream_hub(app.events)
+        def stream_events(self, source_id=None):
+            identity = (
+                "ui." + source_id
+                if isinstance(source_id, str) and source_id
+                else "ui." + secrets.token_hex(10)
+            )
+            try:
+                return self.stream_hub(app.events, presence_id=identity)
+            finally:
+                if isinstance(source_id, str) and source_id:
+                    app.story.director_disconnect(source_id)
 
         def stream_frames(self):
             return self.stream_hub(app.frames, retry_ms=500)
@@ -235,7 +278,9 @@ def handler_for(app):
             if path == "/api/state":
                 return self.send(200, app.snapshot())
             if path == "/api/events":
-                return self.stream_events()
+                query = parse_qs(urlparse(self.path).query)
+                source_id = (query.get("source_id") or [None])[0]
+                return self.stream_events(source_id)
             if path == "/api/frames":
                 return self.stream_frames()
             if path == "/api/graphics/assets":
@@ -260,24 +305,66 @@ def handler_for(app):
                 return self.send(200, (TABLE / "web" / filename).read_bytes(), mime)
             self.send(404, {"error": "Not found"})
 
+        def read_json_body(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 20000:
+                raise ValueError("Сообщение слишком большое")
+            value = json.loads(self.rfile.read(length))
+            if not isinstance(value, dict):
+                raise ValueError("JSON body must be an object")
+            return value
+
         def do_POST(self):
             if not self.local_request() or self.headers.get("X-GameTable-Token") != app.token:
                 return self.send(403, {"error": "Обнови страницу перед отправкой"})
-            if urlparse(self.path).path != "/api/turn":
-                return self.send(404, {"error": "Not found"})
+            path = urlparse(self.path).path
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 20000:
-                    raise ValueError("Сообщение слишком большое")
-                body = json.loads(self.rfile.read(length))
-                allowed = available_intent_ids(
-                    app.store.state(), app.rules, app.store.latest_world_observation()
+                body = self.read_json_body()
+                if path == "/api/turn":
+                    allowed = available_intent_ids(
+                        app.store.state(), app.rules, app.store.latest_world_observation()
+                    )
+                    event = normalize_turn_body(body, app.rules, allowed)
+                    turn = app.runtime.submit(event)
+                    return self.send(202, public_turn(turn))
+                if path == "/api/story/escort-response":
+                    result = app.story.respond(
+                        offer_id=body.get("offer_id"),
+                        response=body.get("response"),
+                        text=body.get("text"),
+                    )
+                    return self.send(200, {"story": result})
+                if path == "/api/director/control/acquire":
+                    result = app.story.director_acquire(
+                        body.get("source_id"),
+                        transfer=body.get("transfer") is True,
+                    )
+                    return self.send(200, result)
+                if path == "/api/director/input":
+                    move_x = body.get("move_x")
+                    if type(move_x) is not int or move_x not in {-1, 0, 1}:
+                        raise ValueError("move_x must be -1, 0, or 1")
+                    result = app.story.director_input(
+                        body.get("source_id"),
+                        body.get("lease_id"),
+                        move_x,
+                    )
+                    return self.send(200, result)
+                if path == "/api/director/control/release":
+                    result = app.story.director_release(
+                        body.get("source_id"),
+                        body.get("lease_id"),
+                    )
+                    return self.send(200, result)
+                return self.send(404, {"error": "Not found"})
+            except (ValueError, TypeError, StoryFlowError) as exc:
+                message_text = str(exc)
+                conflict = (
+                    "Дождись завершения текущего хода" in message_text
+                    or "already" in message_text
+                    or "уже принадлежит" in message_text
                 )
-                event = normalize_turn_body(body, app.rules, allowed)
-                turn = app.runtime.submit(event)
-                self.send(202, public_turn(turn))
-            except (ValueError, TypeError) as exc:
-                self.send(409 if "текущего" in str(exc) else 400, {"error": str(exc)})
+                self.send(409 if conflict else 400, {"error": message_text})
     return Handler
 
 
@@ -350,11 +437,16 @@ def main():
         events = EventHub()
         frames = FrameHub()
         graphics = EmbodiedWorldGraphics()
-        runtime = Runtime(store, backend, rules, manuals, log=logger.write,
-                          events=events.publish)
+        runtime = Runtime(
+            store, backend, rules, manuals,
+            log=logger.write, events=events.publish,
+        )
+        story = StoryFlow(store, events=events.publish)
+        story.attach_runtime(runtime)
+        story.start()
         app = Application(
             store, runtime, backend, rules, args.prompt,
-            events=events, graphics=graphics, frames=frames,
+            events=events, graphics=graphics, frames=frames, story=story,
         )
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
@@ -367,6 +459,11 @@ def main():
     finally:
         if server:
             server.server_close()
+        try:
+            if "story" in locals():
+                story.close()
+        except Exception:
+            pass
         try:
             if "graphics" in locals():
                 graphics.close()

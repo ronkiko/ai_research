@@ -16,6 +16,7 @@ source "$ROOT/op/process.sh"
 
 stop_stack() {
   op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
+  "$ROOT/gameclient/v1/op/director-host.sh" --stop || true
   "$ROOT/gameclient/v1/op/host.sh" --stop || true
   "$ROOT/gameserver/v1/op/embodied.sh" --stop || true
 }
@@ -23,6 +24,7 @@ stop_stack() {
 status_stack() {
   op_managed_process status "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
   "$ROOT/gameclient/v1/op/host.sh" --status || true
+  "$ROOT/gameclient/v1/op/director-host.sh" --status || true
   "$ROOT/gameserver/v1/op/embodied.sh" --status || true
 }
 
@@ -110,11 +112,18 @@ gateway_is_embodied || {
 }
 
 HOST_REUSED=0
+DIRECTOR_HOST_REUSED=0
 if "$ROOT/gameclient/v1/op/host.sh" --status >/dev/null 2>&1; then
   HOST_REUSED=1
 else
   nohup "$ROOT/gameclient/v1/op/host.sh" --start \
     >"$LOGDIR/host.log" 2>&1 &
+fi
+if "$ROOT/gameclient/v1/op/director-host.sh" --status >/dev/null 2>&1; then
+  DIRECTOR_HOST_REUSED=1
+else
+  nohup "$ROOT/gameclient/v1/op/director-host.sh" --start \
+    >"$LOGDIR/director-host.log" 2>&1 &
 fi
 
 readiness() {
@@ -130,9 +139,11 @@ done
 
 # A Host retained from the old Gateway may own a now-invalid transport session.
 # Replace only that managed Host; never kill an unrelated process.
-if [[ "$READY" -ne 1 && "$HOST_REUSED" -eq 1 ]]; then
+if [[ "$READY" -ne 1 && ( "$HOST_REUSED" -eq 1 || "$DIRECTOR_HOST_REUSED" -eq 1 ) ]]; then
   "$ROOT/gameclient/v1/op/host.sh" --restart \
     >"$LOGDIR/host.log" 2>&1 &
+  "$ROOT/gameclient/v1/op/director-host.sh" --restart \
+    >"$LOGDIR/director-host.log" 2>&1 &
   for _ in {1..100}; do
     if readiness; then READY=1; break; fi
     sleep .05
