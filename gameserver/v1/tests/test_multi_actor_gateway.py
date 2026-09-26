@@ -26,12 +26,20 @@ class MultiActorGatewayTests(unittest.TestCase):
             self.assertEqual(
                 ys["observation"]["world_epoch"], ds["observation"]["world_epoch"]
             )
+            self.assertEqual(ys["freshness"]["source"], "world_state_hub")
+            self.assertEqual(ds["freshness"]["source"], "world_state_hub")
+            before = gateway.state_hub.status()["polls"]
+            for _ in range(100):
+                gateway.dispatch(message("snapshot", session_id=yuki["session_id"]))
+                gateway.dispatch(message("snapshot", session_id=director["session_id"]))
+            after = gateway.state_hub.status()["polls"]
+            self.assertLess(after - before, 10)
             with self.assertRaises(Exception):
                 gateway.dispatch(message(
                     "training_reset", session_id=director["session_id"], x=500.0
                 ))
         finally:
-            gateway.server.server_close()
+            gateway.close()
             world.shutdown()
 
 
