@@ -2,21 +2,38 @@
 from __future__ import annotations
 
 import copy
+import time
 from typing import Any
 
-from organism.host import HostClient
+from organism.host import HostClient, HostError
 from .projector import SceneProjector
 
 
 class EmbodiedWorldGraphics:
     mode = "embodied_world_v1"
+    host_timeout = 2.5
+    read_attempts = 2
 
     def __init__(self, client=None, projector: SceneProjector | None = None):
-        self.client = client or HostClient("gametable-graphics")
+        self.client = client or HostClient(
+            "gametable-graphics", timeout=self.host_timeout
+        )
         self.projector = projector or SceneProjector()
 
+    def _state(self) -> dict[str, Any]:
+        error = None
+        for attempt in range(self.read_attempts):
+            try:
+                return self.client.state()
+            except HostError as exc:
+                error = exc
+                if attempt + 1 < self.read_attempts:
+                    time.sleep(0.05)
+        assert error is not None
+        raise error
+
     def snapshot(self, _character_state: dict) -> dict[str, Any]:
-        state = self.client.state()
+        state = self._state()
         session = state.get("session") or {}
         snapshot = state.get("snapshot")
         observation = state.get("observation")
