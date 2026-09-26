@@ -1,4 +1,4 @@
-# 0.0.3.01 — Local actor perception
+# 0.main.3.01 — Local actor perception
 
 Статус: **план**.
 
