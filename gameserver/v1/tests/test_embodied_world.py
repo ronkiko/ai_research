@@ -13,6 +13,7 @@ from gameserver.v1.world.embodied import (
     BODY_PROFILE_SHA256, EmbodiedWorldRuntime,
 )
 from gameserver.v1.world.embodied_server import EmbodiedWorldService
+from gameserver.v1.gateway.embodied import EmbodiedGatewayService
 from gameserver.v1.world.store import WorldCheckpointStore
 from world.catalog import MapCatalog, MapManifest
 from world.contracts import ContractError
@@ -244,6 +245,24 @@ class EmbodiedWorldTests(unittest.TestCase):
         self.assertFalse(receipt["observed_outcome"]["learned_success"])
         self.assertEqual(yuki(runtime)["zone_id"], "training/flat_run")
 
+    def test_training_setup_can_place_episode_inside_training_lane(self):
+        runtime = EmbodiedWorldRuntime()
+        spawn_yuki(runtime)
+        queued = runtime.submit_setup_reset(
+            request_id="setup.x.731",
+            entity_id="entity.yuki",
+            episode_id="episode.x",
+            reason="bounded Motor/Spine episode setup",
+            x=731.0,
+            privileged=True,
+        )
+        runtime.tick()
+        receipt = runtime.receipt(queued["action_id"])
+        self.assertEqual(receipt["status"], "applied")
+        self.assertFalse(receipt["observed_outcome"]["learned_success"])
+        self.assertEqual(yuki(runtime)["zone_id"], "training/flat_run")
+        self.assertEqual(yuki(runtime)["x"], 731.0)
+
     def test_restart_restores_one_body_new_epoch_and_does_not_repeat_transfer(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "world.sqlite3"
@@ -341,6 +360,41 @@ class EmbodiedWorldTests(unittest.TestCase):
             self.assertNotEqual(snapshot, service.runtime.latest_snapshot())
         finally:
             service.shutdown()
+
+
+class EmbodiedGatewayTests(unittest.TestCase):
+    def test_login_training_reset_and_logout_keep_one_persistent_body(self):
+        world = EmbodiedWorldService(port=0, physics_hz=240)
+        world.start()
+        gateway = EmbodiedGatewayService(
+            port=0, world_port=world.address[1]
+        )
+        try:
+            login = gateway.dispatch(message("login", player_id="player1"))
+            session_id = login["session_id"]
+            self.assertEqual(login["entity_id"], "entity.yuki")
+            self.assertEqual(login["world_id"], "yuki-world-v1")
+
+            reset = gateway.dispatch(message(
+                "training_reset", session_id=session_id, x=731.0
+            ))
+            self.assertEqual(reset["type"], "training_reset")
+            state = gateway.dispatch(message(
+                "snapshot", session_id=session_id
+            ))
+            self.assertEqual(state["observation"]["zone_id"], "training/flat_run")
+            self.assertEqual(state["observation"]["physical"]["x"], 731.0)
+
+            gateway.dispatch(message("logout", session_id=session_id))
+            entities = world.runtime.latest_snapshot()["entities"]
+            self.assertEqual(
+                [item["entity_id"] for item in entities], ["entity.yuki"]
+            )
+            again = gateway.dispatch(message("login", player_id="player1"))
+            self.assertEqual(again["zone_id"], "training/flat_run")
+        finally:
+            gateway.server.server_close()
+            world.shutdown()
 
 
 if __name__ == "__main__":

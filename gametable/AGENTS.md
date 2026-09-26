@@ -33,8 +33,8 @@ Store хранит dialogue state, durable action references и bounded observed
 Graphics рендерит world snapshots.
 Browser не реализует world rules.
 
-`scene_id` в существующем save — только pre-cutover compatibility field.
-Новый код не должен использовать его как доказательство физической локации.
+`scene_id` в migrated save — только historical compatibility field.
+Production код не использует его как доказательство физической локации.
 
 ## Side-effect invariants
 
@@ -51,3 +51,13 @@ Browser не реализует world rules.
 старый laboratory_step как способ физического перемещения.
 
 Run: `./gametable/op/check.sh`.
+
+## Cutover 09
+
+- Active OpenCode MCPs: only `navigation_v1` and `learning_v1`.
+- Production graphics source: `EmbodiedWorldGraphics`; LegacyVNGraphics is
+  test/history only.
+- Public VN launcher: `./gametable/op/start.sh`; public body launcher:
+  `./organism/op/organism.sh`.
+- Do not reintroduce `game_v1` or `gamelab_v1` into the active character
+  config, manuals or CI dependency path.

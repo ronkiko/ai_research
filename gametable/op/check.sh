@@ -3,14 +3,15 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 echo "CHECK GameTable syntax"
-bash -n gametable/op/start.sh gametable/op/start-go.sh
+bash -n gametable/op/start.sh gametable/op/start-go.sh \
+  organism/op/organism.sh organism/op/_env.sh gameserver/v1/op/embodied.sh
 for file in gametable/web/js/*.js; do
   node --check "$file"
 done
 python3 -m json.tool gametable/opencode.json >/dev/null
 python3 -m json.tool gametable/roleplay/rules.json >/dev/null
 echo "CHECK Graphics + GameTable runtime"
-python3 -m compileall -q graphics
+python3 -m compileall -q gametable graphics gameserver/v1
 python3 -m unittest discover -s graphics/tests -p 'test_*.py' -v
 python3 -m unittest discover -s gametable/tests -p 'test_*.py' -v
 if [[ "${1:-}" == "--live" ]]; then

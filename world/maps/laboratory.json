@@ -2,7 +2,7 @@
   "schema_version": 1,
   "world_id": "yuki-world-v1",
   "map_id": "laboratory",
-  "map_version": 3,
+  "map_version": 4,
   "physics": {
     "profile": "flat_1d",
     "profile_version": 1,
@@ -32,6 +32,11 @@
         "spawn_id": "from_training",
         "x": 899,
         "kind": "arrival"
+      },
+      {
+        "spawn_id": "migration_workstation",
+        "x": 500,
+        "kind": "migration"
       }
     ],
     "portals": [

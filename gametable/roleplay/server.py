@@ -22,11 +22,10 @@ from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
 from .store import Store
 from .view import available_intent_ids, project_view
-from graphics import FrameHub, LegacyVNGraphics, public_asset_catalog
+from graphics import EmbodiedWorldGraphics, FrameHub, public_asset_catalog
+from gametable.migration import active_save_root
 
 TABLE = Path(__file__).resolve().parents[1]
-DEFAULT_SAVE = TABLE / "runtime/yuki-vn"
-
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/css/shell.css": ("css/shell.css", "text/css; charset=utf-8"),
@@ -120,16 +119,28 @@ class Application:
         self.token = secrets.token_urlsafe(32)
         self.prompt = prompt or ""
         self.events = events or EventHub()
-        self.graphics = graphics or LegacyVNGraphics()
+        if graphics is None:
+            raise ValueError("authoritative graphics source is required")
+        self.graphics = graphics
         self.frames = frames or FrameHub()
 
     def snapshot(self):
         self.runtime.poll_actions()
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
-        world_observation = self.store.latest_world_observation()
         running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
         graphics = self.graphics.snapshot(state)
+        observed = graphics.get("observation")
+        if isinstance(observed, dict):
+            event_key = (
+                f"world.live.{observed.get('world_epoch')}:"
+                f"{observed.get('world_revision')}:"
+                f"{observed.get('observed_tick')}"
+            )
+            self.store.record_world_event(
+                event_key, "world_observation", observed
+            )
+        world_observation = self.store.latest_world_observation()
         self.frames.publish(graphics["frame"])
         frame = graphics["frame"]
         frame_ref = {
@@ -282,7 +293,7 @@ def main():
     logger = ConsoleLog()
     logger.write("GameTable Юки: starting")
     rules = load_rules()
-    root = DEFAULT_SAVE
+    root = active_save_root()
     root.mkdir(parents=True, exist_ok=True)
     import fcntl
     lock_file = (root / "owner.lock").open("w")
@@ -316,7 +327,7 @@ def main():
     try:
         for _ in range(120):
             if stopped.is_set() or process.poll() is not None:
-                raise BackendError("OpenCode остановлен при запуске; см. runtime/yuki-vn/opencode.log")
+                raise BackendError(f"OpenCode остановлен при запуске; см. {root / 'opencode.log'}")
             try:
                 if backend.request("GET", "/global/health", timeout=1).get("healthy"):
                     break
@@ -328,7 +339,7 @@ def main():
         logger.write(f"OpenCode: healthy; model={backend.model}")
         try:
             mcps = backend.request("GET", "/mcp") or {}
-            for name in ("game_v1", "gamelab_v1", "navigation_v1"):
+            for name in ("navigation_v1", "learning_v1"):
                 status = (mcps.get(name) or {}).get("status", "missing")
                 level = "INFO" if status == "connected" else "WARN"
                 logger.write(f"MCP {name}: {status}", level)
@@ -338,7 +349,7 @@ def main():
             p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
         events = EventHub()
         frames = FrameHub()
-        graphics = LegacyVNGraphics()
+        graphics = EmbodiedWorldGraphics()
         runtime = Runtime(store, backend, rules, manuals, log=logger.write,
                           events=events.publish)
         app = Application(
@@ -356,6 +367,11 @@ def main():
     finally:
         if server:
             server.server_close()
+        try:
+            if "graphics" in locals():
+                graphics.close()
+        except Exception:
+            pass
         try:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=3)

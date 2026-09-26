@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 import time
 
@@ -93,6 +94,7 @@ class EmbodiedWorldService:
                 reason=str(request.get("reason", "")),
                 zone_id=str(request.get("zone_id", "training/flat_run")),
                 spawn_id=str(request.get("spawn_id", "training_prepare")),
+                x=request.get("x"),
                 privileged=request.get("capability") == "training_setup",
             )
             return message("action", receipt=receipt)
@@ -156,7 +158,13 @@ def main() -> int:
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=EMBODIED_WORLD_PORT)
     parser.add_argument("--physics-hz", type=int, default=PHYSICS_HZ)
-    parser.add_argument("--state", default="gameserver/v1/runtime/embodied-world.sqlite3")
+    parser.add_argument(
+        "--state",
+        default=os.environ.get(
+            "EMBODIED_WORLD_STATE",
+            "gameserver/v1/runtime/embodied-world.sqlite3",
+        ),
+    )
     args = parser.parse_args()
     EmbodiedWorldService(
         host=args.host, port=args.port, physics_hz=args.physics_hz, state_path=args.state

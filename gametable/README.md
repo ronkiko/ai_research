@@ -1,19 +1,29 @@
 # GameTable · Юки
 
-GameTable — локальная browser visual novel с Юки. После этапа 07 GameTable больше
-не является владельцем физического положения персонажа: social/dialogue state
-остаётся в SQLite GameTable, а координата, zone и transfer receipts принадлежат
-embodied world.
+GameTable — локальная browser visual novel с Юки. После cutover 09 социальное и
+диалоговое состояние остаётся в SQLite GameTable, а физическое тело существует
+в одном authoritative `embodied_world_v1`.
 
-Запуск пока прежний:
+## Запуск
+
+Единый операторский вход:
 
 ~~~bash
 ./gametable/op/start.sh
 ~~~
 
-До cutover 09 launcher ещё поднимает старый compatibility stack. Browser уже
-использует RenderFrame из `graphics/`; если реальный world source ещё не подключён,
-кадр помечен `legacy_vn_compat / authoritative=false`.
+Launcher делает migration/readiness, поднимает embodied GameServer + Gateway,
+GameClient Host, готовит Organism runtime и запускает GameTable/OpenCode.
+Активные MCP персонажа — только `navigation_v1` и `learning_v1`.
+
+~~~bash
+./gametable/op/start.sh --status
+./gametable/op/start.sh --restart
+./gametable/op/start.sh --stop
+~~~
+
+`--fresh` создаёт новое знакомство только для VN save. Физический world,
+Motor/Spine artifacts и mounted skill этим флагом не удаляются.
 
 ## Один ход
 
@@ -34,96 +44,53 @@ DirectorIntent
        └─ CharacterActionProposal
   → CharacterStateReducer
   → durable action outbox
-  → ActionExecutor → world/navigation
+  → ActionExecutor → navigation_v1 → Organism → Host → GameServer
   → Narrator
   → fresh Head Review
   → character/dialogue publish
 ~~~
 
-Главное различие: accepted request и physical arrival теперь разные события.
-`request_lab_work + accept` из hallway создаёт semantic proposal
-`navigate(laboratory)`; оно **не** присваивает `scene_id` и не считает Юки
-уже пришедшей или начавшей работу.
-
-## CharacterActionProposal
-
-Контракт содержит:
-
-~~~text
-proposal_id
-source = director_request | self_initiated
-action_type = navigate | approach
-target_id
-rationale
-observation_ref
-scope
-~~~
-
-Текущая policy хранится в `roleplay/action_rules.json`. Она разрешает navigation
-между известными world locations и approach к workstation. В proposal нет
-`entity_id`, `embodiment_id`, координат, скорости или Motor effort.
-
-Director request может породить proposal только после CharacterDecision=accept.
-Также runtime имеет отдельный tool-less Brain proposer для self-initiated action;
-его вызов должен делаться смысловым event/idle scheduler с budget/cooldown, а не
-на каждом tick. Сам текст Narrator никогда не парсится обратно в команду.
+Принятое решение не является физическим результатом.
+`request_lab_work + accept` может создать semantic `navigate(laboratory)`,
+но arrival существует только после authoritative receipt/observation.
 
 ## Authority
 
-- GameServer/world: x, vx, effort, zone, epoch/tick, transfer receipts.
-- world/navigation: semantic action lifecycle и arrival.
-- Organism: Spine/Motor control.
-- Graphics: projection world snapshot → RenderFrame.
-- GameTable: dialogue, social stats, narrative minutes, decisions, action references.
-- Browser: только renderer и DirectorIntent input.
+- GameServer `embodied_world_v1`: x, vx, effort, zone, epoch/tick, transfer.
+- GameClient Host: одна transport session и последовательность команд.
+- Organism: Spine/Motor, BodyLease, jobs, certificates и learning artifacts.
+- `navigation_v1`: semantic action lifecycle.
+- `learning_v1`: bounded train/verify/select.
+- Graphics: authoritative world snapshot → RenderFrame.
+- GameTable: dialogue, social/resource stats, narrative minutes, decisions и
+  durable references на физические действия.
+- Browser: renderer + DirectorIntent input.
 
-Старое поле `scene_id` пока остаётся в VN save исключительно для совместимости
-до migration/cutover 09. CharacterStateReducer его не меняет. Если Store имеет
-свежее world observation, affordances берутся из physical location; иначе
-pre-cutover shell использует legacy hint.
+Legacy `scene_id` может существовать в перенесённом save как историческое
+поле. Оно не является источником physical location и не меняется как способ
+движения. View/affordances используют свежее world observation.
 
-## Durable actions
+## Durable external actions
 
-Перед side effect Store создаёт запись в `action_outbox`. Только после этого
-ActionExecutor передаёт fixed semantic target в NavigationService. Точный target
-проверяется server-side; модель не может подменить его дополнительными actor/
-coordinate arguments.
+Store записывает action outbox до dispatch. Unknown transport outcome становится
+`uncertain` и не replay-ится вслепую. World observation и action result
+сохраняются отдельно от публикации реплики, поэтому ошибка Narrator/Review не
+отменяет уже состоявшееся физическое событие.
 
-Action start не ждёт маршрута. Возможные статусы навигации включают queued,
-approaching, transfer_pending, continuing и terminal arrived/cancelled/blocked/
-failed/uncertain. GameTable периодически сверяет активные actions через status и
-сохраняет наблюдения в bounded `world_inbox`.
+Navigation worker и learning jobs живут независимо от LLM turn. Закрытие browser
+или отдельной OpenCode voice session не превращает queued/running действие в
+выдуманный terminal result.
 
-World observation и action result коммитятся независимо от публикации реплики.
-Поэтому ошибка Narrator/Review не «откатывает» уже случившееся физическое
-действие. После crash reserved-but-not-observed dispatch становится uncertain и
-не запускается повторно вслепую.
+## Graphics
 
-## Диалог во время движения
+Production source — `EmbodiedWorldGraphics`. Каждый RenderFrame ссылается на
+один authoritative world epoch/tick/revision и zone. Browser не вычисляет
+порталы и не решает, произошёл ли переход комнаты.
 
-Navigation worker работает независимо от LLM turn. После короткого start receipt
-первый turn может завершиться, и следующий разговор не ждёт прибытия. Narrator
-может сказать, что путь начат, только если это есть в action result; сказать
-«я пришла» можно только при terminal `arrived`.
-
-Heart, Head, Narrator и Review создаются deny-all. `NAVIGATION_TOOLS` существует
-как отдельный scoped permission set для рабочих контекстов, но обычные голоса
-его не получают. ActionExecutor дополнительно применяет server-side parameter
-scope, поэтому prompt-ограничение не является единственной защитой.
-
-## Browser
-
-GameTable ViewProjector формирует social stats, controls, busy/stage,
-`presentation_mode`, `frame_ref` и последнее observed world fact. Физическую
-картинку строит `graphics/`.
-
-Потоки разделены:
-
-- `/api/events` — dialogue/turn/action lifecycle notifications;
+Потоки:
+- `/api/events` — dialogue/turn/action lifecycle;
 - `/api/frames` — bounded latest RenderFrame;
 - `/api/state` — bootstrap/resync.
-
-Browser не решает, произошёл ли переход комнаты.
 
 ## Проверки
 
@@ -131,10 +98,9 @@ Browser не решает, произошёл ли переход комнаты
 ./gametable/op/check.sh
 ~~~
 
-Проверяются в том числе: accepted ≠ arrived, decline без body action, отсутствие
-move в character reducer, self-initiated proposal, server-side target scope,
-durable outbox/inbox, tool permissions, параллельность dialogue/body lifecycle,
-graphics/SSE/CSP и прежние Heart/Head invariants.
+Проверяются decision/action separation, durable outbox/inbox, scoped tools,
+migration, authoritative graphics, embodied Gateway/Host contracts, SSE/CSP и
+Heart/Head invariants.
 
 Опциональный live smoke:
 
@@ -142,6 +108,5 @@ graphics/SSE/CSP и прежние Heart/Head invariants.
 ./gametable/op/check.sh --live
 ~~~
 
-Он не выполняет физическую навигацию или обучение: проверяет реальный normal chat,
-новый pure semantic-action contract и прежний безопасный read-only compatibility
-MCP boundary. Полный embodied cutover — этап 09.
+Он не обучает и не двигает тело: проверяет normal chat, pure semantic proposal
+и read-only `learning_v1_describe/skills` boundary.

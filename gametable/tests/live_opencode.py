@@ -1,4 +1,4 @@
-"""Opt-in live smoke: temporary save, real Luna, normal chat and read-only laboratory MCP."""
+"""Opt-in live smoke: temporary save, real Luna, normal chat and read-only learning MCP."""
 import os
 from pathlib import Path
 import secrets
@@ -9,7 +9,7 @@ import time
 
 from gametable.roleplay import prompts
 from gametable.roleplay.engine import load_rules, reduce_turn
-from gametable.roleplay.opencode import BackendError, OpenCode, READ_ONLY_LAB_TOOLS
+from gametable.roleplay.opencode import BackendError, OpenCode, READ_ONLY_LEARNING_TOOLS
 from gametable.roleplay.runtime import Runtime
 from gametable.roleplay.server import TABLE, free_port
 from gametable.roleplay.store import Store
@@ -33,8 +33,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gametable-live-") as temp:
         root = Path(temp)
         port, password = free_port(), secrets.token_urlsafe(32)
-        env = dict(os.environ, OPENCODE_SERVER_PASSWORD=password, OPENCODE_SERVER_USERNAME="opencode",
-                   GAMELAB_BRAIN_STATE_ROOT=str(root / "lab"))
+        env = dict(
+            os.environ,
+            OPENCODE_SERVER_PASSWORD=password,
+            OPENCODE_SERVER_USERNAME="opencode",
+            ORGANISM_LEARNING_ROOT=str(root / "learning"),
+        )
         with (root / "opencode.log").open("wb") as log:
             process = subprocess.Popen(
                 ["opencode", "serve", "--pure", "--hostname", "127.0.0.1", "--port", str(port)],
@@ -55,7 +59,7 @@ def main():
                 assert model == {"providerID": "openai", "modelID": "gpt-5.6-luna"}, model
                 print("LIVE model: openai/gpt-5.6-luna", flush=True)
                 mcps = backend.request("GET", "/mcp")
-                for name in ("game_v1", "gamelab_v1"):
+                for name in ("navigation_v1", "learning_v1"):
                     assert mcps.get(name, {}).get("status") == "connected", (name, mcps.get(name))
                     print("LIVE MCP connected:", name, flush=True)
 
@@ -107,24 +111,26 @@ def main():
                 assert calculations["character_state"]["physical_movement_applied"] is False
 
                 parent = backend.create("GameTable live read-only laboratory")
-                safe_prompt = """MODE: SAFE LIVE LABORATORY SMOKE.
-Use exactly gamelab_v1_health and gamelab_v1_describe, in that order.
-Do not call login, movement, reward, training, verify, run, update, cancel or any write action.
+                safe_prompt = """MODE: SAFE LIVE LEARNING SMOKE.
+Use exactly learning_v1_describe and learning_v1_skills, in that order.
+Do not call training_prepare, train, verify, select, cancel or navigation writes.
 After both read-only observations, answer with one short factual sentence."""
                 observed = backend.complete(
-                    parent, "yuki", safe_prompt, lab_tools=READ_ONLY_LAB_TOOLS)
+                    parent, "yuki", safe_prompt,
+                    lab_tools=READ_ONLY_LEARNING_TOOLS,
+                )
                 tools = [item.get("tool") for item in observed["tools"]]
                 assert tools, observed
-                assert set(tools) <= set(READ_ONLY_LAB_TOOLS), tools
-                assert "gamelab_v1_health" in tools, tools
-                assert "gamelab_v1_describe" in tools, tools
-                print("LIVE safe laboratory tools:", ", ".join(tools), flush=True)
+                assert set(tools) <= set(READ_ONLY_LEARNING_TOOLS), tools
+                assert "learning_v1_describe" in tools, tools
+                assert "learning_v1_skills" in tools, tools
+                print("LIVE safe learning tools:", ", ".join(tools), flush=True)
 
                 # The pure route above was provisional only; the Director's real save was
                 # not advanced by the smoke laboratory check.
                 assert store.state()["revision"] == 1
                 assert store.state()["scene_id"] == "hallway"
-                print("PASS live OpenCode: chat vertical + semantic action contract + read-only legacy lab boundary; Director save untouched",
+                print("PASS live OpenCode: chat vertical + semantic action contract + read-only learning_v1 boundary; Director save untouched",
                       flush=True)
             finally:
                 backend.close_sessions()

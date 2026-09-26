@@ -9,18 +9,18 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
-# A session permission allowlist, not a model instruction. Social state tools are absent.
-LAB_TOOLS = tuple("game_v1_" + x for x in (
-    "health", "describe", "players", "login", "session", "game_state", "recent_events")) + tuple(
-    "gamelab_v1_" + x for x in (
-        "health", "login", "describe", "host_list", "model_info", "reward_get", "reward_set",
-        "training_start", "training_status", "training_cancel", "verify_start", "verify_status",
-        "verify_cancel", "run_start", "run_status", "run_cancel", "run_update_goal"))
+# Session permission allowlists, not model instructions. Social state tools are absent.
+LEARNING_TOOLS = tuple("learning_v1_" + x for x in (
+    "describe", "skills", "training_prepare", "motor_train_start",
+    "spine_train_start", "training_status", "training_cancel",
+    "verify_start", "verify_status", "verify_cancel", "skill_select",
+))
 
-
-READ_ONLY_LAB_TOOLS = (
-    "game_v1_health", "game_v1_describe",
-    "gamelab_v1_health", "gamelab_v1_describe",
+READ_ONLY_LEARNING_TOOLS = (
+    "learning_v1_describe",
+    "learning_v1_skills",
+    "learning_v1_training_status",
+    "learning_v1_verify_status",
 )
 
 NAVIGATION_TOOLS = (
@@ -29,8 +29,16 @@ NAVIGATION_TOOLS = (
     "navigation_v1_locations",
     "navigation_v1_navigate",
     "navigation_v1_approach",
+    "navigation_v1_interact",
     "navigation_v1_action_status",
     "navigation_v1_action_cancel",
+)
+
+READ_ONLY_WORLD_TOOLS = (
+    "navigation_v1_describe",
+    "navigation_v1_observe",
+    "navigation_v1_locations",
+    *READ_ONLY_LEARNING_TOOLS,
 )
 
 class BackendError(RuntimeError):
@@ -93,11 +101,11 @@ class OpenCode:
     ):
         permissions = [{"permission": "*", "pattern": "*", "action": "deny"}]
         if allowed_tools is not None and (lab or lab_tools is not None):
-            raise ValueError("allowed_tools cannot be combined with legacy lab scope")
+            raise ValueError("allowed_tools cannot be combined with learning scope")
         allowed = (
             tuple(allowed_tools) if allowed_tools is not None
             else tuple(lab_tools) if lab_tools is not None
-            else LAB_TOOLS if lab else ()
+            else LEARNING_TOOLS if lab else ()
         )
         permissions.extend({"permission": tool, "pattern": "*", "action": "allow"} for tool in allowed)
         body = {"title": title, "agent": agent, "permission": permissions}

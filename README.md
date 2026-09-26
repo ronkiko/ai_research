@@ -1,12 +1,11 @@
 # ai_research
 
 План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–08 уже добавили identity/action/world contracts, multi-zone physics,
-канонический learned-body core, semantic `navigation_v1`, graphics RenderFrame,
-GameTable CharacterActionProposal → durable ActionExecutor и отдельный
-`learning_v1` для Motor/Spine train/verify/select. VN reducer больше не двигает
-тело. Следующий этап — единый запуск, migration и вывод GameLab из активного
-персонажного контура:
+Этапы 02–09 уже объединили VN и физическое тело: identity/action/world
+contracts, multi-zone `embodied_world_v1`, canonical `organism/`,
+`navigation_v1`, `learning_v1`, authoritative Graphics и durable
+CharacterActionProposal/ActionExecutor. Активный GameTable больше не подключает
+`game_v1/gamelab_v1`; migration и единый launcher выполнены в
 [09-cutover.md](docs/refactor/embodied-vn/09-cutover.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
@@ -53,8 +52,10 @@ Brain LLM остаётся основным смысловым «неокорт�
 ## Структура
 
 Текущая линия realtime-исследования — `gameserver`, `gameclient`, `organism`,
-`gamelab`, `gametable`: LLM Brain, temporal CNN Spine и MLP Motor. Общий контракт: [ARCHITECTURE.md](ARCHITECTURE.md).
-Физический контур: [gamelab/ARCHITECTURE.md](gamelab/ARCHITECTURE.md).
+`graphics`, `gametable`: LLM Brain, temporal CNN Spine и MLP Motor.
+Общий контракт: [ARCHITECTURE.md](ARCHITECTURE.md). Физический learned-body core:
+[organism/README.md](organism/README.md). `gamelab/` сохранён как
+compatibility/history facade и не входит в активный персонажный stack.
 Старые `game1` и `game2` вынесены в ветку `legacy` и в текущую линию не входят.
 
 [`director/`](director/) — архив опыта моделей Brain: единый SQLite-датасет,
@@ -73,7 +74,7 @@ ai_research/
 ├── gameserver/        ← authoritative realtime world
 ├── gameclient/        ← Host и клиенты к GameServer
 ├── organism/          ← canonical learned controller/models/schools
-├── gamelab/           ← временный compatibility service/operator facade
+├── gamelab/           ← compatibility/history facade; не active VN service
 ├── graphics/          ← world snapshot → RenderFrame → browser projection
 └── gametable/         ← visual novel и Brain runtime
 ```
@@ -85,8 +86,8 @@ ai_research/
   сессией игрока и последовательностью команд. CLI/GUI/MCP подключаются к Host.
 - [`organism/`](organism/) — канонический learned-body core: sensors,
   BodyController, Spine/Motor models, schools, verification, jobs и artifacts.
-- [`gamelab/`](gamelab/) — пока сохраняет старый public service/operator
-  surface и делегирует физическое обучение/управление в `organism/`.
+- [`gamelab/`](gamelab/) — сохранённый compatibility/operator surface для
+  прежних экспериментов; active GameTable его не подключает.
 - [`graphics/`](graphics/) — независимая проекция world snapshots в
   RenderFrame/asset IDs; не является physics или sensor authority.
 - [`gametable/`](gametable/) — локальная visual novel с Юки и OpenCode-бэкендом:
@@ -118,10 +119,16 @@ Python; shell-скрипты предоставляют операторские
 4. Корневые `AGENTS.md`/`CLAUDE.md` — краткие указатели для агентов, не
    дублируют детали.
 
-## Запуск GameServer
+## Запуск текущей системы
 
 ```bash
-./gameserver/v1/op/server.sh
+./gametable/op/start.sh
+```
+
+Отдельный embodied GameServer для отладки:
+
+```bash
+./gameserver/v1/op/embodied.sh
 ```
 
 ## Лицензия

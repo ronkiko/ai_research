@@ -1,23 +1,22 @@
 # Graphics
 
-`graphics/` projects versioned world snapshots into browser-facing
+`graphics/` projects versioned authoritative world snapshots into browser
 `RenderFrame` values. It does not own physics, decide portal transfers, send
 Motor commands, or provide policy sensors.
 
-The first renderer is a flat side view for `flat_1d`: continuous authoritative
-X stays in GameServer; display cells are the inclusive 0…1000 projection (1001
-cells); terrain is static per `terrain_revision`; frame traffic contains sparse
-entities/props; multiple entities may occupy one display cell. A seated
-workstation pose requires an interaction record, not merely a location ID.
+The flat renderer projects continuous GameServer X into inclusive 0…1000 display
+cells. Terrain is static per `terrain_revision`; frame traffic contains sparse
+entities/props. A seated workstation pose requires an interaction record, not
+merely a location ID.
 
-`FrameHub` is latest-frame/coalescing transport state. Slow browsers lose
+`EmbodiedWorldGraphics` is the production GameTable source after cutover 09.
+It reads one Host snapshot/observation, projects it through `SceneProjector`,
+and marks frames `authoritative=true`, `source=embodied_world_v1`.
+`LegacyVNGraphics` remains only for isolated compatibility tests/history and
+must never be treated as movement evidence.
+
+`FrameHub` is latest-frame/coalescing transport. Slow browsers lose
 intermediate frames and never backpressure physics. Same-epoch stale revisions
-are rejected; an epoch change must name the previous epoch.
-
-Before stage 09, GameTable uses `LegacyVNGraphics` only so its shell already
-consumes the RenderFrame contract. Those frames are marked
-`authoritative=false` and `source=legacy_vn_compat`; they are not evidence of
-physical movement. Stage 09 replaces this compatibility source with the real
-world snapshot source.
+are rejected; an epoch change names the previous epoch.
 
 Run `./graphics/op/check.sh`.

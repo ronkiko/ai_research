@@ -114,7 +114,7 @@ class HostService:
                 role_to_clients="server",
                 host_protocol_version=HOST_PROTOCOL_VERSION,
                 gameplay_ready=True,
-                capabilities=["players", "login", "session", "state", "input", "motor", "reset", "events", "logout"],
+                capabilities=["players", "login", "session", "state", "input", "motor", "training_reset", "events", "logout"],
                 upstream={
                     "entity": "GameServer Gateway",
                     "host": self.gateway_host,
@@ -143,6 +143,8 @@ class HostService:
             return self._motor(request)
         if kind == "reset":
             return self._reset(request)
+        if kind == "training_reset":
+            return self._training_reset(request)
         if kind == "events":
             return self._events_since(request)
         if kind == "logout":
@@ -350,6 +352,49 @@ class HostService:
             )
             return message(
                 "reset",
+                sequence=sequence,
+                x=x,
+                event=event,
+            )
+
+    def _training_reset(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Privileged internal episode setup used by Organism schools."""
+        client_id = self._client_id(request)
+        value = request.get("x", 100.0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HostProtocolError("training reset x must be numeric")
+        x = float(value)
+        if not math.isfinite(x) or not 0.0 <= x <= 1000.0:
+            raise HostProtocolError("training reset x must be finite within [0,1000]")
+        with self._operation_lock:
+            session = self._session_copy()
+            try:
+                response = self.gateway.request(
+                    "training_reset",
+                    session_id=session["session_id"],
+                    x=x,
+                )
+            except GatewayConnectionError as exc:
+                if "unknown Gateway request: training_reset" not in str(exc):
+                    raise
+                response = self.gateway.request(
+                    "reset",
+                    session_id=session["session_id"],
+                    x=x,
+                )
+            with self._state_lock:
+                sequence = self._sequence
+            event = self._append_event(
+                "training_reset",
+                client_id=client_id,
+                player_id=session["player_id"],
+                sequence=sequence,
+                x=x,
+                command_id=response.get("command_id"),
+                queued_at_tick=response.get("world_tick"),
+            )
+            return message(
+                "training_reset",
                 sequence=sequence,
                 x=x,
                 event=event,

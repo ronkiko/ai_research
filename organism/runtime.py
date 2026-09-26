@@ -86,19 +86,37 @@ def reset_player_state(
     *,
     spawn_x: float = 100.0,
 ) -> dict[str, Any]:
-    """Reset physical episode state through Host without replacing its session."""
+    """Reset one training episode without replacing the Host session."""
     if isinstance(spawn_x, bool) or not isinstance(spawn_x, (int, float)):
         raise ValueError("spawn_x must be numeric")
     spawn_x = float(spawn_x)
     if not WORLD_MIN_X <= spawn_x <= WORLD_MAX_X:
         raise ValueError("spawn_x must be within [0,1000]")
+
     before = ensure_player(client, player_id)
     before_session = before.get("session") or {}
     before_sequence = before_session.get("sequence")
-    reset = client.reset(spawn_x)
-    command_id = reset["event"]["command_id"]
-    before_tick = before["snapshot"]["world_tick"]
-    epoch = before["snapshot"].get("epoch")
+    before_snapshot = before.get("snapshot") or {}
+    before_observation = before.get("observation") or {}
+    before_controller = before.get("controller") or {}
+    before_tick = int(
+        before_observation.get("tick", before_snapshot.get("world_tick", 0))
+    )
+    before_epoch = before_observation.get(
+        "world_epoch",
+        before_snapshot.get("world_epoch", before_snapshot.get("epoch")),
+    )
+    before_generation = before_session.get(
+        "controller_generation", before_controller.get("generation")
+    )
+
+    training_reset = getattr(client, "training_reset", None)
+    reset = (
+        training_reset(spawn_x)
+        if callable(training_reset)
+        else client.reset(spawn_x)
+    )
+    command_id = (reset.get("event") or {}).get("command_id")
 
     deadline = time.monotonic() + timeout
     last_state: dict[str, Any] | None = None
@@ -107,16 +125,55 @@ def reset_player_state(
         last_state = state
         session = state.get("session") or {}
         if session.get("player_id") != player_id:
-            raise HostError("Host player changed during GameLab episode reset")
+            raise HostError("Host player changed during Organism episode reset")
         if session.get("session_id") != before_session.get("session_id"):
-            raise HostError("Host session changed during GameLab episode reset")
+            raise HostError("Host session changed during Organism episode reset")
         if session.get("sequence") != before_sequence:
-            raise HostError("Host sequence changed during GameLab episode reset")
+            raise HostError("Host sequence changed during Organism episode reset")
+
+        snapshot = state.get("snapshot") or {}
+        observation = state.get("observation")
+        current_epoch = (
+            observation.get("world_epoch")
+            if isinstance(observation, dict)
+            else snapshot.get("world_epoch", snapshot.get("epoch"))
+        )
+        if current_epoch != before_epoch:
+            raise HostError("World restarted during episode reset")
+
         player = player_from_state(state)
-        if state["snapshot"].get("epoch") != epoch:
-            raise HostError("World restarted during reset")
-        if (
-            player.get("last_reset_command_id") == command_id
+        current_tick = int(
+            observation.get("tick", snapshot.get("world_tick", 0))
+            if isinstance(observation, dict)
+            else snapshot.get("world_tick", 0)
+        )
+
+        # Post-cutover embodied reset evidence is the authoritative observation
+        # plus the controller fence bump performed by setup_reset. Legacy Zone
+        # keeps its historical last_reset_* evidence for compatibility tests.
+        if isinstance(observation, dict):
+            physical = observation.get("physical") or {}
+            controller = state.get("controller") or {}
+            generation = session.get(
+                "controller_generation", controller.get("generation")
+            )
+            generation_advanced = (
+                type(before_generation) is int
+                and type(generation) is int
+                and generation > before_generation
+            )
+            if (
+                observation.get("zone_id") == "training/flat_run"
+                and current_tick > before_tick
+                and generation_advanced
+                and float(physical.get("x")) == spawn_x
+                and float(physical.get("vx")) == 0.0
+                and abs(float(physical.get("effort"))) < 1e-9
+            ):
+                return state
+        elif (
+            command_id is not None
+            and player.get("last_reset_command_id") == command_id
             and player.get("last_reset_tick", 0) > before_tick
             and float(player["x"]) == spawn_x
             and float(player["vx"]) == 0.0
@@ -124,7 +181,8 @@ def reset_player_state(
         ):
             return state
         _progress_world_wait(client, 0.01)
-    raise HostError(f"GameLab episode reset did not settle: {last_state}")
+
+    raise HostError(f"Organism episode reset did not settle: {last_state}")
 
 
 class GoalRunner:

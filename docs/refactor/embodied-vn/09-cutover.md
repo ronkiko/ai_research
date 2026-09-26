@@ -3,6 +3,10 @@
 Зависимости: [02](02-contracts.md)–[08](08-learning.md).
 Коммит: `Switch VN to embodied runtime and retire GameLab service`. Цель: A8, A10.
 
+Статус: **реализовано**. Активный GameTable stack переключён на
+`embodied_world_v1 + GameClient Host + navigation_v1 + learning_v1`.
+`game_v1/gamelab_v1` больше не подключаются к персонажному OpenCode.
+
 ## Переключение
 
 Обновить `gametable/opencode.json`: активные подключения `navigation_v1` и
@@ -75,3 +79,38 @@ Dry-run ничего не изменяет, migration не теряет памя
 Проверить rollback до cutover и отдельное восстановление после новых событий.
 Поиск runtime imports/config/launchers не находит активных GameLab dependencies;
 исторические упоминания допустимы. CI проверяет именно новый операторский путь.
+
+## Реализованный результат этапа 09
+
+`./gametable/op/start.sh` стал единым операторским входом. Он сначала делает
+non-mutating inventory, затем идемпотентную migration, поднимает versioned
+embodied world/Gateway, Host, проверяет binding/readiness и только после этого
+запускает GameTable/OpenCode. Совместимый уже запущенный stack переиспользуется;
+управляемый старый GameServer останавливается перед переключением. Посторонний
+процесс на Gateway port не убивается.
+
+Мигратор сохраняет исходный VN SQLite, создаёт backup + manifest hashes,
+копирует VN save в новое `yuki-embodied-v1` хранилище и атомарно переключает
+`active-save.json`. Физический world state нового stack хранится рядом с
+новым save и поэтому не смешивается с экспериментальным pre-cutover world
+state. Старое `hallway` получает migration placement `hallway/yuki_day_start`,
+а `laboratory.workstation` — `laboratory/migration_workstation`. Это placement,
+не learned arrival. Повтор migration возвращает тот же manifest.
+
+Graphics теперь читает authoritative Host/world snapshot через
+`EmbodiedWorldGraphics`; обычный browser snapshot одновременно сохраняет
+соответствующий WorldObservation в bounded inbox. LegacyVNGraphics остаётся
+только тестовым/историческим adapter и не является production source.
+
+Новый `./organism/op/organism.sh` владеет operator train/verify/run/check и
+stdio MCP launch для `navigation_v1`/`learning_v1`. Обучающие episode reset
+идут через отдельный internal `training_reset` → privileged
+`setup_reset`; generic embodied reset отвергается. Reset подтверждается
+authoritative observation и controller-generation fence bump.
+
+`gametable/opencode.json` содержит только `navigation_v1` и `learning_v1`.
+Старые GameTable skills про прямой game client/GameLab заменены embodied
+navigation/learning manuals; старые расширенные GameLab manuals удалены из
+активного GameTable skill namespace. GameLab code и исследовательские данные
+сохраняются как compatibility/history, но новый VN launcher/config/CI от них
+не зависят.

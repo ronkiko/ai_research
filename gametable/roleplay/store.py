@@ -344,7 +344,8 @@ class Store:
         with self.lock:
             row = self.db.execute(
                 "SELECT payload FROM world_inbox "
-                "WHERE kind='action_observation' ORDER BY sequence DESC LIMIT 1"
+                "WHERE kind IN ('action_observation','world_observation') "
+                "ORDER BY sequence DESC LIMIT 1"
             ).fetchone()
         return None if not row else json.loads(row[0])
 

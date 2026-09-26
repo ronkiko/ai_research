@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import copy
+import math
 import queue
 import threading
 import uuid
@@ -296,6 +297,7 @@ class EmbodiedWorldRuntime:
         reason: str,
         zone_id: str = "training/flat_run",
         spawn_id: str = "training_prepare",
+        x: float | None = None,
         privileged: bool = False,
     ) -> dict[str, Any]:
         if not privileged:
@@ -306,13 +308,30 @@ class EmbodiedWorldRuntime:
             raise ProtocolError("episode_id is required")
         if not isinstance(reason, str) or not reason or len(reason) > 500:
             raise ProtocolError("setup reason is required and bounded")
-        self._spawn(zone_id, spawn_id)
+        if x is None:
+            setup_x = self._spawn(zone_id, spawn_id)
+        else:
+            if isinstance(x, bool) or not isinstance(x, (int, float)):
+                raise ProtocolError("training reset x must be numeric")
+            setup_x = float(x)
+            if not math.isfinite(setup_x):
+                raise ProtocolError("training reset x must be finite")
+            physics = self.catalog.physics(zone_id)
+            bounds = physics["bounds"]
+            if not bounds["x_min"] <= setup_x <= bounds["x_max"]:
+                raise ProtocolError("training reset x is outside training bounds")
+            if any(
+                interval["x_min"] < setup_x < interval["x_max"]
+                for interval in physics.get("blocked", [])
+            ):
+                raise ProtocolError("training reset x is inside blocked geometry")
         payload = {
             "entity_id": entity_id,
             "episode_id": episode_id,
             "reason": reason,
             "zone_id": zone_id,
             "spawn_id": spawn_id,
+            "x": setup_x,
         }
         with self._lock:
             return self._reserve(request_id, "setup_reset", payload)
@@ -423,7 +442,7 @@ class EmbodiedWorldRuntime:
 
         if command.kind == "setup_reset":
             source_zone = entity.zone_id
-            x = self._spawn(payload["zone_id"], payload["spawn_id"])
+            x = float(payload["x"])
             entity.zone_id = payload["zone_id"]
             entity.x = x
             entity.vx = 0.0

@@ -158,6 +158,18 @@ class HostClient:
             x=x,
         )
 
+    def training_reset(self, x: float = 100.0) -> dict[str, Any]:
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            raise ValueError("training reset x must be numeric")
+        x = float(x)
+        if not math.isfinite(x) or not 0.0 <= x <= 1000.0:
+            raise ValueError("training reset x must be finite within [0,1000]")
+        return self.connection.request(
+            "training_reset",
+            client_id=self.client_id,
+            x=x,
+        )
+
     def events(
         self,
         after_event_id: int = 0,

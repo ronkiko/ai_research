@@ -13,6 +13,6 @@ echo "CHECK embodied world contracts"
 python3 -m unittest discover -s world/tests -p 'test_*.py' -v
 echo "CHECK embodied GameServer physics mode"
 python3 -m unittest gameserver.v1.tests.test_embodied_world -v
-echo "CHECK legacy GameTable remains valid before cutover"
+echo "CHECK GameTable embodied cutover contract"
 ./gametable/op/check.sh
 echo "PASS embodied world contracts"

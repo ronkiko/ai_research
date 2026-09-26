@@ -1,14 +1,16 @@
-# Embodied world contracts
+# Embodied world
 
-This directory is the additive stage-02 boundary for the embodied VN refactor.
-It does **not** switch the current GameTable runtime or GameServer scheduler.
+`world/` owns stable embodied contracts, the semantic map catalog and
+`navigation_v1`. Production GameTable now runs against the versioned
+`embodied_world_v1` GameServer mode.
 
-Ownership at this stage:
-
-- GameServer remains the authority for physical position, velocity, effort, epoch and tick.
-- `world/` defines stable identity/action/observation contracts and the semantic map catalog.
-- GameTable remains the active VN until the explicit cutover stage.
-- Host/session IDs are transport state and are not character identity or authorization.
+Authority:
+- GameServer owns physical position, velocity, effort, zone, epoch/tick and
+  on-touch portal transfer;
+- GameClient Host owns the transport session and input sequence;
+- `navigation_v1` owns semantic action lifecycle, not physics;
+- Organism owns learned control and learning artifacts;
+- GameTable stores dialogue/social state and observed references only.
 
 The catalog has exactly three map IDs:
 
@@ -16,62 +18,37 @@ The catalog has exactly three map IDs:
 hallway ⇄ laboratory ⇄ training/flat_run
 ~~~
 
-`laboratory.workstation` is intentionally not a map. `workstation` is a semantic
-object inside `laboratory`.
+`laboratory.workstation` is not a map. `workstation` is a semantic object in
+`laboratory`. `migration_workstation` is an initial cutover spawn only; it
+does not prove learned arrival or an active seated interaction.
 
-Each map manifest has independent `physics`, `semantics` and `presentation`
-sections. Consumers should use `MapCatalog.physics()`, `semantics()` or
-`presentation()` instead of depending on unrelated sections.
+The first physics profile is `flat_1d`, X in [0,1000], with fixed-step 120 Hz
+physics. Portal transfer is triggered only by swept physical contact and bumps
+the controller fence generation.
 
-The first supported physics profile is `flat_1d`, X in [0,1000]. Hallway
-contains the day-start/EXIT anchor at x=0, the first-day Director spawn at x=1,
-and an on-touch laboratory portal at x=500. Presentation uses an inclusive
-1001-cell X projection; it is not the physical authority.
+## Contracts
 
-Typed contracts in `contracts.py` cover:
+`contracts.py` covers EmbodimentBinding, WorldObservation, ActionRequest/
+ActionReceipt, SkillBinding, dialogue/tutorial contracts and stable failure
+codes. Public navigation exposes semantic IDs only; it has no actuator,
+teleport, generic reset, arbitrary entity or set-position tool.
 
-- EmbodimentBinding and controller generation;
-- WorldObservation with source epoch/tick/revision and contract hashes;
-- ActionRequest/ActionReceipt and server-side authority references;
-- SkillBinding without filesystem paths;
-- dialogue message identity/sequence and persisted tutorial flow state;
-- request and identity registries that state the idempotency rules for later services.
+`navigation_v1` provides `describe`, `observe`, `locations`, `navigate`,
+`approach`, `interact`, `action_status`, `action_cancel`. Actor binding
+is server-side. Cross-zone arrival requires observed membership plus physical
+transfer evidence.
 
-Contract failures use stable codes such as `unsupported_profile`, `stale_world`,
-`identity_mismatch`, `capability_denied`, `skill_missing`, `busy` and
-`unknown_outcome`. No contract imports PyTorch, OpenCode or browser code.
+Navigation journals jobs and outbound commands before execution. Exact request
+IDs are idempotent; uncertain outcomes are reconciled, not blind-replayed.
+`organism.lease.BodyLease` prevents navigation and learning TRAIN/VERIFY from
+concurrently owning the actuator.
 
-Check this boundary with:
+Training setup is a separate privileged internal path. It is limited to
+`training/flat_run`, records a receipt, bumps controller generation and always
+reports `learned_success=false`.
+
+Check with:
 
 ~~~bash
 ./world/op/check.sh
 ~~~
-
-## Physics implementation status
-
-Stage 03 implements a versioned `embodied_world_v1` GameServer mode in
-`gameserver/v1/world/embodied.py`. The map catalog is now consumed by real
-fixed-step physics, including blocked intervals and on-touch portal volumes.
-The legacy one-zone supervisor is intentionally still the default launcher until
-the later cutover stage.
-
-## Semantic navigation status
-
-Stage 05 adds `navigation_v1`: a durable semantic action service over the
-catalog, authoritative observations and the learned Organism controller.
-
-Its MCP surface is intentionally small: `describe`, `observe`, `locations`,
-`navigate`, `approach`, `interact`, `action_status`, `action_cancel`.
-Actor/entity binding is server-side. There is no public actuator, teleport,
-reset, arbitrary entity or set-position tool.
-
-Navigation chooses only the next semantic portal/object region. Spine/Motor own
-motion inside the room and GameServer physics owns transfer. Cross-zone arrival
-requires an observed target membership plus a physical transfer receipt.
-
-Navigation jobs and outbound controller commands are journaled in SQLite before
-execution. Exact request IDs are idempotent; restart reconciles durable evidence
-and never blind-replays an uncertain command.
-
-A shared `organism.lease.BodyLease` prevents navigation and GameLab
-TRAIN/VERIFY/RUN from concurrently owning the physical actuator.

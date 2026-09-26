@@ -2,12 +2,11 @@
 
 Уточнение цели: [план из 11 коммитов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
-навигации и обучения через MCP. Этапы 02–08 уже зафиксировали identity/action/world
-contracts, multi-zone physics, learned-body core, `navigation_v1`, graphics
-RenderFrame, semantic CharacterActionProposal/ActionExecutor в GameTable и
-ID-based `learning_v1` для Motor/Spine.
-Physical location больше не меняется VN reducer-ом; до cutover 09 graphics
-default source всё ещё явно non-authoritative legacy compatibility adapter.
+навигации и обучения через MCP. Этапы 02–09 зафиксировали identity/action/world
+contracts, multi-zone `embodied_world_v1`, learned-body core,
+`navigation_v1`, `learning_v1`, authoritative RenderFrame и semantic
+CharacterActionProposal/ActionExecutor. Physical location больше не меняется VN
+reducer-ом и в production читается только из GameServer observation/receipt.
 
 Цель — один продолжающийся персонаж-исследователь, который общается с Директором,
 накапливает опыт и учится управлять физическим аватаром. Визуальная новелла и
@@ -16,8 +15,9 @@ default source всё ещё явно non-authoritative legacy compatibility ada
 не доказывает другое. Это исследовательская модель, не утверждение о сознании.
 
 Этот документ владеет межкомпонентными границами и направлением развития.
-[GameLab architecture](gamelab/ARCHITECTURE.md) владеет физическим контуром,
+[Organism](organism/README.md) владеет learned-body core,
 [GameTable design](gametable/ROLEPLAY_ENGINE_DESIGN.md) — ходом новеллы.
+GameLab documentation описывает compatibility/history surface.
 Локальные спецификации определяют детали, но не создают вторую власть над
 состоянием соседнего компонента.
 
@@ -57,9 +57,9 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 | Область | Единственный владелец | Что это не означает |
 | --- | --- | --- |
 | Narrative minutes, social/resource stats, published dialogue | GameTable Store/SQLite через CharacterStateReducer | Legacy scene_id не является physical location |
-| Координата, скорость, усилие, epoch/tick | GameServer physics world (legacy Zone до cutover; embodied_world_v1 целевой runtime) | Текст модели не является физическим действием |
+| Координата, скорость, усилие, epoch/tick | GameServer `embodied_world_v1` | Текст модели не является физическим действием |
 | Сессия игрока, последовательность ввода | GameClient Host | Host не определяет успех обучения |
-| Веса, сертификаты, controller/jobs и verification artifacts | Organism (GameLab facade до cutover) | Рассказ об успехе не заменяет VERIFY |
+| Веса, сертификаты, controller/jobs и verification artifacts | Organism | Рассказ об успехе не заменяет VERIFY |
 | Физическое представление | Graphics RenderFrame → browser shell | Renderer не выбирает zone/transfer и не является sensor authority |
 | Social UI и кнопки | GameTable ViewProjector | ViewProjector не владеет координатой/позой тела |
 | Архив наблюдений и исследовательские выводы | director | Архив не подмешивается в память автоматически |
@@ -70,11 +70,10 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 восемь физических часов обучения. Отказ от следующего задания, выход из
 лаборатории и закрытие браузера сами по себе не отменяют ранее начатый job.
 
-Текущая VN всё ещё использует свои `hallway` / `laboratory.workstation` сцены,
-но физический контур этапа 03 уже имеет отдельные зоны `hallway`, `laboratory`
-и `training/flat_run`. Они не синхронизируются с VN до cutover. Сидящая Юки за
-ноутбуком пока остаётся presentation старой VN; физическое положение доказывает
-только GameServer observation/receipt.
+Legacy VN save может содержать `hallway` / `laboratory.workstation`, но это
+не physical scene authority. После migration физический контур имеет зоны
+`hallway`, `laboratory`, `training/flat_run`; актуальное положение и pose
+доказываются GameServer observation/receipt и подтверждённым interaction.
 
 ## Личность, диалог и love story
 
@@ -160,10 +159,10 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 
 ## Совместимость и источники
 
-Старые relationship/duality/volition/executive модули GameLab всё ещё существуют
-и доступны в общем MCP для прежних опытов. Это совместимость, не второй активный
-мозг GameTable. Их отсутствие в allowlist VN принципиально. Профили `characters/`
-обслуживают этот отдельный контур; активная VN пока читает `gametable/roleplay/rules.json`.
+Старые relationship/duality/volition/executive модули GameLab существуют для
+прежних опытов, но GameTable OpenCode их не подключает. Это совместимость, не
+второй активный мозг. Профили `characters/` обслуживают отдельный исторический
+контур; активная VN читает `gametable/roleplay/rules.json`.
 Не объединять их состояния автоматически и не удалять исследовательские архивы
 под видом выравнивания. Описание прежнего контура: [GameLab compatibility](gamelab/COMPATIBILITY.md).
 
@@ -177,5 +176,5 @@ certification one-shot, Spine candidate требует отдельного froz
 
 Setup в `training/flat_run` является privileged assisted apparatus action с
 Director authorization и `learned_success=false`. Это не teleport tool модели
-и не доказательство навыка. Полный process/config/data cutover на
-`navigation_v1 + learning_v1` выполняется в этапе 09.
+и не доказательство навыка. После этапа 09 active GameTable config использует
+только `navigation_v1 + learning_v1`.

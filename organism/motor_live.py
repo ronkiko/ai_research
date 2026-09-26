@@ -59,13 +59,10 @@ class HostMotorWorld:
     def enqueue_reset(self, *, entity_id: str, x: float) -> None:
         if entity_id != "motor-school-player":
             raise ValueError("Motor School adapter only owns its bound entity")
-        # The public learning service fences this call to training/flat_run and
-        # owns the body lease. Stage 09 replaces the compatibility Host reset
-        # transport with the embodied setup-reset route without changing School.
-        response = self.client.reset(float(x))
-        if not isinstance(response, dict):
-            raise RuntimeError("Host rejected Motor School episode reset")
-        state = self._state()
+        from .runtime import reset_player_state
+        state = reset_player_state(
+            self.client, self.player_id, spawn_x=float(x)
+        )
         self._last_state = state
         self._last_tick = int(state["snapshot"]["world_tick"])
 

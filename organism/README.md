@@ -5,8 +5,8 @@ refactor stage 04. It owns controller code, declared sensors, Spine/Motor models
 Motor packages and certificates, Motor/Spine schools, verification, experiment
 job primitives and artifact validation.
 
-GameLab remains the compatibility service and current public operator shell until
-the later cutover. Its old core module paths are thin imports of this package;
+GameLab remains only a compatibility/history facade. After cutover 09 the
+active VN and public learned-body operator path use `organism/` directly;
 there is not a second control loop or trainer.
 
 ## Boundaries
@@ -38,16 +38,22 @@ A pre-refactor Spine checkpoint can be imported only after loading it against
 the certified Motor identity/hash; the checkpoint bytes are copied unchanged.
 No import retrains a model.
 
-The public `learning_v1` MCP is implemented in stage 08. The final operator
-launcher and GameTable/config migration remain stage 09.
+The public `learning_v1` MCP was implemented in stage 08; stage 09 switched
+GameTable to `navigation_v1 + learning_v1` and added the Organism operator
+launcher.
 
-## Check
-
-The current compatibility gate runs both organism and GameLab tests:
+## Operator
 
 ~~~bash
-./gamelab/op/gamelab.sh check
+./organism/op/organism.sh check
+./organism/op/organism.sh train motor
+./organism/op/organism.sh train spine
+./organism/op/organism.sh verify
+./organism/op/organism.sh serve learning
 ~~~
+
+The private `organism/.venv` is bootstrapped by this launcher. GameTable uses
+the same launcher for both active MCP services.
 
 ## learning_v1
 

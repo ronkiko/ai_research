@@ -14,8 +14,11 @@ from gametable.roleplay.engine import (DISPOSITIONS, InvalidReport, initial_stat
                                      plan_effects, reduce_turn, reduce_world,
                                      validate_action_proposal, validate_draft, validate_report)
 from gametable.roleplay.external import ActionExecutor, ActionScopeError
-from gametable.roleplay.opencode import (LAB_TOOLS, NAVIGATION_TOOLS, READ_ONLY_LAB_TOOLS,
-                                         BackendError, OpenCode)
+from gametable.roleplay.opencode import (
+    LEARNING_TOOLS, NAVIGATION_TOOLS, READ_ONLY_LEARNING_TOOLS,
+    BackendError, OpenCode,
+)
+from graphics import LegacyVNGraphics
 from gametable.roleplay.runtime import Runtime, public_turn
 from gametable.roleplay.store import Store
 from gametable.roleplay.server import (Application, EventHub, handler_for,
@@ -543,35 +546,38 @@ class TransportTests(unittest.TestCase):
             {"info": {"providerID": "other", "modelID": "other"}, "parts": [{"type": "text", "text": "{}"}]}])
         with self.assertRaises(BackendError): backend.complete("ses_parent", "yuki", "test")
 
-    def test_lab_session_has_only_a_scoped_allowlist(self):
+    def test_learning_session_has_only_a_scoped_allowlist(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
         backend.request = Mock(return_value={"id": "ses_lab"})
         backend.create("Lab", parent="ses_parent", lab=True)
         body = backend.request.call_args.args[2]
         rules = body["permission"]
         self.assertEqual(rules[0], {"permission": "*", "pattern": "*", "action": "deny"})
-        self.assertEqual({r["permission"] for r in rules[1:]}, set(LAB_TOOLS))
+        self.assertEqual({r["permission"] for r in rules[1:]}, set(LEARNING_TOOLS))
         self.assertNotIn("task", {r["permission"] for r in rules})
 
 
-    def test_read_only_lab_scope_cannot_gain_write_tools(self):
+    def test_read_only_learning_scope_cannot_gain_write_tools(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
         backend.request = Mock(return_value={"id": "ses_readonly"})
-        backend.create("Safe lab", parent="ses_parent", lab_tools=READ_ONLY_LAB_TOOLS)
+        backend.create("Safe lab", parent="ses_parent", lab_tools=READ_ONLY_LEARNING_TOOLS)
         body = backend.request.call_args.args[2]
         rules = body["permission"]
         self.assertEqual(rules[0], {"permission": "*", "pattern": "*", "action": "deny"})
-        self.assertEqual({r["permission"] for r in rules[1:]}, set(READ_ONLY_LAB_TOOLS))
-        self.assertTrue(set(READ_ONLY_LAB_TOOLS) < set(LAB_TOOLS))
+        self.assertEqual({r["permission"] for r in rules[1:]}, set(READ_ONLY_LEARNING_TOOLS))
+        self.assertTrue(set(READ_ONLY_LEARNING_TOOLS) < set(LEARNING_TOOLS))
         self.assertFalse(any(name.endswith(("_start", "_cancel", "_set", "_move"))
-                             for name in READ_ONLY_LAB_TOOLS))
+                             for name in READ_ONLY_LEARNING_TOOLS))
 
 class WebBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.rules = load_rules()
         self.store = Store(Path(self.temp.name) / "test.sqlite3", self.rules)
-        self.app = Application(self.store, Mock(), SimpleNamespace(model="openai/gpt-5.6-luna"), self.rules)
+        self.app = Application(
+            self.store, Mock(), SimpleNamespace(model="openai/gpt-5.6-luna"),
+            self.rules, graphics=LegacyVNGraphics(),
+        )
         self.handler_class = handler_for(self.app)
 
     def tearDown(self):
@@ -762,12 +768,23 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertNotIn('{"id", "text", "activity"}', server)
         self.assertFalse((root / "refactor-plan-v2").exists())
 
-    def test_ci_watches_both_mcp_surfaces(self):
+    def test_ci_watches_embodied_navigation_and_learning_surfaces(self):
         workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "gametable.yml").read_text()
-        self.assertIn('"gameclient/v1/clients/mcp.py"', workflow)
-        self.assertIn('"gamelab/mcp.py"', workflow)
+        self.assertIn('"organism/**"', workflow)
+        self.assertIn('"gameserver/v1/world/**"', workflow)
+        self.assertIn('"gameclient/v1/host/**"', workflow)
         self.assertIn('"graphics/**"', workflow)
         self.assertIn('"world/navigation.py"', workflow)
+        self.assertNotIn('"gamelab/mcp.py"', workflow)
+
+    def test_active_opencode_config_has_only_navigation_and_learning(self):
+        root = Path(__file__).parents[1]
+        config = json.loads((root / "opencode.json").read_text())
+        self.assertEqual(set(config["mcp"]), {"navigation_v1", "learning_v1"})
+        start = (root / "op" / "start.sh").read_text()
+        self.assertNotIn("gamelab", start.lower())
+        self.assertIn("gameserver/v1/op/embodied.sh", start)
+        self.assertIn("organism/op/organism.sh", start)
 
     def test_no_set_stats_or_arbitrary_activity_endpoint(self):
         h = self.handler("/api/set_stats", {"health": 0}, token=self.app.token)

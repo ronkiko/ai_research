@@ -5,6 +5,7 @@ import unittest
 from graphics.assets import public_asset_catalog
 from graphics.contracts import MAX_FRAME_BYTES
 from graphics.projector import SceneProjector
+from graphics.live import EmbodiedWorldGraphics
 from graphics.stream import FrameHub
 from world.catalog import WORLD_ID
 
@@ -85,4 +86,47 @@ class BrowserBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden,renderer)
         self.assertIn("frame.zone_id",renderer); self.assertIn("requestAnimationFrame",renderer)
 
-if __name__=="__main__": unittest.main()
+
+class _FakeGraphicsClient:
+    def state(self):
+        world = snapshot(
+            entity("entity.yuki", "character.yuki", 42.5),
+            tick=77, revision=81, epoch="epoch.live",
+        )
+        return {
+            "session": {
+                "entity_id": "entity.yuki",
+                "player_id": "player1",
+                "zone_id": "hallway",
+            },
+            "snapshot": world,
+            "observation": {
+                "entity_id": "entity.yuki",
+                "world_id": WORLD_ID,
+                "world_epoch": "epoch.live",
+                "tick": 77,
+                "world_revision": 81,
+                "zone_id": "hallway",
+                "physical": {"x": 42.5, "vx": 0.0, "effort": 0.0},
+            },
+        }
+    def close(self):
+        pass
+
+
+class LiveGraphicsTests(unittest.TestCase):
+    def test_embodied_source_is_authoritative_and_exports_same_observation(self):
+        graphics = EmbodiedWorldGraphics(client=_FakeGraphicsClient())
+        value = graphics.snapshot({})
+        self.assertTrue(value["authoritative"])
+        self.assertTrue(value["cutover_ready"])
+        self.assertEqual(
+            value["frame"]["freshness"]["source"], "embodied_world_v1"
+        )
+        self.assertTrue(value["frame"]["freshness"]["authoritative"])
+        self.assertEqual(value["observation"]["location_id"], "hallway")
+        self.assertEqual(value["observation"]["observed_tick"], 77)
+
+
+if __name__ == "__main__":
+    unittest.main()

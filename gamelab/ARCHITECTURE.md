@@ -1,10 +1,10 @@
 # Realtime AI research laboratory
 
-> **Stage 04 status.** Learned controller, sensors, models, Motor registry,
-> Motor/Spine schools, verification, reward/journal and Host adapters are now
-> canonical in [../organism/](../organism/). GameLab keeps the current MCP and
-> operator compatibility surface until cutover; its former core modules are
-> thin shims and do not form a second trainer/control loop.
+> **Post-cutover status.** Learned controller, sensors, models, Motor registry,
+> Motor/Spine schools, verification and Host adapters are canonical in
+> [../organism/](../organism/). GameLab remains for explicit compatibility and
+> historical experiments; active GameTable does not connect its MCP. Former core
+> modules are thin shims and do not form a second trainer/control loop.
 
 ## Related docs
 

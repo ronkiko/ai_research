@@ -1,9 +1,10 @@
 # GameLab
 
-GameLab is currently the compatibility service/operator facade for the composite
-AI organism. Since refactor stage 04, the learned controller/models/schools and
-artifact validation are canonical in [../organism/](../organism/); GameLab's old
-core module paths delegate there. The current physical vertical is:
+GameLab is the retained compatibility/operator facade for pre-cutover
+experiments. Since stage 04 the learned controller/models/schools are canonical
+in [../organism/](../organism/), and since stage 09 active GameTable does not
+connect `gamelab_v1`. Its old module paths delegate to Organism. Historical
+physical vertical:
 
 ```text
 LLM / Director goal
@@ -28,9 +29,9 @@ local proprioception to physical effort.
 There is no PID controller, scripted teacher, heuristic steering fallback, or
 hidden procedural path that can make frozen VERIFY succeed.
 
-## Start here
+## Compatibility operator
 
-GameLab has exactly one public operator command:
+For explicit legacy/compatibility work GameLab keeps one command:
 
 ```bash
 ./gamelab/op/gamelab.sh
@@ -81,7 +82,9 @@ overview.
 
 ## Execution boundary
 
-`gamelab/op/gamelab.sh` is the only public GameLab shell command. The private
+`gamelab/op/gamelab.sh` is the compatibility GameLab shell command. The active
+learned-body operator is `../organism/op/organism.sh`; GameTable does not launch
+GameLab. The private
 `gamelab/op/_env.sh` owns the self-healing project Python environment.
 
 CI uses the same public path as the Operator:

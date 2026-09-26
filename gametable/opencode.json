@@ -1,20 +1,23 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "game_v1": {
+    "navigation_v1": {
       "type": "local",
       "command": [
-        "./gameclient/v1/op/mcp.sh"
+        "./organism/op/organism.sh",
+        "serve",
+        "navigation"
       ],
       "cwd": "..",
       "enabled": true,
-      "timeout": 60000
+      "timeout": 300000
     },
-    "gamelab_v1": {
+    "learning_v1": {
       "type": "local",
       "command": [
-        "./gamelab/op/gamelab.sh",
-        "serve"
+        "./organism/op/organism.sh",
+        "serve",
+        "learning"
       ],
       "cwd": "..",
       "enabled": true,

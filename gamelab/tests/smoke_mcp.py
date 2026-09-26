@@ -729,17 +729,17 @@ async def run_flow(
             if existing and operator.session().get("session_id") != original_session.get("session_id"):
                 raise AssertionError("smoke replaced the pre-existing shared session")
 
-            reset_clients = {
+            training_reset_clients = {
                 event.get("client_id")
                 for event in events
-                if event.get("kind") == "reset"
+                if event.get("kind") == "training_reset"
             }
             for expected in ("gamelab-mcp-train", "gamelab-mcp-verify"):
-                if expected not in reset_clients:
+                if expected not in training_reset_clients:
                     raise AssertionError(
-                        f"missing non-destructive episode reset from {expected}: {events}"
+                        f"missing fenced training reset from {expected}: {events}"
                     )
-            if "gamelab-mcp-run" in reset_clients:
+            if "gamelab-mcp-run" in training_reset_clients:
                 raise AssertionError(f"live RUN must not reset player state: {events}")
 
             if not any(
