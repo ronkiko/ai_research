@@ -11,11 +11,11 @@ release.branch.series.patch
 Для текущей линии:
 
 ```text
-0.0.3.01
-│ │ │ └─ patch 01 внутри roadmap Series 3
-│ │ └─── series 3
-│ └───── branch line 0 = main
-└─────── release line 0
+0.main.3.01
+│ │    └─ patch 01 внутри roadmap Series 3
+│ └────── series 3
+├──────── branch line main
+└──────── release line 0
 ```
 
 ## Поля
@@ -60,7 +60,7 @@ roadmap, Operator назначает ей отдельный branch coordinate.
 
 ```text
 series = 3
-coordinate = 0.0.3
+coordinate = 0.main.3
 ```
 
 Series имеет собственный README с целью, инвариантами, зависимостями и порядком
@@ -73,9 +73,9 @@ patches.
 Примеры:
 
 ```text
-0.0.3.01
-0.0.3.02
-0.0.3.03
+0.main.3.01
+0.main.3.02
+0.main.3.03
 ...
 ```
 
@@ -104,7 +104,7 @@ docs/roadmap/
 Текущая Series 3:
 
 ```text
-docs/roadmap/0/0/3/
+docs/roadmap/0/main/3/
 ```
 
 ## Исторические документы
@@ -121,7 +121,7 @@ docs/roadmap/0/0/3/
 Рекомендуемая рабочая branch для patch:
 
 ```text
-series/0.0.3.01-<short-name>
+series/0.main.3.01-<short-name>
 ```
 
 Это рекомендация для навигации, не часть runtime contract.
