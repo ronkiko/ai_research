@@ -1,0 +1,9 @@
+:root{font-family:system-ui,sans-serif;color:#e7ecef;background:#182126}
+body{margin:0;min-height:100vh;display:grid;place-items:center}
+main{width:min(1200px,96vw)}
+header,.controls{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.7rem 0}
+#world{display:block;width:100%;height:auto;background:#26343a;border:1px solid #4d5e66;border-radius:8px}
+kbd{background:#2f4149;border:1px solid #627780;border-radius:4px;padding:.2rem .5rem}
+#connection,.controls,#world-meta{color:#aebdc4}
+#status{min-height:3em;white-space:pre-wrap;color:#d1dadd}
+.error{color:#ffb4a9!important}

@@ -20,3 +20,9 @@ intermediate frames and never backpressure physics. Same-epoch stale revisions
 are rejected; an epoch change names the previous epoch.
 
 Run `./graphics/op/check.sh`.
+
+
+Stage 13 adds a parity-checked Node.js projection inside `player-gateway/` for
+the standalone human browser vertical. Until Stage 14, GameTable still uses
+`EmbodiedWorldGraphics`; the shared parity fixture prevents the Node and Python
+RenderFrame contracts from drifting. Neither projector is physics authority.

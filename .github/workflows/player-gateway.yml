@@ -1,0 +1,35 @@
+name: Player Gateway checks
+
+on:
+  push:
+    paths:
+      - "player-gateway/**"
+      - "graphics/**"
+      - "world/maps/**"
+      - "gameclient/v1/host/**"
+      - "docs/refactor/embodied-vn/13-player-gateway.md"
+      - ".github/workflows/player-gateway.yml"
+  pull_request:
+    paths:
+      - "player-gateway/**"
+      - "graphics/**"
+      - "world/maps/**"
+      - "gameclient/v1/host/**"
+      - "docs/refactor/embodied-vn/13-player-gateway.md"
+      - ".github/workflows/player-gateway.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Managed launcher smoke
+        run: ./op/test-process.sh
+      - name: Player Gateway checks
+        run: ./player-gateway/op/check.sh

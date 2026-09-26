@@ -45,3 +45,6 @@ gamelab/runtime/
 
 # gametable: persistent Brain/relationship runtime state
 gametable/runtime/
+
+# player-gateway: installed Node dependencies
+player-gateway/node_modules/
