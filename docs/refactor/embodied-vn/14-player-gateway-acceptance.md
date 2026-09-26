@@ -4,9 +4,10 @@
 Планируемый коммит: `Cut browser realtime traffic over to Player Gateway`.
 Цель: A1–A13.
 
-Статус: **план**. Это новый финальный патч серии. Он заменяет статус «11 —
-финальная приёмка»: этап 11 остаётся первым аудитом, на котором и был обнаружен
-непринятый browser realtime path.
+Статус: **реализовано; финальная серия остаётся BLOCKED по evidence**. Этот
+патч завершает кодовую часть 01–14 и заменяет 11 как финальный детерминированный
+gate. Этап 11 остаётся первым аудитом, на котором был обнаружен непринятый
+browser realtime path.
 
 ## Production cutover
 
@@ -153,3 +154,49 @@ Motor/Spine research, frozen VERIFY и live LLM/tool evidence должны бы�
 Если хотя бы один блок остаётся BLOCKED, `01-concept.md` не переводится в
 принятый статус и никакой timeout/retry workaround не объявляется финальным
 решением.
+
+
+## Реализованный результат Stage 14
+
+- Player Gateway теперь раздаёт действующий GameTable web shell и является
+  единственным production browser entrypoint.
+- Realtime frames идут только через Socket.IO Player Gateway; старый
+  GameTable `/api/frames` удалён из backend surface.
+- Browser Director input больше не вызывает `/api/director/*` GameTable.
+  Shell использует только `control.acquire/input_state/control.release`
+  Player Gateway protocol.
+- GameTable стал loopback backend для story/dialogue/state. Разрешённые
+  narrative GET/POST маршруты proxy-ятся через Player Gateway; direct
+  Director/frames routes proxy запрещает.
+- GameTable `/api/state` больше не строит RenderFrame. Независимый
+  `WorldObservationPump` читает cached Host[yuki] observation и сохраняет
+  ограниченные по display-cell world observations для VN context.
+- Production Node projector остаётся parity-checked относительно Python
+  `SceneProjector`; Python graphics больше не является вторым production
+  frame publisher.
+- Player Gateway выдаёт signed HttpOnly SameSite session capability,
+  применяет host/origin policy, payload/input/connection bounds и per-IP
+  connection ceiling. Public bind требует explicit public mode, TLS contract,
+  allowlists и session secret.
+- Slow clients получают `volatile` latest-only frames; runtime status содержит
+  world epoch/tick, Host freshness, frame age/latency и input coalescing metrics.
+- Gateway restart может reclaim старый Host manual lease через fenced transfer;
+  active second browser session внутри одного Gateway не может одновременно
+  владеть actor.
+- `gametable/op/start.sh` запускает Player Gateway как web entrypoint и
+  сохраняет GameServer/Hosts как независимые процессы. `--fresh` по-прежнему
+  не удаляет Organism artifacts.
+- Deterministic acceptance расширен с A1–A11 до A1–A13 и включает Node checks.
+
+## Статус финальной приёмки
+
+Кодовая/контрактная часть Stage 14 может быть PASS только после зелёного CI.
+Даже после этого **Overall остаётся BLOCKED**, пока оператор отдельно не
+зафиксирует:
+
+1. clean/fresh manual browser escort через Player Gateway;
+2. live LLM/MCP vertical;
+3. fresh Motor+Spine research + frozen held-out VERIFY;
+4. sleep/new-day visual evidence и restart/failure checks.
+
+Эти пункты намеренно не заменяются unit/integration tests.
