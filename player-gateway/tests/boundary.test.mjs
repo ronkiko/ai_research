@@ -19,13 +19,47 @@ test("Player Gateway runtime has no direct GameServer port and frames are volati
   assert.match(server, /io\.volatile\.emit\("frame\.latest"/);
 });
 
-test("Stage 13 refuses public bind by default contract", () => {
-  const previous = process.env.PLAYER_GATEWAY_BIND;
-  process.env.PLAYER_GATEWAY_BIND = "0.0.0.0";
-  try {
-    assert.throws(() => loadConfig(), /loopback only/);
-  } finally {
-    if (previous == null) delete process.env.PLAYER_GATEWAY_BIND;
-    else process.env.PLAYER_GATEWAY_BIND = previous;
+function withEnv(values, fn) {
+  const previous = new Map();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    if (value == null) delete process.env[key];
+    else process.env[key] = value;
   }
+  try { return fn(); }
+  finally {
+    for (const [key, value] of previous) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("public bind requires explicit public mode and TLS/auth deployment contract", () => {
+  withEnv({
+    PLAYER_GATEWAY_BIND: "0.0.0.0",
+    PLAYER_GATEWAY_PUBLIC: null,
+  }, () => assert.throws(() => loadConfig(), /PLAYER_GATEWAY_PUBLIC=1/));
+
+  withEnv({
+    PLAYER_GATEWAY_BIND: "0.0.0.0",
+    PLAYER_GATEWAY_PUBLIC: "1",
+    PLAYER_GATEWAY_ALLOWED_ORIGINS: "https://game.example",
+    PLAYER_GATEWAY_ALLOWED_HOSTS: "game.example",
+    PLAYER_GATEWAY_SESSION_SECRET: "x".repeat(40),
+    PLAYER_GATEWAY_TLS_MODE: null,
+  }, () => assert.throws(() => loadConfig(), /TLS termination contract/));
+
+  withEnv({
+    PLAYER_GATEWAY_BIND: "0.0.0.0",
+    PLAYER_GATEWAY_PUBLIC: "1",
+    PLAYER_GATEWAY_ALLOWED_ORIGINS: "https://game.example",
+    PLAYER_GATEWAY_ALLOWED_HOSTS: "game.example",
+    PLAYER_GATEWAY_SESSION_SECRET: "x".repeat(40),
+    PLAYER_GATEWAY_TLS_MODE: "reverse_proxy",
+  }, () => {
+    const config = loadConfig();
+    assert.equal(config.publicMode, true);
+    assert.equal(config.tlsMode, "reverse_proxy");
+  });
 });
