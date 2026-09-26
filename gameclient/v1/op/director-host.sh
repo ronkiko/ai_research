@@ -18,7 +18,7 @@ op_managed_process \
   "$ACTION" \
   "gameclient-director-host-v1" \
   "$ROOT" \
-  "gameclient.v1.host.server" \
+  "gameclient.v1.host.server --port 17701" \
   "$ROOT" \
   "Director Host v1" \
   "${PYTHON:-python3}" -m gameclient.v1.host.server \
