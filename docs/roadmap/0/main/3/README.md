@@ -142,55 +142,51 @@ Host[human] / web VPS B  ═══ P2P demo ═══► Host[yuki] / GPU VPS C
 Host↔Host P2P — **узкое исключение только для authorized demonstration data**.
 Оно не заменяет GameServer Gateway и не переносит physical authority на clients.
 
-## Одна active teacher↔student связь на GameServer
+## Не более одного teacher на одного student
 
-Teacher/demo telemetry — ограниченный server-side ресурс.
+Teacher/demo telemetry — отдельный server-side resource, но Series 3 **не**
+вводит глобальный singleton на весь World.
 
-Нормативный инвариант для Series 3 и будущих learning-серий:
-
-```text
-one GameServer / one World
-        │
-        └─ max 1 active TeacherStudentSession
-              teacher ↔ student
-```
-
-Одновременно на одном World может существовать только **одна активная
-teacher↔student обучающая связь**.
-
-Это ограничение относится именно к assisted/demonstration learning. Другие
-actors могут одновременно:
-
-- находиться в мире;
-- двигаться;
-- получать обычные observations;
-- выполнять свои policy;
-- проходить self-learning / reinforcement learning, если он не использует
-  teacher/demo channel.
-
-Но второй teacher↔student канал открыть нельзя, пока первый не завершён.
-
-Например, если активно:
+Нормативный инвариант:
 
 ```text
-Director ↔ Yuki
+for each student_entity_id:
+    active_teacher_count ∈ {0, 1}
 ```
 
-то одновременно запрещено:
+То есть одновременно допустимо:
 
 ```text
-Director ↔ AI-2
-Teacher-2 ↔ AI-2
-Teacher-3 ↔ AI-3
+Teacher A ↔ Student 1
+Teacher B ↔ Student 2
+Teacher A ↔ Student 3
+Student 4 ↔ none
 ```
 
-GameServer должен проверять singleton `TeacherStudentSession` **до** создания
-demonstration capability, telemetry producer, subscription, buffer или dataset
-stream. Конкурирующий запрос получает typed `TEACHER_SESSION_BUSY` /
-эквивалентный отказ без дополнительной telemetry нагрузки.
+Но запрещено:
 
-Teacher и student образуют одну пару; нельзя обойти ограничение несколькими
-Hosts, connections или sessions.
+```text
+Teacher A ─┐
+           ├─→ Student 1
+Teacher B ─┘
+```
+
+У одного student не может быть двух активных teachers одновременно.
+
+GameServer должен проверять уникальность active teaching relation по
+`student_entity_id` **до** создания demonstration capability, telemetry
+producer, subscription, buffer или dataset stream.
+
+Если student уже имеет активного teacher, второй acquire получает typed
+`STUDENT_ALREADY_HAS_TEACHER` / эквивалентный отказ без создания второго
+telemetry producer для этого student.
+
+Несколько Hosts/connections/sessions не могут обойти это ограничение.
+
+Это правило не ограничивает число студентов в World и не запрещает параллельное
+teacher-assisted обучение разных students. Общие server capacity/rate limits
+для большого числа одновременных students являются отдельной resource-policy
+задачей и не должны подменяться этим cardinality invariant.
 
 Подробный admission/lifecycle contract:
 [0.main.3.05](05-demonstration-link.md).
