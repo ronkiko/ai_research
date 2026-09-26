@@ -50,6 +50,10 @@ grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
 grep -q -- '--free-ports' gametable/op/start.sh
 grep -q -- 'fuser -k "$port/tcp"' gametable/op/start.sh
 grep -q -- './gametable/op/start.sh --restart --free-ports' gametable/op/start.sh
+grep -q -- 'trap cleanup_stack_on_exit EXIT' gametable/op/start.sh
+grep -q -- 'GAMETABLE_STACK_SUPERVISED=1' gametable/op/start.sh
+grep -q -- 'BACKEND_RUNNER_PID=\$!' gametable/op/start.sh
+grep -q -- 'wait "\$BACKEND_RUNNER_PID"' gametable/op/start.sh
 
 # GameTable operator flags are orthogonal and order-independent; none may leak
 # into roleplay.server argv.

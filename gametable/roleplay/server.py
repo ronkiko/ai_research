@@ -496,7 +496,10 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки backend: http://127.0.0.1:{args.port}")
         logger.write(f"Модель: {backend.model}")
-        logger.write("Ctrl+C — сохранить и выйти.")
+        if os.environ.get("GAMETABLE_STACK_SUPERVISED") == "1":
+            logger.write("Foreground supervisor управляет завершением всего стека.")
+        else:
+            logger.write("Ctrl+C — сохранить и выйти.")
         if not stopped.is_set():
             server.serve_forever(poll_interval=0.25)
     except (BackendError, OSError, ValueError) as exc:
