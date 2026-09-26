@@ -178,7 +178,9 @@ class EmbodiedWorldTests(unittest.TestCase):
             self.assertEqual(
                 runtime.receipt(setup["action_id"])["status"], "applied"
             )
-            self.assertEqual(len(store.saves), after_spawn + 1)
+            # Structural action is persisted once as queued/uncertain-safe
+            # reservation and once again with its applied terminal receipt.
+            self.assertEqual(len(store.saves), after_spawn + 2)
         finally:
             runtime.close()
 
