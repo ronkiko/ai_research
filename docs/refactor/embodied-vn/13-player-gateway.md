@@ -4,8 +4,9 @@
 Планируемый коммит: `Add Node.js Player Gateway for realtime web players`.
 Цель: A9, A11–A13.
 
-Статус: **план**. Этап создаёт новый internet-facing runtime, но ещё не делает
-его единственным production entrypoint: окончательный cutover и hardening — в 14.
+Статус: **реализовано**. Этап создаёт новый loopback internet-facing runtime,
+но ещё не делает его единственным production entrypoint: окончательный cutover,
+TLS/auth и hardening остаются в 14.
 
 ## Назначение
 
@@ -146,3 +147,28 @@ proxy и production auth завершаются в 14.
 Результат этапа: локальный browser уже может видеть authoritative world и
 управлять human actor через Node Player Gateway без участия GameTable realtime
 input path.
+
+
+## Реализованный результат
+
+- Добавлен отдельный `player-gateway/` на Node.js с Socket.IO 4.8.1 и
+  зафиксированным `package-lock.json`.
+- Stage 13 listener по умолчанию доступен только на `127.0.0.1:17881`;
+  публичный bind отвергается конфигурацией.
+- Gateway соединяется только с `GameClient Host[human]` на loopback 17701.
+  В runtime нет GameServer physics port или coordinate mutation API.
+- Browser protocol принимает только `axis_x=-1|0|+1` + monotonic browser
+  sequence. Координаты, velocity, zone и portal result не принимаются.
+- Human input coalesce-ится до desired state, имеет browser event budget,
+  upstream ceiling 20 Hz и keepalive 500 ms. Повторы keyboard/curl не становятся
+  равным числом Host commands.
+- Один browser session владеет одним Host manual lease; blur/disconnect/release
+  сбрасывают effort через Host, а world watchdog остаётся последним fence.
+- Gateway читает latest authoritative Host cache и проектирует RenderFrame с
+  базовой частотой 25 Hz. Socket.IO frames отправляются через `volatile.emit`,
+  поэтому slow browser теряет промежуточные frames вместо создания backpressure.
+- Node projector и Python `graphics.SceneProjector` используют общий parity
+  fixture. Python projector остаётся reference/compatibility oracle до cutover 14.
+- Добавлен минимальный standalone browser cockpit для локальной вертикали;
+  GameTable story/dialogue пока остаются отдельным путём, как и требовал план 13.
+- Добавлены operator launch/setup/check scripts и отдельный Player Gateway CI.
