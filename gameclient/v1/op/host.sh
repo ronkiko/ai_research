@@ -19,22 +19,16 @@ MARKER="gameclient.v1.host.server --port 17700"
 LABEL="GameClient Host v1"
 PORT=17700
 
-port_open() {
-  "${PYTHON:-python3}" - "$PORT" <<'PY' >/dev/null 2>&1
-import socket
-import sys
-port = int(sys.argv[1])
-try:
-    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-        pass
-except OSError:
-    raise SystemExit(1)
-raise SystemExit(0)
-PY
-}
-
 if [[ "$ACTION" == "restart" ]]; then
   op_managed_process stop "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL"
+  ACTION="start"
+fi
+
+if [[ "$ACTION" == "start" ]]; then
+  op_require_tcp_port_free "127.0.0.1" "$PORT" "$LABEL"
+fi
+
+op_managed_process stop "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL"
   ACTION="start"
 fi
 
