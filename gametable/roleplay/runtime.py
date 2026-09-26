@@ -185,7 +185,9 @@ class Runtime:
         requests = {role: prompts.appraisal(role, data) for role in ("heart", "head")}
 
         def assess(role):
-            response = self.backend.complete(parent, "yuki-" + role, requests[role])
+            response = self.backend.complete(
+                parent, "yuki-" + role, requests[role], retry_transient=False
+            )
             report = validate_report(parse_json(response["text"]), event, before, role)
             return {"report": report, "session_id": response["session_id"]}
 

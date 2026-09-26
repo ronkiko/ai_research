@@ -592,6 +592,44 @@ class TransportTests(unittest.TestCase):
             len([path for _method, path in calls if path.endswith("/abort")]), 1
         )
 
+    def test_toolless_completion_can_disable_retry_and_logs_provider_error_name(self):
+        logs = []
+        backend = OpenCode(
+            "http://localhost", "/table", "openai/gpt-5.6-luna", log=logs.append
+        )
+        calls = []
+        session_number = 0
+
+        def request(method, path, body=None, **_kwargs):
+            nonlocal session_number
+            calls.append((method, path))
+            if path == "/session":
+                session_number += 1
+                return {"id": f"ses-{session_number}"}
+            if path.endswith("/abort"):
+                return {}
+            if path.endswith("/message"):
+                return {
+                    "info": {"error": {"name": "ProviderError"}},
+                    "parts": [],
+                }
+            raise AssertionError((method, path))
+
+        backend.request = request
+        with self.assertRaises(BackendError):
+            backend.complete(
+                "ses-parent",
+                "yuki-heart",
+                "test",
+                retry_transient=False,
+            )
+
+        self.assertEqual(session_number, 1)
+        self.assertEqual(
+            len([path for _method, path in calls if path.endswith("/message")]), 1
+        )
+        self.assertTrue(any("error=ProviderError" in message for message in logs))
+
     def test_tool_scoped_completion_never_replays_after_unknown_provider_failure(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
         calls = []

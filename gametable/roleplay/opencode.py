@@ -131,7 +131,8 @@ class OpenCode:
             pass
 
     def complete(
-        self, parent, agent, prompt, lab=False, lab_tools=None, allowed_tools=None
+        self, parent, agent, prompt, lab=False, lab_tools=None, allowed_tools=None,
+        retry_transient=True,
     ):
         # Tool-less voices are pure model calls: a transient provider/transport
         # failure can be retried in a fresh child session without duplicating
@@ -139,7 +140,11 @@ class OpenCode:
         # single-attempt because an unknown transport outcome must never replay
         # an MCP mutation.
         tool_scoped = bool(lab or lab_tools is not None or allowed_tools is not None)
-        attempts = 1 if tool_scoped else TEXT_ONLY_COMPLETION_ATTEMPTS
+        attempts = (
+            1
+            if tool_scoped or not retry_transient
+            else TEXT_ONLY_COMPLETION_ATTEMPTS
+        )
         model = self.model.split("/", 1)
         body = {
             "agent": agent,
@@ -172,15 +177,24 @@ class OpenCode:
                 raise
 
             info = result.get("info") if isinstance(result, dict) else None
-            if not isinstance(info, dict) or info.get("error"):
+            error = info.get("error") if isinstance(info, dict) else None
+            if not isinstance(info, dict) or error:
+                if isinstance(error, dict) and isinstance(error.get("name"), str):
+                    error_name = error["name"]
+                elif error:
+                    error_name = type(error).__name__
+                else:
+                    error_name = "missing-info"
+                self.log(
+                    f"OpenCode {agent}: ответ не завершён; error={error_name}"
+                )
                 last_error = BackendError(
                     "OpenCode не завершил ответ модели; проверь серверный журнал"
                 )
                 self._abort_session(sid)
                 if attempt < attempts:
                     self.log(
-                        f"OpenCode {agent}: ответ не завершён; "
-                        f"повтор {attempt + 1}/{attempts}"
+                        f"OpenCode {agent}: повтор {attempt + 1}/{attempts}"
                     )
                     time.sleep(TEXT_ONLY_RETRY_DELAYS[attempt - 1])
                     continue
