@@ -236,6 +236,29 @@ teacher data не зависели от co-location Hosts.
 Подробности:
 [0.main.3.05 DemonstrationLink](../roadmap/0/main/3/05-demonstration-link.md).
 
+## Training telemetry admission
+
+Distributed clients не имеют права масштабировать server-side training
+telemetry количеством Hosts или соединений.
+
+На один GameServer/World действует global `TrainingTelemetrySlot`: максимум
+один active student actor. Проверка выполняется на GameServer до выделения
+telemetry producer/buffer.
+
+Поэтому topology с несколькими AI nodes:
+
+```text
+Host[ai-a] ─┐
+Host[ai-b] ─┼─→ GameServer
+Host[yuki] ─┘
+```
+
+не означает три параллельных training telemetry streams. Только actor,
+получивший slot, получает training-grade telemetry; остальные training acquire
+requests получают bounded busy/rejected response.
+
+Обычный gameplay/state observation всех actors продолжает работать.
+
 ## Failure isolation между машинами
 
 Ожидаемые свойства:
