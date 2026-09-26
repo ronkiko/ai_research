@@ -1,5 +1,9 @@
 # ai_research
 
+Мир, персонажи и сюжетный замысел описаны отдельно в
+[лоре игры](docs/lore/README.md). Раздел содержит только художественные смыслы
+и их версии; устройство системы описывается в архитектуре и roadmap.
+
 Завершённая embodied-VN refactor series 01–15:
 [единое тело Юки в мире новеллы](docs/refactor/embodied-vn/01-concept.md).
 Она закрепила identity/action/world contracts, multi-zone
