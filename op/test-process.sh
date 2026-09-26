@@ -20,6 +20,9 @@ done
 grep -q -- 'gameclient.v1.host.server --port 17700' gameclient/v1/op/host.sh
 grep -q -- 'gameclient.v1.host.server --port 17701' gameclient/v1/op/director-host.sh
 grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
+grep -q -- '--free-ports' gametable/op/start.sh
+grep -q -- 'fuser -k "$port/tcp"' gametable/op/start.sh
+grep -q -- './gametable/op/start.sh --restart --free-ports' gametable/op/start.sh
 
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
