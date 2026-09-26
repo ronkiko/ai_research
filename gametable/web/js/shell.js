@@ -1,10 +1,14 @@
 import {
-  bootstrap, directorAcquire, directorInput, directorRelease,
-  fetchAssetCatalog, fetchAudit, respondEscort, submitTurn,
+  bootstrap, fetchAssetCatalog, fetchAudit, fetchTerrain,
+  respondEscort, submitTurn,
 } from './api.js';
 import {connectEvents} from './events.js';
-import {connectFrames} from './frames.js';
-import {acceptFrame, markFrameStale, renderGraphics, setAssetCatalog} from './frame-renderer.js';
+import {
+  connectFrames, gatewayAcquire, gatewayInput, gatewayRelease,
+} from './frames.js';
+import {
+  acceptFrame, markFrameStale, setAssetCatalog, setTerrain,
+} from './frame-renderer.js';
 import {renderView} from './scene-renderer.js';
 import {createDialogue} from './dialogue.js';
 import {createControls} from './controls.js';
@@ -14,7 +18,8 @@ const dialogue=createDialogue(fetchAudit);
 const sourceId=sessionStorage.getItem('director-source')||crypto.randomUUID();
 sessionStorage.setItem('director-source',sourceId);
 let posting=false,pending=null,lastError='',currentRevision=-1,currentView=null,currentStory=null;
-let syncQueued=false,assetsReady=false,directorLease=null,heldDirection=0,directorBusy=false;
+let syncQueued=false,assetsReady=false,directorControl=false,heldDirection=0,directorBusy=false;
+let currentTerrainRevision=null;
 
 function showStatus(text,error=false){$('status').className=error?'status error':'status';$('status').textContent=text||'';}
 
@@ -55,7 +60,7 @@ function renderStory(story){
   $('vn-dialogue').hidden=story?.presentation_mode==='world_control';
   $('stage').dataset.presentationMode=story?.presentation_mode||'vn_dialogue';
   $('world-control-hint').hidden=story?.presentation_mode!=='world_control';
-  if(story?.presentation_mode!=='world_control'&&directorLease){
+  if(story?.presentation_mode!=='world_control'&&directorControl){
     releaseDirector().catch(()=>{});
   }
 }
@@ -64,7 +69,7 @@ async function sync(){
   try{
     await ensureAssets(); const value=await bootstrap();
     currentView=value.view;currentRevision=value.view.revision;
-    renderView(value.view,value.story);renderGraphics(value.graphics);renderStory(value.story);
+    renderView(value.view,value.story);renderStory(value.story);
     dialogue.renderPublished(value.dialogue);dialogue.renderHistory(value.history);
     controls.render(value.view.affordances,value.view.busy||posting);$('model').textContent=value.model||'';
     if(value.initial_prompt&&!value.history.length&&!$('message').value)$('message').value=value.initial_prompt;
@@ -115,44 +120,58 @@ function typingTarget(target){
 }
 
 async function acquireDirector(){
-  if(directorLease)return directorLease;
-  const value=await directorAcquire(sourceId,true);
-  directorLease=value.lease?.lease_id||null;
-  if(!directorLease)throw Error('Director control lease was not issued');
-  return directorLease;
+  if(directorControl)return true;
+  const value=await gatewayAcquire();
+  directorControl=value.control?.owned_by_you===true;
+  if(!directorControl)throw Error('Player Gateway не выдал управление Директором');
+  return true;
 }
 
-async function sendDirection(direction,{force=false}={}){
+async function sendDirection(direction){
   if(currentStory?.presentation_mode!=='world_control')return;
-  if(direction===heldDirection&&!force)return;
+  if(direction===heldDirection)return;
   heldDirection=direction;
   try{
-    const lease=await acquireDirector();
-    await directorInput(sourceId,lease,direction);
+    await acquireDirector();
+    await gatewayInput(direction);
   }catch(error){
-    directorLease=null;heldDirection=0;showStatus(error.message,true);
+    directorControl=false;heldDirection=0;showStatus(error.message,true);
   }
 }
 
 async function releaseDirector(){
-  const lease=directorLease;
-  heldDirection=0;directorLease=null;
-  if(!lease)return;
-  try{await directorInput(sourceId,lease,0);}catch(_){}
-  try{await directorRelease(sourceId,lease);}catch(_){}
+  const hadControl=directorControl;
+  heldDirection=0;directorControl=false;
+  if(!hadControl)return;
+  try{await gatewayRelease();}catch(_){}
+}
+
+async function handleFrame(frame,reset){
+  try{
+    if(currentTerrainRevision!==frame.terrain_revision){
+      const terrain=await fetchTerrain(frame.zone_id);
+      setTerrain(terrain);
+      currentTerrainRevision=terrain.terrain_revision;
+    }
+    if(acceptFrame(frame,{reset}))markFrameStale(false);
+  }catch(error){
+    markFrameStale(true);
+    showStatus('Ошибка Player Gateway. '+error.message,true);
+  }
 }
 
 window.addEventListener('keydown',(event)=>{
   if(typingTarget(event.target)||currentStory?.presentation_mode!=='world_control')return;
-  if(event.key==='ArrowLeft'){event.preventDefault();sendDirection(-1,{force:event.repeat});}
-  else if(event.key==='ArrowRight'){event.preventDefault();sendDirection(1,{force:event.repeat});}
+  if(event.repeat)return;
+  if(event.key==='ArrowLeft'){event.preventDefault();sendDirection(-1);}
+  else if(event.key==='ArrowRight'){event.preventDefault();sendDirection(1);}
 });
 window.addEventListener('keyup',(event)=>{
   if(event.key==='ArrowLeft'||event.key==='ArrowRight'){
     if(typingTarget(event.target)){
       // Focus may have moved into the composer while an arrow was held.
       // Release the old manual lease without stealing cursor navigation.
-      if(heldDirection!==0||directorLease)releaseDirector();
+      if(heldDirection!==0||directorControl)releaseDirector();
       return;
     }
     event.preventDefault();
@@ -160,7 +179,7 @@ window.addEventListener('keyup',(event)=>{
   }
 });
 document.addEventListener('focusin',(event)=>{
-  if(typingTarget(event.target)&&(heldDirection!==0||directorLease)){
+  if(typingTarget(event.target)&&(heldDirection!==0||directorControl)){
     releaseDirector();
   }
 });
@@ -178,7 +197,14 @@ async function start(){
     onError:()=>showStatus('Переподключение к событиям…'),
     sourceId,
   });
-  connectFrames({onFrame:(frame,reset)=>{if(acceptFrame(frame,{reset}))markFrameStale(false);},
-    onOpen:()=>markFrameStale(false),onError:()=>markFrameStale(true)});
+  connectFrames({
+    onFrame:(frame,reset)=>{void handleFrame(frame,reset);},
+    onOpen:()=>markFrameStale(false),
+    onError:()=>{directorControl=false;markFrameStale(true);},
+    onStatus:(value)=>{
+      if(value?.control?.owned_by_you===false)directorControl=false;
+      if(value?.error)showStatus('Player Gateway: '+value.error,true);
+    },
+  });
 }
 $('close-audit').onclick=()=>$('audit').close();start();

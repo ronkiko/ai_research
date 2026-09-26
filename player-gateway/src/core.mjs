@@ -36,6 +36,13 @@ export class PlayerGatewayCore {
     this.inputTimer = null;
     this.frameBusy = false;
     this.controlQueue = Promise.resolve();
+    this.metricsState = {
+      frames_published: 0,
+      frames_rejected: 0,
+      state_errors: 0,
+      last_state_latency_ms: null,
+      last_frame_at_ms: null,
+    };
     this.onFrame = () => {};
     this.onStatus = () => {};
     this.onInput = () => {};
@@ -74,7 +81,9 @@ export class PlayerGatewayCore {
     if (this.frameBusy) return null;
     this.frameBusy = true;
     try {
+      const started = this.clock();
       const state = await this.stateClient.request("state");
+      this.metricsState.last_state_latency_ms = Math.max(0, this.clock() - started);
       this.latestHostFreshness = state.freshness || null;
       if (state.freshness?.stale) {
         this.lastError = "authoritative Host state is stale";
@@ -83,13 +92,19 @@ export class PlayerGatewayCore {
       }
       const frame = projectHostState(state, this.catalog, {source: "player_gateway_v1"});
       const verdict = this.frameGate.accept(frame);
-      if (!verdict.accepted) return null;
+      if (!verdict.accepted) {
+        this.metricsState.frames_rejected += 1;
+        return null;
+      }
       this.latestFrame = frame;
       this.latestTerrain = terrainFor(this.catalog, frame.zone_id);
       this.lastError = null;
+      this.metricsState.frames_published += 1;
+      this.metricsState.last_frame_at_ms = this.clock();
       this.onFrame(frame, verdict.reset);
       return frame;
     } catch (error) {
+      this.metricsState.state_errors += 1;
       this.lastError = error.message || String(error);
       this.onStatus(this.status());
       return null;
@@ -114,7 +129,7 @@ export class PlayerGatewayCore {
       if (this.owner && this.owner !== ownerId) {
         throw new Error("human control is already owned by another browser session");
       }
-      const response = await this.controlClient.request("control_acquire", {transfer: false});
+      const response = await this.controlClient.request("control_acquire", {transfer: true});
       const leaseId = response.lease?.lease_id;
       if (typeof leaseId !== "string" || !leaseId) throw new Error("Host did not issue a manual lease");
       this.owner = ownerId;
@@ -195,15 +210,24 @@ export class PlayerGatewayCore {
   }
 
   status() {
+    const now = this.clock();
     return {
       version: 1,
       component: "player_gateway",
       status: this.lastError ? "degraded" : "ready",
       control_owned: this.owner !== null,
       frame_id: this.latestFrame?.frame_id || null,
+      world_epoch: this.latestFrame?.source_world_epoch || null,
+      world_tick: this.latestFrame?.source_world_tick ?? null,
       zone_id: this.latestFrame?.zone_id || null,
       host_freshness: this.latestHostFreshness,
       input: this.input.metrics(),
+      metrics: {
+        ...this.metricsState,
+        frame_age_ms: this.metricsState.last_frame_at_ms == null
+          ? null
+          : Math.max(0, now - this.metricsState.last_frame_at_ms),
+      },
       error: this.lastError,
     };
   }

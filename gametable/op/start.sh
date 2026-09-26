@@ -15,6 +15,7 @@ esac
 source "$ROOT/op/process.sh"
 
 stop_stack() {
+  "$ROOT/player-gateway/op/gateway.sh" --stop || true
   op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
   "$ROOT/gameclient/v1/op/director-host.sh" --stop || true
   "$ROOT/gameclient/v1/op/host.sh" --stop || true
@@ -22,6 +23,7 @@ stop_stack() {
 }
 
 status_stack() {
+  "$ROOT/player-gateway/op/gateway.sh" --status || true
   op_managed_process status "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
   "$ROOT/gameclient/v1/op/host.sh" --status || true
   "$ROOT/gameclient/v1/op/director-host.sh" --status || true
@@ -44,6 +46,8 @@ fi
 
 command -v opencode >/dev/null || { echo "ERROR opencode is not installed" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "ERROR python3 is not installed" >&2; exit 2; }
+command -v node >/dev/null || { echo "ERROR node is not installed" >&2; exit 2; }
+command -v npm >/dev/null || { echo "ERROR npm is not installed" >&2; exit 2; }
 cd "$ROOT"
 
 if op_managed_process status "gametable-vn" "$ROOT" "roleplay.server" \
@@ -94,6 +98,26 @@ fi
 
 LOGDIR="$ROOT/gametable/runtime/stack-logs"
 mkdir -p "$LOGDIR"
+
+if [[ ! -f "$ROOT/player-gateway/node_modules/socket.io/package.json" ]]; then
+  echo "CUTOVER prepare Player Gateway"
+  "$ROOT/player-gateway/op/setup.sh" >"$LOGDIR/player-gateway-setup.log" 2>&1
+fi
+
+GAMETABLE_PORT=17880
+argv=("$@")
+for ((i=0; i<${#argv[@]}; i++)); do
+  case "${argv[$i]}" in
+    --port)
+      (( i + 1 < ${#argv[@]} )) || { echo "ERROR --port requires a value" >&2; exit 2; }
+      GAMETABLE_PORT="${argv[$((i+1))]}"
+      ;;
+    --port=*)
+      GAMETABLE_PORT="${argv[$i]#--port=}"
+      ;;
+  esac
+done
+export PLAYER_GATEWAY_GAMETABLE_PORT="${PLAYER_GATEWAY_GAMETABLE_PORT:-$GAMETABLE_PORT}"
 
 gateway_is_embodied() {
   python3 - <<'PY' >/dev/null 2>&1
@@ -193,4 +217,29 @@ cat "$LOGDIR/readiness.json"
 # Prepare the pinned runtime used by both MCP services, without running tests.
 "$ROOT/organism/op/organism.sh" prepare >/dev/null
 
-op_managed_process start "gametable-vn" "$ROOT" "roleplay.server"   "$ROOT/gametable" "GameTable Юки"   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"   python3 -m roleplay.server "$@"
+if ! "$ROOT/player-gateway/op/gateway.sh" --status >/dev/null 2>&1; then
+  nohup "$ROOT/player-gateway/op/gateway.sh" --start     >"$LOGDIR/player-gateway.log" 2>&1 &
+fi
+
+player_gateway_ready() {
+  python3 - <<'PY' >/dev/null 2>&1
+import json
+import urllib.request
+with urllib.request.urlopen("http://127.0.0.1:17881/health", timeout=.3) as response:
+    value = json.load(response)
+raise SystemExit(0 if value.get("component") == "player_gateway" else 1)
+PY
+}
+
+for _ in {1..100}; do
+  player_gateway_ready && break
+  sleep .05
+done
+player_gateway_ready || {
+  echo "ERROR Player Gateway is not ready; core services remain running" >&2
+  [[ -s "$LOGDIR/player-gateway.log" ]] && tail -n 30 "$LOGDIR/player-gateway.log" >&2 || true
+  exit 2
+}
+
+echo "WEB UI · Player Gateway: http://127.0.0.1:17881"
+op_managed_process start "gametable-vn" "$ROOT" "roleplay.server"   "$ROOT/gametable" "GameTable Юки backend"   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"   python3 -m roleplay.server "$@"

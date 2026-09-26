@@ -26,7 +26,11 @@ export function fetchAudit(id) {
 }
 
 export function fetchAssetCatalog() {
-  return request('/api/graphics/assets');
+  return request('/api/assets');
+}
+
+export function fetchTerrain(zone_id) {
+  return request('/api/terrain/' + encodeURIComponent(zone_id));
 }
 
 function postJson(path, body) {
@@ -41,14 +45,3 @@ export function respondEscort(offer_id, response, text) {
   return postJson('/api/story/escort-response', {offer_id, response, text});
 }
 
-export function directorAcquire(source_id, transfer = false) {
-  return postJson('/api/director/control/acquire', {source_id, transfer});
-}
-
-export function directorInput(source_id, lease_id, move_x) {
-  return postJson('/api/director/input', {source_id, lease_id, move_x});
-}
-
-export function directorRelease(source_id, lease_id) {
-  return postJson('/api/director/control/release', {source_id, lease_id});
-}

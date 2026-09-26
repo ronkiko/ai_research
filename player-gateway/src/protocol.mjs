@@ -40,6 +40,10 @@ export function validateControlRequest(payload = {version: BROWSER_PROTOCOL_VERS
 }
 
 export function publicError(error) {
-  const text = error instanceof Error ? error.message : String(error || "request failed");
-  return {ok: false, error: text.slice(0, 240)};
+  const raw = error instanceof Error ? error.message : String(error || "request failed");
+  const safe = raw
+    .replace(/(?:127\.0\.0\.1|localhost):\d+/gi, "internal service")
+    .replace(/\/(?:home|tmp|var)\/[^\s]*/gi, "internal path")
+    .slice(0, 240);
+  return {ok: false, error: safe || "request rejected"};
 }

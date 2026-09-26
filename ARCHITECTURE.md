@@ -60,8 +60,8 @@ LLM. Сертификацию Motor готовит оператор. MCP обу�
 | Координата, скорость, усилие, epoch/tick | GameServer `embodied_world_v1` | Текст модели не является физическим действием |
 | Сессия игрока, последовательность ввода | GameClient Host | Host не определяет успех обучения |
 | Веса, сертификаты, controller/jobs и verification artifacts | Organism | Рассказ об успехе не заменяет VERIFY |
-| Физическое представление | Graphics RenderFrame → browser shell | Renderer не выбирает zone/transfer и не является sensor authority |
-| Social UI и кнопки | GameTable ViewProjector | ViewProjector не владеет координатой/позой тела |
+| Физическое представление | Player Gateway RenderFrame → browser shell | Renderer не выбирает zone/transfer и не является sensor authority |
+| Social UI и кнопки | GameTable ViewProjector через Player Gateway proxy | ViewProjector не владеет координатой/позой тела |
 | Архив наблюдений и исследовательские выводы | director | Архив не подмешивается в память автоматически |
 
 120/60/10 Гц — номинальные частоты в домене world ticks. Пропущенные слоты
@@ -267,3 +267,43 @@ Stage 14 production web cutover.
 Player Gateway failure therefore removes the human web presentation/control
 surface only. GameServer, Host[yuki], Organism, navigation and learning remain
 independent of Node.js.
+
+
+## Stage 14: production browser cutover
+
+The browser no longer talks to GameTable for realtime frames or Director
+movement. Player Gateway is now the only production web entrypoint:
+
+```text
+Internet Browser
+   ↕ HTTPS / Socket.IO
+Player Gateway
+   ├─ RenderFrame stream ← Host[human] latest authoritative state
+   ├─ human input → Host[human]
+   └─ bounded VN proxy ↔ GameTable backend
+
+LLM → Spine → Motor → Host[yuki] → GameServer
+Host[human] ─────────────────────→ GameServer
+```
+
+GameTable owns narrative state, memory, dialogue and LLM workflow only. Its
+`/api/state` no longer renders the world, and its old `/api/frames` is not
+part of the backend surface. A separate low-rate WorldObservationPump reads the
+already-cached Host[yuki] observation so narrative context is not driven by
+browser polling.
+
+Player Gateway serves the GameTable shell, proxies only the allowed narrative
+routes, and explicitly refuses the old browser Director/frames routes. Human
+keyboard input is normalized, coalesced and fenced by the same Host manual
+lease/controller generation used before; Node never writes coordinates or
+physics outcomes.
+
+Public deployment remains opt-in. A non-loopback bind requires explicit public
+mode, host/origin allowlists, a TLS termination contract and a strong session
+secret. Browser sessions receive signed HttpOnly SameSite capabilities, and
+payload/input/connection bounds are enforced before Host. Public frontend
+failure does not stop GameServer, Host[yuki], Organism or world ticks.
+
+The deterministic series gate now covers A1–A13. Passing it proves the software
+contracts only; final series acceptance still requires the documented live LLM,
+manual browser/day-cycle and fresh scientific TRAIN/VERIFY evidence.

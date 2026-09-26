@@ -1,55 +1,79 @@
 # Player Gateway
 
-Stage 13 internet-facing presentation/input boundary for ordinary human players.
+Node.js internet-facing presentation/input boundary for ordinary human players.
 
 ```text
-Browser ⇄ Player Gateway (Node.js) ⇄ GameClient Host[human] ⇄ GameServer
+Internet Browser
+   ↕ HTTPS / Socket.IO
+Player Gateway
+   ├─ GameTable VN proxy
+   ├─ RenderFrame stream
+   └─ human input
+        ↕
+GameClient Host[human] ↔ GameServer
 
-LLM → Spine → Motor → GameClient Host[yuki] ───────────────────────┘
+LLM → Spine → Motor → GameClient Host[yuki] ↔ GameServer
 ```
 
 Player Gateway is not a GameServer. It never writes coordinates, velocities,
-zones, portals, controller generations or physics outcomes. It talks only to the
-loopback Director `GameClient Host` on port 17701.
+zones, portal outcomes or Yuki actuators. Human input reaches only the dedicated
+loopback `Host[human]`; authoritative physics remains Python GameServer.
 
-Current Stage 13 responsibilities:
+After Stage 14 this is the only production browser entrypoint. GameTable is a
+loopback backend for story/dialogue/state and no longer serves realtime frames
+or browser Director movement.
 
-- loopback HTTP + Socket.IO browser endpoint;
-- authoritative Host-state → RenderFrame projection at 25 Hz;
-- latest-frame / volatile delivery for slow browsers;
-- human left/right/release state;
-- browser-event rate limiting and coalescing;
-- bounded upstream Host input rate plus keepalive;
-- one browser control owner for one Host manual lease;
-- release on blur/disconnect;
-- origin, payload and connection bounds.
+## Runtime
 
-GameTable still owns story/dialogue. Stage 14 will proxy/integrate that surface
-and make Player Gateway the only production browser entrypoint.
+Default local entrypoint:
 
-## Local vertical
+```text
+http://127.0.0.1:17881
+```
 
-Start the embodied GameTable stack first so `Host[human]` is present:
+Normal stack startup:
 
 ```bash
 ./gametable/op/start.sh --restart
 ```
 
-Install pinned Node dependencies once, then run the gateway:
+The launcher starts GameServer, `Host[yuki]`, `Host[human]`, Player Gateway
+and the GameTable backend. Player Gateway can fail/restart independently without
+stopping world ticks or Yuki.
 
-```bash
-./player-gateway/op/setup.sh
-./player-gateway/op/gateway.sh
-```
+Human realtime path:
 
-Open `http://127.0.0.1:17881`.
+- Socket.IO RenderFrame stream at a bounded presentation cadence;
+- latest-only volatile frame delivery;
+- one browser session owns one Host manual lease;
+- normalized `axis_x=-1|0|+1` input only;
+- browser event budget + upstream command ceiling + keepalive;
+- release on blur/disconnect/shutdown; world watchdog is the last fence.
 
-The browser can always observe authoritative frames. Human movement remains
-fenced by the Director manual gate; it becomes writable only when the story has
-opened the escort/manual-control lease.
+Narrative path:
+
+- `GET /api/state`, `GET /api/events`, audit reads;
+- `POST /api/turn`, `POST /api/story/escort-response`;
+- direct `/api/director/*` and old `/api/frames` are not proxied.
+
+## Internet deployment contract
+
+Loopback remains the default. A non-loopback bind requires all of:
+
+- `PLAYER_GATEWAY_PUBLIC=1`;
+- explicit allowed origins and hosts;
+- `PLAYER_GATEWAY_SESSION_SECRET` with at least 32 characters;
+- TLS termination contract via `PLAYER_GATEWAY_TLS_MODE=reverse_proxy` or
+  `native_https`.
+
+The gateway issues a signed HttpOnly SameSite player-session capability and
+enforces payload, total-connection, per-IP connection and per-session input
+bounds. Public errors are sanitized; internal GameServer/Host addresses are not
+part of the browser protocol.
 
 Checks:
 
 ```bash
 ./player-gateway/op/check.sh
+./gametable/op/acceptance.sh --automated
 ```
