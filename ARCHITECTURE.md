@@ -376,3 +376,52 @@ The temporary scripted escort now observes the same Host[yuki] cached snapshot
 used by other gameplay clients and writes bounded Yuki effort through Host. It
 has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
+
+
+## Future roadmap 0.0.3: social embodiment and escort
+
+Новая roadmap-нумерация фиксируется как
+`release.branch.series.patch`; текущая будущая серия имеет coordinate
+`0.0.3`. См. [versioning](docs/versioning.md) и
+[Series 3 roadmap](docs/roadmap/0/0/3/README.md).
+
+Series 3 отделяет три уровня, которые раньше были временно слиты в scripted
+escort:
+
+1. **local actor perception** — Юки честно воспринимает присутствие Director/NPC
+   в своей physical zone;
+2. **escort/physical relation** — персонаж отдельно решает идти самостоятельно,
+   взять Директора за руку или отказаться;
+3. **teacher data** — только при разрешённом handhold может появиться scoped
+   Host[human] → Host[yuki] demonstration channel.
+
+Целевая причинность:
+
+```text
+relationship / trust
+        ↓
+character decision + revocable consent
+        ↓
+physical cooperation
+        ↓
+optional teacher demonstration capability
+        ↓
+future learning may use better data
+```
+
+Relationship/trust не является Motor/Spine reward и не даёт hidden physics
+bonus.
+
+`FOLLOW_INDEPENDENTLY` не открывает teacher channel. Текущий deterministic
+`ScriptedEscortController` рассматривается как временная реализация именно
+этой ветки и продолжает иметь `learned_success=false`.
+
+`HAND_IN_HAND` в будущей реализации создаёт server-authoritative
+`HandholdSession`. Отдельная `DemonstrationCapability` может разрешить
+authenticated P2P data plane между `Host[human]` и `Host[yuki]`.
+Передаются не raw network bytes и не browser keys, а единый typed
+`ActorDemonstrationEvent`: normalized actuator request + authoritative server
+outcome/provenance.
+
+Series 3 может записывать demonstration evidence, но **не реализует imitation
+optimizer и не изменяет Motor/Spine weights по teacher data**.
