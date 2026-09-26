@@ -321,6 +321,8 @@ class AcceptanceMatrixTests(unittest.TestCase):
         self.assertIn("тело начнёт день у EXIT", start)
         self.assertIn("focusin", shell)
         self.assertIn("releaseDirector()", shell)
+        self.assertIn("retryableEscort", shell)
+        self.assertIn("Продолжить сопровождение", shell)
         self.assertIn('"entity.yuki"', gui)
         self.assertIn('"entity.director"', gui)
         self.assertIn('return "P"', gui)
