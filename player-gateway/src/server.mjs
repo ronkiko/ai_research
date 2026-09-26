@@ -100,10 +100,6 @@ function staticResponse(request, response) {
     json(response, 421, {error: "host is not allowed"});
     return;
   }
-  if (request.method !== "GET") {
-    json(response, 405, {error: "method not allowed"});
-    return;
-  }
   const url = new URL(request.url || "/", "http://player-gateway.invalid");
   if (url.pathname === "/health") {
     json(response, 200, {
@@ -140,6 +136,10 @@ function staticResponse(request, response) {
       port: config.gameTablePort,
       timeoutMs: config.gameTableTimeoutMs,
     });
+    return;
+  }
+  if (request.method !== "GET") {
+    json(response, 405, {error: "method not allowed"});
     return;
   }
 
