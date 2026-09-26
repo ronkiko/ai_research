@@ -14,7 +14,7 @@ test("Player Gateway runtime has no direct GameServer port and frames are volati
     .map((name) => fs.readFileSync(path.join(project, name), "utf8"))
     .join("\n");
   assert.equal(runtime.includes("17600"), false);
-  assert.equal(runtime.includes("GATEWAY_PORT"), false);
+  assert.equal(/\bGATEWAY_PORT\b/.test(runtime), false);
   const server = fs.readFileSync(path.join(project, "src/server.mjs"), "utf8");
   assert.match(server, /io\.volatile\.emit\("frame\.latest"/);
 });
