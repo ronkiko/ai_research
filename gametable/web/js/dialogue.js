@@ -51,6 +51,21 @@ export function createDialogue(fetchAudit) {
       const director = node('div', undefined, 'bubble director');
       director.append(node('span', 'ДИРЕКТОР', 'speaker'), node('span', turn.event.text));
       container.append(director);
+
+      if (turn.status === 'failed') {
+        const system = node('div', undefined, 'bubble system');
+        system.append(
+          node('span', 'СИСТЕМА', 'speaker'),
+          node('p', turn.notice || 'Ответ Юки не получен. Сообщение можно повторить.', 'status'),
+        );
+        const audit = node('button', 'Диагностика', 'audit-link');
+        audit.type = 'button';
+        audit.onclick = () => showAudit(turn.id);
+        system.append(audit);
+        container.append(system);
+        continue;
+      }
+
       const bubble = node('div', undefined, 'bubble yuki');
       bubble.append(node('span', 'ЮКИ', 'speaker'));
       if (turn.status === 'done') {
@@ -66,12 +81,6 @@ export function createDialogue(fetchAudit) {
         audit.onclick = () => showAudit(turn.id);
         meta.append(audit);
         bubble.append(meta);
-      } else if (turn.status === 'failed') {
-        bubble.append(node('p', turn.error, 'status error'));
-        const audit = node('button', 'Диагностика', 'audit-link');
-        audit.type = 'button';
-        audit.onclick = () => showAudit(turn.id);
-        bubble.append(audit);
       } else {
         bubble.append(node('p', turn.stage + '…', 'status'));
       }
