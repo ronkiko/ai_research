@@ -62,6 +62,14 @@ class _FakeGatewayHandler(socketserver.BaseRequestHandler):
                         if self.server.controller_generation is not None else None
                     ),
                     receipts=list(self.server.receipts),
+                    freshness={
+                        "source": "world_state_hub",
+                        "state": self.server.freshness_state,
+                        "age_seconds": self.server.upstream_age_seconds,
+                        "source_world_tick": 42,
+                        "source_world_revision": self.server.world_revision,
+                        "consecutive_failures": self.server.consecutive_failures,
+                    },
                     snapshot={
                         "version": 1,
                         "type": "zone_snapshot",
@@ -119,6 +127,9 @@ class _FakeGateway(socketserver.ThreadingTCPServer):
         self.snapshot_requests = 0
         self.snapshot_delay = 0.0
         self.snapshot_started = threading.Event()
+        self.upstream_age_seconds = 0.0
+        self.freshness_state = "current"
+        self.consecutive_failures = 0
 
 
 class HostVerticalTests(unittest.TestCase):
@@ -220,8 +231,10 @@ class HostVerticalTests(unittest.TestCase):
             self.assertEqual(state["controller"]["generation"], 4)
             self.assertEqual(state["receipts"][0]["action_id"], "transfer.1")
             self.assertEqual(
-                state["freshness"]["source"], "authoritative_observer_cache"
+                state["freshness"]["source"], "world_state_hub"
             )
+            self.assertGreaterEqual(state["freshness"]["age_seconds"], 0.0)
+            self.assertIn("upstream_age_seconds", state["freshness"])
 
             client.motor(0.25)
             self.assertEqual(
@@ -232,6 +245,30 @@ class HostVerticalTests(unittest.TestCase):
             self.assertEqual(len(transfers), 1)
             self.assertEqual(transfers[0]["source_zone"], "zone1")
             self.assertEqual(transfers[0]["target_zone"], "laboratory")
+        finally:
+            client.close()
+
+    def test_upstream_stale_age_is_not_reset_by_host_cache_refresh(self):
+        client = self.client("freshness")
+        try:
+            client.login("player1")
+            self.gateway.upstream_age_seconds = 1.25
+            self.gateway.freshness_state = "stale"
+            deadline = time.monotonic() + 1.0
+            while True:
+                state = client.state()
+                if state["freshness"]["upstream_age_seconds"] >= 1.25:
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail(f"Host did not receive upstream freshness: {state}")
+                time.sleep(0.01)
+            self.assertTrue(state["freshness"]["stale"])
+            self.assertGreaterEqual(state["freshness"]["age_seconds"], 1.25)
+            again = client.state()
+            self.assertGreaterEqual(
+                again["freshness"]["age_seconds"],
+                again["freshness"]["upstream_age_seconds"],
+            )
         finally:
             client.close()
 

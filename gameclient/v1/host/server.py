@@ -87,6 +87,7 @@ class HostService:
         self._events: deque[dict[str, Any]] = deque(maxlen=HOST_EVENT_LIMIT)
         self._latest_state: dict[str, Any] | None = None
         self._latest_state_at: float | None = None
+        self._latest_upstream_freshness: dict[str, Any] | None = None
         self._observer_stop = threading.Event()
         self._observer_thread: threading.Thread | None = None
 
@@ -258,6 +259,7 @@ class HostService:
                 self._sequence = 0
                 self._latest_state = None
                 self._latest_state_at = None
+                self._latest_upstream_freshness = None
             self._accept_observed_state(
                 snapshot_response,
                 expected_session_id=session["session_id"],
@@ -393,8 +395,28 @@ class HostService:
                 receipts=copy.deepcopy(receipts),
                 last_event=None,
             )
+            upstream_freshness = response.get("freshness")
+            if not isinstance(upstream_freshness, dict):
+                upstream_freshness = {
+                    "source": "gateway_snapshot_compat",
+                    "state": "current",
+                    "age_seconds": 0.0,
+                    "consecutive_failures": 0,
+                }
+            upstream_age = upstream_freshness.get("age_seconds", 0.0)
+            if (
+                isinstance(upstream_age, bool)
+                or not isinstance(upstream_age, (int, float))
+                or upstream_age < 0.0
+            ):
+                upstream_age = 0.0
+            upstream_freshness = {
+                **copy.deepcopy(upstream_freshness),
+                "age_seconds": float(upstream_age),
+            }
             self._latest_state = state
             self._latest_state_at = time.monotonic()
+            self._latest_upstream_freshness = upstream_freshness
 
         if transfer is not None:
             player_id, entity_id, source_zone, target_zone = transfer
@@ -463,14 +485,37 @@ class HostService:
             if self._latest_state is None or self._latest_state_at is None:
                 raise HostStateError("authoritative Host state is not ready")
             state = copy.deepcopy(self._latest_state)
-            age = max(0.0, time.monotonic() - self._latest_state_at)
+            local_age = max(0.0, time.monotonic() - self._latest_state_at)
+            upstream = copy.deepcopy(self._latest_upstream_freshness or {})
+            upstream_age = upstream.get("age_seconds", 0.0)
+            if (
+                isinstance(upstream_age, bool)
+                or not isinstance(upstream_age, (int, float))
+                or upstream_age < 0.0
+            ):
+                upstream_age = 0.0
+            end_to_end_age = float(upstream_age) + local_age
             state["session"] = self._session_copy()
         state["last_event"] = self._last_event()
         state["freshness"] = {
-            "source": "authoritative_observer_cache",
-            "age_seconds": age,
-            "stale": age > HOST_STATE_STALE_SECONDS,
+            "source": upstream.get("source", "authoritative_observer_cache"),
+            "state": (
+                "stale"
+                if upstream.get("state") == "stale"
+                or end_to_end_age > HOST_STATE_STALE_SECONDS
+                else "current"
+            ),
+            "age_seconds": end_to_end_age,
+            "upstream_age_seconds": float(upstream_age),
+            "local_age_seconds": local_age,
+            "stale": (
+                upstream.get("state") == "stale"
+                or end_to_end_age > HOST_STATE_STALE_SECONDS
+            ),
             "observer_hz": self.state_observer_hz,
+            "source_world_tick": upstream.get("source_world_tick"),
+            "source_world_revision": upstream.get("source_world_revision"),
+            "consecutive_failures": upstream.get("consecutive_failures", 0),
         }
         return state
 
@@ -571,6 +616,9 @@ class HostService:
             "motor" if move_x is None else "input",
             sequence=sequence,
             motor_x=motor_x,
+            command_id=response.get("command_id"),
+            world_tick=response.get("world_tick"),
+            receipt=copy.deepcopy(response.get("receipt")),
             **({"move_x": move_x} if move_x is not None else {}),
             event=event,
         )
@@ -743,6 +791,7 @@ class HostService:
                 self._sequence = 0
                 self._latest_state = None
                 self._latest_state_at = None
+                self._latest_upstream_freshness = None
             return message("logout", response=response, event=event)
 
     def serve_forever(self) -> None:

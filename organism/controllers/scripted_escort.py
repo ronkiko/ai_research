@@ -1,8 +1,9 @@
 """Temporary scripted escort controller for the first-day story route.
 
-This is deliberately outside learned Spine/Motor executors and schools. It uses
-authoritative observations plus bounded effort through the normal world input
-path. It never assigns x/vx/zone and never produces learning evidence.
+This is deliberately outside learned Spine/Motor executors and schools. It reads
+one authoritative Host[yuki] cache shared through the Gateway WorldStateHub and
+sends bounded effort through the normal Host input path. It never assigns
+x/vx/zone and never produces learning evidence.
 """
 from __future__ import annotations
 
@@ -13,8 +14,7 @@ import time
 import uuid
 from typing import Any, Callable
 
-from gameserver.v1.common.config import EMBODIED_WORLD_PORT, HOST
-from gameserver.v1.common.protocol import message, rpc
+from gameclient.v1.clients.base import HostClient, HostClientError
 from organism.lease import BodyLease, BodyLeaseBusy
 from world.catalog import MapCatalog
 
@@ -36,7 +36,7 @@ class ScriptedEscortController:
         leader_id: str | None = None,
         target_zone: str = "laboratory",
         body_lease: BodyLease | None = None,
-        world_rpc=rpc,
+        host_client: HostClient | None = None,
         on_update: Callable[[dict[str, Any]], None] | None = None,
         hz: float = 30.0,
         gap: float = 12.0,
@@ -52,7 +52,7 @@ class ScriptedEscortController:
         )
         self.target_zone = target_zone
         self.body_lease = body_lease or BodyLease()
-        self.world_rpc = world_rpc
+        self.host_client = host_client or HostClient("scripted-escort")
         self.on_update = on_update or (lambda _value: None)
         self.period = 1.0 / float(hz)
         self.gap = float(gap)
@@ -66,18 +66,17 @@ class ScriptedEscortController:
         self._thread: threading.Thread | None = None
         self._lease = None
 
-    def _world(self, kind: str, **fields: Any) -> dict[str, Any]:
-        value = self.world_rpc(
-            HOST, EMBODIED_WORLD_PORT, message(kind, **fields), 0.75
-        )
-        if value.get("type") == "error":
-            raise EscortError(str(value.get("error") or "world rejected escort request"))
-        return value
-
     def _snapshot(self) -> dict[str, Any]:
-        value = self._world("snapshot").get("snapshot")
+        try:
+            state = self.host_client.state()
+        except HostClientError as exc:
+            raise EscortError(str(exc)) from exc
+        freshness = state.get("freshness")
+        if isinstance(freshness, dict) and freshness.get("stale"):
+            raise EscortError("Host[yuki] authoritative state is stale")
+        value = state.get("snapshot")
         if not isinstance(value, dict):
-            raise EscortError("world snapshot is unavailable")
+            raise EscortError("Host[yuki] world snapshot is unavailable")
         return value
 
     @staticmethod
@@ -175,24 +174,20 @@ class ScriptedEscortController:
             reason="server_restart_requires_fresh_leader_and_manual_control",
         )
 
-    def _send_effort(self, snapshot: dict[str, Any], effort: float) -> dict[str, Any]:
-        follower = self._entity(snapshot, self.follower_id)
-        sequence = int(follower.get("last_sequence", 0)) + 1
-        response = self._world(
-            "input",
-            request_id=(
-                f"{self._record['job_id']}.input."
-                f"{snapshot.get('world_epoch')}.{sequence}"
-            ),
-            entity_id=self.follower_id,
-            expected_zone_id=follower["zone_id"],
-            expected_world_epoch=snapshot["world_epoch"],
-            controller_id=follower["controller_id"],
-            controller_generation=follower["controller_generation"],
-            sequence=sequence,
-            motor_x=max(-self.max_effort, min(self.max_effort, float(effort))),
-        )
-        return response.get("receipt") or {}
+    def _send_effort(self, _snapshot: dict[str, Any], effort: float) -> dict[str, Any]:
+        motor_x = max(-self.max_effort, min(self.max_effort, float(effort)))
+        try:
+            response = self.host_client.motor(motor_x)
+        except HostClientError as exc:
+            raise EscortError(str(exc)) from exc
+        receipt = response.get("receipt")
+        if isinstance(receipt, dict):
+            return receipt
+        return {
+            "status": "queued",
+            "action_id": response.get("command_id"),
+            "tick": response.get("world_tick"),
+        }
 
     def _portal_center(self) -> float:
         for portal in self.catalog.physics("hallway")["portals"]:
@@ -305,8 +300,6 @@ class ScriptedEscortController:
                         self._send_effort(snapshot, 0.0)
                 except Exception:
                     pass
-                # The caller decides whether this interruption is a true cancel
-                # or a restart reconciliation. Do not publish a terminal state here.
         except Exception as exc:
             try:
                 self._publish(

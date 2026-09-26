@@ -4,7 +4,8 @@
 Планируемый коммит: `Share authoritative world state across Hosts and controllers`.
 Цель: A4, A9, A11–A14.
 
-Статус: **план, без реализации**. Патч добавлен после ручной проверки Stage 14:
+Статус: **реализовано; требуется повторная ручная Stage-14 проверка**. Патч
+добавлен после ручной проверки Stage 14:
 сопровождение и Player Gateway работают, но периодически browser показывает
 `Player Gateway: authoritative Host state is stale`.
 
@@ -377,3 +378,36 @@ Browser → Director → scripted escort → laboratory
 
 После этого повторить Stage-14 manual evidence, а общую серию принимать только
 после остальных live/scientific пунктов acceptance.
+
+
+## Реализованный результат
+
+- `EmbodiedWorldRuntime.state_frame()` атомарно строит
+  `world_state_frame_v1` под одним world lock: snapshot, все entity
+  observations и controller fences имеют один epoch/tick/revision.
+- World service публикует отдельный read-only `state_frame` endpoint.
+- Embodied Gateway содержит один `WorldStateHub` с target 30 Hz и отдельным
+  persistent TCP connection к World. Hub хранит только latest frame и condition
+  generation; queues старых кадров отсутствуют.
+- Все Gateway `snapshot(session)` являются in-memory projections общего Hub
+  frame. Host[yuki] и Host[human] больше не порождают дополнительные World
+  snapshot/observation RPC.
+- Gateway mutation/receipt lane также использует persistent connection, но
+  observer failure не replay-ит mutations и не смешивает command/state lanes.
+- Login/spawn и training structural boundaries ждут появления результата в
+  shared Hub вместо повторного World snapshot polling.
+- Gateway freshness несёт age исходного Hub frame; Host добавляет local cache
+  age, поэтому повторное чтение старого frame не обнуляет end-to-end age.
+  Порог stale не увеличен.
+- `ScriptedEscortController` больше не знает `EMBODIED_WORLD_PORT` и не
+  вызывает World snapshot/input напрямую. Он читает общий snapshot через
+  `Host[yuki].state()` и отправляет bounded motor через тот же persistent Host
+  client. BodyLease и отсутствие learned evidence сохраняются.
+- Readiness показывает StateHub metrics и freshness обоих Hosts.
+- Добавлены regressions на atomicity, fan-out, epoch fencing, stale age и
+  shared-Host escort path.
+
+Следующее операторское доказательство — повторить реальный first-day escort и
+убедиться, что при нормальной локальной нагрузке больше не появляется
+`authoritative Host state is stale`. Настоящий искусственный outage обязан
+по-прежнему стать stale примерно после исходного 1-second threshold.

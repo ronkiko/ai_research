@@ -52,7 +52,7 @@ browser frames/input, and GameTable is now a narrative backend. The deterministi
 gate is extended through A13. This still does not manufacture the missing live,
 manual or fresh scientific evidence.
 
-## A1–A13 matrix
+## A1–A14 matrix
 
 | Criterion | Automated evidence | Status | Remaining evidence |
 | --- | --- | --- | --- |
@@ -69,6 +69,7 @@ manual or fresh scientific evidence.
 | A11 day/escort | Stage-10 tests + fresh-world reset fence + typing/manual release hardening; P/D placeholders fixed | PASS (contract) | 300-second live timer, browser and GUI escort, sleep/new-day human observation |
 | A12 player gateway separation | Browser shell uses Socket.IO Player Gateway for frames/input; GameTable proxy refuses director/frames paths; Node has no direct physics port | PASS (contract) | Live browser capture showing Host[human] path and no direct backend exposure |
 | A13 realtime/failure isolation | Host state cache, volatile latest-only frames, input coalescing/rate limits, session/connection bounds, independent gateway process | PASS (contract) | Manual restart/down/flood checks while Yuki/world continue |
+| A14 shared observation fan-out | Atomic world_state_frame_v1, one Gateway WorldStateHub, Host end-to-end freshness, scripted escort via Host[yuki] cache | PASS (contract) | Repeat live escort and confirm no unexpected stale under normal load; inject real observer outage and confirm stale still appears |
 
 ## Reproducible commands
 
@@ -78,7 +79,7 @@ Deterministic gate:
 ./gametable/op/acceptance.sh --automated
 ~~~
 
-Expected exit code: `0` only if the deterministic A1–A13 contract tests pass.
+Expected exit code: `0` only if the deterministic A1–A14 contract tests pass.
 
 Live LLM smoke:
 
@@ -151,5 +152,5 @@ Record the following from the browser/Director GUI:
 
 The body remains flat_1d. Gravity, 2D/3D humanoid joints, vision, learned sitting,
 teacher/imitation following and long-term personality plasticity are outside
-A1–A13. Scripted escort is an explicit temporary gameplay controller and is not
+A1–A14. Scripted escort is an explicit temporary gameplay controller and is not
 evidence of a learned follow skill.

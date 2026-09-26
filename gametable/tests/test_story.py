@@ -419,64 +419,72 @@ class ManualControlTests(unittest.TestCase):
 
 
 class ScriptedEscortTests(unittest.TestCase):
-    def test_controller_uses_bounded_yuki_effort_and_physical_portal_arrival(self):
+    def test_controller_uses_shared_host_cache_and_bounded_yuki_effort(self):
         snapshots = [
             {
                 "world_epoch": "e1", "world_tick": 1,
                 "entities": [
-                    {"entity_id":"entity.yuki","zone_id":"hallway","x":0.0,"vx":0.0,
-                     "last_sequence":0,"controller_id":"controller.yuki","controller_generation":1},
-                    {"entity_id":"entity.director","zone_id":"hallway","x":1.0,"vx":0.0,
-                     "last_sequence":0,"controller_id":"controller.director","controller_generation":1},
+                    {"entity_id":"entity.yuki","zone_id":"hallway","x":0.0,"vx":0.0},
+                    {"entity_id":"entity.director","zone_id":"hallway","x":1.0,"vx":0.0},
                 ],
             },
             {
                 "world_epoch": "e1", "world_tick": 2,
                 "entities": [
-                    {"entity_id":"entity.yuki","zone_id":"hallway","x":5.0,"vx":5.0,
-                     "last_sequence":0,"controller_id":"controller.yuki","controller_generation":1},
-                    {"entity_id":"entity.director","zone_id":"hallway","x":40.0,"vx":5.0,
-                     "last_sequence":0,"controller_id":"controller.director","controller_generation":1},
+                    {"entity_id":"entity.yuki","zone_id":"hallway","x":5.0,"vx":5.0},
+                    {"entity_id":"entity.director","zone_id":"hallway","x":40.0,"vx":5.0},
                 ],
             },
             {
                 "world_epoch": "e1", "world_tick": 3,
                 "entities": [
-                    {"entity_id":"entity.yuki","zone_id":"hallway","x":498.0,"vx":10.0,
-                     "last_sequence":1,"controller_id":"controller.yuki","controller_generation":1},
-                    {"entity_id":"entity.director","zone_id":"laboratory","x":1.0,"vx":0.0,
-                     "last_sequence":2,"controller_id":"controller.director","controller_generation":2},
+                    {"entity_id":"entity.yuki","zone_id":"hallway","x":498.0,"vx":10.0},
+                    {"entity_id":"entity.director","zone_id":"laboratory","x":1.0,"vx":0.0},
                 ],
             },
             {
                 "world_epoch": "e1", "world_tick": 4,
                 "entities": [
-                    {"entity_id":"entity.yuki","zone_id":"laboratory","x":1.0,"vx":0.0,
-                     "last_sequence":2,"controller_id":"controller.yuki","controller_generation":2},
-                    {"entity_id":"entity.director","zone_id":"laboratory","x":12.0,"vx":0.0,
-                     "last_sequence":2,"controller_id":"controller.director","controller_generation":2},
+                    {"entity_id":"entity.yuki","zone_id":"laboratory","x":1.0,"vx":0.0},
+                    {"entity_id":"entity.director","zone_id":"laboratory","x":12.0,"vx":0.0},
                 ],
             },
         ]
-        calls = []
-        index = {"value": 0}
-        def world_rpc(_host, _port, payload, _timeout):
-            calls.append(dict(payload))
-            if payload["type"] == "snapshot":
-                value = snapshots[min(index["value"], len(snapshots)-1)]
-                index["value"] += 1
-                return {"snapshot": value}
-            if payload["type"] == "input":
-                return {"receipt": {
-                    "status": "applied",
-                    "action_id": "input.test",
-                    "reason_code": "ok",
-                }}
-            raise AssertionError(payload)
 
+        class FakeYukiHost:
+            def __init__(self):
+                self.index = 0
+                self.state_calls = 0
+                self.motors = []
+
+            def state(self):
+                self.state_calls += 1
+                value = snapshots[min(self.index, len(snapshots) - 1)]
+                self.index += 1
+                return {
+                    "snapshot": value,
+                    "freshness": {
+                        "source": "world_state_hub",
+                        "age_seconds": 0.01,
+                        "stale": False,
+                    },
+                }
+
+            def motor(self, motor_x):
+                self.motors.append(float(motor_x))
+                return {
+                    "command_id": f"input.{len(self.motors)}",
+                    "world_tick": len(self.motors),
+                    "receipt": {
+                        "status": "queued",
+                        "action_id": f"input.{len(self.motors)}",
+                    },
+                }
+
+        host = FakeYukiHost()
         lease = FakeLease()
         controller = ScriptedEscortController(
-            world_rpc=world_rpc,
+            host_client=host,
             body_lease=lease,
             hz=1000,
             timeout_seconds=1.0,
@@ -492,12 +500,23 @@ class ScriptedEscortTests(unittest.TestCase):
         final = controller.status()
         self.assertEqual(final["status"], "scripted_arrival", final)
         self.assertFalse(final["learned"])
-        inputs = [row for row in calls if row["type"] == "input"]
-        self.assertTrue(inputs)
-        self.assertTrue(all(row["entity_id"] == "entity.yuki" for row in inputs))
-        self.assertTrue(all(abs(row["motor_x"]) <= 0.58 for row in inputs))
-        self.assertFalse(any(row["type"] in {"transfer","setup_reset","day_start"}
-                             for row in calls))
+        self.assertGreaterEqual(host.state_calls, 4)
+        self.assertTrue(host.motors)
+        self.assertTrue(all(abs(value) <= 0.58 for value in host.motors))
+
+    def test_controller_rejects_genuinely_stale_host_state(self):
+        class StaleHost:
+            def state(self):
+                return {
+                    "snapshot": {"world_epoch": "e1", "world_tick": 1, "entities": []},
+                    "freshness": {"stale": True, "age_seconds": 1.5},
+                }
+
+        controller = ScriptedEscortController(
+            host_client=StaleHost(), body_lease=FakeLease()
+        )
+        with self.assertRaisesRegex(Exception, "authoritative state is stale"):
+            controller.start(day_id=1, offer_id="escort-offer.day1")
 
 
 if __name__ == "__main__":

@@ -465,9 +465,38 @@ class EmbodiedGatewayTests(unittest.TestCase):
             again = gateway.dispatch(message("login", player_id="player1"))
             self.assertEqual(again["zone_id"], "training/flat_run")
         finally:
-            gateway.server.server_close()
+            gateway.close()
             world.shutdown()
 
+
+
+    def test_state_frame_is_atomic_across_snapshot_observations_and_controllers(self):
+        runtime = EmbodiedWorldRuntime()
+        try:
+            spawn_yuki(runtime)
+            frame = runtime.state_frame()
+            self.assertEqual(frame["type"], "world_state_frame_v1")
+            snapshot = frame["snapshot"]
+            self.assertEqual(snapshot["world_epoch"], frame["world_epoch"])
+            self.assertEqual(snapshot["world_tick"], frame["world_tick"])
+            self.assertEqual(snapshot["world_revision"], frame["world_revision"])
+            observation = frame["observations"]["entity.yuki"]
+            self.assertEqual(observation["world_epoch"], frame["world_epoch"])
+            self.assertEqual(observation["tick"], frame["world_tick"])
+            self.assertEqual(observation["world_revision"], frame["world_revision"])
+            controller = frame["controllers"]["entity.yuki"]
+            entity = next(
+                item for item in snapshot["entities"]
+                if item["entity_id"] == "entity.yuki"
+            )
+            self.assertEqual(
+                controller["generation"], entity["controller_generation"]
+            )
+            self.assertEqual(
+                controller["controller_id"], entity["controller_id"]
+            )
+        finally:
+            runtime.close()
 
 if __name__ == "__main__":
     unittest.main()
