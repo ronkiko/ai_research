@@ -2,7 +2,7 @@
 
 ## Scope
 
-Acceptance target: the 11-stage embodied VN series defined by
+Acceptance target: the 14-stage embodied VN series defined by
 `docs/refactor/embodied-vn/01-concept.md`.
 
 Implementation range audited:
@@ -16,7 +16,10 @@ Implementation range audited:
 - 08: `afa59f3` — learning_v1
 - 09: `40803bf` — embodied cutover
 - 10: `ae8e89c` — first-day/escort
-- 11: this commit — acceptance audit and fixes
+- 11: `b2625a3` — first acceptance audit
+- 12: `86e41eb` — realtime Host/World boundary
+- 13: `9012645` — Node.js Player Gateway
+- 14: this commit — production browser cutover and final deterministic gate
 
 Baseline before stage 11: exact HEAD `ae8e89c20166098c97ce6b7e5e54f81a51f3e57a`
 had successful GitHub Actions for Graphics, GameTable, Embodied world, Game v1
@@ -42,7 +45,14 @@ every production mount. No remaining source-level deviation from A1–A11 is
 known after this hardening pass; the remaining BLOCKED items are execution
 evidence, not a planned architectural rewrite.
 
-## A1–A11 matrix
+Stages 12–14 then closed the browser realtime architecture discovered during
+manual acceptance: Host observation/command lanes are separated, continuous
+input no longer drives SQLite fsync cadence, Node.js Player Gateway owns
+browser frames/input, and GameTable is now a narrative backend. The deterministic
+gate is extended through A13. This still does not manufacture the missing live,
+manual or fresh scientific evidence.
+
+## A1–A13 matrix
 
 | Criterion | Automated evidence | Status | Remaining evidence |
 | --- | --- | --- | --- |
@@ -57,6 +67,8 @@ evidence, not a planned architectural rewrite.
 | A9 graphics | 1001 terrain/occupancy cells, two actors in one cell, stale frame rejected, separate VN dialogue stream | PASS (automated) | Manual two-tab/reconnect visual check |
 | A10 cutover | Production config/launcher use embodied world + navigation_v1 + learning_v1 and no active GameLab dependency | PASS (automated) | Clean operator-machine start/stop transcript |
 | A11 day/escort | Stage-10 tests + fresh-world reset fence + typing/manual release hardening; P/D placeholders fixed | PASS (contract) | 300-second live timer, browser and GUI escort, sleep/new-day human observation |
+| A12 player gateway separation | Browser shell uses Socket.IO Player Gateway for frames/input; GameTable proxy refuses director/frames paths; Node has no direct physics port | PASS (contract) | Live browser capture showing Host[human] path and no direct backend exposure |
+| A13 realtime/failure isolation | Host state cache, volatile latest-only frames, input coalescing/rate limits, session/connection bounds, independent gateway process | PASS (contract) | Manual restart/down/flood checks while Yuki/world continue |
 
 ## Reproducible commands
 
@@ -66,7 +78,7 @@ Deterministic gate:
 ./gametable/op/acceptance.sh --automated
 ~~~
 
-Expected exit code: `0` only if the deterministic A1–A11 contract tests pass.
+Expected exit code: `0` only if the deterministic A1–A13 contract tests pass.
 
 Live LLM smoke:
 
@@ -123,11 +135,11 @@ certificate IDs and public hashes, plus fresh/trained held-out results. Assisted
 
 Record the following from the browser/Director GUI:
 
-- first-day frame P@0/D@1 and EXIT;
+- open only the Player Gateway web entrypoint and confirm first-day frame P@0/D@1 and EXIT;
 - sidebar Director message followed by reviewed Yuki reply in lower VN window;
 - one 300-second active intro (including two-tab and disconnected-UI checks);
 - explicit accept causing world_control only after escort start;
-- typing focus releases movement; browser and GUI lease transfer works;
+- typing focus releases movement; Player Gateway browser lease fencing works;
 - Director and Yuki touch the portal independently; no ↑ and no bounce;
 - dialogue during escort does not stop the controller;
 - sleep from a non-hallway zone creates exactly one next-day Yuki placement,
@@ -139,5 +151,5 @@ Record the following from the browser/Director GUI:
 
 The body remains flat_1d. Gravity, 2D/3D humanoid joints, vision, learned sitting,
 teacher/imitation following and long-term personality plasticity are outside
-A1–A11. Scripted escort is an explicit temporary gameplay controller and is not
+A1–A13. Scripted escort is an explicit temporary gameplay controller and is not
 evidence of a learned follow skill.
