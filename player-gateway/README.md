@@ -23,6 +23,22 @@ After Stage 14 this is the only production browser entrypoint. GameTable is a
 loopback backend for story/dialogue/state and no longer serves realtime frames
 or browser Director movement.
 
+## Deployment boundary
+
+Player Gateway belongs on the **human/web node**, not inside GameServer. Its
+local upstream is `Host[human]`; that Host may connect over the network to a
+remote GameServer Gateway.
+
+```text
+browser → Player Gateway → Host[human] ── network ──→ GameServer Gateway
+```
+
+Player Gateway never needs direct access to World/Physics ports. Moving the
+GameServer to another VPS therefore changes Host upstream configuration, not
+the browser protocol or rendering authority.
+
+See [distributed runtime](../docs/deployment/distributed-runtime.md).
+
 ## Runtime
 
 Default local entrypoint:
