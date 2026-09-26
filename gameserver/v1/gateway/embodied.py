@@ -322,6 +322,18 @@ class EmbodiedGatewayService:
                 raise ProtocolError(
                     f"training reset failed: {receipt.get('reason_code')}"
                 )
+            self.state_hub.wait_for(
+                lambda value: (
+                    isinstance(
+                        (value.get("observations") or {}).get(binding["entity_id"]),
+                        dict,
+                    )
+                    and (value["observations"][binding["entity_id"]]).get(
+                        "zone_id"
+                    ) == "training/flat_run"
+                ),
+                timeout=2.0,
+            )
             return message(
                 "training_reset",
                 command_id=receipt["action_id"],
