@@ -1,8 +1,8 @@
 # 01 / 15 — Единое тело Юки: цель и договор рефакторинга
 
-Статус: действующий договор серии. Этапы 02–14 реализованы; этап 15 запланирован
-после ручной проверки production Player Gateway. Серия остаётся не принятой до
-закрытия Stage 15 и обязательной live/manual/scientific evidence. После этапа
+Статус: действующий договор серии. Этапы 02–15 реализованы. Серия остаётся
+не принятой до повторной manual-проверки Stage 15 и обязательной
+live/manual/scientific evidence. После этапа
 11 был исправлен browser realtime path, а проверка этапа 14 выявила следующий
 разрыв: несколько независимых observer loops повторно poll-ят один и тот же
 authoritative World и периодически делают Host cache stale под нормальной
@@ -84,7 +84,7 @@ Player Gateway. Этап 14 перевёл production browser world/input path �
 GameTable web shell на Gateway, добавил deployment hardening и расширил
 детерминированный gate до A1–A13. Ручная проверка 14 подтвердила сам gameplay
 vertical, но показала периодический `authoritative Host state is stale`.
-Этап 15 поэтому вводит один shared `WorldStateHub` внутри GameServer Gateway:
+Этап 15 ввёл один shared `WorldStateHub` внутри GameServer Gateway:
 один authoritative read stream от World и fan-out latest state всем Hosts и
 internal readers без нового daemon. Полная серия всё ещё требует живых
 доказательств, перечисленных в acceptance.
@@ -280,8 +280,7 @@ success, не навык и не тихая телепортация. Та же 
 обученный выход с курса. Приёмка должна различать физическую достигнутость,
 наблюдение результата моделью и корректный рассказ о нём.
 
-После реализации патча 15 финальный аудит заново читает этот файл и проверяет
-каждый A1–A14 по коду и воспроизводимым доказательствам, включая реальный
+После реализации патча 15 финальный аудит проверяет каждый A1–A14 по коду и воспроизводимым доказательствам, включая реальный
 browser → Player Gateway → Host[human] → GameServer путь и bounded shared
 Gateway→World observation rate. Если научный, live LLM или human web-сценарий
 не пройден, серия не объявляется принятой по одним unit tests.
