@@ -1,10 +1,12 @@
-# 01 / 14 — Единое тело Юки: цель и договор рефакторинга
+# 01 / 15 — Единое тело Юки: цель и договор рефакторинга
 
-Статус: действующий договор серии. Этапы 02–14 реализованы, но серия остаётся
-не принятой до закрытия обязательной live/manual/scientific evidence. После
-этапа 11 ручная приёмка выявила архитектурный разрыв realtime browser path;
-этапы 12–14 исправили его через разделённый Host realtime boundary и Node.js
-Player Gateway без переноса authoritative physics из Python.
+Статус: действующий договор серии. Этапы 02–14 реализованы; этап 15 запланирован
+после ручной проверки production Player Gateway. Серия остаётся не принятой до
+закрытия Stage 15 и обязательной live/manual/scientific evidence. После этапа
+11 был исправлен browser realtime path, а проверка этапа 14 выявила следующий
+разрыв: несколько независимых observer loops повторно poll-ят один и тот же
+authoritative World и периодически делают Host cache stale под нормальной
+нагрузкой.
 
 Исходное основание сохраняется: персонаж управляет собственным телом в
 визуальной новелле; обучение Spine и Motor доступно через MCP без файловой
@@ -80,8 +82,12 @@ Player Gateway. Его отказ означает потерю human web UI, а
 Этап 12 исправил realtime Host↔World boundary без Node. Этап 13 ввёл
 Player Gateway. Этап 14 перевёл production browser world/input path и
 GameTable web shell на Gateway, добавил deployment hardening и расширил
-детерминированный gate до A1–A13. Полная серия всё ещё требует живых
-доказательств, перечисленных в финальном отчёте.
+детерминированный gate до A1–A13. Ручная проверка 14 подтвердила сам gameplay
+vertical, но показала периодический `authoritative Host state is stale`.
+Этап 15 поэтому вводит один shared `WorldStateHub` внутри GameServer Gateway:
+один authoritative read stream от World и fan-out latest state всем Hosts и
+internal readers без нового daemon. Полная серия всё ещё требует живых
+доказательств, перечисленных в acceptance.
 
 ## Целевая структура и владельцы
 
@@ -196,6 +202,14 @@ Disconnect/blur освобождает human effort через lease/watchdog. R
 Player Gateway не телепортирует actors, не сбрасывает навыки и не останавливает
 Юки; reconnect начинает с fresh authoritative state.
 
+**A14 — один authoritative observation fan-out.** Production read path
+Gateway→World имеет один shared `WorldStateHub` с bounded cadence и latest-only
+cache независимо от числа Hosts, browser clients и server-side observers.
+Snapshot, per-entity observation и controller fence одного frame относятся к
+одному world epoch/tick/revision. Downstream freshness отражает end-to-end age
+исходного World frame и не обнуляется простым чтением старого cache.
+`scripted_escort` не создаёт отдельный direct World snapshot polling loop.
+
 ## Объём этой серии
 
 Первая версия нового мира использует честно обозначенную физику `flat_1d`:
@@ -229,7 +243,7 @@ success, не навык и не тихая телепортация. Та же 
 
 | № | Файл и результат | Зависит от |
 | --- | --- | --- |
-| 01 | Этот документ: цель, ограничения, A1–A13 | — |
+| 01 | Этот документ: цель, ограничения, A1–A14 | — |
 | 02 | [Контракты и идентичность](02-contracts.md) | 01 |
 | 03 | [Физический мир и зоны](03-physics.md) | 02 |
 | 04 | [Ядро организма вместо GameLab](04-organism.md) | 02–03 |
@@ -242,7 +256,8 @@ success, не навык и не тихая телепортация. Та же 
 | 11 | [Первый аудит и непринятая browser-вертикаль](11-acceptance.md) | 01–10 |
 | 12 | [Realtime boundary Host↔World](12-realtime-boundary.md) | 03, 09–11 |
 | 13 | [Node.js Player Gateway](13-player-gateway.md) | 12 |
-| 14 | [Web cutover, hardening и финальная приёмка](14-player-gateway-acceptance.md) | 12–13 |
+| 14 | [Web cutover, hardening и production browser cutover](14-player-gateway-acceptance.md) | 12–13 |
+| 15 | [Shared World State Hub](15-shared-world-state.md) | 12–14 |
 
 В каждом коммите нужны локальная проверка затронутой границы, обновлённый контракт
 и честная запись результата. Новые будущие команды в этих документах — проект,
@@ -265,7 +280,8 @@ success, не навык и не тихая телепортация. Та же 
 обученный выход с курса. Приёмка должна различать физическую достигнутость,
 наблюдение результата моделью и корректный рассказ о нём.
 
-Финальный патч 14 заново читает этот файл, проверяет каждый A1–A13 по коду и
-воспроизводимым доказательствам, включая реальный browser → Player Gateway →
-Host[human] → GameServer путь. Если научный, live LLM или human web-сценарий не
-пройден, серия не объявляется принятой по одним unit tests.
+После реализации патча 15 финальный аудит заново читает этот файл и проверяет
+каждый A1–A14 по коду и воспроизводимым доказательствам, включая реальный
+browser → Player Gateway → Host[human] → GameServer путь и bounded shared
+Gateway→World observation rate. Если научный, live LLM или human web-сценарий
+не пройден, серия не объявляется принятой по одним unit tests.
