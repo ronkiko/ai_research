@@ -67,10 +67,11 @@ Host command lane does not wait for the observer lane.
 
 ## Authoritative state observation
 
-Host refreshes one **latest-state cache** from GameServer on a dedicated
-observer connection at a bounded cadence (25 Hz by default). Client `state`
-reads return this cache with freshness metadata; they do not synchronously issue
-a new Gateway snapshot request.
+Host refreshes one **latest-state cache** from GameServer Gateway on a dedicated
+observer connection at a bounded cadence (25 Hz by default). Gateway itself
+projects those reads from the shared ~30 Hz WorldStateHub, so multiple Host
+instances do not multiply World snapshot traffic. Client `state` reads return
+the Host cache and do not synchronously issue a new upstream request.
 
 The cache is observational only. Coordinates, velocity, zone, controller
 generation and world epoch remain GameServer-owned. A stale or not-yet-ready
@@ -120,3 +121,9 @@ The Host Protocol has explicit resource bounds:
 These limits keep a slow or buggy local Client from creating unbounded Host
 memory growth. MCP applies stricter context-facing limits on top of this Host
 boundary.
+
+
+Stage 15 freshness is end-to-end. Gateway supplies the current age of its
+WorldStateHub frame; Host stores that upstream age and adds only local elapsed
+cache time. A repeated read of the same old World frame therefore cannot reset
+the stale clock.
