@@ -2,12 +2,9 @@
 # Shared foreground process management for long-lived operator launchers.
 #
 # Ownership contract:
-# - the launcher owns only PIDs that it wrote to its own pidfile;
-# - status/stop never discover processes by scanning the OS;
-# - fixed TCP endpoints are checked separately by the stack launcher.
-#
-# Keep the historical MARKER/CWD arguments in the public function signatures so
-# component launchers remain compatible; MARKER is no longer used for discovery.
+# - a launcher owns only the PID stored in its own pidfile;
+# - status/stop never discover or classify arbitrary OS processes;
+# - fixed TCP endpoints are a separate stack-level responsibility.
 
 op_runtime_dir() {
   if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" && -w "${XDG_RUNTIME_DIR}" ]]; then
@@ -67,8 +64,6 @@ op_process_alive() {
 op_locate_process() {
   local tag="$1"
   local root="$2"
-  local _marker="$3"
-  local _expected_cwd="$4"
   local pidfile pid
 
   pidfile="$(op_pid_file "$tag" "$root")"
@@ -87,13 +82,11 @@ op_locate_process() {
 op_stop_process() {
   local tag="$1"
   local root="$2"
-  local marker="$3"
-  local expected_cwd="$4"
-  local label="$5"
+  local label="$3"
   local pid pidfile i
 
   pidfile="$(op_pid_file "$tag" "$root")"
-  if ! pid="$(op_locate_process "$tag" "$root" "$marker" "$expected_cwd")"; then
+  if ! pid="$(op_locate_process "$tag" "$root")"; then
     echo "$label: stopped"
     return 0
   fi
@@ -128,13 +121,12 @@ op_stop_process() {
 op_start_process() {
   local tag="$1"
   local root="$2"
-  local marker="$3"
-  local expected_cwd="$4"
-  local label="$5"
-  shift 5
+  local cwd="$3"
+  local label="$4"
+  shift 4
   local pid pidfile
 
-  if pid="$(op_locate_process "$tag" "$root" "$marker" "$expected_cwd")"; then
+  if pid="$(op_locate_process "$tag" "$root")"; then
     echo "ERROR $label is already running pid=$pid" >&2
     echo "Use --restart to replace it." >&2
     return 2
@@ -144,19 +136,17 @@ op_start_process() {
   printf '%s\n' "$BASHPID" > "$pidfile"
 
   echo "$label: starting"
-  cd "$expected_cwd"
+  cd "$cwd"
   exec "$@"
 }
 
 op_status_process() {
   local tag="$1"
   local root="$2"
-  local marker="$3"
-  local expected_cwd="$4"
-  local label="$5"
+  local label="$3"
   local pid
 
-  if pid="$(op_locate_process "$tag" "$root" "$marker" "$expected_cwd")"; then
+  if pid="$(op_locate_process "$tag" "$root")"; then
     echo "$label: running pid=$pid"
     return 0
   fi
@@ -168,24 +158,23 @@ op_managed_process() {
   local action="$1"
   local tag="$2"
   local root="$3"
-  local marker="$4"
-  local expected_cwd="$5"
-  local label="$6"
-  shift 6
+  local cwd="$4"
+  local label="$5"
+  shift 5
 
   case "$action" in
     start)
-      op_start_process "$tag" "$root" "$marker" "$expected_cwd" "$label" "$@"
+      op_start_process "$tag" "$root" "$cwd" "$label" "$@"
       ;;
     stop)
-      op_stop_process "$tag" "$root" "$marker" "$expected_cwd" "$label"
+      op_stop_process "$tag" "$root" "$label"
       ;;
     restart)
-      op_stop_process "$tag" "$root" "$marker" "$expected_cwd" "$label"
-      op_start_process "$tag" "$root" "$marker" "$expected_cwd" "$label" "$@"
+      op_stop_process "$tag" "$root" "$label"
+      op_start_process "$tag" "$root" "$cwd" "$label" "$@"
       ;;
     status)
-      op_status_process "$tag" "$root" "$marker" "$expected_cwd" "$label"
+      op_status_process "$tag" "$root" "$label"
       ;;
     *)
       echo "ERROR unknown process action: $action" >&2
