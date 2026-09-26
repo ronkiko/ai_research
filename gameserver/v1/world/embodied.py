@@ -217,7 +217,12 @@ class EmbodiedWorldRuntime:
             "receipt": receipt,
         }
         self._commands.put(WorldCommand(request_id, action_id, kind, copy.deepcopy(payload)))
-        self._checkpoint(force=True)
+        if kind != "input":
+            # Structural requests are durable before execution so restart can
+            # reconcile an uncertain outcome. Continuous actuator packets are
+            # intentionally epoch-local and follow the periodic checkpoint
+            # cadence instead of turning controller frequency into SQLite I/O.
+            self._checkpoint(force=True)
         return copy.deepcopy(receipt)
 
     def submit_spawn(
