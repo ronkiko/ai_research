@@ -21,6 +21,16 @@ def snapshot(*entities, tick=10, revision=10, epoch="epoch.1", previous=None):
 
 class ProjectionTests(unittest.TestCase):
     def setUp(self): self.projector = SceneProjector()
+
+    def test_player_gateway_parity_fixture_matches_python_projector(self):
+        fixture_path = Path(__file__).resolve().parent / "fixtures" / "player_gateway_parity.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        frame = self.projector.project(
+            fixture["snapshot"],
+            focus_entity_id=fixture["focus_entity_id"],
+            source=fixture["source"],
+        )
+        self.assertEqual(frame, fixture["expected"])
     def test_hallway_static_and_occupancy_layers_have_1001_cells(self):
         terrain = self.projector.terrain("hallway")
         frame = self.projector.project(snapshot(
