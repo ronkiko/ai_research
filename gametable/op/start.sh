@@ -316,8 +316,9 @@ BACKEND_RUNNER_PID=$!
 
 echo "Ctrl+C — сохранить и остановить весь GameTable stack."
 
-BACKEND_STATUS=0
-if ! wait "$BACKEND_RUNNER_PID"; then
+if wait "$BACKEND_RUNNER_PID"; then
+  BACKEND_STATUS=0
+else
   BACKEND_STATUS=$?
 fi
 exit "$BACKEND_STATUS"
