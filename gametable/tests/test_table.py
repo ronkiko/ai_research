@@ -576,7 +576,7 @@ class WebBoundaryTests(unittest.TestCase):
         self.store = Store(Path(self.temp.name) / "test.sqlite3", self.rules)
         self.app = Application(
             self.store, Mock(), SimpleNamespace(model="openai/gpt-5.6-luna"),
-            self.rules, graphics=LegacyVNGraphics(),
+            self.rules,
         )
         self.handler_class = handler_for(self.app)
 
@@ -607,10 +607,10 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn('"revision":1', frame)
         self.app.runtime.submit.assert_not_called()
 
-    def test_graphics_snapshot_and_dialogue_stream_are_stable(self):
+    def test_backend_snapshot_and_dialogue_stream_are_stable(self):
         first = self.app.snapshot()
-        self.assertEqual(first["graphics"]["frame"]["zone_id"], "hallway")
-        self.assertEqual(len(first["graphics"]["terrain"]["cells"]), 1001)
+        self.assertNotIn("graphics", first)
+        self.assertIsNone(first["view"]["frame_ref"])
         e = event("turn-0099", text="Привет")
         self.store.begin(e)
         running = self.app.snapshot()
@@ -622,12 +622,11 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertEqual([x["message_id"] for x in again["dialogue"]],
                          [x["message_id"] for x in running["dialogue"]])
 
-    def test_frame_stream_is_local_only_and_separate_from_turn_events(self):
-        h = self.handler("/api/frames?token=forged", host="attacker.example:17880")
+    def test_gametable_backend_no_longer_serves_realtime_frames(self):
+        h = self.handler("/api/frames")
         h.do_GET()
-        self.assertEqual(h.send.call_args.args[0], 403)
+        self.assertEqual(h.send.call_args.args[0], 404)
         self.app.runtime.submit.assert_not_called()
-        self.assertIsNot(self.app.frames, self.app.events)
 
     def test_sse_endpoint_is_local_only_and_never_uses_token_query(self):
         h = self.handler("/api/events?token=forged", host="attacker.example:17880")
@@ -681,13 +680,8 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn("view", snapshot)
         self.assertNotIn("state", snapshot)
         self.assertNotIn("scene", snapshot["view"])
-        self.assertIn("graphics", snapshot)
-        self.assertEqual(snapshot["graphics"]["frame"]["zone_id"], "hallway")
-        self.assertFalse(snapshot["graphics"]["frame"]["freshness"]["authoritative"])
-        self.assertEqual(snapshot["graphics"]["frame"]["freshness"]["source"],
-                         "legacy_vn_compat")
-        self.assertEqual(snapshot["view"]["frame_ref"]["frame_id"],
-                         snapshot["graphics"]["frame"]["frame_id"])
+        self.assertNotIn("graphics", snapshot)
+        self.assertIsNone(snapshot["view"]["frame_ref"])
         self.assertIn("dialogue", snapshot)
         dumped = json.dumps(snapshot, ensure_ascii=False)
         self.assertNotIn("rules_hash", dumped)
@@ -740,8 +734,14 @@ class WebBoundaryTests(unittest.TestCase):
         controls = (web / "js" / "controls.js").read_text()
         self.assertNotIn("<style", index.lower())
         self.assertNotIn(" style=", index.lower())
+        self.assertIn('src="/socket.io/socket.io.js"', index)
         self.assertIn('type="module" src="/js/shell.js"', index)
         self.assertNotIn("setInterval(", scripts)
+        frames = (web / "js" / "frames.js").read_text()
+        self.assertIn("window.io", frames)
+        self.assertNotIn("EventSource('/api/frames", frames)
+        api = (web / "js" / "api.js").read_text()
+        self.assertNotIn("/api/director/", api)
         self.assertNotIn("request_lab_work", renderer)
         self.assertNotIn("laboratory.workstation", renderer)
         self.assertNotIn("view.scene", renderer)
@@ -774,6 +774,7 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn('"gameserver/v1/world/**"', workflow)
         self.assertIn('"gameclient/v1/host/**"', workflow)
         self.assertIn('"graphics/**"', workflow)
+        self.assertIn('"player-gateway/**"', workflow)
         self.assertIn('"world/navigation.py"', workflow)
         self.assertNotIn('"gamelab/mcp.py"', workflow)
 
