@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -27,6 +28,7 @@ from organism.jobs import ExperimentJobs, JobBusy, JobError, TrainingSpec
 from organism.models import build_spine_policy, motor_checkpoint_extra, save_checkpoint
 from organism.motors import package as motor_package
 from organism.sensors import SensorHistory, sensor_frame
+from organism.skill_registry import SkillRegistry
 from world.contracts import ContractError
 
 
@@ -231,6 +233,68 @@ class GoalAndJobTests(unittest.TestCase):
 
 
 class ArtifactImportTests(unittest.TestCase):
+    def test_verified_skill_binding_is_revalidated_before_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            motor_root = root / "motors"
+            learning_root = root / "learning"
+            create_verified_motor_fixture(motor_root)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ORGANISM_MOTOR_ROOT": str(motor_root),
+                    "ORGANISM_EMBODIMENT_ID": "embodiment.yuki.primary",
+                },
+            ):
+                registry = SkillRegistry(learning_root)
+                candidate = registry.candidate_for_request(
+                    "request.binding.1",
+                    motor_id=FIXTURE_MOTOR_ID,
+                    spec_id="spine.flat_run.v1",
+                )
+                skill_id = candidate["skill_id"]
+                model, package = build_spine_policy(FIXTURE_MOTOR_ID, seed=9)
+                save_checkpoint(
+                    registry.checkpoint_path(skill_id),
+                    model,
+                    extra=motor_checkpoint_extra(package),
+                )
+                registry.mark_verified(
+                    skill_id,
+                    suite_id="spine.goal_1d.verify.v1",
+                    verification={"passed": True},
+                )
+                binding = registry.resolve_verified(skill_id)
+                self.assertEqual(
+                    binding["embodiment_id"], "embodiment.yuki.primary"
+                )
+
+                with patch.dict(
+                    os.environ,
+                    {"ORGANISM_EMBODIMENT_ID": "embodiment.other"},
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError, "embodiment_id"
+                    ):
+                        registry.resolve_verified(skill_id)
+
+                payload = json.loads(
+                    registry.state_path.read_text(encoding="utf-8")
+                )
+                payload["candidates"][skill_id]["binding"][
+                    "body_contract_hash"
+                ] = "0" * 64
+                registry.state_path.write_text(
+                    json.dumps(payload, sort_keys=True),
+                    encoding="utf-8",
+                )
+                broken = SkillRegistry(learning_root)
+                with self.assertRaisesRegex(
+                    ValueError, "body_contract_hash"
+                ):
+                    broken.resolve_verified(skill_id)
+
     def test_certified_motor_and_spine_checkpoint_copy_exact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

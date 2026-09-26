@@ -23,7 +23,7 @@ from .runtime import Runtime, public_turn
 from .store import Store, default_story_flow
 from .view import available_intent_ids, project_view
 from graphics import EmbodiedWorldGraphics, FrameHub, public_asset_catalog
-from gametable.migration import active_save_root
+from gametable.migration import active_save_root, migration_manifest
 from gametable.story import StoryFlow, StoryFlowError
 
 TABLE = Path(__file__).resolve().parents[1]
@@ -388,7 +388,18 @@ def main():
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("GameTable уже использует это сохранение")
-    store = Store(root / "save.sqlite3", rules)
+    manifest = migration_manifest()
+    identity_binding = None if manifest is None else manifest.get("identity_binding")
+    if manifest is not None and not isinstance(identity_binding, dict):
+        raise SystemExit("active embodied migration has no identity binding")
+    try:
+        store = Store(
+            root / "save.sqlite3",
+            rules,
+            identity_binding=identity_binding,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     port, password = free_port(), secrets.token_urlsafe(32)
     env = dict(os.environ, OPENCODE_SERVER_PASSWORD=password, OPENCODE_SERVER_USERNAME="opencode")
     backend = OpenCode(f"http://127.0.0.1:{port}", TABLE, args.model, args.variant, password,

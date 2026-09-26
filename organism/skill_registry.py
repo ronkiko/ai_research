@@ -36,6 +36,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sensor_contract_hash() -> str:
+    return canonical_hash({
+        "contract": "proprio_goal_history_v1",
+        "history_frames": HISTORY_FRAMES,
+        "channels": ["x_norm", "vx_norm", "motor_x", "goal_dx"],
+    })
+
+
 class SkillRegistry:
     VERSION = 1
 
@@ -164,11 +172,7 @@ class SkillRegistry:
                 raise ValueError("certified Motor has no certificate_id")
             spine_hash = _sha256(path)
             checkpoint_id = f"spine-checkpoint.{spine_hash[:32]}"
-            sensor_hash = canonical_hash({
-                "contract": "proprio_goal_history_v1",
-                "history_frames": HISTORY_FRAMES,
-                "channels": ["x_norm", "vx_norm", "motor_x", "goal_dx"],
-            })
+            sensor_hash = _sensor_contract_hash()
             socket_hash = canonical_hash(package.manifest.get("socket") or {})
             binding = SkillBinding(
                 schema_version=SCHEMA_VERSION,
@@ -203,16 +207,50 @@ class SkillRegistry:
             record.get("binding"), dict
         ):
             raise ValueError("skill is not verified")
+        binding = SkillBinding.from_dict(record["binding"])
         path = self.checkpoint_path(skill_id)
-        if not path.is_file() or _sha256(path) != record.get("spine_hash"):
+        spine_hash = _sha256(path) if path.is_file() else None
+        if spine_hash is None or spine_hash != record.get("spine_hash"):
             raise ValueError("verified Spine checkpoint hash mismatch")
         package = require_trained_motor(package_for_checkpoint(path))
         if package.motor_id != record["motor_id"]:
             raise ValueError("verified skill Motor mismatch")
-        return {
+
+        certification = (
+            (package.manifest.get("training") or {}).get("certification")
+            or {}
+        )
+        certificate_id = certification.get("certificate_id")
+        expected = {
             "skill_id": skill_id,
+            "embodiment_id": os.environ.get(
+                "ORGANISM_EMBODIMENT_ID", "embodiment.yuki.primary"
+            ),
+            "motor_uuid": package.motor_id,
+            "motor_certificate_id": certificate_id,
+            "motor_hash": package.brain_sha256,
+            "spine_checkpoint_id": f"spine-checkpoint.{spine_hash[:32]}",
+            "spine_hash": spine_hash,
+            "sensor_contract_hash": _sensor_contract_hash(),
+            "socket_contract_hash": canonical_hash(
+                package.manifest.get("socket") or {}
+            ),
+            "body_contract_hash": BODY_PROFILE_SHA256,
+            "physics_contract_hash": PHYSICS_CONTRACT_SHA256,
+        }
+        actual = binding.to_dict()
+        mismatched = [
+            name for name, value in expected.items()
+            if actual.get(name) != value
+        ]
+        if mismatched:
+            raise ValueError(
+                "verified SkillBinding is incompatible with the current "
+                + ", ".join(mismatched)
+            )
+        return {
             "verified": True,
-            **copy.deepcopy(record["binding"]),
+            **actual,
         }
 
     def mount(self, skill_id: str) -> dict[str, Any]:

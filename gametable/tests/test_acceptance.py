@@ -72,6 +72,31 @@ def drive_until_zone(runtime, target_zone, direction, *, limit=1800):
 
 
 class AcceptanceMatrixTests(unittest.TestCase):
+    def test_a1_gametable_save_pins_the_migrated_embodiment_identity(self):
+        rules = load_rules()
+        binding = {
+            "character_id": "character.yuki",
+            "embodiment_id": "embodiment.yuki.primary",
+            "entity_id": "entity.yuki",
+            "player_id": "player1",
+            "controller_id": "controller.yuki",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "save.sqlite3"
+            store = Store(path, rules, identity_binding=binding)
+            try:
+                self.assertEqual(store.identity_binding(), binding)
+            finally:
+                store.close()
+
+            reopened = Store(path, rules, identity_binding=binding)
+            reopened.close()
+
+            foreign = dict(binding)
+            foreign["embodiment_id"] = "embodiment.other"
+            with self.assertRaisesRegex(ValueError, "another embodiment identity"):
+                Store(path, rules, identity_binding=foreign)
+
     def test_a1_a3_same_binding_crosses_all_zones_by_physical_portals_without_bounce(self):
         runtime = EmbodiedWorldRuntime(controller_watchdog_ticks=10000)
         spawn_yuki(runtime)

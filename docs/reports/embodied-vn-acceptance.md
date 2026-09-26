@@ -35,17 +35,24 @@ environment.
 This is not a code blocker for proceeding with experiments; it is an evidence
 blocker for writing “A1–A11 fully accepted”.
 
+A follow-up source audit after stage 11 found and closed two code-level gaps:
+GameTable now persists and fences the migrated embodiment identity in its own
+save, and SkillRegistry revalidates the complete verified SkillBinding before
+every production mount. No remaining source-level deviation from A1–A11 is
+known after this hardening pass; the remaining BLOCKED items are execution
+evidence, not a planned architectural rewrite.
+
 ## A1–A11 matrix
 
 | Criterion | Automated evidence | Status | Remaining evidence |
 | --- | --- | --- | --- |
-| A1 one body | `test_acceptance` drives `entity.yuki / embodiment.yuki.primary` through hallway → laboratory → training → laboratory → hallway | PASS (contract) | Live stack observation IDs during full scenario |
+| A1 one body | `test_acceptance` pins the migrated character/embodiment/entity/Host binding in GameTable SQLite and drives the same `entity.yuki / embodiment.yuki.primary` through hallway → laboratory → training → laboratory → hallway | PASS (contract) | Live stack observation IDs during full scenario |
 | A2 explicit control mode | Navigation source has no actuator fallback; scripted escort is separate and absent from training | PASS (contract) | Trace from a verified learned skill RUN |
 | A3 confirmed portals | Real `EmbodiedWorldRuntime` swept portal round-trip, receipts, arrival anchors/no immediate bounce | PASS (automated) | Visual confirmation in live browser |
 | A4 independent clocks | Real scheduler advances world ticks with no client/LLM/renderer | PASS (automated) | Record measured overruns/latency on operator machine |
 | A5 MCP learning | AST/schema gate exposes bounded ID-only Motor/Spine start/status/cancel/verify/select | PASS (contract) | Live LLM calls on isolated learning artifacts |
 | A6 semantic access/scope | Active config only navigation_v1/learning_v1; ordinary voices deny-all; actor/coordinate args absent | PASS (contract) | Live scope-denial observations |
-| A7 scientific honesty | Assisted setup returns learned_success=false; one-shot/frozen verification and verified-only mount contracts checked | BLOCKED (research) | Fresh Motor+Spine run, held-out VERIFY, artifact IDs/hashes and fresh/trained comparison |
+| A7 scientific honesty | Assisted setup returns learned_success=false; one-shot/frozen verification is preserved; production mount revalidates embodiment + Motor certificate/hash + Spine + sensor/socket/body/physics contracts | BLOCKED (research) | Fresh Motor+Spine run, held-out VERIFY, artifact IDs/hashes and fresh/trained comparison |
 | A8 recovery | Durable outbox crash window becomes uncertain; same proposal is not recreated; existing world/navigation restart tests remain in CI | PASS (contract) | Fault injection against live transport processes |
 | A9 graphics | 1001 terrain/occupancy cells, two actors in one cell, stale frame rejected, separate VN dialogue stream | PASS (automated) | Manual two-tab/reconnect visual check |
 | A10 cutover | Production config/launcher use embodied world + navigation_v1 + learning_v1 and no active GameLab dependency | PASS (automated) | Clean operator-machine start/stop transcript |
@@ -78,6 +85,8 @@ Normal component gates used by CI:
 ./world/op/check.sh
 ./organism/op/organism.sh check
 ./op/test-process.sh
+python3 -m unittest gametable.tests.test_acceptance -v
+python3 -m unittest organism.tests.test_extraction -v
 ~~~
 
 ## Required operator evidence before changing Overall to PASS

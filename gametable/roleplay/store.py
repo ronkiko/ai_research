@@ -57,7 +57,11 @@ def default_story_flow():
 
 
 class Store:
-    def __init__(self, path, rules):
+    IDENTITY_FIELDS = (
+        "character_id", "embodiment_id", "entity_id", "player_id", "controller_id",
+    )
+
+    def __init__(self, path, rules, *, identity_binding=None):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.lock = threading.RLock()
@@ -108,6 +112,10 @@ class Store:
           id INTEGER PRIMARY KEY CHECK(id=1),
           value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS embodiment_binding (
+          id INTEGER PRIMARY KEY CHECK(id=1),
+          value TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_action_outbox_status
           ON action_outbox(status, created);
         CREATE INDEX IF NOT EXISTS idx_world_inbox_kind
@@ -122,6 +130,29 @@ class Store:
                 "INSERT OR IGNORE INTO story_flow VALUES (1,?)",
                 (encode(default_story_flow()),),
             )
+            if identity_binding is not None:
+                if not isinstance(identity_binding, dict):
+                    raise ValueError("embodiment identity binding must be an object")
+                normalized = {}
+                for field in self.IDENTITY_FIELDS:
+                    value = identity_binding.get(field)
+                    if not isinstance(value, str) or not value:
+                        raise ValueError(
+                            f"embodiment identity binding requires {field}"
+                        )
+                    normalized[field] = value
+                row = self.db.execute(
+                    "SELECT value FROM embodiment_binding WHERE id=1"
+                ).fetchone()
+                if row is None:
+                    self.db.execute(
+                        "INSERT INTO embodiment_binding VALUES (1,?)",
+                        (encode(normalized),),
+                    )
+                elif json.loads(row[0]) != normalized:
+                    raise ValueError(
+                        "GameTable save belongs to another embodiment identity"
+                    )
             # Character/dialogue work is never auto-replayed after a crash.
             self.db.execute(
                 "UPDATE turns SET status='failed', error=? WHERE status='running'",
@@ -605,6 +636,13 @@ class Store:
                 "SELECT id FROM turns ORDER BY created DESC LIMIT ?", (limit,)
             ).fetchall()
             return [self.get(row[0]) for row in reversed(ids)]
+
+    def identity_binding(self):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT value FROM embodiment_binding WHERE id=1"
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
 
     def close(self):
         with self.lock:
