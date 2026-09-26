@@ -25,8 +25,9 @@
   `01-...`, `02-...` и имеют coordinates `0.main.3.01`, `0.main.3.02` и т.д.
   Перед добавлением новой patch-series прочитай `docs/versioning.md`.
 
-- **Training telemetry safety:** server-side training telemetry is singleton per
-  GameServer/World: at most one active student actor. Admission/capability/fence
-  checks happen before allocating telemetry producers/buffers; competing
-  training starts must be rejected without creating additional telemetry load.
-  Normal multiplayer and ordinary observations are not subject to this slot.
+- **Teacher/demo telemetry safety:** per GameServer/World there may be at most
+  one active teacher↔student demonstration session. Admission/capability/fence
+  checks happen before allocating P2P capability or telemetry producers/buffers;
+  competing teacher/student pairs are rejected without additional telemetry
+  load. Ordinary multiplayer and self-learning without teacher/demo telemetry
+  are not subject to this singleton.
