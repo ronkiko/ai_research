@@ -27,22 +27,6 @@ from organism.host import HostClient, HostError
 from gametable.story import StoryFlow, StoryFlowError
 
 TABLE = Path(__file__).resolve().parents[1]
-STATIC_FILES = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/css/shell.css": ("css/shell.css", "text/css; charset=utf-8"),
-    "/css/scene.css": ("css/scene.css", "text/css; charset=utf-8"),
-    "/css/dialogue.css": ("css/dialogue.css", "text/css; charset=utf-8"),
-    "/js/api.js": ("js/api.js", "text/javascript; charset=utf-8"),
-    "/js/events.js": ("js/events.js", "text/javascript; charset=utf-8"),
-    "/js/frames.js": ("js/frames.js", "text/javascript; charset=utf-8"),
-    "/js/frame-renderer.js": ("js/frame-renderer.js", "text/javascript; charset=utf-8"),
-    "/js/scene-renderer.js": ("js/scene-renderer.js", "text/javascript; charset=utf-8"),
-    "/js/dialogue.js": ("js/dialogue.js", "text/javascript; charset=utf-8"),
-    "/js/controls.js": ("js/controls.js", "text/javascript; charset=utf-8"),
-    "/js/shell.js": ("js/shell.js", "text/javascript; charset=utf-8"),
-    "/assets/characters/yuki-standing.svg": ("assets/characters/yuki-standing.svg", "image/svg+xml"),
-}
-
 
 class ConsoleLog:
     def __init__(self):
@@ -345,10 +329,6 @@ def handler_for(app):
                     "narration_facts": result.get("narration_facts"),
                     "checks": [{"review": a.get("review"), "rejected": a.get("rejected")}
                                for a in result.get("draft_attempts", [])]})
-            static = STATIC_FILES.get(path)
-            if static:
-                filename, mime = static
-                return self.send(200, (TABLE / "web" / filename).read_bytes(), mime)
             self.send(404, {"error": "Not found"})
 
         def read_json_body(self):
@@ -506,7 +486,7 @@ def main():
             events=events, story=story,
         )
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
-        logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
+        logger.write(f"GameTable · Юки backend: http://127.0.0.1:{args.port}")
         logger.write(f"Модель: {backend.model}")
         logger.write("Ctrl+C — сохранить и выйти.")
         if not stopped.is_set():
