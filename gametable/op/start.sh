@@ -12,14 +12,26 @@ case "${1:-}" in
   --status) ACTION="status"; shift ;;
 esac
 
+PLAYER_GATEWAY_PORT_VALUE="${PLAYER_GATEWAY_PORT:-17881}"
+
 source "$ROOT/op/process.sh"
 
 stop_stack() {
-  "$ROOT/player-gateway/op/gateway.sh" --stop || true
-  op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
-  "$ROOT/gameclient/v1/op/director-host.sh" --stop || true
-  "$ROOT/gameclient/v1/op/host.sh" --stop || true
-  "$ROOT/gameserver/v1/op/embodied.sh" --stop || true
+  "$ROOT/player-gateway/op/gateway.sh" --stop
+  op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server" \
+    "$ROOT/gametable" "GameTable Юки"
+  "$ROOT/gameclient/v1/op/director-host.sh" --stop
+  "$ROOT/gameclient/v1/op/host.sh" --stop
+  "$ROOT/gameserver/v1/op/embodied.sh" --stop
+}
+
+require_stack_ports_free() {
+  op_require_tcp_port_free "127.0.0.1" 17600 "GameServer Gateway"
+  op_require_tcp_port_free "127.0.0.1" 17606 "GameServer embodied World"
+  op_require_tcp_port_free "127.0.0.1" 17700 "Host[yuki]"
+  op_require_tcp_port_free "127.0.0.1" 17701 "Host[director]"
+  op_require_tcp_port_free "127.0.0.1" "$GAMETABLE_PORT" "GameTable backend"
+  op_require_tcp_port_free "127.0.0.1" "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
 }
 
 status_stack() {
@@ -48,6 +60,11 @@ command -v opencode >/dev/null || { echo "ERROR opencode is not installed" >&2; 
 command -v python3 >/dev/null || { echo "ERROR python3 is not installed" >&2; exit 2; }
 command -v node >/dev/null || { echo "ERROR node is not installed" >&2; exit 2; }
 command -v npm >/dev/null || { echo "ERROR npm is not installed" >&2; exit 2; }
+
+if [[ "$ACTION" == "restart" ]]; then
+  require_stack_ports_free
+fi
+
 cd "$ROOT"
 
 if op_managed_process status "gametable-vn" "$ROOT" "roleplay.server" \
@@ -68,16 +85,7 @@ if [[ "$FRESH" -eq 1 ]]; then
   # Keep learned artifacts, but stop only launcher-owned runtime processes and
   # discard the active physical checkpoint before the new Hosts log in.
   stop_stack
-  if python3 - <<'PY' >/dev/null 2>&1
-import socket
-from gameserver.v1.common.config import GATEWAY_PORT, HOST
-with socket.create_connection((HOST, GATEWAY_PORT), timeout=.2):
-    pass
-PY
-  then
-    echo "ERROR --fresh cannot reset an unmanaged service on the embodied Gateway port" >&2
-    exit 2
-  fi
+  require_stack_ports_free
   python3 - <<'PY'
 from gametable.migration import WORLD_STATE, active_save_root
 root = active_save_root()
@@ -129,24 +137,15 @@ PY
 }
 
 if ! "$ROOT/gameserver/v1/op/embodied.sh" --status >/dev/null 2>&1; then
-  if ! gateway_is_embodied; then
-    if "$ROOT/gameserver/v1/op/server.sh" --status >/dev/null 2>&1; then
-      echo "CUTOVER stop legacy GameServer"
-      "$ROOT/gameclient/v1/op/host.sh" --stop || true
-      "$ROOT/gameserver/v1/op/server.sh" --stop
-    elif python3 - <<'PY' >/dev/null 2>&1
-import socket
-from gameserver.v1.common.config import GATEWAY_PORT, HOST
-with socket.create_connection((HOST, GATEWAY_PORT), timeout=.2):
-    pass
-PY
-    then
-      echo "ERROR port 17600 is occupied by an incompatible unmanaged service" >&2
-      exit 2
-    fi
-    nohup "$ROOT/gameserver/v1/op/embodied.sh" --start \
-      >"$LOGDIR/gameserver.log" 2>&1 &
+  if "$ROOT/gameserver/v1/op/server.sh" --status >/dev/null 2>&1; then
+    echo "CUTOVER stop legacy GameServer"
+    "$ROOT/gameclient/v1/op/host.sh" --stop
+    "$ROOT/gameserver/v1/op/server.sh" --stop
   fi
+  op_require_tcp_port_free "127.0.0.1" 17600 "GameServer Gateway"
+  op_require_tcp_port_free "127.0.0.1" 17606 "GameServer embodied World"
+  nohup "$ROOT/gameserver/v1/op/embodied.sh" --start \
+    >"$LOGDIR/gameserver.log" 2>&1 &
 fi
 
 for _ in {1..100}; do
@@ -163,12 +162,14 @@ DIRECTOR_HOST_REUSED=0
 if "$ROOT/gameclient/v1/op/host.sh" --status >/dev/null 2>&1; then
   HOST_REUSED=1
 else
+  op_require_tcp_port_free "127.0.0.1" 17700 "Host[yuki]"
   nohup "$ROOT/gameclient/v1/op/host.sh" --start \
     >"$LOGDIR/host.log" 2>&1 &
 fi
 if "$ROOT/gameclient/v1/op/director-host.sh" --status >/dev/null 2>&1; then
   DIRECTOR_HOST_REUSED=1
 else
+  op_require_tcp_port_free "127.0.0.1" 17701 "Host[director]"
   nohup "$ROOT/gameclient/v1/op/director-host.sh" --start \
     >"$LOGDIR/director-host.log" 2>&1 &
 fi
@@ -218,7 +219,9 @@ cat "$LOGDIR/readiness.json"
 "$ROOT/organism/op/organism.sh" prepare >/dev/null
 
 if ! "$ROOT/player-gateway/op/gateway.sh" --status >/dev/null 2>&1; then
-  nohup "$ROOT/player-gateway/op/gateway.sh" --start     >"$LOGDIR/player-gateway.log" 2>&1 &
+  op_require_tcp_port_free "127.0.0.1" "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
+  nohup "$ROOT/player-gateway/op/gateway.sh" --start \
+    >"$LOGDIR/player-gateway.log" 2>&1 &
 fi
 
 player_gateway_ready() {
@@ -241,5 +244,9 @@ player_gateway_ready || {
   exit 2
 }
 
-echo "WEB UI · Player Gateway: http://127.0.0.1:17881"
-op_managed_process start "gametable-vn" "$ROOT" "roleplay.server"   "$ROOT/gametable" "GameTable Юки backend"   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"   python3 -m roleplay.server "$@"
+echo "WEB UI · Player Gateway: http://127.0.0.1:$PLAYER_GATEWAY_PORT_VALUE"
+op_require_tcp_port_free "127.0.0.1" "$GAMETABLE_PORT" "GameTable backend"
+op_managed_process start "gametable-vn" "$ROOT" "roleplay.server" \
+  "$ROOT/gametable" "GameTable Юки backend" \
+  env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 -m roleplay.server "$@"
