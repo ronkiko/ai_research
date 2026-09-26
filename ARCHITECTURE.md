@@ -238,3 +238,32 @@ to the realtime input path.
 
 This prepares the Python core for Stage 13 Player Gateway without moving physics,
 world authority, Yuki, Spine or Motor into Node.js.
+
+
+## Stage 13: Node.js Player Gateway
+
+Ordinary human web access is now represented by a separate loopback
+`Player Gateway`:
+
+```text
+Browser ⇄ Player Gateway (Node.js) ⇄ GameClient Host[human] ⇄ GameServer
+
+LLM → Spine → Motor → GameClient Host[yuki] ───────────────────────┘
+```
+
+The Gateway owns browser transport, Socket.IO sessions, human input coalescing,
+rate limits and RenderFrame delivery. It does not own coordinates, velocity,
+collisions, portals, world ticks or Yuki control and has no direct GameServer
+physics connection. Human and Yuki still use separate instances/sessions of the
+same GameClient Host implementation.
+
+The browser sends only normalized human actuator state. Repeated events collapse
+before Host, while an upstream ceiling and keepalive keep command cadence bounded.
+Authoritative Host state is projected at 25 Hz into the existing RenderFrame
+contract; slow browsers receive volatile latest-only frames. Python
+`graphics/` remains the parity oracle and current GameTable source until the
+Stage 14 production web cutover.
+
+Player Gateway failure therefore removes the human web presentation/control
+surface only. GameServer, Host[yuki], Organism, navigation and learning remain
+independent of Node.js.
