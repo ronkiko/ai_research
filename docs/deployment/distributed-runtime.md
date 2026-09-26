@@ -238,25 +238,33 @@ teacher data не зависели от co-location Hosts.
 
 ## Teacher/demo session admission
 
-Distributed Hosts не имеют права масштабировать server-side demonstration
-telemetry количеством teachers, students или соединений.
+Distributed Hosts не могут назначить одному student несколько teachers через
+разные machines/connections.
 
-На один GameServer/World действует global `TeacherStudentSession` slot:
-максимум одна active teacher↔student pair.
-
-Например:
+GameServer хранит active `TeacherStudentSession` registry с уникальностью по
+`student_entity_id`:
 
 ```text
-Host[teacher-a] ─┐
-Host[teacher-b] ─┼─→ GameServer
-Host[teacher-c] ─┘
+Student 1 → Teacher A
+Student 2 → Teacher B
+Student 3 → Teacher A
 ```
 
-не означает три параллельных teacher telemetry streams. Только одна pair может
-получить active teaching capability; остальные acquire requests получают
-bounded `TEACHER_SESSION_BUSY`/эквивалентный ответ.
+допустимо, но:
 
-Обычный gameplay и self-learning других actors продолжают работать.
+```text
+Student 1 → Teacher A
+Student 1 → Teacher B
+```
+
+недопустимо одновременно.
+
+Проверка выполняется server-side до выделения второго demonstration telemetry
+producer/capability для student.
+
+Это не ограничивает число students в distributed deployment. Общие quotas,
+rate limits и capacity controls для множества одновременных teaching sessions
+задаются отдельно.
 
 ## Failure isolation между машинами
 
