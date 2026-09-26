@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from pathlib import Path
 import tempfile
+import time
 import threading
 import unittest
 
@@ -621,6 +622,27 @@ class WebBoundaryTests(unittest.TestCase):
             h.send.call_args.args[1]["error"],
         )
 
+    def test_graphics_pump_refreshes_without_api_state_polling(self):
+        class CountingGraphics:
+            def __init__(self):
+                self.calls = 0
+                self.delegate = LegacyVNGraphics()
+            def snapshot(self, state):
+                self.calls += 1
+                return self.delegate.snapshot(state)
+
+        graphics = CountingGraphics()
+        self.app.graphics = graphics
+        self.app.FRAME_HZ = 100.0
+        self.app.start_graphics_pump()
+        try:
+            deadline = time.time() + 0.5
+            while graphics.calls < 2 and time.time() < deadline:
+                time.sleep(0.005)
+            self.assertGreaterEqual(graphics.calls, 2)
+        finally:
+            self.app.stop_graphics_pump()
+
     def test_graphics_snapshot_and_dialogue_stream_are_stable(self):
         first = self.app.snapshot()
         self.assertEqual(first["graphics"]["frame"]["zone_id"], "hallway")
@@ -756,6 +778,8 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertNotIn(" style=", index.lower())
         self.assertIn('type="module" src="/js/shell.js"', index)
         self.assertNotIn("setInterval(", scripts)
+        self.assertIn("DIRECTOR_KEEPALIVE_MS", scripts)
+        self.assertIn("directorInputBusy", scripts)
         self.assertNotIn("request_lab_work", renderer)
         self.assertNotIn("laboratory.workstation", renderer)
         self.assertNotIn("view.scene", renderer)
