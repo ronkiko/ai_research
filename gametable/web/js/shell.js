@@ -86,7 +86,13 @@ function handleEvent(name,data){
   if(name==='turn.started'){showStatus((data.stage||'Юки обдумывает ответ')+'…');controls.setDisabled(true);queueSync();return;}
   if(name==='turn.stage'){showStatus((data.stage||'Юки обдумывает ответ')+'…');controls.setDisabled(true);return;}
   if(name==='scene.transition'){showStatus('Переход подтверждается…');return;}
-  if(name==='turn.failed'){lastError=data.error||'Ход остановлен';queueSync();return;}
+  if(name==='turn.failed'){
+    lastError='';
+    showStatus(data.notice||'Ответ Юки не получен. Сообщение можно повторить.');
+    controls.setDisabled(false);
+    queueSync();
+    return;
+  }
   if(
     name==='state.changed'||name==='turn.completed'||name==='action.updated'||
     name.startsWith('story.')
