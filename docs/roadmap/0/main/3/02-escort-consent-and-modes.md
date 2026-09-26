@@ -1,8 +1,8 @@
-# 0.0.3.02 — Escort consent and modes
+# 0.main.3.02 — Escort consent and modes
 
 Статус: **план**.
 
-Зависимость: [0.0.3.01](01-local-actor-perception.md).
+Зависимость: [0.main.3.01](01-local-actor-perception.md).
 
 Цель: заменить одно неявное «сопровождение» явным выбором персонажа.
 
