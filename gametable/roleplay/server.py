@@ -526,13 +526,13 @@ def main():
         if server:
             server.server_close()
         try:
-            if "story" in locals():
-                story.close()
+            if "app" in locals():
+                app.stop_graphics_pump()
         except Exception:
             pass
         try:
-            if "app" in locals():
-                app.stop_graphics_pump()
+            if "story" in locals():
+                story.close()
         except Exception:
             pass
         try:
