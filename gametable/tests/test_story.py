@@ -11,6 +11,7 @@ from unittest.mock import patch
 from gametable.roleplay.engine import load_rules
 from gametable.roleplay.store import Store
 from gametable.story import StoryFlow, StoryFlowError
+from gameclient.v1.clients.base import HostClientError
 from gameclient.v1.host.manual import ManualControlError, ManualControlGate
 from gameclient.v1.host.recorder import ManualInputRecorder
 from organism.controllers.scripted_escort import ScriptedEscortController
@@ -173,6 +174,80 @@ class StoryFlowTests(unittest.TestCase):
         self.assertEqual(gate["escort_id"], "escort.test")
         self.assertEqual(gate["day_id"], 1)
         self.assertFalse(result["escort"]["learned"])
+
+    def test_gate_changes_only_after_story_update_commits(self):
+        flow = self.flow(escort=FakeEscort())
+        self.publish_offer()
+        flow.respond(
+            offer_id="escort-offer.day1",
+            response="accept",
+            text="Да.",
+        )
+        gate_path = self.root / "manual.json"
+        self.assertTrue(json.loads(gate_path.read_text())["enabled"])
+        active = self.store.story_state()
+        blocked = {
+            **active["escort"],
+            "status": "blocked",
+            "phase": "released",
+            "reason": "simulated_conflict",
+        }
+
+        with patch.object(
+            self.store,
+            "set_story_state",
+            side_effect=ValueError("story flow changed concurrently"),
+        ):
+            flow._on_escort_update(blocked, force=True)
+
+        self.assertEqual(
+            self.store.story_state()["escort"]["status"], "escort_active"
+        )
+        self.assertTrue(json.loads(gate_path.read_text())["enabled"])
+
+        flow._on_escort_update(blocked, force=True)
+        self.assertEqual(self.store.story_state()["escort"]["status"], "blocked")
+        self.assertFalse(json.loads(gate_path.read_text())["enabled"])
+
+    def test_stale_active_callback_cannot_reopen_terminal_escort_gate(self):
+        flow = self.flow(escort=FakeEscort())
+        active = {
+            "job_id": "escort.race",
+            "status": "escort_active",
+            "phase": "following_leader",
+            "last_tick": 10,
+            "reason": None,
+        }
+        blocked = {
+            **active,
+            "status": "blocked",
+            "phase": "released",
+            "last_tick": 11,
+            "reason": "escort_timeout",
+        }
+        flow._on_escort_update(active, force=True)
+        flow._on_escort_update(blocked, force=True)
+        flow._on_escort_update(active, force=True)
+
+        story = self.store.story_state()
+        self.assertEqual(story["escort"]["status"], "blocked")
+        self.assertEqual(story["escort"]["last_tick"], 11)
+        self.assertFalse(
+            json.loads((self.root / "manual.json").read_text())["enabled"]
+        )
+
+    def test_director_host_rejection_is_a_story_error_not_http_thread_crash(self):
+        flow = self.flow(escort=FakeEscort())
+
+        class FailingDirector:
+            def control_acquire(self, **_kwargs):
+                raise HostClientError("manual Director input is locked until escort starts")
+
+        with patch.object(flow, "_director_client", return_value=FailingDirector()):
+            with self.assertRaisesRegex(
+                StoryFlowError, "manual Director input is locked"
+            ):
+                flow.director_acquire("tab-a")
 
     def test_failed_accept_can_retry_same_offer_without_duplicate_dialogue(self):
         escort = FakeEscort(fail_first=True)
