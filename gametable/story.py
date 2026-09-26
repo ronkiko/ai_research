@@ -69,7 +69,6 @@ class StoryFlow:
         self._director_clients: dict[str, HostClient] = {}
         self.escort = escort or ScriptedEscortController(
             body_lease=self.body_lease,
-            world_rpc=self.world_rpc,
             on_update=self._on_escort_update,
         )
         self._write_gate(False, None)
