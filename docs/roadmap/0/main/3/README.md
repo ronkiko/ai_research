@@ -142,6 +142,50 @@ Host[human] / web VPS B  ═══ P2P demo ═══► Host[yuki] / GPU VPS C
 Host↔Host P2P — **узкое исключение только для authorized demonstration data**.
 Оно не заменяет GameServer Gateway и не переносит physical authority на clients.
 
+## Один active training actor на GameServer
+
+GameServer training-grade telemetry — ограниченный server-side ресурс.
+Нормативный инвариант для Series 3 и всех будущих learning-серий:
+
+```text
+one GameServer / one World
+        │
+        └─ max 1 active student actor
+           with training telemetry
+```
+
+Одновременно **обучаемым student** может быть только один actor.
+
+Это не означает, что в мире может находиться только один игрок. Director, NPC и
+другие actors продолжают нормально играть, двигаться и попадать в обычные
+authoritative observations. Ограничивается только специальный training path,
+который включает server-side telemetry/provenance для обучения.
+
+При handhold:
+
+```text
+teacher = Director
+student = Yuki
+```
+
+Director не считается вторым обучаемым actor: он источник demonstration events.
+Training slot принадлежит только Yuki как student.
+
+Server обязан проверять singleton-slot **до** создания telemetry producer,
+subscription, buffer или dataset stream. Если slot уже занят, второй запрос
+получает typed `TRAINING_BUSY`/эквивалентный отказ без дополнительного
+telemetry workload.
+
+Запрещено:
+
+- запускать отдельный server telemetry stream на каждого actor;
+- создавать очередь ожидающих training sessions, которая сама расходует telemetry/memory;
+- умножать telemetry producer по числу Hosts/consumers;
+- разрешать клиенту обходить slot через несколько sessions/connections;
+- считать обычный LocalActorsObservation training telemetry.
+
+Подробный admission/lifecycle contract зафиксирован в
+[0.main.3.05](05-demonstration-link.md).
 ## Не реализуем в Series 3
 
 - imitation optimizer;
