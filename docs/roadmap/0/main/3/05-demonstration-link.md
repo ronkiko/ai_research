@@ -128,120 +128,145 @@ revocation id
 Capability только read-only demonstration. Она **не** разрешает
 `Host[human]` отправлять actuator commands за Yuki.
 
-## Global TrainingTelemetrySlot
+## Global TeacherStudentSession slot
 
-Хотя teacher actions идут по scoped Host↔Host demonstration link, authoritative
-training telemetry/provenance исходит от GameServer. Этот server-side path
-должен иметь **ровно один активный student actor на World**.
+Хотя teacher actions идут по scoped Host↔Host demonstration link, GameServer
+выдаёт capability и формирует authoritative demonstration telemetry/provenance.
+Чтобы один World нельзя было нагрузить сотнями одновременных teachers и
+telemetry producers, действует **глобальный singleton teacher↔student slot**.
 
 Рабочая сущность:
 
 ```text
-TrainingTelemetrySlot
-  training_session_id
+TeacherStudentSession
+  teaching_session_id
+  teacher_entity_id
   student_entity_id
   world_id
   world_epoch
-  controller_generation
+  teacher_controller_generation
+  student_controller_generation
+  handhold_interaction_id
   purpose
   started_tick
   expires_at
   state = active
 ```
 
+На одном World одновременно может существовать максимум **одна** такая session.
+
 ### Admission
 
-Открытие training telemetry выполняется атомарно на GameServer:
+Открытие teacher/demo session выполняется атомарно на GameServer:
 
 1. проверить authentication/capability;
-2. проверить actor/session/controller/world fences;
-3. проверить global singleton slot;
-4. только после этого выделить telemetry producer/buffer;
-5. вернуть scoped training capability.
+2. проверить teacher identity/session/controller fences;
+3. проверить student identity/session/controller fences;
+4. проверить active HandholdSession/consent, если они обязательны для режима;
+5. проверить global singleton `TeacherStudentSession`;
+6. только после этого создать demonstration capability и telemetry producer;
+7. вернуть scoped session capability.
 
-Если slot занят другой active session:
+Если уже активна другая teacher↔student pair:
 
 ```text
-TRAINING_BUSY
+TEACHER_SESSION_BUSY
+active_teacher_entity_id = ...
 active_student_entity_id = ...
 retryable = true
 ```
 
-Отказ не создаёт новый telemetry producer, observer loop, buffer или dataset writer.
+Отказ происходит **до** создания нового telemetry producer, observer loop,
+buffer, P2P capability или dataset writer.
 
-Повтор одного и того же idempotent request той же session может вернуть уже
-существующий slot, но не создавать второй.
+Повтор одного и того же idempotent acquire для той же пары/session может вернуть
+существующую session, но не создавать вторую.
 
-Failed/rejected acquire attempts должны иметь отдельный bounded rate limit,
-чтобы сам admission endpoint нельзя было превратить в CPU/network DoS.
+Failed/rejected acquire attempts имеют отдельный bounded rate limit, чтобы
+admission endpoint сам не стал DoS surface.
 
-### Что считается одним student
+### Что именно ограничивается
 
-В handhold-сценарии:
+Singleton относится к паре:
 
 ```text
-Director = teacher
-Yuki     = student
+teacher ↔ student
 ```
 
-Teacher actor остаётся обычным игровым actor и не занимает второй training slot.
-Его нормализованные actions поступают в DemonstrationLink как teacher input.
+а не просто к student.
 
-Если в будущем другой AI actor хочет начать обучение, пока Yuki training session
-активна, GameServer обязан отклонить запрос до освобождения slot.
+При first-day handhold:
 
-### Один producer, не fan-out N×telemetry
+```text
+teacher = Director
+student = Yuki
+```
 
-Training telemetry строится один раз для active student и имеет bounded cadence
-и bounded schema.
+Пока эта pair активна, нельзя открыть:
 
-Несколько authorized readers/consumers не должны заставлять GameServer повторно
-собирать тот же telemetry frame. Если fan-out вообще понадобится, он строится
-поверх одного canonical producer/latest/ring buffer.
+```text
+Director  ↔ AI-2
+Teacher-2 ↔ AI-2
+Teacher-3 ↔ AI-3
+```
+
+То есть на одном World одновременно не может быть ни 100 teachers, ни 100
+teacher-student demonstration sessions.
+
+### Что не блокируется
+
+Singleton teacher session **не запрещает** другим actors:
+
+- обычный multiplayer;
+- LocalActorsObservation;
+- RenderFrame/Host state;
+- самостоятельное navigation;
+- self-learning / reinforcement learning без teacher/demo telemetry;
+- обычные server receipts.
+
+Например Yuki может быть student в active teacher session, а AI-2 в это же
+время может проходить своё самостоятельное RL-обучение, если его training path
+не создаёт teacher/demo telemetry session.
+
+### Один canonical telemetry producer
+
+Active `TeacherStudentSession` имеет один canonical demonstration telemetry
+producer с bounded cadence/schema.
+
+Несколько authorized readers не заставляют GameServer повторно собирать те же
+teacher/student telemetry frames. Fan-out, если понадобится, строится поверх
+одного producer/latest/ring buffer.
 
 Не допускается:
 
 ```text
-student A → telemetry producer A
-student B → telemetry producer B
-student C → telemetry producer C
+Teacher A ↔ Student A → producer A
+Teacher B ↔ Student B → producer B
+Teacher C ↔ Student C → producer C
 ```
 
 на одном World одновременно.
 
 ### Lifecycle
 
-Slot освобождается при:
+TeacherStudentSession освобождается при:
 
-- явном завершении training/demonstration session;
-- revoke training capability;
-- student disconnect по policy;
+- явном завершении demonstration/teaching session;
+- revoke demonstration consent/capability;
+- завершении HandholdSession, если link к нему привязан;
+- teacher или student disconnect по policy;
 - expiry/lease timeout;
 - world epoch change;
-- controller generation replacement;
+- replacement controller generation любого участника;
 - terminal failure;
-- server restart, если runtime slot не был безопасно восстановлен.
+- server restart, если runtime session не была безопасно восстановлена.
 
-Освобождение slot прекращает server-side training telemetry до выдачи нового slot.
+Освобождение закрывает associated demonstration telemetry/P2P capability и
+разрешает открыть следующую teacher↔student pair.
 
-Slot — runtime resource lease, а не доказательство learned success. Persisted
-DemonstrationEpisode/learning artifacts имеют собственную provenance и не дают
-права автоматически восстановить active telemetry session после restart.
+Persisted DemonstrationEpisode не даёт права автоматически восстановить active
+TeacherStudentSession после restart.
 
-### Что slot не ограничивает
-
-Singleton training slot **не** ограничивает:
-
-- обычный multiplayer;
-- RenderFrame;
-- LocalActorsObservation;
-- normal Host state cache;
-- движение Director/NPC;
-- обычные world receipts;
-- teacher P2P transport сам по себе, если он не имеет active training capability.
-
-Таким образом защита не превращает GameServer в single-player server: она
-ограничивает только дорогой training-grade telemetry path.
 ## Transport
 
 Series 3 не фиксирует конкретный carrier заранее. Реализация может выбрать
