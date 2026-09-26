@@ -1,46 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-ACTION="start"
-ACTION_EXPLICIT=0
-FRESH=0
-FREE_PORTS=0
-BACKEND_ARGS=()
-
-set_action() {
-  local requested="$1"
-  if [[ "$ACTION_EXPLICIT" -eq 1 && "$ACTION" != "$requested" ]]; then
-    echo "ERROR conflicting lifecycle actions: --$ACTION and --$requested" >&2
-    exit 2
-  fi
-  ACTION="$requested"
-  ACTION_EXPLICIT=1
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --start) set_action start ;;
-    --restart) set_action restart ;;
-    --stop) set_action stop ;;
-    --status) set_action status ;;
-    --fresh) FRESH=1 ;;
-    --free-ports) FREE_PORTS=1 ;;
-    *) BACKEND_ARGS+=("$1") ;;
-  esac
-  shift
-done
-set -- "${BACKEND_ARGS[@]}"
-
-if [[ "$ACTION" == "stop" || "$ACTION" == "status" ]]; then
-  [[ "$FRESH" -eq 0 ]] || {
-    echo "ERROR --fresh cannot be combined with --$ACTION" >&2
-    exit 2
-  }
-  [[ "$FREE_PORTS" -eq 0 ]] || {
-    echo "ERROR --free-ports cannot be combined with --$ACTION" >&2
-    exit 2
-  }
-fi
+# shellcheck source=/dev/null
+source "$ROOT/gametable/op/args.sh"
+gametable_parse_cli "$@"
+ACTION="$GAMETABLE_ACTION"
+FRESH="$GAMETABLE_FRESH"
+FREE_PORTS="$GAMETABLE_FREE_PORTS"
+set -- "${GAMETABLE_BACKEND_ARGS[@]}"
 
 GAMETABLE_PORT=17880
 argv=("$@")
