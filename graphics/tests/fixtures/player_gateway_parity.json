@@ -1,0 +1,87 @@
+{
+  "snapshot": {
+    "world_id": "yuki-world-v1",
+    "world_epoch": "epoch-parity",
+    "previous_epoch": null,
+    "world_tick": 120,
+    "world_revision": 77,
+    "entities": [
+      {
+        "entity_id": "entity.yuki",
+        "owner_id": "character.yuki",
+        "kind": "character",
+        "zone_id": "hallway",
+        "x": 10.25,
+        "vx": 5.0
+      },
+      {
+        "entity_id": "entity.director",
+        "owner_id": "character.director",
+        "kind": "character",
+        "zone_id": "hallway",
+        "x": 500.0,
+        "vx": 0.0
+      }
+    ]
+  },
+  "focus_entity_id": "entity.director",
+  "source": "player_gateway_v1",
+  "expected": {
+    "schema_version": 1,
+    "frame_id": "frame:epoch-parity:77:hallway",
+    "source_world_epoch": "epoch-parity",
+    "source_world_tick": 120,
+    "source_world_revision": 77,
+    "zone_id": "hallway",
+    "camera": {
+      "axis": "x",
+      "world_min": 0.0,
+      "world_max": 1000.0,
+      "cells": 1001,
+      "projection": "linear"
+    },
+    "terrain_revision": "hallway_flat_v1",
+    "entities": [
+      {
+        "entity_id": "entity.yuki",
+        "transform": {"x": 10.25},
+        "display_cell": 10,
+        "screen_x": 0.01025,
+        "visual_asset": "marker.yuki",
+        "animation_state": "moving"
+      },
+      {
+        "entity_id": "entity.director",
+        "transform": {"x": 500.0},
+        "display_cell": 500,
+        "screen_x": 0.5,
+        "visual_asset": "marker.director",
+        "animation_state": "idle"
+      }
+    ],
+    "props": [
+      {
+        "object_id": "exit",
+        "kind": "exit_marker",
+        "x": 0.0,
+        "display_cell": 0,
+        "visual_asset": "prop.exit"
+      },
+      {
+        "object_id": "portal.hallway.laboratory",
+        "kind": "portal",
+        "x": 500.0,
+        "display_cell": 500,
+        "visual_asset": "prop.portal"
+      }
+    ],
+    "presentation_revision": "hallway@3:hallway_day",
+    "freshness": {
+      "state": "current",
+      "age_ticks": 0,
+      "authoritative": true,
+      "source": "player_gateway_v1",
+      "previous_epoch": null
+    }
+  }
+}
