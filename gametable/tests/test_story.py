@@ -109,40 +109,53 @@ class StoryFlowTests(unittest.TestCase):
         )
 
     def test_intro_timer_counts_presence_once_and_pauses_without_ui(self):
-        flow = self.flow(intro_seconds=0.05, escort=FakeEscort())
-        flow.note_director_message({
-            "id": "turn-intro", "intent_id": "talk", "text": "Привет"
-        })
-        flow.presence_open("tab-1")
-        flow.presence_open("tab-2")
-        time.sleep(0.07)
-        flow._mark_offer_due_if_ready()
-        story = self.store.story_state()
-        self.assertTrue(story["intro"]["offer_due"])
-        self.assertLess(story["intro"]["elapsed_active_seconds"], 0.14)
+        clock = {"now": 100.0}
+        with patch(
+            "gametable.story.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ):
+            flow = self.flow(intro_seconds=0.05, escort=FakeEscort())
+            flow.note_director_message({
+                "id": "turn-intro", "intent_id": "talk", "text": "Привет"
+            })
+            flow.presence_open("tab-1")
+            flow.presence_open("tab-2")
+            clock["now"] += 0.07
+            flow._mark_offer_due_if_ready()
+            story = self.store.story_state()
+            self.assertTrue(story["intro"]["offer_due"])
+            self.assertAlmostEqual(
+                story["intro"]["elapsed_active_seconds"], 0.07, places=6
+            )
 
-        # A second scheduler check cannot mint a second offer.
-        revision = story["story_revision"]
-        flow._mark_offer_due_if_ready()
-        self.assertEqual(self.store.story_state()["story_revision"], revision)
-        flow.presence_close("tab-1")
-        flow.presence_close("tab-2")
+            # A second scheduler check cannot mint a second offer.
+            revision = story["story_revision"]
+            flow._mark_offer_due_if_ready()
+            self.assertEqual(self.store.story_state()["story_revision"], revision)
+            flow.presence_close("tab-1")
+            flow.presence_close("tab-2")
 
     def test_restart_does_not_count_downtime_as_active_intro(self):
-        flow = self.flow(intro_seconds=0.12, escort=FakeEscort())
-        flow.note_director_message({
-            "id": "turn-intro", "intent_id": "talk", "text": "Привет"
-        })
-        flow.presence_open("tab")
-        time.sleep(0.04)
-        flow.presence_close("tab")
-        before = self.store.story_state()["intro"]["elapsed_active_seconds"]
-        time.sleep(0.12)
-        second = self.flow(intro_seconds=0.12, escort=FakeEscort())
-        second._mark_offer_due_if_ready()
-        after = self.store.story_state()["intro"]["elapsed_active_seconds"]
-        self.assertAlmostEqual(after, before, delta=0.03)
-        self.assertFalse(self.store.story_state()["intro"]["offer_due"])
+        clock = {"now": 200.0}
+        with patch(
+            "gametable.story.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ):
+            flow = self.flow(intro_seconds=0.12, escort=FakeEscort())
+            flow.note_director_message({
+                "id": "turn-intro", "intent_id": "talk", "text": "Привет"
+            })
+            flow.presence_open("tab")
+            clock["now"] += 0.04
+            flow.presence_close("tab")
+            before = self.store.story_state()["intro"]["elapsed_active_seconds"]
+            clock["now"] += 0.12
+            second = self.flow(intro_seconds=0.12, escort=FakeEscort())
+            second._mark_offer_due_if_ready()
+            after = self.store.story_state()["intro"]["elapsed_active_seconds"]
+            self.assertAlmostEqual(after, before, places=6)
+            self.assertAlmostEqual(after, 0.04, places=6)
+            self.assertFalse(self.store.story_state()["intro"]["offer_due"])
 
     def test_explicit_accept_starts_scripted_escort_and_enables_gate(self):
         escort = FakeEscort()
