@@ -30,7 +30,7 @@ case "$command" in
   check)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
     echo "CHECK Organism + embodied world"
-    "$ORGANISM_PY" -m compileall -q organism world
+    "$ORGANISM_PY" -m compileall -q -x '(^|/)\.venv(/|$)' organism world
     "$ORGANISM_PY" -m unittest discover -s organism/tests -p 'test_*.py' -v
     "$ORGANISM_PY" -m unittest discover -s world/tests -p 'test_*.py' -v
     "$ORGANISM_PY" -c 'import organism.mcp, world.mcp'
