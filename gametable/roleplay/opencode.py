@@ -171,7 +171,8 @@ class OpenCode:
                 self.log(f"ошибка ответа {agent}: OpenCode message")
                 raise
 
-            if not isinstance(result, dict) or result.get("info", {}).get("error"):
+            info = result.get("info") if isinstance(result, dict) else None
+            if not isinstance(info, dict) or info.get("error"):
                 last_error = BackendError(
                     "OpenCode не завершил ответ модели; проверь серверный журнал"
                 )
@@ -185,7 +186,7 @@ class OpenCode:
                     continue
                 raise last_error
 
-            actual = result.get("info", {})
+            actual = info
             if actual.get("providerID") != model[0] or actual.get("modelID") != model[1]:
                 self._abort_session(sid)
                 raise BackendError(
