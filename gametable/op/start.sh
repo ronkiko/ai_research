@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="start"
 FRESH=0
+FREE_PORTS=0
 
 case "${1:-}" in
   --start) shift ;;
@@ -11,6 +12,23 @@ case "${1:-}" in
   --restart) ACTION="restart"; shift ;;
   --status) ACTION="status"; shift ;;
 esac
+
+# --free-ports is an explicit destructive operator choice. Keep it out of the
+# GameTable backend argv; all other arguments pass through unchanged.
+filtered=()
+for arg in "$@"; do
+  if [[ "$arg" == "--free-ports" ]]; then
+    FREE_PORTS=1
+  else
+    filtered+=("$arg")
+  fi
+done
+set -- "${filtered[@]}"
+
+if [[ "$FREE_PORTS" -eq 1 && ( "$ACTION" == "stop" || "$ACTION" == "status" ) ]]; then
+  echo "ERROR --free-ports is only valid with start, --restart, or --fresh" >&2
+  exit 2
+fi
 
 GAMETABLE_PORT=17880
 argv=("$@")
@@ -39,13 +57,49 @@ stop_stack() {
   "$ROOT/gameserver/v1/op/embodied.sh" --stop
 }
 
+require_runtime_port_free() {
+  local port="$1"
+  local label="$2"
+
+  if ! op_tcp_port_in_use "127.0.0.1" "$port"; then
+    return 0
+  fi
+
+  if [[ "$FREE_PORTS" -ne 1 ]]; then
+    echo "ERROR $label cannot start: 127.0.0.1:$port is already occupied" >&2
+    echo "Free that port manually, or rerun with:" >&2
+    echo "  ./gametable/op/start.sh --restart --free-ports" >&2
+    return 2
+  fi
+
+  command -v fuser >/dev/null || {
+    echo "ERROR --free-ports requires the 'fuser' command" >&2
+    return 2
+  }
+
+  echo "FREE PORT $label · 127.0.0.1:$port"
+  fuser -k "$port/tcp" >/dev/null 2>&1 || true
+
+  for _ in {1..40}; do
+    if ! op_tcp_port_in_use "127.0.0.1" "$port"; then
+      echo "FREE PORT $label · released"
+      return 0
+    fi
+    sleep .05
+  done
+
+  echo "ERROR $label port 127.0.0.1:$port is still occupied after --free-ports" >&2
+  echo "Free that port manually and run the command again." >&2
+  return 2
+}
+
 require_stack_ports_free() {
-  op_require_tcp_port_free "127.0.0.1" 17600 "GameServer Gateway"
-  op_require_tcp_port_free "127.0.0.1" 17606 "GameServer embodied World"
-  op_require_tcp_port_free "127.0.0.1" 17700 "Host[yuki]"
-  op_require_tcp_port_free "127.0.0.1" 17701 "Host[director]"
-  op_require_tcp_port_free "127.0.0.1" "$GAMETABLE_PORT" "GameTable backend"
-  op_require_tcp_port_free "127.0.0.1" "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
+  require_runtime_port_free 17600 "GameServer Gateway"
+  require_runtime_port_free 17606 "GameServer embodied World"
+  require_runtime_port_free 17700 "Host[yuki]"
+  require_runtime_port_free 17701 "Host[director]"
+  require_runtime_port_free "$GAMETABLE_PORT" "GameTable backend"
+  require_runtime_port_free "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
 }
 
 status_stack() {
@@ -141,8 +195,8 @@ if ! "$ROOT/gameserver/v1/op/embodied.sh" --status >/dev/null 2>&1; then
     "$ROOT/gameclient/v1/op/host.sh" --stop
     "$ROOT/gameserver/v1/op/server.sh" --stop
   fi
-  op_require_tcp_port_free "127.0.0.1" 17600 "GameServer Gateway"
-  op_require_tcp_port_free "127.0.0.1" 17606 "GameServer embodied World"
+  require_runtime_port_free 17600 "GameServer Gateway"
+  require_runtime_port_free 17606 "GameServer embodied World"
   nohup "$ROOT/gameserver/v1/op/embodied.sh" --start \
     >"$LOGDIR/gameserver.log" 2>&1 &
 fi
@@ -161,14 +215,14 @@ DIRECTOR_HOST_REUSED=0
 if "$ROOT/gameclient/v1/op/host.sh" --status >/dev/null 2>&1; then
   HOST_REUSED=1
 else
-  op_require_tcp_port_free "127.0.0.1" 17700 "Host[yuki]"
+  require_runtime_port_free 17700 "Host[yuki]"
   nohup "$ROOT/gameclient/v1/op/host.sh" --start \
     >"$LOGDIR/host.log" 2>&1 &
 fi
 if "$ROOT/gameclient/v1/op/director-host.sh" --status >/dev/null 2>&1; then
   DIRECTOR_HOST_REUSED=1
 else
-  op_require_tcp_port_free "127.0.0.1" 17701 "Host[director]"
+  require_runtime_port_free 17701 "Host[director]"
   nohup "$ROOT/gameclient/v1/op/director-host.sh" --start \
     >"$LOGDIR/director-host.log" 2>&1 &
 fi
@@ -218,7 +272,7 @@ cat "$LOGDIR/readiness.json"
 "$ROOT/organism/op/organism.sh" prepare >/dev/null
 
 if ! "$ROOT/player-gateway/op/gateway.sh" --status >/dev/null 2>&1; then
-  op_require_tcp_port_free "127.0.0.1" "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
+  require_runtime_port_free "$PLAYER_GATEWAY_PORT_VALUE" "Player Gateway"
   nohup "$ROOT/player-gateway/op/gateway.sh" --start \
     >"$LOGDIR/player-gateway.log" 2>&1 &
 fi
@@ -246,7 +300,7 @@ player_gateway_ready || {
 }
 
 echo "WEB UI · Player Gateway: http://127.0.0.1:$PLAYER_GATEWAY_PORT_VALUE"
-op_require_tcp_port_free "127.0.0.1" "$GAMETABLE_PORT" "GameTable backend"
+require_runtime_port_free "$GAMETABLE_PORT" "GameTable backend"
 op_managed_process start "gametable-vn" "$ROOT" "roleplay.server" \
   "$ROOT/gametable" "GameTable Юки backend" \
   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
