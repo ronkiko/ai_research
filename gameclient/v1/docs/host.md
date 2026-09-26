@@ -39,6 +39,27 @@ After an I/O failure Host discards the affected socket; it does not silently
 replay an ambiguous mutation. The next explicit command may reconnect, while
 observer failure only makes the cached state stale until observation recovers.
 
+## Distributed upstream
+
+The Host-facing protocol remains local-only, but the **upstream GameServer
+Gateway may be remote**. This is the intended client/server split:
+
+```text
+local Clients → GameClient Host ── network ──→ GameServer Gateway
+```
+
+A human web node normally keeps Player Gateway and `Host[human]` together.
+A Yuki/AI node normally keeps Organism and `Host[yuki]` together. Either Host
+may point `--gateway-host` / `--gateway-port` at a GameServer on another
+machine or VPS.
+
+Do not expose Host Protocol publicly to achieve this. The remote boundary is
+Host → GameServer Gateway; local Client → Host remains loopback-only.
+
+Machine address is transport configuration, not player/entity/controller
+identity. See the repository-wide
+[distributed runtime contract](../../../docs/deployment/distributed-runtime.md).
+
 ## Shared control
 
 v1 intentionally permits multiple Clients to observe and control the same Host
