@@ -127,7 +127,7 @@ future learning may use better information
 ## Distributed architecture
 
 Series 3 опирается на
-[distributed runtime contract](../../../deployment/distributed-runtime.md).
+[distributed runtime contract](../../../../deployment/distributed-runtime.md).
 
 Например:
 
