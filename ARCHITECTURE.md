@@ -129,7 +129,7 @@ Legacy VN save может содержать `hallway` / `laboratory.workstation
 | Непрерывность диалога | Последние 24 воспоминания, полный журнал ходов | Долговременная память с извлечением и источниками |
 | Настройка характера | Фиксированный профиль + влияние недавнего диалога | Явные сохраняемые предпочтения и версии изменений |
 | Рабочий Brain | Один ограниченный MCP-шаг принятого хода | Сопровождение долгих задач и восстановление связи с ними |
-| Идентичность организма | Технические host/player, experiment и checkpoint IDs | Сохраняемая привязка персонаж ↔ тело ↔ навык ↔ активный job |
+| Идентичность организма | Persisted GameTable binding персонаж ↔ embodiment ↔ entity + Gateway fence + verified SkillBinding | Долговременная связь с историей экспериментов и сменой навыков |
 | Love story | Диалог, симпатия/доверие, совместный недавний опыт | Память значимых событий и согласованных отношений |
 | Доказательность | Сертификаты, frozen VERIFY, журналы | Полный независимый протокол сравнения организма |
 
@@ -210,3 +210,11 @@ Fresh story semantics were tightened during this audit: `--fresh` preserves
 learned Organism artifacts but replaces the launcher-owned physical checkpoint,
 so the new first day cannot inherit an old zone/pose and must start from the
 declared EXIT bindings. Unmanaged Gateway processes are never killed/reset.
+
+The follow-up hardening pins the migration identity binding inside the GameTable
+save itself. Reopening that save with another character/embodiment/entity/Host
+binding is rejected; this is an identity fence, not a second physical location
+store. Verified SkillBinding records are also revalidated at every mount against
+the current embodiment, Motor certificate/hash, Spine checkpoint/hash and
+sensor/socket/body/physics contracts. A stale certificate cannot become the
+production controller merely because it was verified in an older environment.
