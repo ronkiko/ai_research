@@ -111,7 +111,77 @@ class PhysicsKernelTests(unittest.TestCase):
         self.assertEqual(again.state.vx, 0.0)
 
 
+class _CountingCheckpointStore:
+    def __init__(self):
+        self.saves = []
+        self.closed = False
+
+    def load(self):
+        return None
+
+    def save(self, payload):
+        self.saves.append(copy.deepcopy(payload))
+
+    def close(self):
+        self.closed = True
+
+
 class EmbodiedWorldTests(unittest.TestCase):
+    def test_continuous_input_uses_periodic_not_forced_checkpoint(self):
+        store = _CountingCheckpointStore()
+        runtime = EmbodiedWorldRuntime(
+            store=store,
+            checkpoint_interval_ticks=10000,
+            controller_watchdog_ticks=5000,
+        )
+        try:
+            spawn_yuki(runtime)
+            baseline = len(store.saves)
+            current = yuki(runtime)
+            queued = runtime.submit_input(
+                request_id="input.no-forced-checkpoint",
+                entity_id=current["entity_id"],
+                expected_zone_id=current["zone_id"],
+                expected_world_epoch=runtime.epoch,
+                controller_id=current["controller_id"],
+                controller_generation=current["controller_generation"],
+                sequence=current["last_sequence"] + 1,
+                motor_x=0.25,
+            )
+            runtime.tick()
+            self.assertEqual(
+                runtime.receipt(queued["action_id"])["status"], "applied"
+            )
+            self.assertEqual(len(store.saves), baseline)
+        finally:
+            runtime.close()
+
+    def test_structural_action_and_portal_transfer_force_checkpoint(self):
+        store = _CountingCheckpointStore()
+        runtime = EmbodiedWorldRuntime(
+            store=store,
+            checkpoint_interval_ticks=10000,
+            controller_watchdog_ticks=5000,
+        )
+        try:
+            spawn_yuki(runtime)
+            after_spawn = len(store.saves)
+            current = yuki(runtime)
+            setup = runtime.submit_setup_reset(
+                request_id="setup.durable-boundary",
+                entity_id=current["entity_id"],
+                episode_id="episode.durable",
+                reason="durable structural setup",
+                privileged=True,
+            )
+            runtime.tick()
+            self.assertEqual(
+                runtime.receipt(setup["action_id"])["status"], "applied"
+            )
+            self.assertEqual(len(store.saves), after_spawn + 1)
+        finally:
+            runtime.close()
+
     def test_world_starts_without_demo_mob_and_ticks_without_clients(self):
         runtime = EmbodiedWorldRuntime()
         self.assertEqual(runtime.latest_snapshot()["entities"], [])
