@@ -4,7 +4,15 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-bash -n   op/process.sh   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh   player-gateway/op/gateway.sh
+bash -n \
+  op/process.sh \
+  gameserver/v1/op/server.sh \
+  gameclient/v1/op/host.sh \
+  gameclient/v1/op/director-host.sh \
+  gameclient/v1/op/gui.sh \
+  gametable/op/args.sh \
+  gametable/op/start.sh \
+  player-gateway/op/gateway.sh
 
 for script in   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh   player-gateway/op/gateway.sh
 do
@@ -30,6 +38,38 @@ grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
 grep -q -- '--free-ports' gametable/op/start.sh
 grep -q -- 'fuser -k "$port/tcp"' gametable/op/start.sh
 grep -q -- './gametable/op/start.sh --restart --free-ports' gametable/op/start.sh
+
+# GameTable operator flags are orthogonal and order-independent; none may leak
+# into roleplay.server argv.
+# shellcheck source=/dev/null
+source "$ROOT/gametable/op/args.sh"
+
+gametable_parse_cli --fresh --restart --free-ports --model test/model --port 19000
+[[ "$GAMETABLE_ACTION" == "restart" ]]
+[[ "$GAMETABLE_FRESH" -eq 1 ]]
+[[ "$GAMETABLE_FREE_PORTS" -eq 1 ]]
+[[ "${GAMETABLE_BACKEND_ARGS[*]}" == "--model test/model --port 19000" ]]
+
+gametable_parse_cli --restart --fresh --prompt "hello"
+[[ "$GAMETABLE_ACTION" == "restart" ]]
+[[ "$GAMETABLE_FRESH" -eq 1 ]]
+[[ "$GAMETABLE_FREE_PORTS" -eq 0 ]]
+[[ "${GAMETABLE_BACKEND_ARGS[*]}" == "--prompt hello" ]]
+
+gametable_parse_cli --free-ports --fresh --restart
+[[ "$GAMETABLE_ACTION" == "restart" ]]
+[[ "$GAMETABLE_FRESH" -eq 1 ]]
+[[ "$GAMETABLE_FREE_PORTS" -eq 1 ]]
+[[ "${#GAMETABLE_BACKEND_ARGS[@]}" -eq 0 ]]
+
+if gametable_parse_cli --start --restart >/dev/null 2>&1; then
+  echo "ERROR conflicting lifecycle actions were accepted" >&2
+  exit 1
+fi
+if gametable_parse_cli --status --free-ports >/dev/null 2>&1; then
+  echo "ERROR --status --free-ports was accepted" >&2
+  exit 1
+fi
 
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
