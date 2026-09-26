@@ -12,7 +12,21 @@ case "${1:-}" in
   --status) ACTION="status"; shift ;;
 esac
 
+GAMETABLE_PORT=17880
+argv=("$@")
+for ((i=0; i<${#argv[@]}; i++)); do
+  case "${argv[$i]}" in
+    --port)
+      (( i + 1 < ${#argv[@]} )) || { echo "ERROR --port requires a value" >&2; exit 2; }
+      GAMETABLE_PORT="${argv[$((i+1))]}"
+      ;;
+    --port=*)
+      GAMETABLE_PORT="${argv[$i]#--port=}"
+      ;;
+  esac
+done
 PLAYER_GATEWAY_PORT_VALUE="${PLAYER_GATEWAY_PORT:-17881}"
+export PLAYER_GATEWAY_GAMETABLE_PORT="${PLAYER_GATEWAY_GAMETABLE_PORT:-$GAMETABLE_PORT}"
 
 source "$ROOT/op/process.sh"
 
@@ -112,21 +126,6 @@ if [[ ! -f "$ROOT/player-gateway/node_modules/socket.io/package.json" ]]; then
   "$ROOT/player-gateway/op/setup.sh" >"$LOGDIR/player-gateway-setup.log" 2>&1
 fi
 
-GAMETABLE_PORT=17880
-argv=("$@")
-for ((i=0; i<${#argv[@]}; i++)); do
-  case "${argv[$i]}" in
-    --port)
-      (( i + 1 < ${#argv[@]} )) || { echo "ERROR --port requires a value" >&2; exit 2; }
-      GAMETABLE_PORT="${argv[$((i+1))]}"
-      ;;
-    --port=*)
-      GAMETABLE_PORT="${argv[$i]#--port=}"
-      ;;
-  esac
-done
-export PLAYER_GATEWAY_GAMETABLE_PORT="${PLAYER_GATEWAY_GAMETABLE_PORT:-$GAMETABLE_PORT}"
-
 gateway_is_embodied() {
   python3 - <<'PY' >/dev/null 2>&1
 from gameserver.v1.common.config import GATEWAY_PORT, HOST
@@ -225,10 +224,12 @@ if ! "$ROOT/player-gateway/op/gateway.sh" --status >/dev/null 2>&1; then
 fi
 
 player_gateway_ready() {
-  python3 - <<'PY' >/dev/null 2>&1
+  python3 - "$PLAYER_GATEWAY_PORT_VALUE" <<'PY' >/dev/null 2>&1
 import json
+import sys
 import urllib.request
-with urllib.request.urlopen("http://127.0.0.1:17881/health", timeout=.3) as response:
+port = int(sys.argv[1])
+with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=.3) as response:
     value = json.load(response)
 raise SystemExit(0 if value.get("component") == "player_gateway" else 1)
 PY
