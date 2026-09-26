@@ -199,3 +199,12 @@ class HostClient:
 
     def logout(self) -> dict[str, Any]:
         return self.connection.request("logout", client_id=self.client_id)
+
+    def shutdown(self, management_token: str) -> dict[str, Any]:
+        if not isinstance(management_token, str) or not management_token:
+            raise ValueError("management_token must be non-empty")
+        return self.connection.request(
+            "shutdown",
+            client_id=self.client_id,
+            management_token=management_token,
+        )
