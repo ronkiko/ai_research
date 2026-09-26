@@ -371,5 +371,35 @@ class AcceptanceMatrixTests(unittest.TestCase):
         self.assertIn('"$ROOT/player-gateway/op/gateway.sh" --stop', start)
 
 
+    def test_a14_world_state_reads_are_shared_and_atomic(self):
+        world = (ROOT / "gameserver/v1/world/embodied.py").read_text(encoding="utf-8")
+        world_server = (
+            ROOT / "gameserver/v1/world/embodied_server.py"
+        ).read_text(encoding="utf-8")
+        gateway = (
+            ROOT / "gameserver/v1/gateway/embodied.py"
+        ).read_text(encoding="utf-8")
+        hub = (
+            ROOT / "gameserver/v1/gateway/state_hub.py"
+        ).read_text(encoding="utf-8")
+        escort = (
+            ROOT / "organism/controllers/scripted_escort.py"
+        ).read_text(encoding="utf-8")
+        host = (
+            ROOT / "gameclient/v1/host/server.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("def state_frame(self)", world)
+        self.assertIn('kind == "state_frame"', world_server)
+        self.assertIn("WorldStateHub", gateway)
+        self.assertNotIn('self._world("snapshot")', gateway)
+        self.assertIn('self.connection.request("state_frame")', hub)
+        self.assertIn("WORLD_STATE_HUB_HZ", hub)
+        self.assertIn("upstream_age_seconds", host)
+        self.assertIn("HostClient", escort)
+        self.assertNotIn("EMBODIED_WORLD_PORT", escort)
+        self.assertNotIn('message("snapshot"', escort)
+
+
 if __name__ == "__main__":
     unittest.main()
