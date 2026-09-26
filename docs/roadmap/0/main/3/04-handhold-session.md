@@ -1,8 +1,8 @@
-# 0.0.3.04 — Server-authoritative HandholdSession
+# 0.main.3.04 — Server-authoritative HandholdSession
 
 Статус: **план**.
 
-Зависимость: [0.0.3.02](02-escort-consent-and-modes.md).
+Зависимость: [0.main.3.02](02-escort-consent-and-modes.md).
 
 Цель: сделать «Директор ведёт Юки за руку» реальным взаимодействием двух
 GameServer actors, а не только текстом VN.
