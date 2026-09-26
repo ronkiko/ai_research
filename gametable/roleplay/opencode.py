@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +41,9 @@ READ_ONLY_WORLD_TOOLS = (
     "navigation_v1_locations",
     *READ_ONLY_LEARNING_TOOLS,
 )
+
+TEXT_ONLY_COMPLETION_ATTEMPTS = 3
+TEXT_ONLY_RETRY_DELAYS = (0.5, 1.5)
 
 class BackendError(RuntimeError):
     pass
@@ -118,49 +122,115 @@ class OpenCode:
             self.sessions.add(sid)
         return sid
 
+    def _abort_session(self, sid):
+        if not sid:
+            return
+        try:
+            self.request("POST", f"/session/{sid}/abort", {}, timeout=5)
+        except BackendError:
+            pass
+
     def complete(
         self, parent, agent, prompt, lab=False, lab_tools=None, allowed_tools=None
     ):
-        sid = self.create(
-            "GameTable " + agent, agent, parent, lab, lab_tools, allowed_tools
-        )
+        # Tool-less voices are pure model calls: a transient provider/transport
+        # failure can be retried in a fresh child session without duplicating
+        # world or learning side effects. Tool-scoped sessions remain strictly
+        # single-attempt because an unknown transport outcome must never replay
+        # an MCP mutation.
+        tool_scoped = bool(lab or lab_tools is not None or allowed_tools is not None)
+        attempts = 1 if tool_scoped else TEXT_ONLY_COMPLETION_ATTEMPTS
         model = self.model.split("/", 1)
-        body = {"agent": agent, "model": {"providerID": model[0], "modelID": model[1]},
-                "parts": [{"type": "text", "text": prompt}]}
+        body = {
+            "agent": agent,
+            "model": {"providerID": model[0], "modelID": model[1]},
+            "parts": [{"type": "text", "text": prompt}],
+        }
         if self.variant:
             body["variant"] = self.variant
-        try:
-            result = self.request("POST", f"/session/{sid}/message", body)
-        except BackendError:
-            self.log(f"ошибка ответа {agent}: OpenCode message")
+
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            sid = None
             try:
-                self.request("POST", f"/session/{sid}/abort", {}, timeout=5)
-            except BackendError:
-                pass
-            raise
-        if result.get("info", {}).get("error"):
-            raise BackendError("OpenCode не завершил ответ модели; проверь серверный журнал")
-        actual = result.get("info", {})
-        if actual.get("providerID") != model[0] or actual.get("modelID") != model[1]:
-            raise BackendError("OpenCode вернул ответ другой модели; ход остановлен")
-        text = "\n".join(p.get("text", "") for p in result.get("parts", [])
-                         if p.get("type") == "text" and not p.get("ignored"))
-        if not text.strip():
-            raise BackendError("OpenCode вернул пустой ответ")
-        trace = []
-        if lab or lab_tools is not None or allowed_tools is not None:
-            messages = self.request("GET", f"/session/{sid}/message")
-            for msg in messages:
-                for part in msg.get("parts", []):
-                    if part.get("type") == "tool":
-                        trace.append({"tool": part.get("tool"), "state": part.get("state")})
-            if trace:
-                for item in trace:
-                    state = item.get("state") or {}
-                    self.log(f"MCP {item.get('tool', '?')}: {state.get('status', 'unknown')}")
-            else:
-                self.log("MCP: лабораторный контекст не вызвал инструментов")
-        return {"session_id": sid, "text": text, "tools": trace}
+                sid = self.create(
+                    "GameTable " + agent, agent, parent,
+                    lab, lab_tools, allowed_tools,
+                )
+                result = self.request("POST", f"/session/{sid}/message", body)
+            except BackendError as exc:
+                last_error = exc
+                self._abort_session(sid)
+                if attempt < attempts:
+                    self.log(
+                        f"OpenCode {agent}: временный сбой; "
+                        f"повтор {attempt + 1}/{attempts}"
+                    )
+                    time.sleep(TEXT_ONLY_RETRY_DELAYS[attempt - 1])
+                    continue
+                self.log(f"ошибка ответа {agent}: OpenCode message")
+                raise
+
+            info = result.get("info") if isinstance(result, dict) else None
+            if not isinstance(info, dict) or info.get("error"):
+                last_error = BackendError(
+                    "OpenCode не завершил ответ модели; проверь серверный журнал"
+                )
+                self._abort_session(sid)
+                if attempt < attempts:
+                    self.log(
+                        f"OpenCode {agent}: ответ не завершён; "
+                        f"повтор {attempt + 1}/{attempts}"
+                    )
+                    time.sleep(TEXT_ONLY_RETRY_DELAYS[attempt - 1])
+                    continue
+                raise last_error
+
+            actual = info
+            if actual.get("providerID") != model[0] or actual.get("modelID") != model[1]:
+                self._abort_session(sid)
+                raise BackendError(
+                    "OpenCode вернул ответ другой модели; ход остановлен"
+                )
+
+            answer = "\n".join(
+                part.get("text", "")
+                for part in result.get("parts", [])
+                if part.get("type") == "text" and not part.get("ignored")
+            )
+            if not answer.strip():
+                last_error = BackendError("OpenCode вернул пустой ответ")
+                self._abort_session(sid)
+                if attempt < attempts:
+                    self.log(
+                        f"OpenCode {agent}: пустой ответ; "
+                        f"повтор {attempt + 1}/{attempts}"
+                    )
+                    time.sleep(TEXT_ONLY_RETRY_DELAYS[attempt - 1])
+                    continue
+                raise last_error
+
+            trace = []
+            if tool_scoped:
+                messages = self.request("GET", f"/session/{sid}/message")
+                for msg in messages:
+                    for part in msg.get("parts", []):
+                        if part.get("type") == "tool":
+                            trace.append(
+                                {"tool": part.get("tool"), "state": part.get("state")}
+                            )
+                if trace:
+                    for item in trace:
+                        state = item.get("state") or {}
+                        self.log(
+                            f"MCP {item.get('tool', '?')}: "
+                            f"{state.get('status', 'unknown')}"
+                        )
+                else:
+                    self.log("MCP: лабораторный контекст не вызвал инструментов")
+            return {"session_id": sid, "text": answer, "tools": trace}
+
+        raise last_error or BackendError("OpenCode не завершил ответ модели")
 
     def close_sessions(self):
         # Owned sessions only; no user TUI history is touched here.

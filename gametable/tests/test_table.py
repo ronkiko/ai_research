@@ -4,7 +4,7 @@ import copy
 import json
 import io
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from pathlib import Path
 import tempfile
 import threading
@@ -542,9 +542,86 @@ class TransportTests(unittest.TestCase):
 
     def test_provider_cannot_silently_return_another_model(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
-        backend.request = Mock(side_effect=[{"id": "ses_child"},
-            {"info": {"providerID": "other", "modelID": "other"}, "parts": [{"type": "text", "text": "{}"}]}])
-        with self.assertRaises(BackendError): backend.complete("ses_parent", "yuki", "test")
+        backend.request = Mock(side_effect=[
+            {"id": "ses_child"},
+            {"info": {"providerID": "other", "modelID": "other"},
+             "parts": [{"type": "text", "text": "{}"}]},
+            {},
+        ])
+        with self.assertRaises(BackendError):
+            backend.complete("ses_parent", "yuki", "test")
+        self.assertTrue(
+            backend.request.call_args_list[-1].args[1].endswith("/abort")
+        )
+
+    def test_toolless_completion_retries_transient_provider_failure(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        calls = []
+        session_number = 0
+        message_number = 0
+
+        def request(method, path, body=None, **_kwargs):
+            nonlocal session_number, message_number
+            calls.append((method, path))
+            if path == "/session":
+                session_number += 1
+                return {"id": f"ses-{session_number}"}
+            if path.endswith("/abort"):
+                return {}
+            if path.endswith("/message"):
+                message_number += 1
+                if message_number == 1:
+                    return {"info": {"error": {"name": "ProviderError"}}, "parts": []}
+                return {
+                    "info": {
+                        "providerID": "openai",
+                        "modelID": "gpt-5.6-luna",
+                    },
+                    "parts": [{"type": "text", "text": "{}"}],
+                }
+            raise AssertionError((method, path))
+
+        backend.request = request
+        with patch("gametable.roleplay.opencode.time.sleep"):
+            result = backend.complete("ses-parent", "yuki", "test")
+
+        self.assertEqual(result["text"], "{}")
+        self.assertEqual(session_number, 2)
+        self.assertEqual(message_number, 2)
+        self.assertEqual(
+            len([path for _method, path in calls if path.endswith("/abort")]), 1
+        )
+
+    def test_tool_scoped_completion_never_replays_after_unknown_provider_failure(self):
+        backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
+        calls = []
+        session_number = 0
+
+        def request(method, path, body=None, **_kwargs):
+            nonlocal session_number
+            calls.append((method, path))
+            if path == "/session":
+                session_number += 1
+                return {"id": f"ses-{session_number}"}
+            if path.endswith("/abort"):
+                return {}
+            if path.endswith("/message"):
+                return {"info": {"error": {"name": "ProviderError"}}, "parts": []}
+            raise AssertionError((method, path))
+
+        backend.request = request
+        with self.assertRaises(BackendError):
+            backend.complete(
+                "ses-parent",
+                "yuki",
+                "test",
+                allowed_tools=("navigation_v1_describe",),
+            )
+
+        self.assertEqual(session_number, 1)
+        self.assertEqual(
+            len([path for _method, path in calls if path.endswith("/message")]), 1
+        )
 
     def test_learning_session_has_only_a_scoped_allowlist(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
@@ -606,6 +683,37 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertIn("event: state.changed", frame)
         self.assertIn('"revision":1', frame)
         self.app.runtime.submit.assert_not_called()
+
+    def test_failed_turn_keeps_backend_details_out_of_public_vn_state(self):
+        e = event("turn-failed", text="Привет")
+        self.store.begin(e)
+        self.store.progress(
+            e["id"],
+            "Ход остановлен",
+            {"failure": {"kind": "BackendError", "message": "SECRET PROVIDER ERROR"}},
+        )
+        self.store.fail(e["id"], "SECRET PROVIDER ERROR")
+
+        public = public_turn(self.store.get(e["id"]))
+        self.assertEqual(public["status"], "failed")
+        self.assertNotIn("error", public)
+        self.assertIn("можно повторить", public["notice"])
+        self.assertNotIn("SECRET PROVIDER ERROR", json.dumps(public, ensure_ascii=False))
+
+        snapshot = self.app.snapshot()
+        self.assertNotIn(
+            "SECRET PROVIDER ERROR",
+            json.dumps(snapshot, ensure_ascii=False),
+        )
+
+    def test_browser_does_not_render_backend_exception_as_red_yuki_dialogue(self):
+        web = Path(__file__).parents[1] / "web" / "js"
+        dialogue = (web / "dialogue.js").read_text()
+        shell = (web / "shell.js").read_text()
+        self.assertIn("bubble system", dialogue)
+        self.assertNotIn("turn.error, 'status error'", dialogue)
+        self.assertIn("data.notice", shell)
+        self.assertNotIn("lastError=data.error", shell)
 
     def test_backend_snapshot_and_dialogue_stream_are_stable(self):
         first = self.app.snapshot()
