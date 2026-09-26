@@ -29,6 +29,10 @@ export function fetchAssetCatalog() {
   return request('/api/assets');
 }
 
+export function fetchTerrain(zone_id) {
+  return request('/api/terrain/' + encodeURIComponent(zone_id));
+}
+
 function postJson(path, body) {
   return request(path, {
     method: 'POST',
