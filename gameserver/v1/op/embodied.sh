@@ -13,4 +13,10 @@ if [[ "$ACTION" == "stop" || "$ACTION" == "status" ]] && [[ $# -ne 0 ]]; then
   exit 2
 fi
 source "$ROOT/op/process.sh"
-op_managed_process   "$ACTION"   "gameserver-embodied-v1"   "$ROOT"   "gameserver.v1.embodied_supervisor"   "$ROOT"   "GameServer embodied v1"   "${PYTHON:-python3}" -m gameserver.v1.embodied_supervisor "$@"
+op_managed_process \
+  "$ACTION" \
+  "gameserver-embodied-v1" \
+  "$ROOT" \
+  "$ROOT" \
+  "GameServer embodied v1" \
+  "${PYTHON:-python3}" -m gameserver.v1.embodied_supervisor "$@"
