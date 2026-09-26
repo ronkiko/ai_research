@@ -34,16 +34,24 @@ function renderStory(story){
   const intro=story?.intro||{};
   const escort=story?.escort||{};
   const choices=$('escort-choices');
-  const offerReady=intro.phase==='escort_offer_published'&&!intro.response;
+  const retryableEscort=intro.response==='accept'&&
+    ['blocked','failed','reconciling'].includes(escort.status);
+  const offerReady=
+    (intro.phase==='escort_offer_published'&&!intro.response)||retryableEscort;
   choices.hidden=!offerReady;
+  $('escort-accept').textContent=retryableEscort?'Продолжить сопровождение':'Провести Юки';
+  $('escort-decline').hidden=retryableEscort;
+  $('escort-clarify').hidden=retryableEscort;
   $('story-status').textContent=
     escort.status==='escort_active'
       ? 'Сопровождение · '+(escort.phase||'active')
-      : story?.day_phase==='waking'
-        ? 'Начинается новый день…'
-        : intro.phase==='escort_offer_pending'
-          ? 'Юки собирается кое-что попросить…'
-          : '';
+      : retryableEscort
+        ? 'Сопровождение прервано · можно продолжить'
+        : story?.day_phase==='waking'
+          ? 'Начинается новый день…'
+          : intro.phase==='escort_offer_pending'
+            ? 'Юки собирается кое-что попросить…'
+            : '';
   $('vn-dialogue').hidden=story?.presentation_mode==='world_control';
   $('stage').dataset.presentationMode=story?.presentation_mode||'vn_dialogue';
   $('world-control-hint').hidden=story?.presentation_mode!=='world_control';
