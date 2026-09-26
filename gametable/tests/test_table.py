@@ -542,9 +542,17 @@ class TransportTests(unittest.TestCase):
 
     def test_provider_cannot_silently_return_another_model(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
-        backend.request = Mock(side_effect=[{"id": "ses_child"},
-            {"info": {"providerID": "other", "modelID": "other"}, "parts": [{"type": "text", "text": "{}"}]}])
-        with self.assertRaises(BackendError): backend.complete("ses_parent", "yuki", "test")
+        backend.request = Mock(side_effect=[
+            {"id": "ses_child"},
+            {"info": {"providerID": "other", "modelID": "other"},
+             "parts": [{"type": "text", "text": "{}"}]},
+            {},
+        ])
+        with self.assertRaises(BackendError):
+            backend.complete("ses_parent", "yuki", "test")
+        self.assertTrue(
+            backend.request.call_args_list[-1].args[1].endswith("/abort")
+        )
 
     def test_toolless_completion_retries_transient_provider_failure(self):
         backend = OpenCode("http://localhost", "/table", "openai/gpt-5.6-luna")
