@@ -1,6 +1,6 @@
 # ИИ-организм: общий контракт проекта
 
-Уточнение цели: [план из 11 коммитов](docs/refactor/embodied-vn/01-concept.md)
+Уточнение цели: [серия из 14 этапов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
 навигации и обучения через MCP. Этапы 02–09 зафиксировали identity/action/world
 contracts, multi-zone `embodied_world_v1`, learned-body core,
@@ -218,3 +218,23 @@ store. Verified SkillBinding records are also revalidated at every mount against
 the current embodiment, Motor certificate/hash, Spine checkpoint/hash and
 sensor/socket/body/physics contracts. A stale certificate cannot become the
 production controller merely because it was verified in an older environment.
+
+
+## Stage 12: realtime Host ↔ World boundary
+
+GameClient Host now separates actuator commands from authoritative observation.
+The command lane owns mutations and monotonic input sequencing; a second
+persistent Gateway connection refreshes one bounded latest-state cache at 25 Hz.
+Client `state` reads no longer create synchronous upstream snapshot RPCs and
+carry freshness metadata. This keeps rendering/observation latency from blocking
+human or Organism actuator commands.
+
+The embodied world no longer treats controller packet cadence as durable storage
+cadence: continuous `input` is checkpointed by the normal periodic interval,
+while spawn/day-start/setup and physical portal transfers still force durable
+boundaries. Director demo telemetry uses cached observations and asynchronous
+persistence, so optional recording cannot add state round trips or fsync latency
+to the realtime input path.
+
+This prepares the Python core for Stage 13 Player Gateway without moving physics,
+world authority, Yuki, Spine or Motor into Node.js.
