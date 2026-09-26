@@ -329,5 +329,47 @@ class AcceptanceMatrixTests(unittest.TestCase):
         self.assertIn('return "D"', gui)
 
 
+    def test_a12_browser_is_separated_by_player_gateway(self):
+        gateway = (ROOT / "player-gateway/src/server.mjs").read_text(encoding="utf-8")
+        proxy = (ROOT / "player-gateway/src/proxy.mjs").read_text(encoding="utf-8")
+        shell = (ROOT / "gametable/web/js/shell.js").read_text(encoding="utf-8")
+        frames = (ROOT / "gametable/web/js/frames.js").read_text(encoding="utf-8")
+        api = (ROOT / "gametable/web/js/api.js").read_text(encoding="utf-8")
+        backend = (ROOT / "gametable/roleplay/server.py").read_text(encoding="utf-8")
+        start = (ROOT / "gametable/op/start.sh").read_text(encoding="utf-8")
+
+        self.assertIn("player-gateway/op/gateway.sh", start)
+        self.assertIn("window.io", frames)
+        self.assertIn("gatewayAcquire", shell)
+        self.assertIn("gatewayInput", shell)
+        self.assertNotIn("/api/director/", api)
+        self.assertIn('pathname === "/api/frames"', proxy)
+        self.assertIn('pathname.startsWith("/api/director/")', proxy)
+        self.assertNotIn("17600", gateway)
+        self.assertNotIn("GATEWAY_PORT", gateway)
+        self.assertNotIn('path == "/api/frames"', backend)
+        self.assertNotIn("EmbodiedWorldGraphics", backend)
+
+    def test_a13_web_frontend_is_bounded_and_failure_isolated(self):
+        server = (ROOT / "player-gateway/src/server.mjs").read_text(encoding="utf-8")
+        config = (ROOT / "player-gateway/src/config.mjs").read_text(encoding="utf-8")
+        core = (ROOT / "player-gateway/src/core.mjs").read_text(encoding="utf-8")
+        session = (ROOT / "player-gateway/src/session.mjs").read_text(encoding="utf-8")
+        start = (ROOT / "gametable/op/start.sh").read_text(encoding="utf-8")
+
+        self.assertIn('io.volatile.emit("frame.latest"', server)
+        self.assertIn("maxHttpBufferSize", server)
+        self.assertIn("maxConnectionsPerIp", server)
+        self.assertIn("PLAYER_GATEWAY_PUBLIC=1", config)
+        self.assertIn("TLS termination contract", config)
+        self.assertIn("PLAYER_GATEWAY_SESSION_SECRET", config)
+        self.assertIn("HttpOnly", session)
+        self.assertIn("SameSite=Strict", session)
+        self.assertIn("await this.release(this.owner)", core)
+        self.assertIn("frames_published", core)
+        self.assertIn("coalesced", (ROOT / "player-gateway/src/input-buffer.mjs").read_text(encoding="utf-8"))
+        self.assertIn('"$ROOT/player-gateway/op/gateway.sh" --stop', start)
+
+
 if __name__ == "__main__":
     unittest.main()
