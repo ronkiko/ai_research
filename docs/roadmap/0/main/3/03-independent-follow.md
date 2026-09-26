@@ -1,10 +1,10 @@
-# 0.0.3.03 — Independent follow
+# 0.main.3.03 — Independent follow
 
 Статус: **план**.
 
 Зависимости:
-[0.0.3.01](01-local-actor-perception.md),
-[0.0.3.02](02-escort-consent-and-modes.md).
+[0.main.3.01](01-local-actor-perception.md),
+[0.main.3.02](02-escort-consent-and-modes.md).
 
 Цель: зафиксировать правильное место текущего deterministic follow.
 

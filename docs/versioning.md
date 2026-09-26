@@ -11,11 +11,11 @@ release.branch.series.patch
 Для текущей линии:
 
 ```text
-0.0.3.01
-│ │ │ └─ patch 01 внутри roadmap Series 3
-│ │ └─── series 3
-│ └───── branch line 0 = main
-└─────── release line 0
+0.main.3.01
+│ │    └─ patch 01 внутри roadmap Series 3
+│ └────── series 3
+├──────── branch line main
+└──────── release line 0
 ```
 
 ## Поля
@@ -40,16 +40,33 @@ release = 0
 Сейчас:
 
 ```text
-branch = 0
+branch = main
 Git branch = main
 ```
 
-Обычные короткоживущие Git feature/fix/doc branches **не меняют** эту цифру.
-Они являются способом реализации patch и после merge исчезают из архитектурной
-версии.
+Branch coordinate записывается словом из строчных ASCII-букв и обязан
+соответствовать формату:
+
+```text
+[a-z]+
+```
+
+Нормативная проверка:
+
+```text
+^[a-z]+$
+```
+
+Допустимо: `main`, `dev`, `research`.  
+Недопустимо: `0`, `main2`, `release-candidate`, `feature_x`, `Main`.
+
+Обычные короткоживущие Git feature/fix/doc branches **не меняют** этот
+компонент. Они являются способом реализации patch и после merge исчезают из
+архитектурной версии.
 
 Если в будущем появится отдельная долгоживущая продуктовая ветка с собственным
-roadmap, Operator назначает ей отдельный branch coordinate.
+roadmap, Operator назначает ей отдельный словесный branch coordinate формата
+`[a-z]+`.
 
 ### Series
 
@@ -60,7 +77,7 @@ roadmap, Operator назначает ей отдельный branch coordinate.
 
 ```text
 series = 3
-coordinate = 0.0.3
+coordinate = 0.main.3
 ```
 
 Series имеет собственный README с целью, инвариантами, зависимостями и порядком
@@ -73,9 +90,9 @@ patches.
 Примеры:
 
 ```text
-0.0.3.01
-0.0.3.02
-0.0.3.03
+0.main.3.01
+0.main.3.02
+0.main.3.03
 ...
 ```
 
@@ -104,7 +121,7 @@ docs/roadmap/
 Текущая Series 3:
 
 ```text
-docs/roadmap/0/0/3/
+docs/roadmap/0/main/3/
 ```
 
 ## Исторические документы
@@ -121,7 +138,7 @@ docs/roadmap/0/0/3/
 Рекомендуемая рабочая branch для patch:
 
 ```text
-series/0.0.3.01-<short-name>
+series/0.main.3.01-<short-name>
 ```
 
 Это рекомендация для навигации, не часть runtime contract.

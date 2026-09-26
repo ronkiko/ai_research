@@ -7,8 +7,8 @@
 distributed GameServer↔GameClient boundary и shared WorldStateHub.
 
 Следующая roadmap-series документируется по новой координате
-`release.branch.series.patch`: [0.0.3 — social embodiment, escort and
-demonstration](docs/roadmap/0/0/3/README.md). Правила нумерации:
+`release.branch.series.patch`: [0.main.3 — social embodiment, escort and
+demonstration](docs/roadmap/0/main/3/README.md). Правила нумерации:
 [docs/versioning.md](docs/versioning.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
@@ -54,9 +54,9 @@ Brain LLM остаётся основным смысловым «неокорт�
 
 ## Roadmap/version coordinate
 
-Текущая долгоживущая линия работы: release `0`, branch `0 = main`.
-Следующая series: `3`; её patches имеют coordinates `0.0.3.01`,
-`0.0.3.02` и далее. Git feature branches не меняют branch coordinate.
+Текущая долгоживущая линия работы: release `0`, branch `main`.
+Следующая series: `3`; её patches имеют coordinates `0.main.3.01`,
+`0.main.3.02` и далее. Git feature branches не меняют branch coordinate.
 
 ## Структура
 

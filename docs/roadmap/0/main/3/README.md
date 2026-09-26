@@ -1,9 +1,9 @@
-# 0.0.3 — Social embodiment, escort and demonstration
+# 0.main.3 — Social embodiment, escort and demonstration
 
 Статус: **roadmap-заготовка, runtime не реализован**.
 
 Release: `0`  
-Branch: `0 = main`  
+Branch: `main`  
 Series: `3`
 
 Series 3 развивает уже существующий честный multiplayer world:
@@ -157,11 +157,11 @@ Host↔Host P2P — **узкое исключение только для author
 
 | Version | Patch | Result |
 | --- | --- | --- |
-| `0.0.3.01` | [Local actor perception](01-local-actor-perception.md) | Юки получает честное same-zone присутствие других actors |
-| `0.0.3.02` | [Escort consent and modes](02-escort-consent-and-modes.md) | HAND_IN_HAND / FOLLOW_INDEPENDENTLY / DECLINE и отдельные consent scopes |
-| `0.0.3.03` | [Independent follow](03-independent-follow.md) | Текущий scripted follow получает правильный контракт без teacher data |
-| `0.0.3.04` | [Handhold session](04-handhold-session.md) | GameServer-authoritative физическое взаимодействие и assisted provenance |
-| `0.0.3.05` | [Demonstration link](05-demonstration-link.md) | Scoped Host↔Host P2P protocol и записываемое demo evidence без обучения |
+| `0.main.3.01` | [Local actor perception](01-local-actor-perception.md) | Юки получает честное same-zone присутствие других actors |
+| `0.main.3.02` | [Escort consent and modes](02-escort-consent-and-modes.md) | HAND_IN_HAND / FOLLOW_INDEPENDENTLY / DECLINE и отдельные consent scopes |
+| `0.main.3.03` | [Independent follow](03-independent-follow.md) | Текущий scripted follow получает правильный контракт без teacher data |
+| `0.main.3.04` | [Handhold session](04-handhold-session.md) | GameServer-authoritative физическое взаимодействие и assisted provenance |
+| `0.main.3.05` | [Demonstration link](05-demonstration-link.md) | Scoped Host↔Host P2P protocol и записываемое demo evidence без обучения |
 
 Порядок важен: demonstration link строится поверх perception, consent и
 server-authoritative physical relation, а не наоборот.
