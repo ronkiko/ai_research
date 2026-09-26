@@ -20,6 +20,9 @@ from .external import ACTIVE_NAVIGATION, ActionExecutor
 from .opencode import BackendError, parse_json
 
 
+PUBLIC_TURN_FAILURE = "Ответ Юки не получен. Сообщение можно повторить."
+
+
 class Runtime:
     def __init__(
         self, store, backend, rules, manuals="", log=None, events=None,
@@ -527,7 +530,14 @@ class Runtime:
             if self.story is not None:
                 self.story.on_turn_completed(event, audit)
         except Exception as exc:
+            # Technical/provider failures stay in the server log and audit.
+            # They are not character dialogue and must not be rendered as a
+            # red "Yuki response" in the VN.
             self.log(f"ход {event['id']}: {exc}", "ERROR")
+            audit["failure"] = {
+                "kind": type(exc).__name__,
+                "message": str(exc),
+            }
             try:
                 self.progress(
                     event["id"], "Ход остановлен", audit, before["revision"]
@@ -537,15 +547,15 @@ class Runtime:
             self.store.fail(event["id"], str(exc))
             self.emit(
                 "turn.failed", event["id"], self.store.state()["revision"],
-                error=str(exc),
+                notice=PUBLIC_TURN_FAILURE,
             )
         finally:
             self.backend.close_sessions()
 
 
 def public_turn(turn):
-    """Never expose in-flight/rejected drafts; action status is a durable fact."""
-    item = {k: turn[k] for k in ("id", "event", "status", "stage", "error")}
+    """Expose VN-safe turn state; technical failure details stay in audit/log."""
+    item = {k: turn[k] for k in ("id", "event", "status", "stage")}
     if turn["status"] == "done":
         result = turn["result"]
         item.update(
@@ -560,4 +570,6 @@ def public_turn(turn):
             )
             for k in result["after"]["stats"]
         }
+    elif turn["status"] == "failed":
+        item["notice"] = PUBLIC_TURN_FAILURE
     return item
