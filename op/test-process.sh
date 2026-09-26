@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-bash -n   op/process.sh   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh
+bash -n   op/process.sh   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh   player-gateway/op/gateway.sh
 
-for script in   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh
+for script in   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh   player-gateway/op/gateway.sh
 do
   grep -q -- '--start' "$script"
   grep -q -- '--stop' "$script"
@@ -19,6 +19,7 @@ done
 # be mistaken for the other during status/restart.
 grep -q -- 'gameclient.v1.host.server --port 17700' gameclient/v1/op/host.sh
 grep -q -- 'gameclient.v1.host.server --port 17701' gameclient/v1/op/director-host.sh
+grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
 
 # shellcheck source=/dev/null
 source "$ROOT/op/process.sh"
