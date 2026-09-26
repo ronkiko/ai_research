@@ -71,9 +71,28 @@ GameClient Host
 
 ### Gateway
 
-The only public game endpoint in v1. GameClient Host talks to Gateway,
-not to World, Zone, Mob, Telemetry, or Persistence directly. The first lobby is
-passwordless: `list_players` returns demo player IDs and `login` selects one.
+The only public **game-protocol** endpoint in v1. GameClient Host talks to
+Gateway, not to World, Zone, Mob, Telemetry, Persistence or the embodied
+WorldStateHub directly. A Host may be on another machine/VPS; GameServer does
+not require client co-location.
+
+```text
+remote Host[human] ─┐
+                    ├─ network → Gateway → server internals
+remote Host[yuki] ──┘
+```
+
+Machine/VPS address is deployment configuration, not gameplay identity.
+Player Gateway and Organism remain client-side and are not required on the
+GameServer node.
+
+The first compatibility lobby is passwordless: `list_players` returns demo
+player IDs and `login` selects one. The current raw Gateway transport is not
+yet declared safe as a public-Internet endpoint; distributed deployments should
+use a trusted private network/VPN/tunnel until Gateway authentication/TLS is
+hardened.
+
+See [distributed runtime](../../docs/deployment/distributed-runtime.md).
 
 ### World Server
 

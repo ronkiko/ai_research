@@ -26,6 +26,30 @@ there is not a second control loop or trainer.
 - Unpaced training still drives the same canonical `ZoneRuntime`, whose motion
   math is the shared `gameserver.v1.physics` kernel.
 
+## Deployment
+
+Organism is **client-side relative to GameServer**. It does not have to run on
+the GameServer VPS or on the same machine as a human player.
+
+Typical Yuki node:
+
+```text
+LLM → Organism → Spine → Motor → Host[yuki]
+                                  │
+                                  └─ network → GameServer Gateway
+```
+
+This allows Yuki to live on a GPU workstation/VPS while GameServer runs
+elsewhere. `Host[yuki]` stays local to Organism and is the only gameplay-facing
+transport used by the learned body. Organism must not bypass Host to call World
+or Physics services directly.
+
+A failure or restart of the human Player Gateway is therefore independent of
+Yuki's control node, and a failure of Yuki's compute node does not stop the
+authoritative world.
+
+See [distributed runtime](../docs/deployment/distributed-runtime.md).
+
 ## Artifacts
 
 New Motor instances live under `organism/motors/instances/`. The registry can

@@ -68,6 +68,13 @@ job. Нельзя одним числом делать commit разных вл�
 day_id/day-start receipt и controller_mode. Поэтому binding Юки не должен
 подразумевать единственную entity мира или общий Host с человеческим игроком.
 
+Deployment также не является identity. `EmbodimentBinding`, player/entity/
+controller IDs и skill binding не содержат machine/VPS address. `Host[yuki]`
+и `Host[human]` могут работать на разных машинах и подключаться к удалённому
+GameServer Gateway. Их локальные Clients остаются за loopback Host Protocol.
+Нормативная topology описана в
+[distributed runtime](../../deployment/distributed-runtime.md).
+
 ## Приёмка
 
 Сериализация/десериализация сохраняет identity и источники наблюдения. Неверный

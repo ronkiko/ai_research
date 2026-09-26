@@ -102,10 +102,20 @@ internal readers без нового daemon. Полная серия всё ещ
 | `gametable/` | Личность, диалог, память, решения, исполнитель утверждённых действий и VN state | Авторитетное physical location, realtime human transport, низкоуровневое руление |
 | `director/` | Архив и измерения | Автоматическая память персонажа |
 
-Это границы модулей и API, не требование немедленно создать шесть новых демонов.
-World и graphics допускается разместить в одном application host разными
-модулями. Физика и control executor живут независимо от HTTP/LLM; transport
-поток физики не ждёт потребителя. Публичная граница Host сохраняется.
+Это границы модулей и API, а не требование co-location или немедленно создать
+отдельный daemon на каждый модуль. `gameserver/` и `gameclient/` образуют
+настоящую сетевую границу: GameServer может жить на VPS A, `Host[human]` +
+Player Gateway на VPS B, а `Host[yuki]` + Organism/Spine/Motor — на отдельной
+GPU machine/VPS C. Оба Host используют одну codebase и подключаются к одному
+GameServer Gateway как независимые sessions.
+
+WorldStateHub остаётся внутри server-side Gateway; web/AI nodes не получают
+прямой World/Physics access. Single-machine launcher — development convenience,
+не нормативная production topology. Подробный deployment contract:
+[distributed runtime](../../deployment/distributed-runtime.md).
+
+Физика и control executor живут независимо от HTTP/LLM; transport поток физики
+не ждёт потребителя. Локальная Host-facing граница сохраняется.
 
 ```text
 Director → appraisal → CharacterDecision + ActionProposal → ActionExecutor
