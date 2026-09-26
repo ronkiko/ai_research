@@ -1,6 +1,6 @@
 # ИИ-организм: общий контракт проекта
 
-Уточнение цели: [серия из 14 этапов](docs/refactor/embodied-vn/01-concept.md)
+Уточнение цели: [серия из 15 этапов](docs/refactor/embodied-vn/01-concept.md)
 объединяет тело Юки и персонажа новеллы, заменяет публичный GameLab интерфейсами
 навигации и обучения через MCP. Этапы 02–09 зафиксировали identity/action/world
 contracts, multi-zone `embodied_world_v1`, learned-body core,
@@ -51,6 +51,36 @@ Organism меняет веса на измеренных последствия�
 долгоживущую цель; CNN и замороженный Motor исполняют её без дальнейших ответов
 LLM. Сертификацию Motor готовит оператор. MCP обучает Spine с готовым Motor.
 Без нужного артефакта следует сообщить блокер, а не заменить сеть ручным рулением.
+
+## Сетевая граница GameServer ↔ GameClient
+
+Модульная граница `gameserver/` ↔ `gameclient/` является также допустимой
+физической сетевой границей. GameServer, human web node и Organism Юки **не
+обязаны находиться на одной машине**.
+
+```text
+Browser → Player Gateway → Host[human] ─┐
+                                        ├─ network → GameServer Gateway
+LLM → Spine → Motor → Host[yuki] ───────┘
+```
+
+`Host[human]` и `Host[yuki]` — разные instances/sessions одной реализации
+GameClient Host. Их upstream GameServer Gateway может быть удалённым. Локальные
+Host-facing interfaces при этом остаются loopback-only: Player Gateway локален
+для human Host, Organism локален для Yuki Host.
+
+WorldStateHub остаётся server-side. Ни Player Gateway, ни Organism не получают
+direct World/Physics connection. Полностью распределённая topology
+`GameServer VPS A / web VPS B / Yuki GPU node C` является нормальной целевой
+конфигурацией, а single-machine launcher — только удобный development vertical.
+
+Нормативный deployment contract:
+[distributed runtime](docs/deployment/distributed-runtime.md).
+
+Текущий raw Gateway transport ещё не объявлен безопасным public-Internet
+interface: до отдельного network hardening удалённые Hosts должны использовать
+доверенную private network/VPN/tunnel. Это ограничение deployment, не требование
+co-location.
 
 ## Владельцы состояния и часов
 
