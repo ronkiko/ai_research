@@ -20,6 +20,6 @@
 
 - **Roadmap/versioning:** новая работа, начиная с Series 3, использует координату
   `release.branch.series.patch`. Текущая линия: release `0`, branch
-  `0 = main`; Series 3 лежит в `docs/roadmap/0/0/3/`, patches именуются
-  `01-...`, `02-...` и имеют coordinates `0.0.3.01`, `0.0.3.02` и т.д.
+  `0 = main`; Series 3 лежит в `docs/roadmap/0/main/3/`, patches именуются
+  `01-...`, `02-...` и имеют coordinates `0.main.3.01`, `0.main.3.02` и т.д.
   Перед добавлением новой patch-series прочитай `docs/versioning.md`.
