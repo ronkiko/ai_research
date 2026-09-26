@@ -307,3 +307,42 @@ failure does not stop GameServer, Host[yuki], Organism or world ticks.
 The deterministic series gate now covers A1–A13. Passing it proves the software
 contracts only; final series acceptance still requires the documented live LLM,
 manual browser/day-cycle and fresh scientific TRAIN/VERIFY evidence.
+
+
+## Stage 15: shared authoritative World State Hub
+
+Read fan-out is now centralized inside the embodied GameServer Gateway.
+
+```text
+Physics / EmbodiedWorldRuntime 120 Hz
+             │
+             │ atomic world_state_frame_v1
+             ▼
+       WorldStateHub ~30 Hz
+        latest frame only
+          /           \
+ Host[yuki]          Host[human]
+    │                    │
+ GameTable/escort     Player Gateway
+```
+
+World exposes one atomic state frame containing the full snapshot plus
+per-entity observations and controller fences from one epoch/tick/revision.
+The Gateway maintains one persistent observer connection to World and projects
+all Host session snapshots from that cache. Adding Hosts or browser readers no
+longer multiplies Gateway→World state reads.
+
+Mutation/receipt traffic remains a separate persistent lane and is never
+automatically replayed after an ambiguous I/O failure. Structural operations may
+wait for their result to become visible through the shared Hub, but they do not
+start private snapshot polling loops.
+
+Freshness is end-to-end: Gateway reports the age of the latest World frame and
+Host adds only the time spent in its own cache. Re-reading the same stale frame
+cannot make it fresh. The original stale threshold remains meaningful rather
+than being increased to hide load.
+
+The temporary scripted escort now observes the same Host[yuki] cached snapshot
+used by other gameplay clients and writes bounded Yuki effort through Host. It
+has no direct World snapshot loop or private World TCP traffic and remains
+outside learned Spine/Motor evidence.
