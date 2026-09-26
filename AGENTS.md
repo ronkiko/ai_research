@@ -19,7 +19,8 @@
 - **GameTable tasks:** read `gametable/AGENTS.md` and `gametable/DESK.md`; the Director supplies the assignment in conversation. The assistant operates the game and laboratory through the local MCP manuals, not by entering neighboring project directories.
 
 - **Roadmap/versioning:** новая работа, начиная с Series 3, использует координату
-  `release.branch.series.patch`. Текущая линия: release `0`, branch
-  `0 = main`; Series 3 лежит в `docs/roadmap/0/main/3/`, patches именуются
+  `release.branch.series.patch`. Branch coordinate обязан соответствовать
+  `[a-z]+`; текущая линия: release `0`, branch `main`. Series 3 лежит в
+  `docs/roadmap/0/main/3/`, patches именуются
   `01-...`, `02-...` и имеют coordinates `0.main.3.01`, `0.main.3.02` и т.д.
   Перед добавлением новой patch-series прочитай `docs/versioning.md`.
