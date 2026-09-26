@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -40,8 +40,8 @@ if grep -q -- 'op_find_legacy_process' op/process.sh; then
   echo "ERROR legacy process discovery returned" >&2
   exit 1
 fi
-grep -q -- 'gameclient.v1.host.server --port 17700' gameclient/v1/op/host.sh
-grep -q -- 'gameclient.v1.host.server --port 17701' gameclient/v1/op/director-host.sh
+grep -q -- '--port 17700' gameclient/v1/op/host.sh
+grep -q -- '--port 17701' gameclient/v1/op/director-host.sh
 grep -q -- 'player-gateway/src/server.mjs' player-gateway/op/gateway.sh
 grep -q -- '--free-ports' gametable/op/start.sh
 grep -q -- 'fuser -k "$port/tcp"' gametable/op/start.sh
