@@ -378,12 +378,12 @@ has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
 
 
-## Future roadmap 0.0.3: social embodiment and escort
+## Future roadmap 0.main.3: social embodiment and escort
 
 Новая roadmap-нумерация фиксируется как
 `release.branch.series.patch`; текущая будущая серия имеет coordinate
-`0.0.3`. См. [versioning](docs/versioning.md) и
-[Series 3 roadmap](docs/roadmap/0/0/3/README.md).
+`0.main.3`. См. [versioning](docs/versioning.md) и
+[Series 3 roadmap](docs/roadmap/0/main/3/README.md).
 
 Series 3 отделяет три уровня, которые раньше были временно слиты в scripted
 escort:
