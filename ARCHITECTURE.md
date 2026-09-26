@@ -378,6 +378,30 @@ has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
 
 
+## Teacher/demo relation cardinality
+
+Teacher-assisted learning не имеет глобального singleton на весь World.
+
+Нормативный инвариант:
+
+```text
+for each student:
+    active teachers = 0 or 1
+```
+
+Разные students могут иметь разных teachers одновременно. Один teacher может
+обучать несколько students, если отдельная policy этого не запрещает.
+
+GameServer проверяет уникальность active `TeacherStudentSession` по
+`student_entity_id` до создания demonstration capability или telemetry
+producer. Попытка назначить второму teacher уже занятого student отклоняется
+без создания второго telemetry path.
+
+Для одного student существует максимум один canonical demonstration telemetry
+producer. Общие capacity/rate limits при большом числе одновременно обучаемых
+students являются отдельной server resource policy и не должны смешиваться с
+этим relation invariant.
+
 ## Future roadmap 0.main.3: social embodiment and escort
 
 Новая roadmap-нумерация фиксируется как

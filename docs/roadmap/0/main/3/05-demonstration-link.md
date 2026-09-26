@@ -128,6 +128,140 @@ revocation id
 Capability только read-only demonstration. Она **не** разрешает
 `Host[human]` отправлять actuator commands за Yuki.
 
+## TeacherStudentSession registry
+
+GameServer выдаёт capability и формирует authoritative demonstration
+telemetry/provenance. Ограничение здесь **не глобальное на весь World**.
+
+Нормативная cardinality:
+
+```text
+student_entity_id → 0 or 1 active teacher
+```
+
+Рабочая сущность:
+
+```text
+TeacherStudentSession
+  teaching_session_id
+  teacher_entity_id
+  student_entity_id
+  world_id
+  world_epoch
+  teacher_controller_generation
+  student_controller_generation
+  handhold_interaction_id
+  purpose
+  started_tick
+  expires_at
+  state = active
+```
+
+GameServer хранит registry активных teaching sessions с уникальностью по
+`student_entity_id`.
+
+### Admission
+
+Открытие teacher/demo session выполняется атомарно:
+
+1. проверить authentication/capability;
+2. проверить teacher identity/session/controller fences;
+3. проверить student identity/session/controller fences;
+4. проверить HandholdSession/consent, если они обязательны для режима;
+5. проверить, что у данного `student_entity_id` нет другого active teacher;
+6. только после этого создать demonstration capability и telemetry producer;
+7. зарегистрировать session и вернуть scoped capability.
+
+Если student уже занят другим teacher:
+
+```text
+STUDENT_ALREADY_HAS_TEACHER
+student_entity_id = ...
+active_teacher_entity_id = ...
+retryable = true
+```
+
+Отказ происходит до создания второго telemetry producer, observer loop,
+buffer, P2P capability или dataset writer для этого student.
+
+Повтор idempotent acquire для той же пары/session может вернуть уже существующую
+session, но не создавать дубль.
+
+Rejected acquire attempts имеют bounded rate limit, чтобы сам admission endpoint
+не был DoS surface.
+
+### Допустимая параллельность
+
+Разные students могут обучаться одновременно:
+
+```text
+Teacher A ↔ Student 1
+Teacher B ↔ Student 2
+Teacher C ↔ Student 3
+```
+
+Также один teacher может иметь несколько students, если отдельная policy этого
+не запрещает:
+
+```text
+Teacher A ↔ Student 1
+Teacher A ↔ Student 2
+```
+
+Series 3 не вводит `max_students_per_teacher`.
+
+Главный инвариант только один:
+
+```text
+max_active_teachers_per_student = 1
+```
+
+### Один canonical producer на student
+
+Для каждого active student существует максимум один canonical demonstration
+telemetry producer, соответствующий его единственной active teacher relation.
+
+Несколько authorized readers не должны заставлять GameServer повторно собирать
+одинаковую telemetry для того же student. Fan-out строится поверх одного
+producer/latest/ring buffer.
+
+Запрещено:
+
+```text
+Teacher A → Student 1 → producer A
+Teacher B → Student 1 → producer B
+```
+
+Разрешено:
+
+```text
+Teacher A → Student 1 → producer 1
+Teacher B → Student 2 → producer 2
+```
+
+Общая нагрузка многих одновременно обучаемых students должна отдельно
+ограничиваться server capacity/rate/resource policy. Это отдельная защита и не
+меняет relation cardinality.
+
+### Lifecycle
+
+TeacherStudentSession для конкретного student освобождается при:
+
+- явном завершении demonstration/teaching session;
+- revoke demonstration consent/capability;
+- завершении связанного HandholdSession;
+- teacher или student disconnect по policy;
+- expiry/lease timeout;
+- world epoch change;
+- replacement controller generation любого участника;
+- terminal failure;
+- server restart, если runtime session не была безопасно восстановлена.
+
+После освобождения student может принять нового teacher.
+
+Persisted DemonstrationEpisode не даёт права автоматически восстановить active
+TeacherStudentSession после restart.
+
 ## Transport
 
 Series 3 не фиксирует конкретный carrier заранее. Реализация может выбрать

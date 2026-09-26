@@ -236,6 +236,36 @@ teacher data не зависели от co-location Hosts.
 Подробности:
 [0.main.3.05 DemonstrationLink](../roadmap/0/main/3/05-demonstration-link.md).
 
+## Teacher/demo session admission
+
+Distributed Hosts не могут назначить одному student несколько teachers через
+разные machines/connections.
+
+GameServer хранит active `TeacherStudentSession` registry с уникальностью по
+`student_entity_id`:
+
+```text
+Student 1 → Teacher A
+Student 2 → Teacher B
+Student 3 → Teacher A
+```
+
+допустимо, но:
+
+```text
+Student 1 → Teacher A
+Student 1 → Teacher B
+```
+
+недопустимо одновременно.
+
+Проверка выполняется server-side до выделения второго demonstration telemetry
+producer/capability для student.
+
+Это не ограничивает число students в distributed deployment. Общие quotas,
+rate limits и capacity controls для множества одновременных teaching sessions
+задаются отдельно.
+
 ## Failure isolation между машинами
 
 Ожидаемые свойства:

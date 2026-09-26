@@ -142,6 +142,55 @@ Host[human] / web VPS B  ═══ P2P demo ═══► Host[yuki] / GPU VPS C
 Host↔Host P2P — **узкое исключение только для authorized demonstration data**.
 Оно не заменяет GameServer Gateway и не переносит physical authority на clients.
 
+## Не более одного teacher на одного student
+
+Teacher/demo telemetry — отдельный server-side resource, но Series 3 **не**
+вводит глобальный singleton на весь World.
+
+Нормативный инвариант:
+
+```text
+for each student_entity_id:
+    active_teacher_count ∈ {0, 1}
+```
+
+То есть одновременно допустимо:
+
+```text
+Teacher A ↔ Student 1
+Teacher B ↔ Student 2
+Teacher A ↔ Student 3
+Student 4 ↔ none
+```
+
+Но запрещено:
+
+```text
+Teacher A ─┐
+           ├─→ Student 1
+Teacher B ─┘
+```
+
+У одного student не может быть двух активных teachers одновременно.
+
+GameServer должен проверять уникальность active teaching relation по
+`student_entity_id` **до** создания demonstration capability, telemetry
+producer, subscription, buffer или dataset stream.
+
+Если student уже имеет активного teacher, второй acquire получает typed
+`STUDENT_ALREADY_HAS_TEACHER` / эквивалентный отказ без создания второго
+telemetry producer для этого student.
+
+Несколько Hosts/connections/sessions не могут обойти это ограничение.
+
+Это правило не ограничивает число студентов в World и не запрещает параллельное
+teacher-assisted обучение разных students. Общие server capacity/rate limits
+для большого числа одновременных students являются отдельной resource-policy
+задачей и не должны подменяться этим cardinality invariant.
+
+Подробный admission/lifecycle contract:
+[0.main.3.05](05-demonstration-link.md).
+
 ## Не реализуем в Series 3
 
 - imitation optimizer;
