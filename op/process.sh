@@ -10,6 +10,35 @@ op_runtime_dir() {
   fi
 }
 
+op_tcp_port_in_use() {
+  local host="$1"
+  local port="$2"
+  "${PYTHON:-python3}" - "$host" "$port" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=0.2):
+        pass
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+op_require_tcp_port_free() {
+  local host="$1"
+  local port="$2"
+  local label="$3"
+  if op_tcp_port_in_use "$host" "$port"; then
+    echo "ERROR $label cannot start: $host:$port is already occupied" >&2
+    echo "Free that port and run the command again." >&2
+    return 2
+  fi
+}
+
 op_root_key() {
   local root="$1"
   printf '%s' "$root" | cksum | awk '{print $1}'
