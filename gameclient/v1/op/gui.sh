@@ -18,7 +18,6 @@ op_managed_process \
   "$ACTION" \
   "gameclient-gui-v1" \
   "$ROOT" \
-  "gameclient.v1.clients.gui" \
   "$ROOT" \
   "GameClient GUI v1" \
   "${PYTHON:-python3}" -m gameclient.v1.clients.gui "$@"
