@@ -1,10 +1,10 @@
-# 0.0.3.05 — Host↔Host DemonstrationLink
+# 0.main.3.05 — Host↔Host DemonstrationLink
 
 Статус: **план**.
 
 Зависимости:
-[0.0.3.02](02-escort-consent-and-modes.md),
-[0.0.3.04](04-handhold-session.md).
+[0.main.3.02](02-escort-consent-and-modes.md),
+[0.main.3.04](04-handhold-session.md).
 
 Цель: подготовить настоящий teacher channel «Директор учит Юки, ведя её за
 руку», **без реализации imitation optimizer**.
@@ -185,7 +185,7 @@ learned_success = false
 
 ## Что намеренно отложено
 
-Не входит в `0.0.3.05`:
+Не входит в `0.main.3.05`:
 
 - behavior cloning;
 - imitation loss;
