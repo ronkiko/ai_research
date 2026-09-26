@@ -212,7 +212,7 @@ World polling rate.
 ## Planned Host↔Host demonstration exception
 
 Обычный gameplay по-прежнему идёт только через GameServer Gateway. Future
-Series `0.0.3` резервирует **узкое read-only исключение** для обучения
+Series `0.main.3` резервирует **узкое read-only исключение** для обучения
 Директора и Юки при добровольном handhold:
 
 ```text
@@ -234,7 +234,7 @@ capability. P2P используется только как data plane teacher�
 teacher data не зависели от co-location Hosts.
 
 Подробности:
-[0.0.3.05 DemonstrationLink](../roadmap/0/0/3/05-demonstration-link.md).
+[0.main.3.05 DemonstrationLink](../roadmap/0/main/3/05-demonstration-link.md).
 
 ## Failure isolation между машинами
 
