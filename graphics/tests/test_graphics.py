@@ -6,7 +6,6 @@ from graphics.assets import public_asset_catalog
 from graphics.contracts import MAX_FRAME_BYTES
 from graphics.projector import SceneProjector
 from graphics.live import EmbodiedWorldGraphics
-from organism.host import HostError
 from graphics.stream import FrameHub
 from world.catalog import WORLD_ID
 
@@ -115,23 +114,10 @@ class _FakeGraphicsClient:
         pass
 
 
-class _FlakyGraphicsClient(_FakeGraphicsClient):
-    def __init__(self):
-        self.calls = 0
-    def state(self):
-        self.calls += 1
-        if self.calls == 1:
-            raise HostError("temporary snapshot timeout")
-        return super().state()
-
-
 class LiveGraphicsTests(unittest.TestCase):
-    def test_read_only_snapshot_retries_one_transient_host_failure(self):
-        client = _FlakyGraphicsClient()
-        graphics = EmbodiedWorldGraphics(client=client)
-        value = graphics.snapshot({})
-        self.assertEqual(client.calls, 2)
-        self.assertEqual(value["observation"]["observed_tick"], 77)
+    def test_outer_graphics_timeout_exceeds_inner_gateway_budget(self):
+        self.assertGreater(EmbodiedWorldGraphics.host_timeout, 1.0)
+        self.assertLess(EmbodiedWorldGraphics.host_timeout, 2.0)
 
     def test_embodied_source_is_authoritative_and_exports_same_observation(self):
         graphics = EmbodiedWorldGraphics(client=_FakeGraphicsClient())
