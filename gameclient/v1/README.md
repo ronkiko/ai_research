@@ -45,6 +45,24 @@ GameServer Gateway
 Client Client Client
 ```
 
+## Distributed deployment
+
+`gameclient/v1` is a real network client of GameServer, not a component that
+must be co-located with it. A Host can run on a different machine and use the
+existing `--gateway-host` / `--gateway-port` upstream settings.
+
+Typical production roles:
+
+```text
+web VPS:       Player Gateway → Host[human] ─┐
+                                             ├→ remote GameServer Gateway
+AI/GPU node:   Organism → Host[yuki] ────────┘
+```
+
+The Host Protocol itself remains loopback-only for local GUI/MCP/web/Organism
+clients. The GameServer Gateway is the network boundary. See
+[distributed runtime](../../docs/deployment/distributed-runtime.md).
+
 ## Start
 
 Terminal 1:
