@@ -15,6 +15,8 @@ const sourceId=sessionStorage.getItem('director-source')||crypto.randomUUID();
 sessionStorage.setItem('director-source',sourceId);
 let posting=false,pending=null,lastError='',currentRevision=-1,currentView=null,currentStory=null;
 let syncQueued=false,assetsReady=false,directorLease=null,heldDirection=0,directorBusy=false;
+let directorInputBusy=false,pendingDirection=null,lastDirectionSentAt=0;
+const DIRECTOR_KEEPALIVE_MS=400;
 
 function showStatus(text,error=false){$('status').className=error?'status error':'status';$('status').textContent=text||'';}
 
@@ -124,13 +126,36 @@ async function acquireDirector(){
 
 async function sendDirection(direction,{force=false}={}){
   if(currentStory?.presentation_mode!=='world_control')return;
-  if(direction===heldDirection&&!force)return;
+  const changed=direction!==heldDirection;
+  const now=performance.now();
+  if(!changed&&!force)return;
+  if(
+    !changed&&force&&direction!==0&&
+    now-lastDirectionSentAt<DIRECTOR_KEEPALIVE_MS
+  )return;
   heldDirection=direction;
+
+  if(directorInputBusy){
+    pendingDirection=direction;
+    return;
+  }
+
+  directorInputBusy=true;
+  pendingDirection=null;
   try{
     const lease=await acquireDirector();
     await directorInput(sourceId,lease,direction);
+    lastDirectionSentAt=performance.now();
   }catch(error){
-    directorLease=null;heldDirection=0;showStatus(error.message,true);
+    directorLease=null;heldDirection=0;pendingDirection=null;
+    showStatus(error.message,true);
+  }finally{
+    directorInputBusy=false;
+    const next=pendingDirection;
+    pendingDirection=null;
+    if(next!==null&&next!==direction){
+      queueMicrotask(()=>sendDirection(next,{force:true}));
+    }
   }
 }
 
