@@ -22,8 +22,8 @@ from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
 from .store import Store, default_story_flow
 from .view import available_intent_ids, project_view
-from graphics import EmbodiedWorldGraphics, FrameHub, public_asset_catalog
 from gametable.migration import active_save_root, migration_manifest
+from organism.host import HostClient, HostError
 from gametable.story import StoryFlow, StoryFlowError
 
 TABLE = Path(__file__).resolve().parents[1]
@@ -84,6 +84,74 @@ class EventHub:
             return [dict(item) for item in self.events if item["id"] > last_id]
 
 
+class WorldObservationPump:
+    """Persist Yuki's authoritative Host observation independently of browser reads."""
+
+    def __init__(self, store, *, client=None, hz=10.0):
+        self.store = store
+        self.client = client or HostClient("gametable-world-observer")
+        self.period = 1.0 / float(hz)
+        self.stop_event = threading.Event()
+        self.thread = None
+
+    @staticmethod
+    def public_observation(observation):
+        if not isinstance(observation, dict):
+            raise ValueError("Host returned no authoritative world observation")
+        physical = observation.get("physical") or {}
+        return {
+            "entity_id": observation.get("entity_id"),
+            "world_id": observation.get("world_id"),
+            "world_epoch": observation.get("world_epoch"),
+            "observed_tick": observation.get("tick"),
+            "world_revision": observation.get("world_revision"),
+            "location_id": observation.get("zone_id"),
+            "physical": {
+                "x": physical.get("x"),
+                "vx": physical.get("vx"),
+                "effort": physical.get("effort"),
+            },
+        }
+
+    def observe_once(self):
+        state = self.client.state()
+        observed = self.public_observation(state.get("observation"))
+        event_key = (
+            f"world.live.{observed.get('world_epoch')}:"
+            f"{observed.get('world_revision')}:"
+            f"{observed.get('observed_tick')}"
+        )
+        self.store.record_world_event(event_key, "world_observation", observed)
+        return observed
+
+    def _loop(self):
+        while not self.stop_event.is_set():
+            started = time.monotonic()
+            try:
+                self.observe_once()
+            except (HostError, ValueError):
+                pass
+            delay = max(0.0, self.period - (time.monotonic() - started))
+            self.stop_event.wait(delay)
+
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self.stop_event.clear()
+        self.thread = threading.Thread(
+            target=self._loop,
+            name="gametable-world-observer",
+            daemon=True,
+        )
+        self.thread.start()
+
+    def close(self):
+        self.stop_event.set()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        self.client.close()
+
+
 def sse_frame(item):
     payload = json.dumps(item["data"], ensure_ascii=False, separators=(",", ":"))
     return f'id: {item["id"]}\nevent: {item["event"]}\ndata: {payload}\n\n'.encode()
@@ -138,16 +206,12 @@ class _StaticStory:
 class Application:
     def __init__(
         self, store, runtime, backend, rules, prompt=None, events=None,
-        graphics=None, frames=None, story=None,
+        story=None, **_compat,
     ):
         self.store, self.runtime, self.backend, self.rules = store, runtime, backend, rules
         self.token = secrets.token_urlsafe(32)
         self.prompt = prompt or ""
         self.events = events or EventHub()
-        if graphics is None:
-            raise ValueError("authoritative graphics source is required")
-        self.graphics = graphics
-        self.frames = frames or FrameHub()
         self.story = story or _StaticStory()
 
     def snapshot(self):
@@ -155,44 +219,23 @@ class Application:
         history = [public_turn(t) for t in self.store.history()]
         state = self.store.state()
         running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
-        graphics = self.graphics.snapshot(state)
-        observed = graphics.get("observation")
-        if isinstance(observed, dict):
-            event_key = (
-                f"world.live.{observed.get('world_epoch')}:"
-                f"{observed.get('world_revision')}:"
-                f"{observed.get('observed_tick')}"
-            )
-            self.store.record_world_event(
-                event_key, "world_observation", observed
-            )
         world_observation = self.store.latest_world_observation()
-        self.frames.publish(graphics["frame"])
-        frame = graphics["frame"]
-        frame_ref = {
-            "frame_id": frame["frame_id"],
-            "source_world_epoch": frame["source_world_epoch"],
-            "source_world_tick": frame["source_world_tick"],
-            "source_world_revision": frame["source_world_revision"],
-            "terrain_revision": frame["terrain_revision"],
-        }
         story = self.story.snapshot()
         view = project_view(
             state, self.rules, busy=running is not None,
             stage=running["stage"] if running else None,
-            frame_ref=frame_ref,
+            frame_ref=None,
             presentation_mode=story["presentation_mode"],
             world_observation=world_observation,
         )
         return {
             "view": view, "history": history, "dialogue": self.store.dialogue(),
             "actions": self.store.active_actions(),
-            "graphics": graphics, "character": self.rules["character"],
+            "character": self.rules["character"],
             "model": self.backend.model, "token": self.token,
             "initial_prompt": self.prompt,
             "story": story,
         }
-
 
 def handler_for(app):
     class Handler(BaseHTTPRequestHandler):
@@ -268,9 +311,6 @@ def handler_for(app):
                 if isinstance(source_id, str) and source_id:
                     app.story.director_disconnect(source_id)
 
-        def stream_frames(self):
-            return self.stream_hub(app.frames, retry_ms=500)
-
         def do_GET(self):
             if not self.local_request():
                 return self.send(403, {"error": "Local access only"})
@@ -281,10 +321,6 @@ def handler_for(app):
                 query = parse_qs(urlparse(self.path).query)
                 source_id = (query.get("source_id") or [None])[0]
                 return self.stream_events(source_id)
-            if path == "/api/frames":
-                return self.stream_frames()
-            if path == "/api/graphics/assets":
-                return self.send(200, public_asset_catalog())
             if path.startswith("/api/audit/"):
                 event_id = path.rsplit("/", 1)[1]
                 turn = app.store.get(event_id)
@@ -446,8 +482,6 @@ def main():
         manuals = "\n\n".join(
             p.read_text() for p in sorted((TABLE / ".opencode/skills").glob("00[12]*/SKILL.md")))
         events = EventHub()
-        frames = FrameHub()
-        graphics = EmbodiedWorldGraphics()
         runtime = Runtime(
             store, backend, rules, manuals,
             log=logger.write, events=events.publish,
@@ -455,9 +489,11 @@ def main():
         story = StoryFlow(store, events=events.publish)
         story.attach_runtime(runtime)
         story.start()
+        world_observer = WorldObservationPump(store)
+        world_observer.start()
         app = Application(
             store, runtime, backend, rules, args.prompt,
-            events=events, graphics=graphics, frames=frames, story=story,
+            events=events, story=story,
         )
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
@@ -476,8 +512,8 @@ def main():
         except Exception:
             pass
         try:
-            if "graphics" in locals():
-                graphics.close()
+            if "world_observer" in locals():
+                world_observer.close()
         except Exception:
             pass
         try:
