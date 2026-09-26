@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from collections import deque
 from datetime import datetime
 import json
@@ -138,6 +139,8 @@ class _StaticStory:
 
 
 class Application:
+    FRAME_HZ = 10.0
+
     def __init__(
         self, store, runtime, backend, rules, prompt=None, events=None,
         graphics=None, frames=None, story=None,
@@ -151,13 +154,13 @@ class Application:
         self.graphics = graphics
         self.frames = frames or FrameHub()
         self.story = story or _StaticStory()
+        self._graphics_lock = threading.RLock()
+        self._latest_graphics = None
+        self._graphics_stop = threading.Event()
+        self._graphics_thread = None
 
-    def snapshot(self):
-        self.runtime.poll_actions()
-        history = [public_turn(t) for t in self.store.history()]
-        state = self.store.state()
-        running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
-        graphics = self.graphics.snapshot(state)
+    def _refresh_graphics(self):
+        graphics = self.graphics.snapshot(self.store.state())
         observed = graphics.get("observation")
         if isinstance(observed, dict):
             event_key = (
@@ -168,8 +171,54 @@ class Application:
             self.store.record_world_event(
                 event_key, "world_observation", observed
             )
-        world_observation = self.store.latest_world_observation()
         self.frames.publish(graphics["frame"])
+        with self._graphics_lock:
+            self._latest_graphics = copy.deepcopy(graphics)
+        return graphics
+
+    def _graphics_loop(self):
+        period = 1.0 / self.FRAME_HZ
+        while not self._graphics_stop.is_set():
+            started = time.monotonic()
+            try:
+                self._refresh_graphics()
+            except HostClientError:
+                # Keep the last good frame. The next 10 Hz iteration retries
+                # naturally without blocking browser /api/state.
+                pass
+            delay = max(0.0, period - (time.monotonic() - started))
+            self._graphics_stop.wait(delay)
+
+    def start_graphics_pump(self):
+        if self._graphics_thread and self._graphics_thread.is_alive():
+            return
+        self._graphics_stop.clear()
+        self._graphics_thread = threading.Thread(
+            target=self._graphics_loop,
+            daemon=True,
+            name="gametable-graphics-pump",
+        )
+        self._graphics_thread.start()
+
+    def stop_graphics_pump(self):
+        self._graphics_stop.set()
+        if self._graphics_thread and self._graphics_thread.is_alive():
+            self._graphics_thread.join(timeout=2)
+
+    def _graphics_value(self):
+        if self._graphics_thread and self._graphics_thread.is_alive():
+            with self._graphics_lock:
+                if self._latest_graphics is not None:
+                    return copy.deepcopy(self._latest_graphics)
+        return self._refresh_graphics()
+
+    def snapshot(self):
+        self.runtime.poll_actions()
+        history = [public_turn(t) for t in self.store.history()]
+        state = self.store.state()
+        running = next((turn for turn in reversed(history) if turn["status"] == "running"), None)
+        graphics = self._graphics_value()
+        world_observation = self.store.latest_world_observation()
         frame = graphics["frame"]
         frame_ref = {
             "frame_id": frame["frame_id"],
@@ -464,6 +513,7 @@ def main():
             store, runtime, backend, rules, args.prompt,
             events=events, graphics=graphics, frames=frames, story=story,
         )
+        app.start_graphics_pump()
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(app))
         logger.write(f"GameTable · Юки: http://127.0.0.1:{args.port}")
         logger.write(f"Модель: {backend.model}")
@@ -478,6 +528,11 @@ def main():
         try:
             if "story" in locals():
                 story.close()
+        except Exception:
+            pass
+        try:
+            if "app" in locals():
+                app.stop_graphics_pump()
         except Exception:
             pass
         try:
