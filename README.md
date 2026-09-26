@@ -1,12 +1,15 @@
 # ai_research
 
-План следующего рефакторинга: [единое тело Юки в мире новеллы — 11 коммитов](docs/refactor/embodied-vn/01-concept.md).
-Этапы 02–09 уже объединили VN и физическое тело: identity/action/world
-contracts, multi-zone `embodied_world_v1`, canonical `organism/`,
-`navigation_v1`, `learning_v1`, authoritative Graphics и durable
-CharacterActionProposal/ActionExecutor. Активный GameTable больше не подключает
-`game_v1/gamelab_v1`; migration и единый launcher выполнены в
-[09-cutover.md](docs/refactor/embodied-vn/09-cutover.md).
+Завершённая embodied-VN refactor series 01–15:
+[единое тело Юки в мире новеллы](docs/refactor/embodied-vn/01-concept.md).
+Она закрепила identity/action/world contracts, multi-zone
+`embodied_world_v1`, canonical `organism/`, Player Gateway,
+distributed GameServer↔GameClient boundary и shared WorldStateHub.
+
+Следующая roadmap-series документируется по новой координате
+`release.branch.series.patch`: [0.0.3 — social embodiment, escort and
+demonstration](docs/roadmap/0/0/3/README.md). Правила нумерации:
+[docs/versioning.md](docs/versioning.md).
 
 Исследовательский проект составного ИИ-организма: персонаж общается с Директором,
 накапливает совместный опыт и учится управлять аватаром в непрерывном физическом
@@ -48,6 +51,12 @@ Brain LLM остаётся основным смысловым «неокорт�
 оценку. Исследовательская гипотеза состоит в том, что согласованная личность
 может возникнуть именно из взаимодействия ограниченных специализированных
 подсистем.
+
+## Roadmap/version coordinate
+
+Текущая долгоживущая линия работы: release `0`, branch `0 = main`.
+Следующая series: `3`; её patches имеют coordinates `0.0.3.01`,
+`0.0.3.02` и далее. Git feature branches не меняют branch coordinate.
 
 ## Структура
 
