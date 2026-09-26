@@ -4,8 +4,8 @@
 Планируемый коммит: `Harden realtime Host and World boundary for human control`.
 Цель: A4, A8, A11–A13.
 
-Статус: **план**. Этот этап не добавляет Node.js и не меняет public browser UI.
-Он сначала исправляет внутреннюю realtime-границу, на которую затем будет опираться
+Статус: **реализовано**. Этап не добавляет Node.js и не меняет public browser UI.
+Он исправляет внутреннюю realtime-границу, на которую затем будет опираться
 `Player Gateway`.
 
 ## Почему нужен отдельный подготовительный патч
@@ -117,3 +117,21 @@ persisted; новый epoch + controller fence уже запрещают его 
 
 После 12 Python core должен быть пригоден для realtime frontend независимо от
 того, будет этим frontend CLI, GUI или будущий Node.js Player Gateway.
+
+
+## Реализованный результат
+
+- GameClient Host разделил command lane и authoritative observer lane на две
+  независимые persistent Gateway connections.
+- Observer обновляет только latest-state cache с базовой частотой 25 Hz;
+  downstream `state` больше не делает синхронный Gateway snapshot на каждый read
+  и возвращает freshness metadata.
+- Session/zone/controller fences обновляются только из authoritative observer
+  state; login/relogin очищает несовместимый cache.
+- Continuous `input` больше не форсирует SQLite world checkpoint на каждом
+  применении. Периодический checkpoint сохраняется, а structural commands и
+  physical portal transfer остаются forced durable boundaries.
+- Director recorder использует cached observations и сохраняет telemetry
+  асинхронно, без дополнительных state round trips и fsync в actuator path.
+- Host остаётся одной реализацией; human/Yuki различаются instance/session, а не
+  fork-ами Host.
