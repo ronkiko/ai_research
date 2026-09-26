@@ -378,32 +378,29 @@ has no direct World snapshot loop or private World TCP traffic and remains
 outside learned Spine/Motor evidence.
 
 
-## Teacher/demo resource boundary
+## Teacher/demo relation cardinality
 
-Teacher-assisted learning — отдельный bounded server resource.
+Teacher-assisted learning не имеет глобального singleton на весь World.
 
-Нормативно на один GameServer/World одновременно допускается максимум **одна
-active teacher↔student pair**:
+Нормативный инвариант:
 
 ```text
-World
- └─ TeacherStudentSession
-      ├─ teacher_entity_id
-      └─ student_entity_id
+for each student:
+    active teachers = 0 or 1
 ```
 
-Ограничение действует на demonstration/teacher telemetry, а не на число actors
-или обычные self-learning процессы.
+Разные students могут иметь разных teachers одновременно. Один teacher может
+обучать несколько students, если отдельная policy этого не запрещает.
 
-Конкурирующая teacher↔student session отклоняется server-side **до** создания
-demonstration capability, telemetry producer/buffer или P2P channel. Несколько
-connections/sessions не могут обходить singleton rule.
+GameServer проверяет уникальность active `TeacherStudentSession` по
+`student_entity_id` до создания demonstration capability или telemetry
+producer. Попытка назначить второму teacher уже занятого student отклоняется
+без создания второго telemetry path.
 
-Одна active pair имеет один canonical demonstration telemetry producer;
-downstream fan-out не должен умножать server workload.
-
-Поэтому ни 100 teachers, ни 100 teacher/student pairs не могут одновременно
-запустить teacher telemetry на одном World.
+Для одного student существует максимум один canonical demonstration telemetry
+producer. Общие capacity/rate limits при большом числе одновременно обучаемых
+students являются отдельной server resource policy и не должны смешиваться с
+этим relation invariant.
 
 ## Future roadmap 0.main.3: social embodiment and escort
 
