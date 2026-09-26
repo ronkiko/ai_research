@@ -14,12 +14,20 @@ bash -n \
   gametable/op/start.sh \
   player-gateway/op/gateway.sh
 
-for script in   gameserver/v1/op/server.sh   gameclient/v1/op/host.sh   gameclient/v1/op/director-host.sh   gameclient/v1/op/gui.sh   gametable/op/start.sh   player-gateway/op/gateway.sh
+for script in \
+  gameserver/v1/op/server.sh \
+  gameclient/v1/op/host.sh \
+  gameclient/v1/op/director-host.sh \
+  gameclient/v1/op/gui.sh \
+  player-gateway/op/gateway.sh
 do
   grep -q -- '--start' "$script"
   grep -q -- '--stop' "$script"
   grep -q -- '--restart' "$script"
   grep -q -- '--status' "$script"
+done
+for flag in --start --stop --restart --status --fresh --free-ports; do
+  grep -q -- "$flag" gametable/op/args.sh
 done
 
 # Managed lifecycle is pidfile-only. Port ownership is checked separately by
