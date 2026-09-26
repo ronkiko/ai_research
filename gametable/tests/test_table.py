@@ -658,12 +658,50 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertNotIn("scene", view)
         self.assertEqual(view["presentation_mode"], "vn_dialogue")
         self.assertIsNone(view["frame_ref"])
-        self.assertEqual([a["intent_id"] for a in view["affordances"]],
-                         ["talk", "request_lab_work", "request_rest", "request_sleep"])
+        self.assertEqual(
+            [a["intent_id"] for a in view["affordances"]],
+            [
+                "talk", "request_lab_work", "request_rest", "request_sleep",
+                "request_training_prepare", "request_training_status",
+                "request_action_cancel",
+            ],
+        )
         self.assertNotIn("request_leave_lab", [a["intent_id"] for a in view["affordances"]])
         view["stats"]["trust"] = 999
         view["affordances"].append({"intent_id": "forged"})
         self.assertEqual(self.store.state(), before)
+
+    def test_training_zone_exposes_learning_cycle_without_workstation_controls(self):
+        state = copy.deepcopy(self.store.state())
+        view = project_view(
+            state,
+            self.rules,
+            world_observation={"location_id": "training/flat_run"},
+        )
+        ids = [a["intent_id"] for a in view["affordances"]]
+        for intent_id in (
+            "request_motor_train", "request_motor_verify",
+            "request_spine_train", "request_spine_verify",
+            "request_skill_select", "request_training_status",
+            "request_action_cancel",
+        ):
+            self.assertIn(intent_id, ids)
+        self.assertNotIn("request_workstation", ids)
+        self.assertNotIn("request_training_prepare", ids)
+
+    def test_laboratory_world_view_exposes_workstation_but_not_training_rollouts(self):
+        state = copy.deepcopy(self.store.state())
+        view = project_view(
+            state,
+            self.rules,
+            world_observation={"location_id": "laboratory"},
+        )
+        ids = [a["intent_id"] for a in view["affordances"]]
+        self.assertIn("request_workstation", ids)
+        self.assertIn("request_training_prepare", ids)
+        self.assertIn("request_training_status", ids)
+        self.assertNotIn("request_motor_train", ids)
+        self.assertNotIn("request_spine_train", ids)
 
     def test_laboratory_viewstate_exposes_leave_intent_without_world_presentation(self):
         state = copy.deepcopy(self.store.state())

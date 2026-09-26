@@ -3,9 +3,33 @@ from __future__ import annotations
 import copy
 
 WORLD_AFFORDANCES = {
-    "hallway": ("talk", "request_lab_work", "request_rest", "request_sleep"),
-    "laboratory": ("talk", "request_lab_work", "request_leave_lab", "request_rest", "request_sleep"),
-    "training/flat_run": ("talk", "request_leave_lab", "request_rest", "request_sleep"),
+    "hallway": (
+        "talk", "request_lab_work", "request_rest", "request_sleep",
+        "request_training_prepare", "request_training_status",
+        "request_action_cancel",
+    ),
+    "laboratory": (
+        "talk", "request_lab_work", "request_leave_lab", "request_rest",
+        "request_sleep", "request_workstation", "request_training_prepare",
+        "request_training_status", "request_action_cancel",
+    ),
+    "training/flat_run": (
+        "talk", "request_leave_lab", "request_rest", "request_sleep",
+        "request_motor_train", "request_motor_verify", "request_spine_train",
+        "request_spine_verify", "request_skill_select",
+        "request_training_status", "request_action_cancel",
+    ),
+}
+
+LEGACY_EXTRA_AFFORDANCES = {
+    "hallway": (
+        "request_training_prepare", "request_training_status",
+        "request_action_cancel",
+    ),
+    "laboratory.workstation": (
+        "request_workstation", "request_training_prepare",
+        "request_training_status", "request_action_cancel",
+    ),
 }
 
 def relationship_label(stats):
@@ -19,22 +43,21 @@ def relationship_label(stats):
         return "Осторожность"
     return "Узнаёте друг друга"
 
-EXTRA_INTENTS = (
-    "request_workstation", "request_training_prepare", "request_motor_train",
-    "request_motor_verify", "request_spine_train", "request_spine_verify",
-    "request_skill_select", "request_training_status", "request_action_cancel",
-)
+def _known_intents(values, rules):
+    return tuple(intent_id for intent_id in values if intent_id in rules["intents"])
+
 
 def available_intent_ids(state, rules, world_observation=None):
     if isinstance(world_observation, dict):
         location = world_observation.get("location_id")
         if location in WORLD_AFFORDANCES:
-            return WORLD_AFFORDANCES[location] + tuple(x for x in EXTRA_INTENTS if x in rules["intents"])
+            return _known_intents(WORLD_AFFORDANCES[location], rules)
     scene_id = state.get("scene_id")
     scene = rules["scenes"].get(scene_id)
     if not scene:
         raise ValueError("Неизвестная legacy VN scene")
-    return tuple(scene["affordances"]) + tuple(x for x in EXTRA_INTENTS if x in rules["intents"])
+    values = tuple(scene["affordances"]) + LEGACY_EXTRA_AFFORDANCES.get(scene_id, ())
+    return _known_intents(values, rules)
 
 def project_view(
     state, rules, busy=False, stage=None, *,

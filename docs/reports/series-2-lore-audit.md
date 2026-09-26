@@ -10,6 +10,23 @@ GameTable по исходникам. Это не полный аудит все�
 Остаются как недоделки интеграции, так и недостающие исполнительные доказательства.
 Прежний вывод «остались только доказательства» этим аудитом уточняется.
 
+## Follow-up после аудита
+
+После этого аудита в Series 2 добавлен кодовый closure F1–F4:
+
+- approved VN→learning path через server-scoped MCP ticket;
+- отдельные preparation/TRAIN/VERIFY/select/status/cancel intents;
+- bounded self-initiative scheduler с Heart/Head appraisal;
+- durable terminal experience journal и background reconciliation;
+- выровненные активные GameTable instructions.
+
+Новые regressions находятся в `gametable/tests/test_series2.py`.
+Это закрывает **source-level замечания** аудита, но не меняет исторический текст
+F1–F4 ниже: он фиксирует, почему эти исправления потребовались.
+
+Series 2 всё ещё не принята до ручной игровой и научной проверки по
+[gameplay acceptance](series-2-gameplay-acceptance.md) и F5.
+
 ## Полнота лора
 
 L001 корректно задавал общую жизнь, самостоятельность Юки, отношения, места

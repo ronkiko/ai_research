@@ -7,9 +7,13 @@ Acceptance target: **Series 0.main.2, patches 01–15**, defined by
 
 2026-09-27 follow-up: [lore/product audit](series-2-lore-audit.md) found
 production VN integration gaps in learning, self-initiative and action-result
-memory (F1–F3). Overall remains BLOCKED for **implementation and evidence**.
-Earlier statements below that only execution evidence remains are historical
-conclusions superseded by this audit. Contract PASS rows do not close F1–F3.
+memory (F1–F3). A later Series-2 closure patch adds the approved learning path,
+bounded initiative and durable experience journal; deterministic regressions
+cover those source-level gaps.
+
+Overall remains **BLOCKED for Operator gameplay/live/scientific evidence**.
+Source-level closure does not itself prove a real Luna/MCP learning run,
+fresh convergence or manual visual behavior.
 
 Implementation range audited:
 
@@ -34,7 +38,7 @@ and GameLab compatibility checks.
 
 ## Result
 
-**Overall: BLOCKED for final series acceptance.**
+**Overall: BLOCKED for final Series 2 acceptance pending Operator evidence.**
 
 The deterministic software-contract gate is implemented and is expected to be
 green in CI. The plan explicitly forbids treating those tests as evidence of
@@ -108,6 +112,9 @@ Normal component gates used by CI:
 python3 -m unittest gametable.tests.test_acceptance -v
 python3 -m unittest organism.tests.test_extraction -v
 ~~~
+
+Series-2 gameplay handoff and VN-specific checks:
+[series-2-gameplay-acceptance.md](series-2-gameplay-acceptance.md).
 
 ## Required operator evidence before changing Overall to PASS
 

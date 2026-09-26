@@ -7,8 +7,8 @@
 Текущая серия **0.main.2**, патчи 01–15:
 [единое тело Юки в мире новеллы](docs/roadmap/0/main/2/README.md).
 Приёмка не завершена: [аудит соответствия лору и замыслу](docs/reports/series-2-lore-audit.md)
-выявил разрывы между VN-действиями, инициативой и обучением. В рабочем дереве
-добавлен путь их исправления; [ручная и научная приёмка](docs/reports/series-2-gameplay-acceptance.md)
+выявил разрывы между VN-действиями, инициативой и обучением. Кодовый follow-up
+закрывает F1–F4; [ручная и научная приёмка](docs/reports/series-2-gameplay-acceptance.md)
 ещё предстоит.
 Серия ввела identity/action/world contracts, multi-zone
 `embodied_world_v1`, canonical `organism/`, Player Gateway,
