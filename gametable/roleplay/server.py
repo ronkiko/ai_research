@@ -17,6 +17,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from gameclient.v1.clients.base import HostClientError
+
 from .engine import load_rules
 from .opencode import BackendError, OpenCode
 from .runtime import Runtime, public_turn
@@ -276,7 +278,10 @@ def handler_for(app):
                 return self.send(403, {"error": "Local access only"})
             path = urlparse(self.path).path
             if path == "/api/state":
-                return self.send(200, app.snapshot())
+                try:
+                    return self.send(200, app.snapshot())
+                except HostClientError as exc:
+                    return self.send(503, {"error": str(exc)})
             if path == "/api/events":
                 query = parse_qs(urlparse(self.path).query)
                 source_id = (query.get("source_id") or [None])[0]
