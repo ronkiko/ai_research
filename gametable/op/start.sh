@@ -1,34 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-ACTION="start"
-FRESH=0
-FREE_PORTS=0
-
-case "${1:-}" in
-  --start) shift ;;
-  --fresh) FRESH=1; shift ;;
-  --stop) ACTION="stop"; shift ;;
-  --restart) ACTION="restart"; shift ;;
-  --status) ACTION="status"; shift ;;
-esac
-
-# --free-ports is an explicit destructive operator choice. Keep it out of the
-# GameTable backend argv; all other arguments pass through unchanged.
-filtered=()
-for arg in "$@"; do
-  if [[ "$arg" == "--free-ports" ]]; then
-    FREE_PORTS=1
-  else
-    filtered+=("$arg")
-  fi
-done
-set -- "${filtered[@]}"
-
-if [[ "$FREE_PORTS" -eq 1 && ( "$ACTION" == "stop" || "$ACTION" == "status" ) ]]; then
-  echo "ERROR --free-ports is only valid with start, --restart, or --fresh" >&2
-  exit 2
-fi
+# shellcheck source=/dev/null
+source "$ROOT/gametable/op/args.sh"
+gametable_parse_cli "$@"
+ACTION="$GAMETABLE_ACTION"
+FRESH="$GAMETABLE_FRESH"
+FREE_PORTS="$GAMETABLE_FREE_PORTS"
+set -- "${GAMETABLE_BACKEND_ARGS[@]}"
 
 GAMETABLE_PORT=17880
 argv=("$@")
@@ -50,7 +29,7 @@ source "$ROOT/op/process.sh"
 
 stop_stack() {
   "$ROOT/player-gateway/op/gateway.sh" --stop
-  op_managed_process stop "gametable-vn" "$ROOT" "roleplay.server" \
+  op_managed_process stop "gametable-vn" "$ROOT" \
     "$ROOT/gametable" "GameTable Юки"
   "$ROOT/gameclient/v1/op/director-host.sh" --stop
   "$ROOT/gameclient/v1/op/host.sh" --stop
@@ -104,38 +83,40 @@ require_stack_ports_free() {
 
 status_stack() {
   "$ROOT/player-gateway/op/gateway.sh" --status || true
-  op_managed_process status "gametable-vn" "$ROOT" "roleplay.server"     "$ROOT/gametable" "GameTable Юки" || true
+  op_managed_process status "gametable-vn" "$ROOT" \
+    "$ROOT/gametable" "GameTable Юки" || true
   "$ROOT/gameclient/v1/op/host.sh" --status || true
   "$ROOT/gameclient/v1/op/director-host.sh" --status || true
   "$ROOT/gameserver/v1/op/embodied.sh" --status || true
 }
 
 if [[ "$ACTION" == "stop" ]]; then
-  [[ $# -eq 0 ]] || { echo "ERROR stop does not accept arguments" >&2; exit 2; }
+  [[ $# -eq 0 ]] || { echo "ERROR --stop does not accept backend arguments" >&2; exit 2; }
   stop_stack
   exit 0
 fi
 if [[ "$ACTION" == "status" ]]; then
-  [[ $# -eq 0 ]] || { echo "ERROR status does not accept arguments" >&2; exit 2; }
+  [[ $# -eq 0 ]] || { echo "ERROR --status does not accept backend arguments" >&2; exit 2; }
   status_stack
   exit 0
 fi
-if [[ "$ACTION" == "restart" ]]; then
-  stop_stack
-fi
 
+# Validate prerequisites before a destructive restart/fresh stop.
 command -v opencode >/dev/null || { echo "ERROR opencode is not installed" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "ERROR python3 is not installed" >&2; exit 2; }
 command -v node >/dev/null || { echo "ERROR node is not installed" >&2; exit 2; }
 command -v npm >/dev/null || { echo "ERROR npm is not installed" >&2; exit 2; }
 
-if [[ "$ACTION" == "restart" ]]; then
+# Restart and fresh are orthogonal flags but share one lifecycle boundary:
+# stop once, resolve endpoint conflicts once, then start once.
+if [[ "$ACTION" == "restart" || "$FRESH" -eq 1 ]]; then
+  stop_stack
   require_stack_ports_free
 fi
 
 cd "$ROOT"
 
-if op_managed_process status "gametable-vn" "$ROOT" "roleplay.server" \
+if op_managed_process status "gametable-vn" "$ROOT" \
   "$ROOT/gametable" "GameTable Юки" >/dev/null 2>&1; then
   echo "GameTable Юки is already running; use --status or --restart"
   exit 0
@@ -150,10 +131,8 @@ export DIRECTOR_MANUAL_GATE="${DIRECTOR_MANUAL_GATE:-$ROOT/gametable/runtime/dir
 
 if [[ "$FRESH" -eq 1 ]]; then
   # A fresh story must really satisfy the first-day contract P@0 / D@1.
-  # Keep learned artifacts, but stop only launcher-owned runtime processes and
-  # discard the active physical checkpoint before the new Hosts log in.
-  stop_stack
-  require_stack_ports_free
+  # Managed runtime was already stopped and all fixed endpoints were resolved
+  # before migration/reset, so destructive state reset happens exactly once.
   python3 - <<'PY'
 from gametable.migration import WORLD_STATE, active_save_root
 root = active_save_root()
@@ -301,7 +280,7 @@ player_gateway_ready || {
 
 echo "WEB UI · Player Gateway: http://127.0.0.1:$PLAYER_GATEWAY_PORT_VALUE"
 require_runtime_port_free "$GAMETABLE_PORT" "GameTable backend"
-op_managed_process start "gametable-vn" "$ROOT" "roleplay.server" \
+op_managed_process start "gametable-vn" "$ROOT" \
   "$ROOT/gametable" "GameTable Юки backend" \
   env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
   python3 -m roleplay.server "$@"

@@ -20,4 +20,10 @@ if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
     exit 2
   }
 fi
-op_managed_process   "$ACTION"   "player-gateway"   "$ROOT"   "player-gateway/src/server.mjs"   "$ROOT"   "Player Gateway"   node "$ROOT/player-gateway/src/server.mjs" "$@"
+op_managed_process \
+  "$ACTION" \
+  "player-gateway" \
+  "$ROOT" \
+  "$ROOT" \
+  "Player Gateway" \
+  node "$ROOT/player-gateway/src/server.mjs" "$@"

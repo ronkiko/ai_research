@@ -16,11 +16,10 @@ fi
 source "$ROOT/op/process.sh"
 
 TAG="gameclient-host-v1"
-MARKER="gameclient.v1.host.server --port 17700"
 LABEL="GameClient Host v1"
 
 if [[ "$ACTION" == "restart" ]]; then
-  op_managed_process stop "$TAG" "$ROOT" "$MARKER" "$ROOT" "$LABEL"
+  op_managed_process stop "$TAG" "$ROOT" "$ROOT" "$LABEL"
   ACTION="start"
 fi
 if [[ "$ACTION" == "start" ]]; then
@@ -31,7 +30,6 @@ op_managed_process \
   "$ACTION" \
   "$TAG" \
   "$ROOT" \
-  "$MARKER" \
   "$ROOT" \
   "$LABEL" \
   "${PYTHON:-python3}" -m gameclient.v1.host.server --port 17700 "$@"

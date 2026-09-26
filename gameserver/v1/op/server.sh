@@ -18,7 +18,6 @@ op_managed_process \
   "$ACTION" \
   "gameserver-v1" \
   "$ROOT" \
-  "gameserver.v1.supervisor" \
   "$ROOT" \
   "GameServer v1" \
   "${PYTHON:-python3}" -m gameserver.v1.supervisor "$@"
