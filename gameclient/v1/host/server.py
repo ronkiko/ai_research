@@ -791,6 +791,7 @@ class HostService:
                 self._sequence = 0
                 self._latest_state = None
                 self._latest_state_at = None
+                self._latest_upstream_freshness = None
             return message("logout", response=response, event=event)
 
     def serve_forever(self) -> None:
