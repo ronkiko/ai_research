@@ -610,6 +610,32 @@ class EmbodiedWorldRuntime:
         with self._lock:
             return copy.deepcopy(self._latest_snapshot)
 
+    def state_frame(self) -> dict[str, Any]:
+        """Return one immutable authoritative read-model from one world tick."""
+        with self._lock:
+            snapshot = copy.deepcopy(self._latest_snapshot)
+            observations = {
+                entity_id: self._observation_unlocked(entity).to_dict()
+                for entity_id, entity in sorted(self.entities.items())
+            }
+            controllers = {
+                entity_id: self._controller_state_unlocked(entity)
+                for entity_id, entity in sorted(self.entities.items())
+            }
+            return {
+                "schema_version": 1,
+                "type": "world_state_frame_v1",
+                "world_id": self.world_id,
+                "world_epoch": self.epoch,
+                "previous_epoch": self.previous_epoch,
+                "world_tick": self.world_tick,
+                "world_revision": self.world_revision,
+                "physics_hz": self.physics_hz,
+                "snapshot": snapshot,
+                "observations": observations,
+                "controllers": controllers,
+            }
+
     def _snapshot(self, applied: tuple[dict[str, Any], ...]) -> dict[str, Any]:
         return {
             "version": WORLD_MODE_VERSION,
@@ -631,35 +657,42 @@ class EmbodiedWorldRuntime:
             "transfers": copy.deepcopy(self._transfers[-32:]),
         }
 
+    def _observation_unlocked(self, entity: WorldEntity) -> WorldObservation:
+        return WorldObservation(
+            SCHEMA_VERSION,
+            f"obs.{self.epoch}.{self.world_tick}.{entity.entity_id}",
+            self.world_id,
+            self.epoch,
+            self.world_tick,
+            self.world_revision,
+            entity.entity_id,
+            entity.zone_id,
+            PhysicalState(entity.x, entity.vx, entity.motor_x),
+            entity.body_profile_hash,
+            self.catalog.physics_contract_hash(entity.zone_id),
+        )
+
+    @staticmethod
+    def _controller_state_unlocked(entity: WorldEntity) -> dict[str, Any]:
+        return {
+            "controller_id": entity.controller_id,
+            "generation": entity.controller_generation,
+            "control_state": entity.control_state,
+        }
+
     def observation(self, entity_id: str) -> dict[str, Any]:
         with self._lock:
             entity = self.entities.get(entity_id)
             if entity is None:
                 raise ProtocolError("unknown entity")
-            return WorldObservation(
-                SCHEMA_VERSION,
-                f"obs.{self.epoch}.{self.world_tick}.{entity_id}",
-                self.world_id,
-                self.epoch,
-                self.world_tick,
-                self.world_revision,
-                entity.entity_id,
-                entity.zone_id,
-                PhysicalState(entity.x, entity.vx, entity.motor_x),
-                entity.body_profile_hash,
-                self.catalog.physics_contract_hash(entity.zone_id),
-            ).to_dict()
+            return self._observation_unlocked(entity).to_dict()
 
     def controller_state(self, entity_id: str) -> dict[str, Any]:
         with self._lock:
             entity = self.entities.get(entity_id)
             if entity is None:
                 raise ProtocolError("unknown entity")
-            return {
-                "controller_id": entity.controller_id,
-                "generation": entity.controller_generation,
-                "control_state": entity.control_state,
-            }
+            return copy.deepcopy(self._controller_state_unlocked(entity))
 
     def receipt(self, action_id: str) -> dict[str, Any] | None:
         with self._lock:
